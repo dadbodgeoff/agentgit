@@ -1,0 +1,145 @@
+{
+  "schema": "timeline-step",
+  "cases": {
+    "happy_path": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_0195c7b10001",
+      "run_id": "run_0195c7b0a000",
+      "sequence": 3,
+      "step_type": "action_step",
+      "title": "Write src/app.ts",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": "act_0195c7b0a001",
+      "decision": "allow_with_snapshot",
+      "reversibility_class": "reversible",
+      "confidence": 0.98,
+      "summary": "The agent updated one protected file after creating a recovery boundary.",
+      "primary_artifacts": [
+        {
+          "artifact_id": "artifact_0195c7b0d001",
+          "artifact_status": "available",
+          "integrity": {
+            "schema_version": "artifact-integrity.v1",
+            "digest_algorithm": "sha256",
+            "digest": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+          },
+          "type": "file_diff",
+          "count": 1,
+          "label": "src/app.ts"
+        }
+      ],
+      "artifact_previews": [
+        {
+          "type": "diff",
+          "label": "src/app.ts",
+          "preview": "- const oldValue = 1\\n+ const oldValue = 2"
+        }
+      ],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": "snap_0195c7b0c001",
+        "execution_id": "exec_0195c7b0d001",
+        "recovery_plan_ids": []
+      },
+      "occurred_at": "2026-03-29T14:12:05Z"
+    },
+    "edge_case": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_0195c7b10101",
+      "run_id": "run_0195c7b0a100",
+      "sequence": 2,
+      "step_type": "approval_step",
+      "title": "Approval needed for untrusted MCP mutation",
+      "status": "awaiting_approval",
+      "provenance": "governed",
+      "action_id": "act_0195c7b0a101",
+      "decision": "ask",
+      "reversibility_class": null,
+      "confidence": 0.91,
+      "summary": "The action is paused until a one-time approval is resolved.",
+      "primary_artifacts": [],
+      "artifact_previews": [],
+      "external_effects": [
+        "network"
+      ],
+      "related": {
+        "snapshot_id": null,
+        "execution_id": null,
+        "recovery_plan_ids": []
+      },
+      "occurred_at": "2026-03-29T14:13:00Z"
+    },
+    "minimal_valid": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_0195c7b10201",
+      "run_id": "run_0195c7b0a200",
+      "sequence": 1,
+      "step_type": "system_step",
+      "title": "Run created",
+      "status": "completed",
+      "provenance": "unknown",
+      "action_id": null,
+      "decision": null,
+      "reversibility_class": null,
+      "confidence": 0.75,
+      "summary": "The run was registered before any governed actions were attempted.",
+      "primary_artifacts": [],
+      "artifact_previews": [],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": null,
+        "execution_id": null,
+        "recovery_plan_ids": []
+      },
+      "occurred_at": "2026-03-29T14:14:00Z"
+    },
+    "recovery_branch_point_valid": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_0195c7b10301",
+      "run_id": "run_0195c7b0a300",
+      "sequence": 7,
+      "step_type": "recovery_step",
+      "title": "Recovery executed",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": "act_0195c7b0a301",
+      "decision": null,
+      "reversibility_class": "reversible",
+      "confidence": 0.97,
+      "summary": "Executed recovery for branch point run_0195c7b0a300#7.",
+      "primary_artifacts": [
+        {
+          "type": "snapshot",
+          "label": "branch point run_0195c7b0a300#7"
+        }
+      ],
+      "artifact_previews": [
+        {
+          "type": "restore",
+          "label": "branch point run_0195c7b0a300#7",
+          "preview": "Restored branch point run_0195c7b0a300#7."
+        }
+      ],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": "snap_0195c7b0c301",
+        "execution_id": null,
+        "recovery_plan_ids": [
+          "rec_0195c7b0f301"
+        ],
+        "target_locator": "/workspace/src/config.json",
+        "recovery_target_type": "branch_point",
+        "recovery_target_label": "branch point run_0195c7b0a300#7",
+        "recovery_scope_paths": [
+          "/workspace/src/config.json"
+        ],
+        "recovery_strategy": "restore_snapshot",
+        "later_actions_affected": 0,
+        "overlapping_paths": [],
+        "data_loss_risk": "low"
+      },
+      "occurred_at": "2026-03-29T14:15:30Z"
+    }
+  }
+}

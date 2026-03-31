@@ -1,0 +1,209 @@
+{
+  "schema": "recovery-plan",
+  "cases": {
+    "happy_path": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_0195c7b0f001",
+      "target": {
+        "type": "snapshot_id",
+        "snapshot_id": "snap_0195c7b0c001"
+      },
+      "recovery_class": "reversible",
+      "strategy": "restore_exact_boundary",
+      "confidence": 0.98,
+      "steps": [
+        {
+          "step_id": "rcvstep_0195c7b0f001",
+          "type": "restore_paths",
+          "idempotent": true,
+          "depends_on": []
+        },
+        {
+          "step_id": "rcvstep_0195c7b0f002",
+          "type": "verify_manifest",
+          "idempotent": true,
+          "depends_on": [
+            "rcvstep_0195c7b0f001"
+          ]
+        }
+      ],
+      "impact_preview": {
+        "paths_to_change": 14,
+        "later_actions_affected": 2,
+        "overlapping_paths": [
+          "src/app.ts",
+          "README.md"
+        ],
+        "external_effects": [],
+        "data_loss_risk": "moderate"
+      },
+      "warnings": [
+        {
+          "code": "LATER_ACTIONS_OVERLAP_BOUNDARY",
+          "message": "Two later governed edits touch protected paths that this restore would overwrite."
+        }
+      ],
+      "created_at": "2026-03-29T14:12:00Z"
+    },
+    "edge_case": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_0195c7b0f101",
+      "target": {
+        "type": "external_object",
+        "external_object_id": "email_draft_8841"
+      },
+      "recovery_class": "compensatable",
+      "strategy": "issue_compensating_api_call",
+      "confidence": 0.72,
+      "steps": [
+        {
+          "step_id": "rcvstep_0195c7b0f101",
+          "type": "create_reversal_request",
+          "idempotent": false,
+          "depends_on": []
+        }
+      ],
+      "impact_preview": {
+        "paths_to_change": 0,
+        "later_actions_affected": 0,
+        "overlapping_paths": [],
+        "external_effects": [
+          "api_compensation"
+        ],
+        "data_loss_risk": "moderate"
+      },
+      "warnings": [],
+      "created_at": "2026-03-29T14:13:00Z"
+    },
+    "minimal_valid": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_0195c7b0f201",
+      "target": {
+        "type": "action_boundary",
+        "action_id": "act_0195c7b0a201"
+      },
+      "recovery_class": "review_only",
+      "strategy": "manual_review_only",
+      "confidence": 0.41,
+      "steps": [],
+      "impact_preview": {
+        "later_actions_affected": 0,
+        "overlapping_paths": [],
+        "external_effects": [],
+        "data_loss_risk": "unknown"
+      },
+      "warnings": [],
+      "review_guidance": {
+        "systems_touched": [
+          "shell"
+        ],
+        "objects_touched": [
+          "/workspace"
+        ],
+        "manual_steps": [
+          "Inspect workspace changes before applying cleanup."
+        ],
+        "uncertainty": [
+          "Only metadata was captured for this boundary."
+        ]
+      },
+      "created_at": "2026-03-29T14:14:00Z"
+    },
+    "run_checkpoint_valid": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_0195c7b0f301",
+      "target": {
+        "type": "run_checkpoint",
+        "run_checkpoint": "run_0195c7b0a000#7"
+      },
+      "recovery_class": "reversible",
+      "strategy": "restore_snapshot",
+      "confidence": 0.93,
+      "steps": [
+        {
+          "step_id": "rcvstep_0195c7b0f301",
+          "type": "restore_snapshot",
+          "idempotent": true,
+          "depends_on": []
+        }
+      ],
+      "impact_preview": {
+        "paths_to_change": 1,
+        "later_actions_affected": 0,
+        "overlapping_paths": [],
+        "external_effects": [],
+        "data_loss_risk": "low"
+      },
+      "warnings": [],
+      "created_at": "2026-03-29T14:15:00Z"
+    },
+    "branch_point_valid": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_0195c7b0f351",
+      "target": {
+        "type": "branch_point",
+        "run_id": "run_0195c7b0a000",
+        "sequence": 7
+      },
+      "recovery_class": "reversible",
+      "strategy": "restore_snapshot",
+      "confidence": 0.93,
+      "steps": [
+        {
+          "step_id": "rcvstep_0195c7b0f351",
+          "type": "restore_snapshot",
+          "idempotent": true,
+          "depends_on": []
+        }
+      ],
+      "impact_preview": {
+        "paths_to_change": 1,
+        "later_actions_affected": 0,
+        "overlapping_paths": [],
+        "external_effects": [],
+        "data_loss_risk": "low"
+      },
+      "warnings": [],
+      "created_at": "2026-03-29T14:15:30Z"
+    },
+    "path_subset_valid": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_0195c7b0f401",
+      "target": {
+        "type": "path_subset",
+        "snapshot_id": "snap_0195c7b0c401",
+        "paths": [
+          "src/config.json",
+          "README.md"
+        ]
+      },
+      "recovery_class": "reversible",
+      "strategy": "restore_path_subset",
+      "confidence": 0.88,
+      "steps": [
+        {
+          "step_id": "rcvstep_0195c7b0f401",
+          "type": "restore_path_subset",
+          "idempotent": true,
+          "depends_on": []
+        }
+      ],
+      "impact_preview": {
+        "paths_to_change": 2,
+        "later_actions_affected": 1,
+        "overlapping_paths": [
+          "src/config.json"
+        ],
+        "external_effects": [],
+        "data_loss_risk": "moderate"
+      },
+      "warnings": [
+        {
+          "code": "LATER_ACTIONS_OVERLAP_BOUNDARY",
+          "message": "Recovery would overwrite 1 later action(s) touching src/config.json."
+        }
+      ],
+      "created_at": "2026-03-29T14:16:00Z"
+    }
+  }
+}

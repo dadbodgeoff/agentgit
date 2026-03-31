@@ -1,0 +1,1433 @@
+import crypto from "node:crypto";
+import path from "node:path";
+
+import {
+  InternalError,
+  PreconditionError,
+  ValidationError,
+  type ActionRecord,
+  type RawActionAttempt,
+} from "@agentgit/schemas";
+import { v7 as uuidv7 } from "uuid";
+
+function createActionId(): string {
+  return `act_${uuidv7().replaceAll("-", "")}`;
+}
+
+function normalizePath(targetPath: string, cwd: string | undefined): string {
+  if (path.isAbsolute(targetPath)) {
+    return path.normalize(targetPath);
+  }
+
+  return path.resolve(cwd ?? process.cwd(), targetPath);
+}
+
+function isPathInsideWorkspace(targetPath: string, workspaceRoots: string[]): boolean {
+  return workspaceRoots.some((root) => {
+    const normalizedRoot = path.resolve(root);
+    const normalizedTarget = path.resolve(targetPath);
+    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`);
+  });
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sortJsonValue(entry));
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, sortJsonValue(entry)]),
+    );
+  }
+
+  return value;
+}
+
+function stableJsonHash(value: unknown): string {
+  return crypto.createHash("sha256").update(JSON.stringify(sortJsonValue(value))).digest("hex");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeFilesystemAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+  const rawOperation = String(attempt.raw_call.operation ?? "write");
+  const rawPath = String(attempt.raw_call.path ?? "");
+  const normalizedPath = normalizePath(rawPath, attempt.environment_context.cwd);
+  const content = typeof attempt.raw_call.content === "string" ? attempt.raw_call.content : "";
+  const byteLength = Buffer.byteLength(content, "utf8");
+  const isWorkspacePath = isPathInsideWorkspace(normalizedPath, attempt.environment_context.workspace_roots);
+
+  const sideEffectLevel =
+    rawOperation === "delete" ? "destructive" : rawOperation === "write" || rawOperation === "overwrite" ? "mutating" : "unknown";
+
+  return {
+    schema_version: "action.v1",
+    action_id: createActionId(),
+    run_id: attempt.run_id,
+    session_id: sessionId,
+    status: "normalized",
+    timestamps: {
+      requested_at: attempt.received_at,
+      normalized_at: new Date().toISOString(),
+    },
+    provenance: {
+      mode: "governed",
+      source: "authority-sdk-ts",
+      confidence: isWorkspacePath ? 0.99 : 0.85,
+    },
+    actor: {
+      type: "agent",
+      agent_name: attempt.framework_context?.agent_name,
+      agent_framework: attempt.framework_context?.agent_framework,
+      tool_name: attempt.tool_registration.tool_name,
+      tool_kind: attempt.tool_registration.tool_kind,
+    },
+    operation: {
+      domain: "filesystem",
+      kind: rawOperation,
+      name: `filesystem.${rawOperation}`,
+      display_name: rawOperation === "delete" ? "Delete file" : "Write file",
+    },
+    execution_path: {
+      surface: "governed_fs",
+      mode: "pre_execution",
+      credential_mode: attempt.environment_context.credential_mode ?? "none",
+    },
+    target: {
+      primary: {
+        type: "path",
+        locator: normalizedPath,
+        label: path.basename(normalizedPath),
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: isWorkspacePath ? [] : ["scope"],
+      },
+    },
+    input: {
+      raw: attempt.raw_call,
+      redacted: attempt.raw_call,
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: sideEffectLevel,
+      external_effects: "none",
+      reversibility_hint: rawOperation === "delete" ? "potentially_reversible" : "reversible",
+      sensitivity_hint: byteLength > 262144 ? "moderate" : "low",
+      batch: false,
+    },
+    facets: {
+      filesystem: {
+        operation: rawOperation,
+        paths: [normalizedPath],
+        path_count: 1,
+        recursive: false,
+        overwrite: rawOperation !== "delete",
+        byte_length: byteLength,
+      },
+    },
+    normalization: {
+      mapper: "filesystem/v1",
+      inferred_fields: ["target.scope", "risk_hints"],
+      warnings: isWorkspacePath ? [] : ["unknown_scope"],
+      normalization_confidence: isWorkspacePath ? 0.99 : 0.48,
+    },
+  };
+}
+
+const SAFE_READ_ONLY_COMMANDS = new Set(["ls", "pwd", "cat", "head", "tail", "find", "rg", "wc"]);
+const SAFE_READ_ONLY_GIT_SUBCOMMANDS = new Set(["status", "diff", "log", "show", "rev-parse", "blame"]);
+const PACKAGE_MANAGER_COMMANDS = new Set(["npm", "pnpm", "yarn", "bun", "uv", "pip", "pip3", "poetry"]);
+const BUILD_TOOL_COMMANDS = new Set([
+  "make",
+  "just",
+  "cargo",
+  "go",
+  "dotnet",
+  "gradle",
+  "mvn",
+  "vite",
+  "webpack",
+  "tsc",
+  "turbo",
+]);
+const INTERPRETER_COMMANDS = new Set(["python", "python3", "node", "bash", "sh", "zsh", "ruby", "php"]);
+
+interface ShellClassification {
+  commandFamily: string;
+  sideEffectLevel: ActionRecord["risk_hints"]["side_effect_level"];
+  reversibilityHint: ActionRecord["risk_hints"]["reversibility_hint"];
+  externalEffects: ActionRecord["risk_hints"]["external_effects"];
+  sensitivityHint: ActionRecord["risk_hints"]["sensitivity_hint"];
+  batch: boolean;
+  warnings: string[];
+  confidence: number;
+  classifierRule: string;
+}
+
+interface FunctionRawCall {
+  integration?: unknown;
+  operation?: unknown;
+  draft_id?: unknown;
+  note_id?: unknown;
+  ticket_id?: unknown;
+  status?: unknown;
+  labels?: unknown;
+  assigned_users?: unknown;
+  user_id?: unknown;
+  subject?: unknown;
+  title?: unknown;
+  body?: unknown;
+  label?: unknown;
+}
+
+interface McpRawCall {
+  server_id?: unknown;
+  tool_name?: unknown;
+  arguments?: unknown;
+  annotations?: unknown;
+  input_schema?: unknown;
+}
+
+function normalizeStringArray(value: unknown, fieldName: string): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new ValidationError(`Ticket restore ${fieldName} must be an array of non-empty strings.`, {
+      field: fieldName,
+    });
+  }
+
+  const normalized = value.map((entry) => entry.trim());
+  if (normalized.some((entry) => entry.length === 0)) {
+    throw new ValidationError(`Ticket restore ${fieldName} must be an array of non-empty strings.`, {
+      field: fieldName,
+    });
+  }
+
+  return [...new Set(normalized)];
+}
+
+function isDirectRestoreTicketStatus(value: string): value is "active" | "closed" {
+  return value === "active" || value === "closed";
+}
+
+function normalizeDraftRestoreLabels(value: unknown): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new ValidationError("Draft restore labels must be an array of non-empty strings.", {
+      field: "labels",
+    });
+  }
+
+  const normalized = value.map((entry) => entry.trim());
+  if (normalized.some((entry) => entry.length === 0)) {
+    throw new ValidationError("Draft restore labels must be an array of non-empty strings.", {
+      field: "labels",
+    });
+  }
+
+  return [...new Set(normalized)];
+}
+
+function isDirectRestoreDraftStatus(value: string): value is "active" | "archived" | "deleted" {
+  return value === "active" || value === "archived" || value === "deleted";
+}
+
+function isDirectRestoreNoteStatus(value: string): value is "active" | "archived" | "deleted" {
+  return value === "active" || value === "archived" || value === "deleted";
+}
+
+function shellDisplayName(argv: string[], classification: ShellClassification): string {
+  const command = argv[0] ?? "command";
+  const subcommand = argv[1] ?? "";
+
+  switch (classification.commandFamily) {
+    case "version_control_read_only":
+      if (subcommand === "status") return "Inspect git status";
+      if (subcommand === "diff") return "Inspect git diff";
+      if (subcommand === "log") return "Inspect git history";
+      return "Inspect git state";
+    case "version_control_mutating":
+      if (subcommand === "reset") return argv.includes("--hard") ? "Hard reset git state" : "Reset git state";
+      if (subcommand === "checkout" || subcommand === "switch") return "Switch git branch";
+      if (subcommand === "restore") return "Restore git-tracked files";
+      if (subcommand === "commit") return "Create git commit";
+      return "Modify git state";
+    case "filesystem_primitive":
+      if (command === "rm") return "Delete files";
+      if (command === "mv") return "Move files";
+      if (command === "cp") return "Copy files";
+      return "Mutate files";
+    case "package_manager":
+      if (["install", "add", "sync"].includes(subcommand)) return "Install packages";
+      if (["remove", "rm", "uninstall"].includes(subcommand)) return "Remove packages";
+      if (["update", "upgrade"].includes(subcommand)) return "Update packages";
+      if (["run", "exec", "dlx"].includes(subcommand)) return `Run ${command} task`;
+      return "Manage packages";
+    case "build_tool":
+      return "Run build tool";
+    case "interpreter":
+      return `Run ${command} script`;
+    case "read_only_shell":
+      return `Inspect workspace with ${command}`;
+    default:
+      return "Run shell command";
+  }
+}
+
+function classifyShellCommand(argv: string[]): ShellClassification {
+  const command = argv[0] ?? "unknown";
+  const subcommand = argv[1] ?? "";
+
+  if (SAFE_READ_ONLY_COMMANDS.has(command)) {
+    return {
+      commandFamily: "read_only_shell",
+      sideEffectLevel: "read_only",
+      reversibilityHint: "reversible",
+      externalEffects: "none",
+      sensitivityHint: "low",
+      batch: false,
+      warnings: [],
+      confidence: 0.96,
+      classifierRule: "shell.read_only.core",
+    };
+  }
+
+  if (command === "git" && SAFE_READ_ONLY_GIT_SUBCOMMANDS.has(subcommand)) {
+    return {
+      commandFamily: "version_control_read_only",
+      sideEffectLevel: "read_only",
+      reversibilityHint: "reversible",
+      externalEffects: "none",
+      sensitivityHint: "low",
+      batch: false,
+      warnings: [],
+      confidence: 0.96,
+      classifierRule: "shell.git.read_only",
+    };
+  }
+
+  if (command === "rm") {
+    return {
+      commandFamily: "filesystem_primitive",
+      sideEffectLevel: "destructive",
+      reversibilityHint: "potentially_reversible",
+      externalEffects: "none",
+      sensitivityHint: "moderate",
+      batch: true,
+      warnings: [],
+      confidence: 0.93,
+      classifierRule: "shell.fs.rm",
+    };
+  }
+
+  if (command === "mv" || command === "cp") {
+    return {
+      commandFamily: "filesystem_primitive",
+      sideEffectLevel: "mutating",
+      reversibilityHint: "potentially_reversible",
+      externalEffects: "none",
+      sensitivityHint: "low",
+      batch: false,
+      warnings: [],
+      confidence: 0.8,
+      classifierRule: `shell.fs.${command}`,
+    };
+  }
+
+  if (command === "git" && (subcommand === "reset" || subcommand === "clean")) {
+    const destructive =
+      subcommand === "clean" ||
+      argv.includes("--hard") ||
+      argv.includes("-fd") ||
+      argv.includes("-fdx") ||
+      argv.includes("-xdf");
+
+    return {
+      commandFamily: "version_control_mutating",
+      sideEffectLevel: destructive ? "destructive" : "mutating",
+      reversibilityHint: destructive ? "potentially_reversible" : "compensatable",
+      externalEffects: "none",
+      sensitivityHint: destructive ? "high" : "moderate",
+      batch: destructive,
+      warnings: destructive ? [] : ["workspace_wide_effects"],
+      confidence: destructive ? 0.9 : 0.78,
+      classifierRule: destructive ? "shell.git.destructive" : "shell.git.mutating",
+    };
+  }
+
+  if (
+    command === "git" &&
+    ["checkout", "switch", "restore", "apply", "am", "commit", "merge", "rebase", "cherry-pick", "stash"].includes(
+      subcommand,
+    )
+  ) {
+    return {
+      commandFamily: "version_control_mutating",
+      sideEffectLevel: "mutating",
+      reversibilityHint: "compensatable",
+      externalEffects: "none",
+      sensitivityHint: "moderate",
+      batch: false,
+      warnings: ["workspace_wide_effects"],
+      confidence: 0.76,
+      classifierRule: "shell.git.mutating",
+    };
+  }
+
+  if (PACKAGE_MANAGER_COMMANDS.has(command)) {
+    const isInstallLike = ["install", "add", "update", "upgrade", "remove", "rm", "uninstall", "sync"].includes(subcommand);
+    const isRunLike = ["run", "exec", "dlx"].includes(subcommand);
+
+    return {
+      commandFamily: "package_manager",
+      sideEffectLevel: "mutating",
+      reversibilityHint: isInstallLike ? "compensatable" : "potentially_reversible",
+      externalEffects: isInstallLike ? "network" : "none",
+      sensitivityHint: isInstallLike ? "moderate" : "low",
+      batch: isInstallLike,
+      warnings: isRunLike ? ["opaque_execution", "workspace_wide_effects"] : ["workspace_wide_effects"],
+      confidence: isInstallLike ? 0.72 : 0.58,
+      classifierRule: isInstallLike ? "shell.pkg.install_like" : "shell.pkg.run_like",
+    };
+  }
+
+  if (BUILD_TOOL_COMMANDS.has(command)) {
+    return {
+      commandFamily: "build_tool",
+      sideEffectLevel: "mutating",
+      reversibilityHint: "potentially_reversible",
+      externalEffects: "none",
+      sensitivityHint: "low",
+      batch: true,
+      warnings: ["workspace_wide_effects"],
+      confidence: 0.62,
+      classifierRule: "shell.build_tool",
+    };
+  }
+
+  if (INTERPRETER_COMMANDS.has(command)) {
+    return {
+      commandFamily: "interpreter",
+      sideEffectLevel: "mutating",
+      reversibilityHint: "potentially_reversible",
+      externalEffects: "none",
+      sensitivityHint: "moderate",
+      batch: false,
+      warnings: ["unknown_scope", "opaque_execution"],
+      confidence: 0.29,
+      classifierRule: "shell.interpreter.opaque",
+    };
+  }
+
+  return {
+    commandFamily: "unclassified",
+    sideEffectLevel: "mutating",
+    reversibilityHint: "potentially_reversible",
+    externalEffects: "none",
+    sensitivityHint: "moderate",
+    batch: false,
+    warnings: ["unknown_scope", "opaque_execution"],
+    confidence: 0.29,
+    classifierRule: "shell.unclassified",
+  };
+}
+
+function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+  const rawArgv = Array.isArray(attempt.raw_call.argv)
+    ? attempt.raw_call.argv.map((value: unknown) => String(value))
+    : typeof attempt.raw_call.command === "string"
+      ? attempt.raw_call.command.trim().split(/\s+/)
+      : [];
+
+  const command = rawArgv[0] ?? "unknown";
+  const cwd = attempt.environment_context.cwd ?? attempt.environment_context.workspace_roots[0] ?? process.cwd();
+  const classification = classifyShellCommand(rawArgv);
+
+  return {
+    schema_version: "action.v1",
+    action_id: createActionId(),
+    run_id: attempt.run_id,
+    session_id: sessionId,
+    status: "normalized",
+    timestamps: {
+      requested_at: attempt.received_at,
+      normalized_at: new Date().toISOString(),
+    },
+    provenance: {
+      mode: "governed",
+      source: "authority-sdk-ts",
+      confidence: classification.confidence,
+    },
+    actor: {
+      type: "agent",
+      agent_name: attempt.framework_context?.agent_name,
+      agent_framework: attempt.framework_context?.agent_framework,
+      tool_name: attempt.tool_registration.tool_name,
+      tool_kind: attempt.tool_registration.tool_kind,
+    },
+    operation: {
+      domain: "shell",
+      kind: "exec",
+      name: "shell.exec",
+      display_name: shellDisplayName(rawArgv, classification),
+    },
+    execution_path: {
+      surface: "governed_shell",
+      mode: "pre_execution",
+      credential_mode: attempt.environment_context.credential_mode ?? "none",
+    },
+    target: {
+      primary: {
+        type: "workspace",
+        locator: cwd,
+        label: path.basename(cwd),
+      },
+      scope: {
+        breadth: classification.warnings.includes("unknown_scope") ? "unknown" : "workspace",
+        unknowns: classification.warnings.includes("unknown_scope") ? ["scope", "target_count"] : [],
+      },
+    },
+    input: {
+      raw: attempt.raw_call,
+      redacted: attempt.raw_call,
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: classification.sideEffectLevel,
+      external_effects: classification.externalEffects,
+      reversibility_hint: classification.reversibilityHint,
+      sensitivity_hint: classification.sensitivityHint,
+      batch: classification.batch,
+    },
+    facets: {
+      shell: {
+        argv: rawArgv,
+        cwd,
+        interpreter: command,
+        command_family: classification.commandFamily,
+        classifier_rule: classification.classifierRule,
+        declared_env_keys: [],
+        stdin_kind: "none",
+      },
+    },
+    normalization: {
+      mapper: "shell/v1",
+      inferred_fields: ["risk_hints", "target.scope"],
+      warnings: classification.warnings,
+      normalization_confidence: classification.confidence,
+    },
+  };
+}
+
+function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+  const rawCall = attempt.raw_call as McpRawCall;
+  const serverId = typeof rawCall.server_id === "string" ? rawCall.server_id.trim() : "";
+  const toolName = typeof rawCall.tool_name === "string" ? rawCall.tool_name.trim() : "";
+  const toolArguments = rawCall.arguments ?? {};
+
+  if (serverId.length === 0) {
+    throw new ValidationError("MCP tool execution requires a non-empty server_id.", {
+      tool_kind: attempt.tool_registration.tool_kind,
+      tool_name: attempt.tool_registration.tool_name,
+    });
+  }
+
+  if (toolName.length === 0) {
+    throw new ValidationError("MCP tool execution requires a non-empty tool_name.", {
+      tool_kind: attempt.tool_registration.tool_kind,
+      tool_name: attempt.tool_registration.tool_name,
+      server_id: serverId,
+    });
+  }
+
+  if (!isRecord(toolArguments)) {
+    throw new ValidationError("MCP tool execution requires arguments to be a JSON object.", {
+      server_id: serverId,
+      tool_name: toolName,
+    });
+  }
+
+  const annotations = isRecord(rawCall.annotations) ? rawCall.annotations : null;
+  const inputSchema = isRecord(rawCall.input_schema) ? rawCall.input_schema : null;
+  const declaredReadOnlyHint =
+    typeof annotations?.readOnlyHint === "boolean"
+      ? annotations.readOnlyHint
+      : typeof annotations?.read_only_hint === "boolean"
+        ? annotations.read_only_hint
+        : null;
+  const normalizedRawCall: Record<string, unknown> = {
+    server_id: serverId,
+    tool_name: toolName,
+    arguments: toolArguments,
+    ...(annotations ? { annotations } : {}),
+    ...(inputSchema ? { input_schema: inputSchema } : {}),
+  };
+  const toolLocator = `mcp://server/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}`;
+
+  return {
+    schema_version: "action.v1",
+    action_id: createActionId(),
+    run_id: attempt.run_id,
+    session_id: sessionId,
+    status: "normalized",
+    timestamps: {
+      requested_at: attempt.received_at,
+      normalized_at: new Date().toISOString(),
+    },
+    provenance: {
+      mode: "governed",
+      source: "authority-sdk-ts",
+      confidence: 0.9,
+    },
+    actor: {
+      type: "agent",
+      agent_name: attempt.framework_context?.agent_name,
+      agent_framework: attempt.framework_context?.agent_framework,
+      tool_name: attempt.tool_registration.tool_name,
+      tool_kind: attempt.tool_registration.tool_kind,
+    },
+    operation: {
+      domain: "mcp",
+      kind: "call_tool",
+      name: `mcp.${serverId}.${toolName}`,
+      display_name: `Call MCP tool ${serverId}/${toolName}`,
+    },
+    execution_path: {
+      surface: "mcp_proxy",
+      mode: "pre_execution",
+      credential_mode: attempt.environment_context.credential_mode ?? "unknown",
+    },
+    target: {
+      primary: {
+        type: "external_object",
+        locator: toolLocator,
+        label: `${serverId}/${toolName}`,
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: normalizedRawCall,
+      redacted: normalizedRawCall,
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: "unknown",
+      external_effects: "network",
+      reversibility_hint: "unknown",
+      sensitivity_hint: "moderate",
+      batch: false,
+    },
+    facets: {
+      mcp: {
+        server_id: serverId,
+        tool_name: toolName,
+        tool_locator: toolLocator,
+        argument_keys: Object.keys(toolArguments).sort(),
+        arguments_sha256: stableJsonHash(toolArguments),
+        input_schema_sha256: inputSchema ? stableJsonHash(inputSchema) : null,
+        annotations,
+        declared_read_only_hint: declaredReadOnlyHint,
+      },
+    },
+    normalization: {
+      mapper: "mcp/v1",
+      inferred_fields: ["target.primary", "risk_hints", "facets.mcp.arguments_sha256"],
+      warnings: declaredReadOnlyHint === null ? [] : ["mcp_read_only_hint_untrusted"],
+      normalization_confidence: 0.91,
+    },
+  };
+}
+
+function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+  const rawCall = attempt.raw_call as FunctionRawCall;
+  const integration = typeof rawCall.integration === "string" ? rawCall.integration : "";
+  const operation = typeof rawCall.operation === "string" ? rawCall.operation : "";
+
+  if (
+    !(
+      (integration === "drafts" &&
+        (operation === "create_draft" ||
+          operation === "archive_draft" ||
+          operation === "delete_draft" ||
+          operation === "unarchive_draft" ||
+          operation === "update_draft" ||
+          operation === "restore_draft" ||
+          operation === "add_label" ||
+          operation === "remove_label")) ||
+      (integration === "notes" &&
+        (operation === "create_note" ||
+          operation === "archive_note" ||
+          operation === "unarchive_note" ||
+          operation === "update_note" ||
+          operation === "restore_note" ||
+          operation === "delete_note")) ||
+      (integration === "tickets" &&
+        (operation === "create_ticket" ||
+          operation === "update_ticket" ||
+          operation === "delete_ticket" ||
+          operation === "restore_ticket" ||
+          operation === "close_ticket" ||
+          operation === "reopen_ticket" ||
+          operation === "add_label" ||
+          operation === "remove_label" ||
+          operation === "assign_user" ||
+          operation === "unassign_user"))
+    )
+  ) {
+    throw new ValidationError("Unsupported function action.", {
+      integration,
+      operation,
+    });
+  }
+
+  const actionId = createActionId();
+  const hasSubject = typeof rawCall.subject === "string";
+  const hasBody = typeof rawCall.body === "string";
+  const hasTitle = typeof rawCall.title === "string";
+  const hasStatus = typeof rawCall.status === "string";
+  const subject = hasSubject ? (rawCall.subject as string) : "";
+  const body = hasBody ? (rawCall.body as string) : "";
+  const title = hasTitle ? (rawCall.title as string) : "";
+  const status = hasStatus ? String(rawCall.status).trim() : "";
+  const label = typeof rawCall.label === "string" ? rawCall.label.trim() : "";
+  const userId = typeof rawCall.user_id === "string" ? rawCall.user_id.trim() : "";
+  const draftRestoreLabels =
+    integration === "drafts" && operation === "restore_draft" ? normalizeDraftRestoreLabels(rawCall.labels) : [];
+  const restoreLabels = integration === "tickets" && operation === "restore_ticket" ? normalizeStringArray(rawCall.labels, "labels") : [];
+  const restoreAssignedUsers =
+    integration === "tickets" && operation === "restore_ticket"
+      ? normalizeStringArray(rawCall.assigned_users, "assigned_users")
+      : [];
+  const rawDraftId = typeof rawCall.draft_id === "string" ? rawCall.draft_id : "";
+  const rawNoteId = typeof rawCall.note_id === "string" ? rawCall.note_id : "";
+  const rawTicketId = typeof rawCall.ticket_id === "string" ? rawCall.ticket_id : "";
+  const draftId = operation === "create_draft" ? `draft_${actionId}` : rawDraftId.trim();
+  const noteId = operation === "create_note" ? `note_${actionId}` : rawNoteId.trim();
+  const ticketId = operation === "create_ticket" ? (rawTicketId.trim().length > 0 ? rawTicketId.trim() : `ticket_${actionId}`) : rawTicketId.trim();
+
+  if ((operation === "create_draft" || operation === "update_draft") && hasSubject && subject.trim().length === 0) {
+    throw new ValidationError("Draft subject must be non-empty when provided.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "create_draft" && subject.trim().length === 0) {
+    throw new ValidationError("Draft creation requires a non-empty subject.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "create_note" && title.trim().length === 0) {
+    throw new ValidationError("Note creation requires a non-empty title.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (
+    (operation === "archive_note" ||
+      operation === "unarchive_note" ||
+      operation === "update_note" ||
+      operation === "restore_note" ||
+      operation === "delete_note") &&
+    noteId.length === 0
+  ) {
+    throw new ValidationError(
+      operation === "archive_note"
+        ? "Note archive requires a non-empty note_id."
+        : operation === "unarchive_note"
+          ? "Note unarchive requires a non-empty note_id."
+          : operation === "update_note"
+            ? "Note update requires a non-empty note_id."
+            : operation === "restore_note"
+              ? "Note restore requires a non-empty note_id."
+              : "Note delete requires a non-empty note_id.",
+      {
+        integration,
+        operation,
+      },
+    );
+  }
+
+  if ((operation === "create_note" || operation === "update_note") && hasTitle && title.trim().length === 0) {
+    throw new ValidationError("Note title must be non-empty when provided.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "update_note" && !hasTitle && !hasBody) {
+    throw new ValidationError("Note update requires at least one mutable field.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_note" && title.trim().length === 0) {
+    throw new ValidationError("Note restore requires a non-empty title.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_note" && !hasBody) {
+    throw new ValidationError("Note restore requires a body string.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_note" && !hasStatus) {
+    throw new ValidationError("Note restore requires a target status.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_note" && !isDirectRestoreNoteStatus(status)) {
+    throw new ValidationError("Note restore status must be either active, archived, or deleted.", {
+      integration,
+      operation,
+      status,
+    });
+  }
+
+  if (operation === "create_ticket" && title.trim().length === 0) {
+    throw new ValidationError("Ticket creation requires a non-empty title.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "update_ticket" && ticketId.length === 0) {
+    throw new ValidationError("Ticket update requires a non-empty ticket_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (
+    (operation === "delete_ticket" ||
+      operation === "restore_ticket" ||
+      operation === "close_ticket" ||
+      operation === "reopen_ticket") &&
+    ticketId.length === 0
+  ) {
+    throw new ValidationError(
+      operation === "delete_ticket"
+        ? "Ticket delete requires a non-empty ticket_id."
+        : operation === "restore_ticket"
+          ? "Ticket restore requires a non-empty ticket_id."
+          : operation === "close_ticket"
+            ? "Ticket close requires a non-empty ticket_id."
+            : "Ticket reopen requires a non-empty ticket_id.",
+      {
+        integration,
+        operation,
+      },
+    );
+  }
+
+  if (
+    integration === "tickets" &&
+    (operation === "add_label" || operation === "remove_label") &&
+    ticketId.length === 0
+  ) {
+    throw new ValidationError(
+      operation === "add_label"
+        ? "Ticket labeling requires a non-empty ticket_id."
+        : "Ticket label removal requires a non-empty ticket_id.",
+      {
+      integration,
+      operation,
+      },
+    );
+  }
+
+  if (
+    integration === "tickets" &&
+    (operation === "assign_user" || operation === "unassign_user") &&
+    ticketId.length === 0
+  ) {
+    throw new ValidationError(
+      operation === "assign_user"
+        ? "Ticket assignment requires a non-empty ticket_id."
+        : "Ticket unassignment requires a non-empty ticket_id.",
+      {
+      integration,
+      operation,
+      },
+    );
+  }
+
+  if (operation === "update_ticket" && !hasTitle && !hasBody) {
+    throw new ValidationError("Ticket update requires at least one mutable field.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "update_ticket" && hasTitle && title.trim().length === 0) {
+    throw new ValidationError("Ticket title must be non-empty when provided.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_ticket" && title.trim().length === 0) {
+    throw new ValidationError("Ticket restore requires a non-empty title.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_ticket" && !hasBody) {
+    throw new ValidationError("Ticket restore requires a body string.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_ticket" && !hasStatus) {
+    throw new ValidationError("Ticket restore requires a target status.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_ticket" && !isDirectRestoreTicketStatus(status)) {
+    throw new ValidationError("Ticket restore status must be either active or closed.", {
+      integration,
+      operation,
+      status,
+    });
+  }
+
+  if (operation === "archive_draft" && draftId.length === 0) {
+    throw new ValidationError("Draft archive requires a non-empty draft_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "delete_draft" && draftId.length === 0) {
+    throw new ValidationError("Draft delete requires a non-empty draft_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "unarchive_draft" && draftId.length === 0) {
+    throw new ValidationError("Draft unarchive requires a non-empty draft_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "update_draft" && draftId.length === 0) {
+    throw new ValidationError("Draft update requires a non-empty draft_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_draft" && draftId.length === 0) {
+    throw new ValidationError("Draft restore requires a non-empty draft_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "update_draft" && !hasSubject && !hasBody) {
+    throw new ValidationError("Draft update requires at least one mutable field.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (integration === "drafts" && operation === "add_label" && draftId.length === 0) {
+    throw new ValidationError("Draft labeling requires a non-empty draft_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (integration === "drafts" && operation === "remove_label" && draftId.length === 0) {
+    throw new ValidationError("Draft label removal requires a non-empty draft_id.", {
+      integration,
+      operation,
+    });
+  }
+
+  if ((operation === "add_label" || operation === "remove_label") && label.length === 0) {
+    throw new ValidationError(
+      integration === "tickets"
+        ? operation === "add_label"
+          ? "Ticket labeling requires a non-empty label."
+          : "Ticket label removal requires a non-empty label."
+        : "Draft labeling requires a non-empty label.",
+      {
+      integration,
+      operation,
+      },
+    );
+  }
+
+  if (
+    integration === "tickets" &&
+    (operation === "assign_user" || operation === "unassign_user") &&
+    userId.length === 0
+  ) {
+    throw new ValidationError(
+      operation === "assign_user"
+        ? "Ticket assignment requires a non-empty user_id."
+        : "Ticket unassignment requires a non-empty user_id.",
+      {
+      integration,
+      operation,
+      },
+    );
+  }
+
+  if (operation === "restore_draft" && subject.trim().length === 0) {
+    throw new ValidationError("Draft restore requires a non-empty subject.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_draft" && !hasBody) {
+    throw new ValidationError("Draft restore requires a body string.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_draft" && !hasStatus) {
+    throw new ValidationError("Draft restore requires a target status.", {
+      integration,
+      operation,
+    });
+  }
+
+  if (operation === "restore_draft" && !isDirectRestoreDraftStatus(status)) {
+    throw new ValidationError("Draft restore status must be either active, archived, or deleted.", {
+      integration,
+      operation,
+      status,
+    });
+  }
+
+  const locator =
+    (operation === "add_label" || operation === "remove_label") && integration === "drafts"
+      ? `drafts://message_draft/${draftId}/labels/${encodeURIComponent(label)}`
+      : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
+        ? `tickets://issue/${ticketId}/labels/${encodeURIComponent(label)}`
+      : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
+        ? `tickets://issue/${ticketId}/assignees/${encodeURIComponent(userId)}`
+      : integration === "drafts"
+        ? `drafts://message_draft/${draftId}`
+        : integration === "notes"
+          ? `notes://workspace_note/${noteId}`
+          : `tickets://issue/${ticketId}`;
+  const targetLabel =
+    operation === "create_draft"
+      ? subject
+      : operation === "create_note"
+        ? title
+      : operation === "create_ticket"
+        ? title
+      : operation === "update_ticket"
+        ? `Ticket ${ticketId}`
+      : operation === "delete_ticket"
+        ? `Ticket ${ticketId}`
+      : operation === "restore_ticket"
+        ? `Ticket ${ticketId}`
+      : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
+        ? `Ticket ${ticketId} label ${label}`
+      : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
+        ? `Ticket ${ticketId} assignee ${userId}`
+      : operation === "close_ticket"
+        ? `Ticket ${ticketId}`
+      : operation === "reopen_ticket"
+        ? `Ticket ${ticketId}`
+      : operation === "add_label"
+        ? `Draft ${draftId} label ${label}`
+      : operation === "remove_label" && integration === "drafts"
+        ? `Draft ${draftId} label ${label}`
+      : operation === "delete_draft"
+        ? `Draft ${draftId}`
+      : operation === "unarchive_draft"
+        ? `Draft ${draftId}`
+      : operation === "restore_draft"
+        ? `Draft ${draftId}`
+      : operation === "archive_note"
+        ? `Note ${noteId}`
+      : operation === "update_note"
+        ? `Note ${noteId}`
+      : operation === "restore_note"
+        ? `Note ${noteId}`
+      : operation === "delete_note"
+        ? `Note ${noteId}`
+      : operation === "unarchive_note"
+        ? `Note ${noteId}`
+        : integration === "drafts"
+          ? `Draft ${draftId}`
+          : integration === "notes"
+            ? `Note ${noteId}`
+            : `Ticket ${ticketId}`;
+  const trustedCompensator =
+    operation === "create_draft"
+      ? "drafts.archive_draft"
+      : operation === "create_note"
+        ? "notes.archive_note"
+      : operation === "create_ticket"
+        ? "tickets.delete_ticket"
+      : operation === "update_ticket"
+        ? "tickets.restore_ticket"
+      : operation === "delete_ticket"
+        ? "tickets.restore_ticket"
+      : operation === "restore_ticket"
+        ? "tickets.restore_ticket"
+      : operation === "add_label" && integration === "tickets"
+        ? "tickets.remove_label"
+      : operation === "remove_label" && integration === "tickets"
+        ? "tickets.add_label"
+      : operation === "assign_user" && integration === "tickets"
+        ? "tickets.unassign_user"
+      : operation === "unassign_user" && integration === "tickets"
+        ? "tickets.assign_user"
+      : operation === "close_ticket"
+        ? "tickets.reopen_ticket"
+      : operation === "reopen_ticket"
+        ? "tickets.close_ticket"
+      : operation === "archive_draft"
+        ? "drafts.unarchive_draft"
+      : operation === "delete_draft"
+        ? "drafts.restore_draft"
+      : operation === "unarchive_draft"
+        ? "drafts.archive_draft"
+        : operation === "update_draft"
+          ? "drafts.restore_draft"
+        : operation === "restore_draft"
+          ? "drafts.restore_draft"
+        : operation === "remove_label" && integration === "drafts"
+          ? "drafts.add_label"
+        : operation === "archive_note"
+          ? "notes.unarchive_note"
+        : operation === "update_note"
+          ? "notes.restore_note"
+        : operation === "restore_note"
+          ? "notes.restore_note"
+        : operation === "delete_note"
+          ? "notes.restore_note"
+        : operation === "unarchive_note"
+          ? "notes.archive_note"
+        : "drafts.remove_label";
+  const payloadKeys =
+    operation === "create_draft"
+      ? body.length > 0
+        ? ["subject", "body"]
+        : ["subject"]
+      : operation === "create_note"
+        ? body.length > 0
+          ? ["title", "body"]
+          : ["title"]
+      : operation === "create_ticket"
+        ? body.length > 0
+          ? ["title", "body", "ticket_id"]
+          : ["title", "ticket_id"]
+      : operation === "update_ticket"
+        ? ["ticket_id", ...(hasTitle ? ["title"] : []), ...(hasBody ? ["body"] : [])]
+      : operation === "delete_ticket"
+        ? ["ticket_id"]
+      : operation === "restore_ticket"
+        ? ["ticket_id", "title", "body", "status", "labels", "assigned_users"]
+      : operation === "close_ticket"
+        ? ["ticket_id"]
+      : operation === "reopen_ticket"
+        ? ["ticket_id"]
+      : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
+        ? ["ticket_id", "label"]
+      : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
+        ? ["ticket_id", "user_id"]
+      : operation === "archive_draft"
+        ? ["draft_id"]
+      : operation === "delete_draft"
+        ? ["draft_id"]
+      : operation === "unarchive_draft"
+        ? ["draft_id"]
+        : operation === "update_draft"
+          ? ["draft_id", ...(hasSubject ? ["subject"] : []), ...(hasBody ? ["body"] : [])]
+        : operation === "restore_draft"
+          ? ["draft_id", "subject", "body", "status", "labels"]
+        : operation === "update_note"
+          ? ["note_id", ...(hasTitle ? ["title"] : []), ...(hasBody ? ["body"] : [])]
+        : operation === "restore_note"
+          ? ["note_id", "title", "body", "status"]
+        : operation === "delete_note"
+          ? ["note_id"]
+        : operation === "archive_note" || operation === "unarchive_note"
+          ? ["note_id"]
+        : ["draft_id", "label"];
+  const displayName =
+    operation === "create_draft"
+      ? "Create draft message"
+      : operation === "create_note"
+        ? "Create workspace note"
+      : operation === "create_ticket"
+        ? "Create external ticket"
+      : operation === "update_ticket"
+        ? "Update external ticket"
+      : operation === "delete_ticket"
+        ? "Delete external ticket"
+      : operation === "restore_ticket"
+        ? "Restore external ticket"
+      : operation === "close_ticket"
+        ? "Close external ticket"
+      : operation === "reopen_ticket"
+        ? "Reopen external ticket"
+      : operation === "add_label" && integration === "tickets"
+        ? "Add external ticket label"
+      : operation === "remove_label" && integration === "tickets"
+        ? "Remove external ticket label"
+      : operation === "assign_user" && integration === "tickets"
+        ? "Assign external ticket user"
+      : operation === "unassign_user" && integration === "tickets"
+        ? "Unassign external ticket user"
+      : operation === "archive_draft"
+        ? "Archive draft message"
+      : operation === "delete_draft"
+        ? "Delete draft message"
+      : operation === "unarchive_draft"
+        ? "Unarchive draft message"
+        : operation === "update_draft"
+          ? "Update draft message"
+        : operation === "restore_draft"
+          ? "Restore draft message"
+        : operation === "remove_label" && integration === "drafts"
+          ? "Remove draft label"
+        : operation === "archive_note"
+          ? "Archive workspace note"
+        : operation === "update_note"
+          ? "Update workspace note"
+        : operation === "restore_note"
+          ? "Restore workspace note"
+        : operation === "delete_note"
+          ? "Delete workspace note"
+        : operation === "unarchive_note"
+          ? "Unarchive workspace note"
+        : "Add draft label";
+  const normalizedRawCall: Record<string, unknown> = {
+    integration,
+    operation,
+    ...(operation === "create_draft" ? { subject: subject.trim(), ...(body.length > 0 ? { body } : {}) } : {}),
+    ...(operation === "create_note" ? { title: title.trim(), ...(body.length > 0 ? { body } : {}) } : {}),
+    ...(operation === "create_ticket"
+      ? { ticket_id: ticketId, title: title.trim(), ...(body.length > 0 ? { body } : {}) }
+      : {}),
+    ...(operation === "update_ticket"
+      ? { ticket_id: ticketId, ...(hasTitle ? { title: title.trim() } : {}), ...(hasBody ? { body } : {}) }
+      : {}),
+    ...(operation === "delete_ticket" ? { ticket_id: ticketId } : {}),
+    ...(operation === "restore_ticket"
+      ? {
+          ticket_id: ticketId,
+          title: title.trim(),
+          body,
+          status,
+          labels: restoreLabels,
+          assigned_users: restoreAssignedUsers,
+        }
+      : {}),
+    ...(operation === "close_ticket" ? { ticket_id: ticketId } : {}),
+    ...(operation === "reopen_ticket" ? { ticket_id: ticketId } : {}),
+    ...((operation === "add_label" || operation === "remove_label") && integration === "tickets"
+      ? { ticket_id: ticketId, label }
+      : {}),
+    ...((operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
+      ? { ticket_id: ticketId, user_id: userId }
+      : {}),
+    ...(operation === "archive_draft" ? { draft_id: draftId } : {}),
+    ...(operation === "delete_draft" ? { draft_id: draftId } : {}),
+    ...(operation === "unarchive_draft" ? { draft_id: draftId } : {}),
+    ...(operation === "update_draft"
+      ? { draft_id: draftId, ...(hasSubject ? { subject: subject.trim() } : {}), ...(hasBody ? { body } : {}) }
+      : {}),
+    ...(operation === "restore_draft"
+      ? {
+          draft_id: draftId,
+          subject: subject.trim(),
+          body,
+          status,
+          labels: draftRestoreLabels,
+        }
+      : {}),
+    ...(operation === "update_note"
+      ? { note_id: noteId, ...(hasTitle ? { title: title.trim() } : {}), ...(hasBody ? { body } : {}) }
+      : {}),
+    ...(operation === "restore_note"
+      ? {
+          note_id: noteId,
+          title: title.trim(),
+          body,
+          status,
+        }
+      : {}),
+    ...(operation === "archive_note" || operation === "unarchive_note" || operation === "delete_note"
+      ? { note_id: noteId }
+      : {}),
+    ...(operation === "add_label" && integration === "drafts" ? { draft_id: draftId, label } : {}),
+    ...(operation === "remove_label" && integration === "drafts" ? { draft_id: draftId, label } : {}),
+  };
+
+  return {
+    schema_version: "action.v1",
+    action_id: actionId,
+    run_id: attempt.run_id,
+    session_id: sessionId,
+    status: "normalized",
+    timestamps: {
+      requested_at: attempt.received_at,
+      normalized_at: new Date().toISOString(),
+    },
+    provenance: {
+      mode: "governed",
+      source: "authority-sdk-ts",
+      confidence: 0.95,
+    },
+    actor: {
+      type: "agent",
+      agent_name: attempt.framework_context?.agent_name,
+      agent_framework: attempt.framework_context?.agent_framework,
+      tool_name: attempt.tool_registration.tool_name,
+      tool_kind: attempt.tool_registration.tool_kind,
+    },
+    operation: {
+      domain: "function",
+      kind: operation,
+      name: `${integration}.${operation}`,
+      display_name: displayName,
+    },
+    execution_path: {
+      surface: "sdk_function",
+      mode: "pre_execution",
+      credential_mode: attempt.environment_context.credential_mode ?? "none",
+    },
+    target: {
+      primary: {
+        type: "external_object",
+        locator,
+        label: targetLabel,
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: normalizedRawCall,
+      redacted: normalizedRawCall,
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level:
+        operation === "delete_ticket" || operation === "delete_note" || operation === "delete_draft"
+          ? "destructive"
+          : "mutating",
+      external_effects: "network",
+      reversibility_hint: "compensatable",
+      sensitivity_hint: "moderate",
+      batch: false,
+    },
+    facets: {
+      function: {
+        integration,
+        operation,
+        object_type:
+          integration === "drafts"
+            ? "message_draft"
+            : integration === "notes"
+              ? "workspace_note"
+              : "issue_ticket",
+        object_locator: locator,
+        trusted_compensator: trustedCompensator,
+        payload_keys: payloadKeys,
+      },
+    },
+    normalization: {
+      mapper: "function/drafts.v1",
+      inferred_fields: ["target.primary", "risk_hints", "facets.function.object_locator"],
+      warnings: [],
+      normalization_confidence: 0.95,
+    },
+  };
+}
+
+export function normalizeActionAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+  try {
+    if (attempt.tool_registration.tool_kind === "filesystem") {
+      return normalizeFilesystemAttempt(attempt, sessionId);
+    }
+
+    if (attempt.tool_registration.tool_kind === "shell") {
+      return normalizeShellAttempt(attempt, sessionId);
+    }
+
+    if (attempt.tool_registration.tool_kind === "function") {
+      return normalizeFunctionAttempt(attempt, sessionId);
+    }
+
+    if (attempt.tool_registration.tool_kind === "mcp") {
+      return normalizeMcpAttempt(attempt, sessionId);
+    }
+
+    if (attempt.tool_registration.tool_kind === "browser") {
+      throw new PreconditionError(
+        "Governed browser/computer execution is not part of the supported runtime surface.",
+        {
+          requested_tool_kind: attempt.tool_registration.tool_kind,
+          requested_tool_name: attempt.tool_registration.tool_name,
+          supported_tool_kinds: ["filesystem", "shell", "function", "mcp"],
+          unsupported_surface: "browser_computer",
+        },
+      );
+    }
+
+    throw new ValidationError("Unsupported tool kind.", {
+      tool_kind: attempt.tool_registration.tool_kind,
+    });
+  } catch (error) {
+    if (error instanceof ValidationError || error instanceof InternalError || error instanceof PreconditionError) {
+      throw error;
+    }
+
+    throw new InternalError("Action normalization failed.", {
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+}

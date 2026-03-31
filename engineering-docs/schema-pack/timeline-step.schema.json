@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/timeline-step.schema.json",
+  "title": "TimelineStep",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "timeline-step.v1"
+    },
+    "step_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "run_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "step_type": {
+      "type": "string",
+      "enum": [
+        "action_step",
+        "approval_step",
+        "recovery_step",
+        "analysis_step",
+        "system_step"
+      ]
+    },
+    "title": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "partial",
+        "blocked",
+        "awaiting_approval",
+        "cancelled"
+      ]
+    },
+    "provenance": {
+      "$ref": "./common.schema.json#/$defs/provenanceMode"
+    },
+    "action_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decision": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "allow",
+        "deny",
+        "ask",
+        "simulate",
+        "allow_with_snapshot",
+        null
+      ]
+    },
+    "reversibility_class": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "reversible",
+        "compensatable",
+        "review_only",
+        "irreversible",
+        null
+      ]
+    },
+    "confidence": {
+      "$ref": "./common.schema.json#/$defs/confidenceLevel"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "primary_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_status": {
+            "$ref": "./common.schema.json#/$defs/artifactAvailability"
+          },
+          "integrity": {
+            "$ref": "./common.schema.json#/$defs/artifactIntegrity"
+          },
+          "type": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "artifact_previews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "preview": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "type",
+          "preview"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "external_effects": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "none",
+          "network",
+          "communication",
+          "financial",
+          "unknown"
+        ]
+      }
+    },
+    "related": {
+      "type": "object",
+      "properties": {
+        "snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "execution_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_plan_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "./common.schema.json#/$defs/idString"
+          }
+        },
+        "target_locator": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_target_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "snapshot_id",
+            "action_boundary",
+            "external_object",
+            "run_checkpoint",
+            "branch_point",
+            "path_subset",
+            null
+          ]
+        },
+        "recovery_target_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_scope_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recovery_strategy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recovery_downgrade_reason": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        },
+        "later_actions_affected": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "overlapping_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "data_loss_risk": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "low",
+            "moderate",
+            "high",
+            "unknown",
+            null
+          ]
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "execution_id",
+        "recovery_plan_ids"
+      ],
+      "additionalProperties": false
+    },
+    "occurred_at": {
+      "$ref": "./common.schema.json#/$defs/timestamp"
+    }
+  },
+  "required": [
+    "schema_version",
+    "step_id",
+    "run_id",
+    "sequence",
+    "step_type",
+    "title",
+    "status",
+    "provenance",
+    "action_id",
+    "decision",
+    "reversibility_class",
+    "confidence",
+    "summary",
+    "primary_artifacts",
+    "artifact_previews",
+    "external_effects",
+    "related"
+    ,
+    "occurred_at"
+  ],
+  "additionalProperties": false
+}

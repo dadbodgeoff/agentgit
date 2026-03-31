@@ -1,0 +1,183 @@
+{
+  "schema": "action",
+  "cases": {
+    "missing_required": {
+      "schema_version": "action.v1",
+      "action_id": "act_invalid_missing",
+      "run_id": "run_invalid_missing",
+      "session_id": "sess_invalid_missing",
+      "status": "normalized",
+      "timestamps": {
+        "requested_at": "2026-03-29T14:00:00Z",
+        "normalized_at": "2026-03-29T14:00:00Z"
+      },
+      "provenance": {
+        "mode": "governed",
+        "source": "sdk",
+        "confidence": 1
+      },
+      "correlation": {
+        "upstream_call_ids": []
+      },
+      "actor": {
+        "type": "agent"
+      },
+      "execution_path": {
+        "surface": "governed_fs",
+        "mode": "pre_execution",
+        "credential_mode": "none"
+      },
+      "target": {
+        "primary": {
+          "type": "path",
+          "locator": "/tmp/file"
+        },
+        "scope": {
+          "breadth": "single",
+          "unknowns": []
+        }
+      },
+      "input": {
+        "raw": {},
+        "redacted": {},
+        "schema_ref": null,
+        "contains_sensitive_data": false
+      },
+      "risk_hints": {
+        "side_effect_level": "mutating",
+        "external_effects": "none",
+        "reversibility_hint": "reversible",
+        "sensitivity_hint": "low",
+        "batch": false
+      },
+      "facets": {},
+      "normalization": {
+        "mapper": "fallback/v1",
+        "inferred_fields": [],
+        "warnings": []
+      }
+    },
+    "wrong_type": {
+      "schema_version": "action.v1",
+      "action_id": "act_invalid_type",
+      "run_id": "run_invalid_type",
+      "session_id": "sess_invalid_type",
+      "status": "normalized",
+      "timestamps": {
+        "requested_at": "2026-03-29T14:00:00Z",
+        "normalized_at": "2026-03-29T14:00:00Z"
+      },
+      "provenance": {
+        "mode": "governed",
+        "source": "sdk",
+        "confidence": "high"
+      },
+      "correlation": {
+        "upstream_call_ids": []
+      },
+      "actor": {
+        "type": "agent"
+      },
+      "operation": {
+        "domain": "filesystem",
+        "kind": "write",
+        "name": "filesystem.write"
+      },
+      "execution_path": {
+        "surface": "governed_fs",
+        "mode": "pre_execution",
+        "credential_mode": "none"
+      },
+      "target": {
+        "primary": {
+          "type": "path",
+          "locator": "/tmp/file"
+        },
+        "scope": {
+          "breadth": "single",
+          "unknowns": []
+        }
+      },
+      "input": {
+        "raw": {},
+        "redacted": {},
+        "schema_ref": null,
+        "contains_sensitive_data": false
+      },
+      "risk_hints": {
+        "side_effect_level": "mutating",
+        "external_effects": "none",
+        "reversibility_hint": "reversible",
+        "sensitivity_hint": "low",
+        "batch": false
+      },
+      "facets": {},
+      "normalization": {
+        "mapper": "fallback/v1",
+        "inferred_fields": [],
+        "warnings": []
+      }
+    },
+    "invalid_enum_or_const": {
+      "schema_version": "action.v1",
+      "action_id": "act_invalid_enum",
+      "run_id": "run_invalid_enum",
+      "session_id": "sess_invalid_enum",
+      "status": "normalized",
+      "timestamps": {
+        "requested_at": "2026-03-29T14:00:00Z",
+        "normalized_at": "2026-03-29T14:00:00Z"
+      },
+      "provenance": {
+        "mode": "governed",
+        "source": "sdk",
+        "confidence": 1
+      },
+      "correlation": {
+        "upstream_call_ids": []
+      },
+      "actor": {
+        "type": "agent"
+      },
+      "operation": {
+        "domain": "filesystem",
+        "kind": "write",
+        "name": "filesystem.write"
+      },
+      "execution_path": {
+        "surface": "shell",
+        "mode": "pre_execution",
+        "credential_mode": "none"
+      },
+      "target": {
+        "primary": {
+          "type": "path",
+          "locator": "/tmp/file"
+        },
+        "scope": {
+          "breadth": "single",
+          "unknowns": []
+        }
+      },
+      "input": {
+        "raw": {},
+        "redacted": {},
+        "schema_ref": null,
+        "contains_sensitive_data": false
+      },
+      "risk_hints": {
+        "side_effect_level": "mutating",
+        "external_effects": "none",
+        "reversibility_hint": "reversible",
+        "sensitivity_hint": "low",
+        "batch": false
+      },
+      "facets": {},
+      "normalization": {
+        "mapper": "fallback/v1",
+        "inferred_fields": [],
+        "warnings": []
+      }
+    }
+  }
+}

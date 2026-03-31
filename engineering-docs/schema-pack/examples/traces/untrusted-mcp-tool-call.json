@@ -1,0 +1,255 @@
+{
+  "trace_name": "untrusted-mcp-tool-call",
+  "description": "Mutating MCP call requires approval before execution.",
+  "records": {
+    "actions": [
+      {
+        "schema_version": "action.v1",
+        "action_id": "act_trace_mcp_001",
+        "run_id": "run_trace_mcp_001",
+        "session_id": "sess_trace_mcp_001",
+        "status": "normalized",
+        "timestamps": {
+          "requested_at": "2026-03-29T15:10:00Z",
+          "normalized_at": "2026-03-29T15:10:00.020Z"
+        },
+        "provenance": {
+          "mode": "governed",
+          "source": "mcp-proxy",
+          "confidence": 0.95
+        },
+        "correlation": {
+          "trace_id": "trace_mcp_001",
+          "span_id": "span_mcp_action_001",
+          "parent_action_id": null,
+          "upstream_call_ids": [
+            {
+              "system": "mcp",
+              "id": "tool_call_001"
+            }
+          ]
+        },
+        "actor": {
+          "type": "agent",
+          "agent_name": "codex",
+          "agent_framework": "openai-agents",
+          "tool_name": "crm.update_contact",
+          "tool_kind": "mcp"
+        },
+        "operation": {
+          "domain": "mcp",
+          "kind": "tool_call",
+          "name": "mcp.tools.call"
+        },
+        "execution_path": {
+          "surface": "mcp_proxy",
+          "mode": "pre_execution",
+          "credential_mode": "brokered"
+        },
+        "target": {
+          "primary": {
+            "type": "mcp_tool",
+            "locator": "crm.update_contact"
+          },
+          "scope": {
+            "breadth": "external",
+            "estimated_count": 1,
+            "unknowns": []
+          }
+        },
+        "input": {
+          "raw": {
+            "contact_id": "cust_42",
+            "tier": "enterprise"
+          },
+          "redacted": {
+            "contact_id": "cust_42",
+            "tier": "enterprise"
+          },
+          "schema_ref": "schema://crm.update_contact",
+          "contains_sensitive_data": false
+        },
+        "risk_hints": {
+          "side_effect_level": "mutating",
+          "external_effects": "network",
+          "reversibility_hint": "compensatable",
+          "sensitivity_hint": "moderate",
+          "batch": false
+        },
+        "facets": {
+          "mcp": {
+            "server_label": "crm",
+            "server_uri": "mcp://crm",
+            "tool_name": "crm.update_contact",
+            "tool_annotations": {
+              "readOnlyHint": false
+            },
+            "trusted_server": false
+          }
+        },
+        "normalization": {
+          "mapper": "mcp/v1",
+          "inferred_fields": [
+            "risk_hints"
+          ],
+          "warnings": [
+            "untrusted_metadata"
+          ],
+          "normalization_confidence": 0.95
+        }
+      }
+    ],
+    "policy_outcomes": [
+      {
+        "schema_version": "policy-outcome.v1",
+        "policy_outcome_id": "pol_trace_mcp_001",
+        "action_id": "act_trace_mcp_001",
+        "decision": "ask",
+        "reasons": [
+          {
+            "code": "UNTRUSTED_SERVER_MUTATION",
+            "severity": "high",
+            "message": "The MCP server is not trusted for mutating actions."
+          }
+        ],
+        "trust_requirements": {
+          "wrapped_path_required": true,
+          "brokered_credentials_required": true,
+          "direct_credentials_forbidden": true
+        },
+        "preconditions": {
+          "snapshot_required": false,
+          "approval_required": true,
+          "simulation_supported": false
+        },
+        "approval": {
+          "approval_id": "approval_trace_mcp_001",
+          "approval_kind": "one_time",
+          "status": "approved",
+          "expires_at": "2026-03-29T15:20:00Z",
+          "sticky_scope": "one_time"
+        },
+        "budget_effects": {
+          "budget_check": "passed",
+          "estimated_cost": 0.01
+        },
+        "policy_context": {
+          "matched_rules": [
+            "mcp.untrusted_mutation.ask"
+          ],
+          "sticky_decision_applied": false
+        },
+        "evaluated_at": "2026-03-29T15:10:00.040Z"
+      }
+    ],
+    "snapshot_records": [],
+    "execution_results": [
+      {
+        "schema_version": "execution-result.v1",
+        "execution_result_id": "exec_trace_mcp_001",
+        "action_id": "act_trace_mcp_001",
+        "adapter_kind": "mcp_proxy",
+        "status": "completed",
+        "started_at": "2026-03-29T15:10:03Z",
+        "completed_at": "2026-03-29T15:10:03.400Z",
+        "outcome": {
+          "result_type": "tool_call_completed",
+          "message": "Updated CRM contact."
+        },
+        "tool_result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Contact updated."
+            }
+          ],
+          "structured_content": {
+            "contact_id": "cust_42",
+            "updated": true
+          },
+          "is_error": false
+        },
+        "artifacts": [],
+        "resource_usage": {
+          "duration_ms": 400,
+          "bytes_written": 0,
+          "network_requests": 1
+        }
+      }
+    ],
+    "run_events": [
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_mcp_001",
+        "run_id": "run_trace_mcp_001",
+        "sequence": 1,
+        "event_type": "policy.evaluated",
+        "occurred_at": "2026-03-29T15:10:00.040Z",
+        "recorded_at": "2026-03-29T15:10:00.041Z",
+        "causality": {
+          "action_id": "act_trace_mcp_001",
+          "policy_outcome_id": "pol_trace_mcp_001",
+          "approval_id": "approval_trace_mcp_001"
+        },
+        "actor": {
+          "type": "system",
+          "component": "policy-engine"
+        },
+        "payload": {},
+        "refs": []
+      },
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_mcp_002",
+        "run_id": "run_trace_mcp_001",
+        "sequence": 2,
+        "event_type": "approval.resolved",
+        "occurred_at": "2026-03-29T15:10:02Z",
+        "recorded_at": "2026-03-29T15:10:02.010Z",
+        "causality": {
+          "action_id": "act_trace_mcp_001",
+          "policy_outcome_id": "pol_trace_mcp_001",
+          "approval_id": "approval_trace_mcp_001"
+        },
+        "actor": {
+          "type": "user",
+          "component": "approval-inbox",
+          "actor_id": "user_local"
+        },
+        "payload": {
+          "resolution": "approved"
+        },
+        "refs": []
+      }
+    ],
+    "recovery_plans": [],
+    "timeline_steps": [
+      {
+        "schema_version": "timeline-step.v1",
+        "step_id": "step_trace_mcp_001",
+        "run_id": "run_trace_mcp_001",
+        "sequence": 1,
+        "step_type": "approval_step",
+        "title": "Approve CRM contact update",
+        "status": "completed",
+        "provenance": "governed",
+        "action_id": "act_trace_mcp_001",
+        "decision": "ask",
+        "reversibility_class": "compensatable",
+        "confidence": 0.95,
+        "summary": "A one-time approval was required because the MCP server was not trusted for mutation.",
+        "primary_artifacts": [],
+        "artifact_previews": [],
+        "external_effects": [
+          "network"
+        ],
+        "related": {
+          "snapshot_id": null,
+          "execution_id": "exec_trace_mcp_001",
+          "recovery_plan_ids": []
+        },
+        "occurred_at": "2026-03-29T15:10:02Z"
+      }
+    ]
+  }
+}

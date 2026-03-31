@@ -1,0 +1,272 @@
+{
+  "schema": "action",
+  "cases": {
+    "happy_path": {
+      "schema_version": "action.v1",
+      "action_id": "act_0195c7b0a001",
+      "run_id": "run_0195c7b0a000",
+      "session_id": "sess_0195c7b0a000",
+      "status": "normalized",
+      "timestamps": {
+        "requested_at": "2026-03-29T14:00:00Z",
+        "normalized_at": "2026-03-29T14:00:00.120Z"
+      },
+      "provenance": {
+        "mode": "governed",
+        "source": "authority-sdk-ts",
+        "confidence": 0.99
+      },
+      "correlation": {
+        "trace_id": "trace_simple_write",
+        "span_id": "span_action_1",
+        "parent_action_id": null,
+        "upstream_call_ids": [
+          {
+            "system": "openai-agents",
+            "id": "call_write_file_1"
+          }
+        ]
+      },
+      "actor": {
+        "type": "agent",
+        "agent_name": "codex",
+        "agent_framework": "openai-agents",
+        "tool_name": "write_file",
+        "tool_kind": "filesystem",
+        "tool_registration_id": "toolreg_write_file"
+      },
+      "operation": {
+        "domain": "filesystem",
+        "kind": "write",
+        "name": "filesystem.write",
+        "display_name": "Write file"
+      },
+      "execution_path": {
+        "surface": "governed_fs",
+        "mode": "pre_execution",
+        "credential_mode": "none"
+      },
+      "target": {
+        "primary": {
+          "type": "path",
+          "locator": "/workspace/src/app.ts",
+          "label": "src/app.ts"
+        },
+        "additional": [],
+        "scope": {
+          "breadth": "single",
+          "estimated_count": 1,
+          "unknowns": []
+        }
+      },
+      "input": {
+        "raw": {
+          "path": "/workspace/src/app.ts",
+          "content": "export const ok = true;\n"
+        },
+        "redacted": {
+          "path": "/workspace/src/app.ts",
+          "content": "export const ok = true;\n"
+        },
+        "schema_ref": null,
+        "contains_sensitive_data": false,
+        "redaction_reasons": []
+      },
+      "risk_hints": {
+        "side_effect_level": "mutating",
+        "external_effects": "none",
+        "reversibility_hint": "reversible",
+        "sensitivity_hint": "low",
+        "batch": false
+      },
+      "facets": {
+        "filesystem": {
+          "operation": "write",
+          "paths": [
+            "/workspace/src/app.ts"
+          ],
+          "path_count": 1,
+          "recursive": false,
+          "overwrite": true
+        }
+      },
+      "normalization": {
+        "mapper": "filesystem/v1",
+        "inferred_fields": [
+          "operation.kind",
+          "target.scope"
+        ],
+        "warnings": [],
+        "normalization_confidence": 0.99
+      }
+    },
+    "edge_case": {
+      "schema_version": "action.v1",
+      "action_id": "act_0195c7b0a101",
+      "run_id": "run_0195c7b0a100",
+      "session_id": "sess_0195c7b0a100",
+      "status": "normalized",
+      "timestamps": {
+        "requested_at": "2026-03-29T14:05:00Z",
+        "normalized_at": "2026-03-29T14:05:00.800Z"
+      },
+      "provenance": {
+        "mode": "observed",
+        "source": "workspace-watcher",
+        "confidence": 0.43
+      },
+      "correlation": {
+        "trace_id": "trace_observed_cli",
+        "span_id": "span_observed_1",
+        "parent_action_id": null,
+        "upstream_call_ids": []
+      },
+      "actor": {
+        "type": "observer",
+        "tool_name": "fsnotify",
+        "tool_kind": "watcher"
+      },
+      "operation": {
+        "domain": "shell",
+        "kind": "exec",
+        "name": "shell.exec",
+        "display_name": "Observed shell execution"
+      },
+      "execution_path": {
+        "surface": "observer",
+        "mode": "post_hoc",
+        "credential_mode": "unknown"
+      },
+      "target": {
+        "primary": {
+          "type": "workspace",
+          "locator": "/workspace",
+          "label": "workspace root"
+        },
+        "scope": {
+          "breadth": "unknown",
+          "unknowns": [
+            "scope",
+            "target_count",
+            "external_side_effects"
+          ]
+        }
+      },
+      "input": {
+        "raw": {
+          "argv": [
+            "python",
+            "script.py"
+          ]
+        },
+        "redacted": {
+          "argv": [
+            "python",
+            "script.py"
+          ]
+        },
+        "schema_ref": null,
+        "contains_sensitive_data": false,
+        "redaction_reasons": []
+      },
+      "risk_hints": {
+        "side_effect_level": "unknown",
+        "external_effects": "unknown",
+        "reversibility_hint": "unknown",
+        "sensitivity_hint": "unknown",
+        "batch": false
+      },
+      "facets": {
+        "shell": {
+          "argv": [
+            "python",
+            "script.py"
+          ],
+          "cwd": "/workspace",
+          "interpreter": "python",
+          "declared_env_keys": [
+            "PATH"
+          ],
+          "stdin_kind": "none"
+        }
+      },
+      "normalization": {
+        "mapper": "shell/v1",
+        "inferred_fields": [
+          "target.scope",
+          "risk_hints"
+        ],
+        "warnings": [
+          "unknown_scope",
+          "opaque_execution"
+        ],
+        "normalization_confidence": 0.29
+      }
+    },
+    "minimal_valid": {
+      "schema_version": "action.v1",
+      "action_id": "act_0195c7b0a201",
+      "run_id": "run_0195c7b0a200",
+      "session_id": "sess_0195c7b0a200",
+      "status": "normalized",
+      "timestamps": {
+        "requested_at": "2026-03-29T14:10:00Z",
+        "normalized_at": "2026-03-29T14:10:00.010Z"
+      },
+      "provenance": {
+        "mode": "unknown",
+        "source": "normalizer-fallback",
+        "confidence": 0.2
+      },
+      "correlation": {
+        "upstream_call_ids": []
+      },
+      "actor": {
+        "type": "system"
+      },
+      "operation": {
+        "domain": "system",
+        "kind": "opaque",
+        "name": "system.opaque"
+      },
+      "execution_path": {
+        "surface": "observer",
+        "mode": "post_hoc",
+        "credential_mode": "unknown"
+      },
+      "target": {
+        "primary": {
+          "type": "unknown",
+          "locator": "unknown"
+        },
+        "scope": {
+          "breadth": "unknown",
+          "unknowns": [
+            "scope"
+          ]
+        }
+      },
+      "input": {
+        "raw": {},
+        "redacted": {},
+        "schema_ref": null,
+        "contains_sensitive_data": false
+      },
+      "risk_hints": {
+        "side_effect_level": "unknown",
+        "external_effects": "unknown",
+        "reversibility_hint": "unknown",
+        "sensitivity_hint": "unknown",
+        "batch": false
+      },
+      "facets": {},
+      "normalization": {
+        "mapper": "fallback/v1",
+        "inferred_fields": [],
+        "warnings": [
+          "partial_parse"
+        ]
+      }
+    }
+  }
+}

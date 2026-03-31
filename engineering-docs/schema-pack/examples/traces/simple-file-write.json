@@ -1,0 +1,289 @@
+{
+  "trace_name": "simple-file-write",
+  "description": "Governed file write with a straightforward allow decision.",
+  "records": {
+    "actions": [
+      {
+        "schema_version": "action.v1",
+        "action_id": "act_trace_write_001",
+        "run_id": "run_trace_write_001",
+        "session_id": "sess_trace_write_001",
+        "status": "normalized",
+        "timestamps": {
+          "requested_at": "2026-03-29T15:00:00Z",
+          "normalized_at": "2026-03-29T15:00:00.050Z"
+        },
+        "provenance": {
+          "mode": "governed",
+          "source": "authority-sdk-ts",
+          "confidence": 0.99
+        },
+        "correlation": {
+          "trace_id": "trace_write_001",
+          "span_id": "span_write_action_001",
+          "parent_action_id": null,
+          "upstream_call_ids": []
+        },
+        "actor": {
+          "type": "agent",
+          "agent_name": "codex",
+          "agent_framework": "openai-agents",
+          "tool_name": "write_file",
+          "tool_kind": "filesystem"
+        },
+        "operation": {
+          "domain": "filesystem",
+          "kind": "write",
+          "name": "filesystem.write"
+        },
+        "execution_path": {
+          "surface": "governed_fs",
+          "mode": "pre_execution",
+          "credential_mode": "none"
+        },
+        "target": {
+          "primary": {
+            "type": "path",
+            "locator": "/workspace/README.md"
+          },
+          "scope": {
+            "breadth": "single",
+            "estimated_count": 1,
+            "unknowns": []
+          }
+        },
+        "input": {
+          "raw": {
+            "path": "/workspace/README.md",
+            "content": "hello\n"
+          },
+          "redacted": {
+            "path": "/workspace/README.md",
+            "content": "hello\n"
+          },
+          "schema_ref": null,
+          "contains_sensitive_data": false
+        },
+        "risk_hints": {
+          "side_effect_level": "mutating",
+          "external_effects": "none",
+          "reversibility_hint": "reversible",
+          "sensitivity_hint": "low",
+          "batch": false
+        },
+        "facets": {
+          "filesystem": {
+            "operation": "write",
+            "paths": [
+              "/workspace/README.md"
+            ],
+            "path_count": 1,
+            "recursive": false,
+            "overwrite": true
+          }
+        },
+        "normalization": {
+          "mapper": "filesystem/v1",
+          "inferred_fields": [
+            "target.scope"
+          ],
+          "warnings": [],
+          "normalization_confidence": 0.99
+        }
+      }
+    ],
+    "policy_outcomes": [
+      {
+        "schema_version": "policy-outcome.v1",
+        "policy_outcome_id": "pol_trace_write_001",
+        "action_id": "act_trace_write_001",
+        "decision": "allow",
+        "reasons": [
+          {
+            "code": "TRUSTED_READONLY_ALLOWED",
+            "severity": "low",
+            "message": "Path is governed and within an approved workspace."
+          }
+        ],
+        "trust_requirements": {
+          "wrapped_path_required": true,
+          "brokered_credentials_required": false,
+          "direct_credentials_forbidden": false
+        },
+        "preconditions": {
+          "snapshot_required": false,
+          "approval_required": false,
+          "simulation_supported": false
+        },
+        "approval": null,
+        "budget_effects": {
+          "budget_check": "passed",
+          "estimated_cost": 0.0
+        },
+        "policy_context": {
+          "matched_rules": [
+            "filesystem.safe.small_write"
+          ],
+          "sticky_decision_applied": false
+        },
+        "evaluated_at": "2026-03-29T15:00:00.060Z"
+      }
+    ],
+    "snapshot_records": [],
+    "execution_results": [
+      {
+        "schema_version": "execution-result.v1",
+        "execution_result_id": "exec_trace_write_001",
+        "action_id": "act_trace_write_001",
+        "adapter_kind": "filesystem",
+        "status": "completed",
+        "started_at": "2026-03-29T15:00:00.090Z",
+        "completed_at": "2026-03-29T15:00:00.120Z",
+        "outcome": {
+          "result_type": "mutation_applied",
+          "message": "Wrote /workspace/README.md"
+        },
+        "tool_result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Wrote /workspace/README.md"
+            }
+          ],
+          "structured_content": {
+            "changed_paths": [
+              "/workspace/README.md"
+            ]
+          },
+          "is_error": false
+        },
+        "artifacts": [
+          {
+            "artifact_id": "artifact_trace_write_001",
+            "type": "file_diff",
+            "ref": "blob_trace_write_001",
+            "visibility": "user"
+          }
+        ],
+        "resource_usage": {
+          "duration_ms": 30,
+          "bytes_written": 6,
+          "network_requests": 0
+        }
+      }
+    ],
+    "run_events": [
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_write_001",
+        "run_id": "run_trace_write_001",
+        "sequence": 1,
+        "event_type": "action.normalized",
+        "occurred_at": "2026-03-29T15:00:00.050Z",
+        "recorded_at": "2026-03-29T15:00:00.051Z",
+        "causality": {
+          "action_id": "act_trace_write_001"
+        },
+        "actor": {
+          "type": "system",
+          "component": "normalizer"
+        },
+        "payload": {},
+        "refs": [
+          {
+            "kind": "action",
+            "id": "act_trace_write_001"
+          }
+        ]
+      },
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_write_002",
+        "run_id": "run_trace_write_001",
+        "sequence": 2,
+        "event_type": "policy.evaluated",
+        "occurred_at": "2026-03-29T15:00:00.060Z",
+        "recorded_at": "2026-03-29T15:00:00.061Z",
+        "causality": {
+          "action_id": "act_trace_write_001",
+          "policy_outcome_id": "pol_trace_write_001"
+        },
+        "actor": {
+          "type": "system",
+          "component": "policy-engine"
+        },
+        "payload": {},
+        "refs": [
+          {
+            "kind": "policy_outcome",
+            "id": "pol_trace_write_001"
+          }
+        ]
+      },
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_write_003",
+        "run_id": "run_trace_write_001",
+        "sequence": 3,
+        "event_type": "execution.completed",
+        "occurred_at": "2026-03-29T15:00:00.120Z",
+        "recorded_at": "2026-03-29T15:00:00.121Z",
+        "causality": {
+          "action_id": "act_trace_write_001",
+          "policy_outcome_id": "pol_trace_write_001",
+          "execution_result_id": "exec_trace_write_001"
+        },
+        "actor": {
+          "type": "system",
+          "component": "execution-adapter"
+        },
+        "payload": {},
+        "refs": [
+          {
+            "kind": "execution_result",
+            "id": "exec_trace_write_001"
+          }
+        ]
+      }
+    ],
+    "recovery_plans": [],
+    "timeline_steps": [
+      {
+        "schema_version": "timeline-step.v1",
+        "step_id": "step_trace_write_001",
+        "run_id": "run_trace_write_001",
+        "sequence": 3,
+        "step_type": "action_step",
+        "title": "Write README.md",
+        "status": "completed",
+        "provenance": "governed",
+        "action_id": "act_trace_write_001",
+        "decision": "allow",
+        "reversibility_class": "reversible",
+        "confidence": 0.99,
+        "summary": "The agent wrote one governed file.",
+        "primary_artifacts": [
+          {
+            "type": "file_diff",
+            "count": 1,
+            "label": "/workspace/README.md"
+          }
+        ],
+        "artifact_previews": [
+          {
+            "type": "diff",
+            "label": "/workspace/README.md",
+            "preview": "+ hello"
+          }
+        ],
+        "external_effects": [],
+        "related": {
+          "snapshot_id": null,
+          "execution_id": "exec_trace_write_001",
+          "recovery_plan_ids": []
+        },
+        "occurred_at": "2026-03-29T15:00:00.120Z"
+      }
+    ]
+  }
+}

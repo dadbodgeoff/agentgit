@@ -1,0 +1,67 @@
+{
+  "schema": "execution-result",
+  "cases": {
+    "missing_required": {
+      "schema_version": "execution-result.v1",
+      "execution_result_id": "exec_invalid_missing",
+      "action_id": "act_missing",
+      "adapter_kind": "shell",
+      "started_at": "2026-03-29T14:00:00Z",
+      "outcome": {
+        "result_type": "mutation_applied",
+        "message": "ok"
+      },
+      "tool_result": {
+        "content": [],
+        "structured_content": {},
+        "is_error": false
+      },
+      "artifacts": [],
+      "resource_usage": {
+        "duration_ms": 10
+      }
+    },
+    "wrong_type": {
+      "schema_version": "execution-result.v1",
+      "execution_result_id": "exec_invalid_type",
+      "action_id": "act_missing",
+      "adapter_kind": "shell",
+      "status": "completed",
+      "started_at": "2026-03-29T14:00:00Z",
+      "outcome": {
+        "result_type": "mutation_applied",
+        "message": "ok"
+      },
+      "tool_result": {
+        "content": [],
+        "structured_content": {},
+        "is_error": false
+      },
+      "artifacts": [],
+      "resource_usage": {
+        "duration_ms": "10"
+      }
+    },
+    "invalid_enum_or_const": {
+      "schema_version": "execution-result.v1",
+      "execution_result_id": "exec_invalid_enum",
+      "action_id": "act_missing",
+      "adapter_kind": "shell",
+      "status": "ok",
+      "started_at": "2026-03-29T14:00:00Z",
+      "outcome": {
+        "result_type": "mutation_applied",
+        "message": "ok"
+      },
+      "tool_result": {
+        "content": [],
+        "structured_content": {},
+        "is_error": false
+      },
+      "artifacts": [],
+      "resource_usage": {
+        "duration_ms": 10
+      }
+    }
+  }
+}

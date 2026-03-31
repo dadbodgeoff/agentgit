@@ -1,0 +1,57 @@
+{
+  "schema": "recovery-plan",
+  "cases": {
+    "missing_required": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_invalid_missing",
+      "recovery_class": "reversible",
+      "strategy": "restore",
+      "confidence": 0.91,
+      "steps": [],
+      "impact_preview": {
+        "external_effects": [],
+        "data_loss_risk": "low"
+      },
+      "created_at": "2026-03-29T14:00:00Z"
+    },
+    "wrong_type": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_invalid_type",
+      "target": {
+        "type": "path_subset",
+        "paths": [
+          "/workspace/src/app.ts"
+        ]
+      },
+      "recovery_class": "reversible",
+      "strategy": "restore",
+      "confidence": 0.91,
+      "steps": [],
+      "impact_preview": {
+        "paths_to_change": "1",
+        "external_effects": [],
+        "data_loss_risk": "low"
+      },
+      "created_at": "2026-03-29T14:00:00Z"
+    },
+    "invalid_enum_or_const": {
+      "schema_version": "recovery-plan.v1",
+      "recovery_plan_id": "rcvplan_invalid_enum",
+      "target": {
+        "type": "path_subset",
+        "paths": [
+          "/workspace/src/app.ts"
+        ]
+      },
+      "recovery_class": "undoable",
+      "strategy": "restore",
+      "confidence": 0.91,
+      "steps": [],
+      "impact_preview": {
+        "external_effects": [],
+        "data_loss_risk": "low"
+      },
+      "created_at": "2026-03-29T14:00:00Z"
+    }
+  }
+}

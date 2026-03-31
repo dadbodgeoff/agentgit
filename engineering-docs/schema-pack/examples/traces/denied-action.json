@@ -1,0 +1,189 @@
+{
+  "trace_name": "denied-action",
+  "description": "A high-risk action is denied before execution.",
+  "records": {
+    "actions": [
+      {
+        "schema_version": "action.v1",
+        "action_id": "act_trace_deny_001",
+        "run_id": "run_trace_deny_001",
+        "session_id": "sess_trace_deny_001",
+        "status": "normalized",
+        "timestamps": {
+          "requested_at": "2026-03-29T15:15:00Z",
+          "normalized_at": "2026-03-29T15:15:00.020Z"
+        },
+        "provenance": {
+          "mode": "governed",
+          "source": "authority-sdk-ts",
+          "confidence": 0.97
+        },
+        "correlation": {
+          "trace_id": "trace_deny_001",
+          "span_id": "span_deny_action_001",
+          "parent_action_id": null,
+          "upstream_call_ids": []
+        },
+        "actor": {
+          "type": "agent",
+          "agent_name": "codex"
+        },
+        "operation": {
+          "domain": "http",
+          "kind": "post",
+          "name": "email.send"
+        },
+        "execution_path": {
+          "surface": "sdk_function",
+          "mode": "pre_execution",
+          "credential_mode": "direct"
+        },
+        "target": {
+          "primary": {
+            "type": "email_address",
+            "locator": "customer@example.com"
+          },
+          "scope": {
+            "breadth": "external",
+            "estimated_count": 1,
+            "unknowns": []
+          }
+        },
+        "input": {
+          "raw": {
+            "to": "customer@example.com",
+            "subject": "Pricing"
+          },
+          "redacted": {
+            "to": "customer@example.com",
+            "subject": "Pricing"
+          },
+          "schema_ref": null,
+          "contains_sensitive_data": false
+        },
+        "risk_hints": {
+          "side_effect_level": "mutating",
+          "external_effects": "communication",
+          "reversibility_hint": "irreversible",
+          "sensitivity_hint": "high",
+          "batch": false
+        },
+        "facets": {
+          "http": {
+            "method": "POST",
+            "url": "https://api.mail.example/send",
+            "origin": "https://api.mail.example",
+            "path_template": "/send",
+            "request_body_kind": "json",
+            "response_expected": true
+          }
+        },
+        "normalization": {
+          "mapper": "function/v1",
+          "inferred_fields": [
+            "risk_hints"
+          ],
+          "warnings": [],
+          "normalization_confidence": 0.97
+        }
+      }
+    ],
+    "policy_outcomes": [
+      {
+        "schema_version": "policy-outcome.v1",
+        "policy_outcome_id": "pol_trace_deny_001",
+        "action_id": "act_trace_deny_001",
+        "decision": "deny",
+        "reasons": [
+          {
+            "code": "DIRECT_CREDENTIALS_FORBIDDEN",
+            "severity": "critical",
+            "message": "Owned integrations may not execute with direct credentials."
+          },
+          {
+            "code": "IRREVERSIBLE_EXTERNAL_COMMUNICATION",
+            "severity": "high",
+            "message": "The action would send an irreversible external communication."
+          }
+        ],
+        "trust_requirements": {
+          "wrapped_path_required": true,
+          "brokered_credentials_required": true,
+          "direct_credentials_forbidden": true
+        },
+        "preconditions": {
+          "snapshot_required": false,
+          "approval_required": false,
+          "simulation_supported": false
+        },
+        "approval": null,
+        "budget_effects": {
+          "budget_check": "passed",
+          "estimated_cost": 0.01
+        },
+        "policy_context": {
+          "matched_rules": [
+            "credentials.direct.forbidden",
+            "email.irreversible.deny"
+          ],
+          "sticky_decision_applied": false
+        },
+        "evaluated_at": "2026-03-29T15:15:00.040Z"
+      }
+    ],
+    "snapshot_records": [],
+    "execution_results": [],
+    "run_events": [
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_deny_001",
+        "run_id": "run_trace_deny_001",
+        "sequence": 1,
+        "event_type": "policy.evaluated",
+        "occurred_at": "2026-03-29T15:15:00.040Z",
+        "recorded_at": "2026-03-29T15:15:00.041Z",
+        "causality": {
+          "action_id": "act_trace_deny_001",
+          "policy_outcome_id": "pol_trace_deny_001"
+        },
+        "actor": {
+          "type": "system",
+          "component": "policy-engine"
+        },
+        "payload": {
+          "decision": "deny"
+        },
+        "refs": []
+      }
+    ],
+    "recovery_plans": [],
+    "timeline_steps": [
+      {
+        "schema_version": "timeline-step.v1",
+        "step_id": "step_trace_deny_001",
+        "run_id": "run_trace_deny_001",
+        "sequence": 1,
+        "step_type": "action_step",
+        "title": "Block outbound email send",
+        "status": "blocked",
+        "provenance": "governed",
+        "action_id": "act_trace_deny_001",
+        "decision": "deny",
+        "reversibility_class": "irreversible",
+        "confidence": 0.97,
+        "summary": "The system denied the email action before any side effect began.",
+        "primary_artifacts": [],
+        "artifact_previews": [],
+        "external_effects": [
+          "communication"
+        ],
+        "related": {
+          "snapshot_id": null,
+          "execution_id": null,
+          "recovery_plan_ids": []
+        },
+        "occurred_at": "2026-03-29T15:15:00.040Z"
+      }
+    ]
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "trace_name": "imported-observed-action",
+  "description": "A post-hoc observed action is journaled without claiming pre-execution control.",
+  "records": {
+    "actions": [
+      {
+        "schema_version": "action.v1",
+        "action_id": "act_trace_obs_001",
+        "run_id": "run_trace_obs_001",
+        "session_id": "sess_trace_obs_001",
+        "status": "normalized",
+        "timestamps": {
+          "requested_at": "2026-03-29T15:30:00Z",
+          "normalized_at": "2026-03-29T15:30:01Z"
+        },
+        "provenance": {
+          "mode": "imported",
+          "source": "provider-audit-importer",
+          "confidence": 0.61
+        },
+        "correlation": {
+          "trace_id": "trace_obs_001",
+          "span_id": "span_obs_action_001",
+          "parent_action_id": null,
+          "upstream_call_ids": [
+            {
+              "system": "provider_audit",
+              "id": "audit_evt_55"
+            }
+          ]
+        },
+        "actor": {
+          "type": "observer",
+          "tool_name": "provider_audit_importer",
+          "tool_kind": "observer"
+        },
+        "operation": {
+          "domain": "http",
+          "kind": "post",
+          "name": "external.api.post"
+        },
+        "execution_path": {
+          "surface": "provider_hosted",
+          "mode": "imported",
+          "credential_mode": "unknown"
+        },
+        "target": {
+          "primary": {
+            "type": "url",
+            "locator": "https://api.vendor.example/v1/jobs"
+          },
+          "scope": {
+            "breadth": "external",
+            "unknowns": [
+              "target_count"
+            ]
+          }
+        },
+        "input": {
+          "raw": {
+            "method": "POST",
+            "path": "/v1/jobs"
+          },
+          "redacted": {
+            "method": "POST",
+            "path": "/v1/jobs"
+          },
+          "schema_ref": null,
+          "contains_sensitive_data": false
+        },
+        "risk_hints": {
+          "side_effect_level": "mutating",
+          "external_effects": "network",
+          "reversibility_hint": "unknown",
+          "sensitivity_hint": "moderate",
+          "batch": false
+        },
+        "facets": {
+          "http": {
+            "method": "POST",
+            "url": "https://api.vendor.example/v1/jobs",
+            "origin": "https://api.vendor.example",
+            "path_template": "/v1/jobs",
+            "request_body_kind": "json",
+            "response_expected": true
+          }
+        },
+        "normalization": {
+          "mapper": "http-import/v1",
+          "inferred_fields": [
+            "provenance.mode"
+          ],
+          "warnings": [
+            "untrusted_metadata"
+          ],
+          "normalization_confidence": 0.61
+        }
+      }
+    ],
+    "policy_outcomes": [],
+    "snapshot_records": [],
+    "execution_results": [],
+    "run_events": [
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_obs_001",
+        "run_id": "run_trace_obs_001",
+        "sequence": 1,
+        "event_type": "action.imported",
+        "occurred_at": "2026-03-29T15:29:20Z",
+        "recorded_at": "2026-03-29T15:30:01Z",
+        "causality": {
+          "action_id": "act_trace_obs_001"
+        },
+        "actor": {
+          "type": "observer",
+          "component": "provider-audit-importer"
+        },
+        "payload": {
+          "governed": false
+        },
+        "refs": [
+          {
+            "kind": "action",
+            "id": "act_trace_obs_001"
+          }
+        ]
+      }
+    ],
+    "recovery_plans": [],
+    "timeline_steps": [
+      {
+        "schema_version": "timeline-step.v1",
+        "step_id": "step_trace_obs_001",
+        "run_id": "run_trace_obs_001",
+        "sequence": 1,
+        "step_type": "analysis_step",
+        "title": "Imported provider-side action",
+        "status": "completed",
+        "provenance": "imported",
+        "action_id": "act_trace_obs_001",
+        "decision": null,
+        "reversibility_class": "review_only",
+        "confidence": 0.61,
+        "summary": "The action was imported from provider audit logs and was not governed pre-execution.",
+        "primary_artifacts": [],
+        "artifact_previews": [],
+        "external_effects": [
+          "network"
+        ],
+        "related": {
+          "snapshot_id": null,
+          "execution_id": null,
+          "recovery_plan_ids": []
+        },
+        "occurred_at": "2026-03-29T15:29:20Z"
+      }
+    ]
+  }
+}

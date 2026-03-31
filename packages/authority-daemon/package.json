@@ -1,0 +1,28 @@
+{
+  "name": "@agentgit/authority-daemon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "types": "dist/main.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "vitest run --dir src",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@agentgit/action-normalizer": "workspace:*",
+    "@agentgit/credential-broker": "workspace:*",
+    "@agentgit/execution-adapters": "workspace:*",
+    "@agentgit/integration-state": "workspace:*",
+    "@agentgit/policy-engine": "workspace:*",
+    "@agentgit/recovery-engine": "workspace:*",
+    "@agentgit/run-journal": "workspace:*",
+    "@agentgit/schemas": "workspace:*",
+    "@agentgit/snapshot-engine": "workspace:*",
+    "@agentgit/timeline-helper": "workspace:*",
+    "uuid": "^13.0.0"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema": "run-event",
+  "cases": {
+    "missing_required": {
+      "schema_version": "run-event.v1",
+      "event_id": "evt_invalid_missing",
+      "run_id": "run_missing",
+      "sequence": 1,
+      "occurred_at": "2026-03-29T14:00:00Z",
+      "recorded_at": "2026-03-29T14:00:00Z",
+      "causality": {},
+      "actor": {
+        "type": "system"
+      },
+      "payload": {},
+      "refs": []
+    },
+    "wrong_type": {
+      "schema_version": "run-event.v1",
+      "event_id": "evt_invalid_type",
+      "run_id": "run_missing",
+      "sequence": "1",
+      "event_type": "run.created",
+      "occurred_at": "2026-03-29T14:00:00Z",
+      "recorded_at": "2026-03-29T14:00:00Z",
+      "causality": {},
+      "actor": {
+        "type": "system"
+      },
+      "payload": {},
+      "refs": []
+    },
+    "invalid_enum_or_const": {
+      "schema_version": "run-event.v1",
+      "event_id": "evt_invalid_enum",
+      "run_id": "run_missing",
+      "sequence": 1,
+      "event_type": "run.created",
+      "occurred_at": "2026-03-29T14:00:00Z",
+      "recorded_at": "2026-03-29T14:00:00Z",
+      "causality": {},
+      "actor": {
+        "type": "daemon"
+      },
+      "payload": {},
+      "refs": []
+    }
+  }
+}

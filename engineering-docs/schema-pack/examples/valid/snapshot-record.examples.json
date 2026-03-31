@@ -1,0 +1,72 @@
+{
+  "schema": "snapshot-record",
+  "cases": {
+    "happy_path": {
+      "schema_version": "snapshot-record.v1",
+      "snapshot_id": "snap_0195c7b0c001",
+      "action_id": "act_0195c7b0a001",
+      "snapshot_class": "journal_plus_anchor",
+      "fidelity": "exact_for_protected_paths",
+      "scope": {
+        "breadth": "repository",
+        "path_count": 14
+      },
+      "artifacts": {
+        "manifest_id": "manifest_0195c7b0c001",
+        "journal_ids": [
+          "journalseg_0195c7b0c001"
+        ],
+        "anchor_ref": "cow://workspace/anchor/0195c7b0c001"
+      },
+      "storage_cost": {
+        "logical_bytes": 412345,
+        "physical_bytes": 84123,
+        "index_entries": 32
+      },
+      "created_at": "2026-03-29T14:00:00.180Z"
+    },
+    "edge_case": {
+      "schema_version": "snapshot-record.v1",
+      "snapshot_id": "snap_0195c7b0c101",
+      "action_id": "act_0195c7b0a101",
+      "snapshot_class": "exact_anchor",
+      "fidelity": "exact_boundary",
+      "scope": {
+        "breadth": "workspace",
+        "path_count": 220
+      },
+      "artifacts": {
+        "manifest_id": "manifest_0195c7b0c101",
+        "journal_ids": [],
+        "anchor_ref": "apfs://volume/shadow/0195c7b0c101"
+      },
+      "storage_cost": {
+        "logical_bytes": 210000000,
+        "physical_bytes": 14300000,
+        "index_entries": 440
+      },
+      "created_at": "2026-03-29T14:05:02Z"
+    },
+    "minimal_valid": {
+      "schema_version": "snapshot-record.v1",
+      "snapshot_id": "snap_0195c7b0c201",
+      "action_id": "act_0195c7b0a201",
+      "snapshot_class": "metadata_only",
+      "fidelity": "review_only",
+      "scope": {
+        "breadth": "unknown"
+      },
+      "artifacts": {
+        "manifest_id": "manifest_0195c7b0c201",
+        "journal_ids": [],
+        "anchor_ref": null
+      },
+      "storage_cost": {
+        "logical_bytes": 0,
+        "physical_bytes": 0,
+        "index_entries": 1
+      },
+      "created_at": "2026-03-29T14:10:00.050Z"
+    }
+  }
+}

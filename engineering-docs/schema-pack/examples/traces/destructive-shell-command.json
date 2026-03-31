@@ -1,0 +1,271 @@
+{
+  "trace_name": "destructive-shell-command",
+  "description": "Broad shell mutation that is allowed only with a snapshot boundary.",
+  "records": {
+    "actions": [
+      {
+        "schema_version": "action.v1",
+        "action_id": "act_trace_shell_001",
+        "run_id": "run_trace_shell_001",
+        "session_id": "sess_trace_shell_001",
+        "status": "normalized",
+        "timestamps": {
+          "requested_at": "2026-03-29T15:05:00Z",
+          "normalized_at": "2026-03-29T15:05:00.030Z"
+        },
+        "provenance": {
+          "mode": "governed",
+          "source": "authority-sdk-ts",
+          "confidence": 0.94
+        },
+        "correlation": {
+          "trace_id": "trace_shell_001",
+          "span_id": "span_shell_action_001",
+          "parent_action_id": null,
+          "upstream_call_ids": []
+        },
+        "actor": {
+          "type": "agent",
+          "agent_name": "codex",
+          "agent_framework": "openai-agents",
+          "tool_name": "exec_command",
+          "tool_kind": "shell"
+        },
+        "operation": {
+          "domain": "shell",
+          "kind": "exec",
+          "name": "shell.exec"
+        },
+        "execution_path": {
+          "surface": "governed_shell",
+          "mode": "pre_execution",
+          "credential_mode": "none"
+        },
+        "target": {
+          "primary": {
+            "type": "workspace",
+            "locator": "/workspace"
+          },
+          "scope": {
+            "breadth": "repository",
+            "estimated_count": 40,
+            "unknowns": []
+          }
+        },
+        "input": {
+          "raw": {
+            "argv": [
+              "bash",
+              "-lc",
+              "rm -rf build tmp"
+            ]
+          },
+          "redacted": {
+            "argv": [
+              "bash",
+              "-lc",
+              "rm -rf build tmp"
+            ]
+          },
+          "schema_ref": null,
+          "contains_sensitive_data": false
+        },
+        "risk_hints": {
+          "side_effect_level": "destructive",
+          "external_effects": "none",
+          "reversibility_hint": "potentially_reversible",
+          "sensitivity_hint": "moderate",
+          "batch": true
+        },
+        "facets": {
+          "shell": {
+            "argv": [
+              "bash",
+              "-lc",
+              "rm -rf build tmp"
+            ],
+            "cwd": "/workspace",
+            "interpreter": "bash",
+            "declared_env_keys": [],
+            "stdin_kind": "none"
+          }
+        },
+        "normalization": {
+          "mapper": "shell/v1",
+          "inferred_fields": [
+            "target.scope",
+            "risk_hints"
+          ],
+          "warnings": [],
+          "normalization_confidence": 0.94
+        }
+      }
+    ],
+    "policy_outcomes": [
+      {
+        "schema_version": "policy-outcome.v1",
+        "policy_outcome_id": "pol_trace_shell_001",
+        "action_id": "act_trace_shell_001",
+        "decision": "allow_with_snapshot",
+        "reasons": [
+          {
+            "code": "FS_DESTRUCTIVE_WORKSPACE_MUTATION",
+            "severity": "high",
+            "message": "The command is destructive but recoverable inside the workspace."
+          }
+        ],
+        "trust_requirements": {
+          "wrapped_path_required": true,
+          "brokered_credentials_required": false,
+          "direct_credentials_forbidden": false
+        },
+        "preconditions": {
+          "snapshot_required": true,
+          "approval_required": false,
+          "simulation_supported": false
+        },
+        "approval": null,
+        "budget_effects": {
+          "budget_check": "passed",
+          "estimated_cost": 0.0
+        },
+        "policy_context": {
+          "matched_rules": [
+            "shell.destructive.requires_snapshot"
+          ],
+          "sticky_decision_applied": false
+        },
+        "evaluated_at": "2026-03-29T15:05:00.040Z"
+      }
+    ],
+    "snapshot_records": [
+      {
+        "schema_version": "snapshot-record.v1",
+        "snapshot_id": "snap_trace_shell_001",
+        "action_id": "act_trace_shell_001",
+        "snapshot_class": "journal_plus_anchor",
+        "fidelity": "exact_for_protected_paths",
+        "scope": {
+          "breadth": "repository",
+          "path_count": 40
+        },
+        "artifacts": {
+          "manifest_id": "manifest_trace_shell_001",
+          "journal_ids": [
+            "journalseg_trace_shell_001"
+          ],
+          "anchor_ref": "cow://workspace/anchor/trace_shell_001"
+        },
+        "storage_cost": {
+          "logical_bytes": 1200000,
+          "physical_bytes": 220000,
+          "index_entries": 75
+        },
+        "created_at": "2026-03-29T15:05:00.070Z"
+      }
+    ],
+    "execution_results": [
+      {
+        "schema_version": "execution-result.v1",
+        "execution_result_id": "exec_trace_shell_001",
+        "action_id": "act_trace_shell_001",
+        "adapter_kind": "shell",
+        "status": "completed",
+        "started_at": "2026-03-29T15:05:00.090Z",
+        "completed_at": "2026-03-29T15:05:00.260Z",
+        "outcome": {
+          "result_type": "mutation_applied",
+          "message": "Removed build and tmp directories."
+        },
+        "tool_result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Command exited successfully."
+            }
+          ],
+          "structured_content": {
+            "deleted_paths": [
+              "/workspace/build",
+              "/workspace/tmp"
+            ]
+          },
+          "is_error": false
+        },
+        "artifacts": [],
+        "resource_usage": {
+          "duration_ms": 170,
+          "bytes_written": 0,
+          "network_requests": 0
+        }
+      }
+    ],
+    "run_events": [
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_shell_001",
+        "run_id": "run_trace_shell_001",
+        "sequence": 1,
+        "event_type": "policy.evaluated",
+        "occurred_at": "2026-03-29T15:05:00.040Z",
+        "recorded_at": "2026-03-29T15:05:00.041Z",
+        "causality": {
+          "action_id": "act_trace_shell_001",
+          "policy_outcome_id": "pol_trace_shell_001"
+        },
+        "actor": {
+          "type": "system",
+          "component": "policy-engine"
+        },
+        "payload": {},
+        "refs": []
+      },
+      {
+        "schema_version": "run-event.v1",
+        "event_id": "evt_trace_shell_002",
+        "run_id": "run_trace_shell_001",
+        "sequence": 2,
+        "event_type": "snapshot.created",
+        "occurred_at": "2026-03-29T15:05:00.070Z",
+        "recorded_at": "2026-03-29T15:05:00.071Z",
+        "causality": {
+          "action_id": "act_trace_shell_001",
+          "snapshot_id": "snap_trace_shell_001"
+        },
+        "actor": {
+          "type": "system",
+          "component": "snapshot-engine"
+        },
+        "payload": {},
+        "refs": []
+      }
+    ],
+    "recovery_plans": [],
+    "timeline_steps": [
+      {
+        "schema_version": "timeline-step.v1",
+        "step_id": "step_trace_shell_001",
+        "run_id": "run_trace_shell_001",
+        "sequence": 3,
+        "step_type": "action_step",
+        "title": "Remove build and tmp",
+        "status": "completed",
+        "provenance": "governed",
+        "action_id": "act_trace_shell_001",
+        "decision": "allow_with_snapshot",
+        "reversibility_class": "reversible",
+        "confidence": 0.94,
+        "summary": "The shell command ran after a snapshot boundary was created.",
+        "primary_artifacts": [],
+        "artifact_previews": [],
+        "external_effects": [],
+        "related": {
+          "snapshot_id": "snap_trace_shell_001",
+          "execution_id": "exec_trace_shell_001",
+          "recovery_plan_ids": []
+        },
+        "occurred_at": "2026-03-29T15:05:00.070Z"
+      }
+    ]
+  }
+}

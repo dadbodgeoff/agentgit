@@ -1,0 +1,534 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/action.schema.json",
+  "title": "Action",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "action.v1"
+    },
+    "action_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "run_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "session_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "status": {
+      "const": "normalized"
+    },
+    "timestamps": {
+      "type": "object",
+      "properties": {
+        "requested_at": {
+          "$ref": "./common.schema.json#/$defs/timestamp"
+        },
+        "normalized_at": {
+          "$ref": "./common.schema.json#/$defs/timestamp"
+        }
+      },
+      "required": [
+        "requested_at",
+        "normalized_at"
+      ],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "./common.schema.json#/$defs/provenanceMode"
+        },
+        "source": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "mode",
+        "source",
+        "confidence"
+      ],
+      "additionalProperties": false
+    },
+    "correlation": {
+      "type": "object",
+      "properties": {
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_action_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "upstream_call_ids": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "system": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "system",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "upstream_call_ids"
+      ],
+      "additionalProperties": false
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "user",
+            "system",
+            "observer"
+          ]
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "agent_framework": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "tool_kind": {
+          "type": "string"
+        },
+        "tool_registration_id": {
+          "$ref": "./common.schema.json#/$defs/idString"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain",
+        "kind",
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "execution_path": {
+      "type": "object",
+      "properties": {
+        "surface": {
+          "type": "string",
+          "enum": [
+            "sdk_function",
+            "governed_shell",
+            "governed_fs",
+            "mcp_proxy",
+            "provider_hosted",
+            "observer"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "pre_execution",
+            "post_hoc",
+            "imported"
+          ]
+        },
+        "credential_mode": {
+          "type": "string",
+          "enum": [
+            "brokered",
+            "delegated",
+            "direct",
+            "none",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "surface",
+        "mode",
+        "credential_mode"
+      ],
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "primary": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "locator": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "locator"
+          ],
+          "additionalProperties": false
+        },
+        "additional": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "locator": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "locator"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "scope": {
+          "type": "object",
+          "properties": {
+            "breadth": {
+              "type": "string",
+              "enum": [
+                "single",
+                "set",
+                "workspace",
+                "repository",
+                "origin",
+                "external",
+                "unknown"
+              ]
+            },
+            "estimated_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unknowns": {
+              "$ref": "./common.schema.json#/$defs/stringArray"
+            }
+          },
+          "required": [
+            "breadth",
+            "unknowns"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "primary",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "raw": {},
+        "redacted": {},
+        "schema_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contains_sensitive_data": {
+          "type": "boolean"
+        },
+        "redaction_reasons": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        }
+      },
+      "required": [
+        "raw",
+        "redacted",
+        "schema_ref",
+        "contains_sensitive_data"
+      ],
+      "additionalProperties": false
+    },
+    "risk_hints": {
+      "type": "object",
+      "properties": {
+        "side_effect_level": {
+          "type": "string",
+          "enum": [
+            "read_only",
+            "mutating",
+            "destructive",
+            "unknown"
+          ]
+        },
+        "external_effects": {
+          "type": "string",
+          "enum": [
+            "none",
+            "network",
+            "communication",
+            "financial",
+            "unknown"
+          ]
+        },
+        "reversibility_hint": {
+          "type": "string",
+          "enum": [
+            "reversible",
+            "potentially_reversible",
+            "compensatable",
+            "irreversible",
+            "unknown"
+          ]
+        },
+        "sensitivity_hint": {
+          "type": "string",
+          "enum": [
+            "low",
+            "moderate",
+            "high",
+            "unknown"
+          ]
+        },
+        "batch": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "side_effect_level",
+        "external_effects",
+        "reversibility_hint",
+        "sensitivity_hint",
+        "batch"
+      ],
+      "additionalProperties": false
+    },
+    "facets": {
+      "type": "object",
+      "properties": {
+        "shell": {
+          "type": "object",
+          "properties": {
+            "argv": {
+              "$ref": "./common.schema.json#/$defs/stringArray"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "interpreter": {
+              "type": "string"
+            },
+            "declared_env_keys": {
+              "$ref": "./common.schema.json#/$defs/stringArray"
+            },
+            "stdin_kind": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "filesystem": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string"
+            },
+            "paths": {
+              "$ref": "./common.schema.json#/$defs/stringArray"
+            },
+            "path_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "recursive": {
+              "type": "boolean"
+            },
+            "overwrite": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "browser": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "selector": {
+              "type": "string"
+            },
+            "element_role": {
+              "type": "string"
+            },
+            "navigation_expected": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "http": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "origin": {
+              "type": "string"
+            },
+            "path_template": {
+              "type": "string"
+            },
+            "request_body_kind": {
+              "type": "string"
+            },
+            "response_expected": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "mcp": {
+          "type": "object",
+          "properties": {
+            "server_label": {
+              "type": "string"
+            },
+            "server_uri": {
+              "type": "string"
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "tool_annotations": {
+              "type": "object"
+            },
+            "trusted_server": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "function": {
+          "type": "object",
+          "properties": {
+            "function_name": {
+              "type": "string"
+            },
+            "arguments_kind": {
+              "type": "string"
+            },
+            "declared_schema_hash": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "normalization": {
+      "type": "object",
+      "properties": {
+        "mapper": {
+          "type": "string"
+        },
+        "inferred_fields": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        },
+        "warnings": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        },
+        "normalization_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "mapper",
+        "inferred_fields",
+        "warnings"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "action_id",
+    "run_id",
+    "session_id",
+    "status",
+    "timestamps",
+    "provenance",
+    "correlation",
+    "actor",
+    "operation",
+    "execution_path",
+    "target",
+    "input",
+    "risk_hints",
+    "facets",
+    "normalization"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/run-event.schema.json",
+  "title": "RunEvent",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "run-event.v1"
+    },
+    "event_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "run_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "occurred_at": {
+      "$ref": "./common.schema.json#/$defs/timestamp"
+    },
+    "recorded_at": {
+      "$ref": "./common.schema.json#/$defs/timestamp"
+    },
+    "causality": {
+      "$ref": "./common.schema.json#/$defs/causalIds"
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "agent",
+            "user",
+            "system",
+            "observer"
+          ]
+        },
+        "component": {
+          "type": "string"
+        },
+        "actor_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "payload": {
+      "type": "object"
+    },
+    "refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "./common.schema.json#/$defs/idString"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "event_id",
+    "run_id",
+    "sequence",
+    "event_type",
+    "occurred_at",
+    "recorded_at",
+    "causality",
+    "actor",
+    "payload",
+    "refs"
+  ],
+  "additionalProperties": false
+}

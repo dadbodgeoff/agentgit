@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/common.schema.json",
+  "title": "Common Schema Definitions",
+  "$defs": {
+    "idString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidenceLevel": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "provenanceMode": {
+      "type": "string",
+      "enum": [
+        "governed",
+        "observed",
+        "imported",
+        "unknown"
+      ]
+    },
+    "artifactAvailability": {
+      "type": "string",
+      "enum": [
+        "available",
+        "missing",
+        "expired",
+        "corrupted",
+        "tampered"
+      ]
+    },
+    "artifactIntegrity": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "artifact-integrity.v1"
+        },
+        "digest_algorithm": {
+          "type": "string",
+          "const": "sha256"
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema_version",
+        "digest_algorithm",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "reversibilityClass": {
+      "type": "string",
+      "enum": [
+        "reversible",
+        "compensatable",
+        "review_only",
+        "irreversible"
+      ]
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny",
+        "ask",
+        "simulate",
+        "allow_with_snapshot"
+      ]
+    },
+    "artifactRef": {
+      "type": "object",
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "type": {
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/idString"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "user",
+            "model",
+            "internal",
+            "sensitive_internal"
+          ]
+        }
+      },
+      "required": [
+        "artifact_id",
+        "type",
+        "ref"
+      ],
+      "additionalProperties": false
+    },
+    "causalIds": {
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "policy_outcome_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "snapshot_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "execution_result_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "approval_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "recovery_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "recovery_plan_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "parent_event_id": {
+          "$ref": "#/$defs/idString"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/policy-outcome.schema.json",
+  "title": "PolicyOutcome",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "policy-outcome.v1"
+    },
+    "policy_outcome_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "action_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "decision": {
+      "$ref": "./common.schema.json#/$defs/decision"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "low",
+              "moderate",
+              "high",
+              "critical"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "trust_requirements": {
+      "type": "object",
+      "properties": {
+        "wrapped_path_required": {
+          "type": "boolean"
+        },
+        "brokered_credentials_required": {
+          "type": "boolean"
+        },
+        "direct_credentials_forbidden": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "wrapped_path_required",
+        "brokered_credentials_required",
+        "direct_credentials_forbidden"
+      ],
+      "additionalProperties": false
+    },
+    "preconditions": {
+      "type": "object",
+      "properties": {
+        "snapshot_required": {
+          "type": "boolean"
+        },
+        "approval_required": {
+          "type": "boolean"
+        },
+        "simulation_supported": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "snapshot_required",
+        "approval_required",
+        "simulation_supported"
+      ],
+      "additionalProperties": false
+    },
+    "approval": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "approval_id": {
+          "$ref": "./common.schema.json#/$defs/idString"
+        },
+        "approval_kind": {
+          "type": "string",
+          "enum": [
+            "one_time",
+            "run_sticky",
+            "session_sticky",
+            "policy_update_suggested"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "expired"
+          ]
+        },
+        "expires_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "sticky_scope": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "budget_effects": {
+      "type": "object",
+      "properties": {
+        "budget_check": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "soft_limit",
+            "hard_limit",
+            "unknown"
+          ]
+        },
+        "estimated_cost": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "budget_check",
+        "estimated_cost"
+      ],
+      "additionalProperties": false
+    },
+    "policy_context": {
+      "type": "object",
+      "properties": {
+        "matched_rules": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        },
+        "sticky_decision_applied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "matched_rules",
+        "sticky_decision_applied"
+      ],
+      "additionalProperties": false
+    },
+    "evaluated_at": {
+      "$ref": "./common.schema.json#/$defs/timestamp"
+    }
+  },
+  "required": [
+    "schema_version",
+    "policy_outcome_id",
+    "action_id",
+    "decision",
+    "reasons",
+    "trust_requirements",
+    "preconditions",
+    "approval",
+    "budget_effects",
+    "policy_context",
+    "evaluated_at"
+  ],
+  "additionalProperties": false
+}

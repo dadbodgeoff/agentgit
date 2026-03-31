@@ -1,0 +1,75 @@
+{
+  "schema": "run-event",
+  "cases": {
+    "happy_path": {
+      "schema_version": "run-event.v1",
+      "event_id": "evt_0195c7b0e001",
+      "run_id": "run_0195c7b0a000",
+      "sequence": 1,
+      "event_type": "action.normalized",
+      "occurred_at": "2026-03-29T14:00:00.120Z",
+      "recorded_at": "2026-03-29T14:00:00.121Z",
+      "causality": {
+        "action_id": "act_0195c7b0a001",
+        "trace_id": "trace_simple_write",
+        "span_id": "span_action_1"
+      },
+      "actor": {
+        "type": "system",
+        "component": "normalizer"
+      },
+      "payload": {
+        "mapper": "filesystem/v1",
+        "warnings": []
+      },
+      "refs": [
+        {
+          "kind": "action",
+          "id": "act_0195c7b0a001"
+        }
+      ]
+    },
+    "edge_case": {
+      "schema_version": "run-event.v1",
+      "event_id": "evt_0195c7b0e101",
+      "run_id": "run_0195c7b0a100",
+      "sequence": 9,
+      "event_type": "action.imported",
+      "occurred_at": "2026-03-29T13:58:00Z",
+      "recorded_at": "2026-03-29T14:05:05Z",
+      "causality": {
+        "action_id": "act_0195c7b0a101"
+      },
+      "actor": {
+        "type": "observer",
+        "component": "provider-audit-importer",
+        "actor_id": "audit_job_17"
+      },
+      "payload": {
+        "source": "provider_audit_log",
+        "lag_ms": 425000
+      },
+      "refs": [
+        {
+          "kind": "action",
+          "id": "act_0195c7b0a101"
+        }
+      ]
+    },
+    "minimal_valid": {
+      "schema_version": "run-event.v1",
+      "event_id": "evt_0195c7b0e201",
+      "run_id": "run_0195c7b0a200",
+      "sequence": 0,
+      "event_type": "run.created",
+      "occurred_at": "2026-03-29T14:10:00Z",
+      "recorded_at": "2026-03-29T14:10:00Z",
+      "causality": {},
+      "actor": {
+        "type": "system"
+      },
+      "payload": {},
+      "refs": []
+    }
+  }
+}

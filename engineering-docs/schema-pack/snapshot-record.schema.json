@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/snapshot-record.schema.json",
+  "title": "SnapshotRecord",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "snapshot-record.v1"
+    },
+    "snapshot_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "action_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "snapshot_class": {
+      "type": "string",
+      "enum": [
+        "metadata_only",
+        "journal_only",
+        "journal_plus_anchor",
+        "exact_anchor"
+      ]
+    },
+    "fidelity": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "breadth": {
+          "type": "string",
+          "enum": [
+            "single",
+            "set",
+            "workspace",
+            "repository",
+            "origin",
+            "external",
+            "unknown"
+          ]
+        },
+        "path_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "breadth"
+      ],
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "manifest_id": {
+          "$ref": "./common.schema.json#/$defs/idString"
+        },
+        "journal_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "./common.schema.json#/$defs/idString"
+          }
+        },
+        "anchor_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "manifest_id",
+        "journal_ids",
+        "anchor_ref"
+      ],
+      "additionalProperties": false
+    },
+    "storage_cost": {
+      "type": "object",
+      "properties": {
+        "logical_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "physical_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "index_entries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "logical_bytes",
+        "physical_bytes",
+        "index_entries"
+      ],
+      "additionalProperties": false
+    },
+    "created_at": {
+      "$ref": "./common.schema.json#/$defs/timestamp"
+    }
+  },
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "action_id",
+    "snapshot_class",
+    "fidelity",
+    "scope",
+    "artifacts",
+    "storage_cost",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

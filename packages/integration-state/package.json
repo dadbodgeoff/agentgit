@@ -1,0 +1,21 @@
+{
+  "name": "@agentgit/integration-state",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "vitest run --dir src"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
+  },
+  "dependencies": {
+    "@agentgit/schemas": "workspace:*",
+    "better-sqlite3": "^12.8.0"
+  }
+}

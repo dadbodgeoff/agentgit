@@ -1,0 +1,63 @@
+{
+  "schema": "snapshot-record",
+  "cases": {
+    "missing_required": {
+      "schema_version": "snapshot-record.v1",
+      "snapshot_id": "snap_invalid_missing",
+      "action_id": "act_missing",
+      "snapshot_class": "journal_only",
+      "fidelity": "review_only",
+      "scope": {
+        "breadth": "single"
+      },
+      "artifacts": {
+        "manifest_id": "manifest_invalid_missing",
+        "journal_ids": [],
+        "anchor_ref": null
+      },
+      "created_at": "2026-03-29T14:00:00Z"
+    },
+    "wrong_type": {
+      "schema_version": "snapshot-record.v1",
+      "snapshot_id": "snap_invalid_type",
+      "action_id": "act_missing",
+      "snapshot_class": "journal_only",
+      "fidelity": "review_only",
+      "scope": {
+        "breadth": "single"
+      },
+      "artifacts": {
+        "manifest_id": "manifest_invalid_type",
+        "journal_ids": [],
+        "anchor_ref": null
+      },
+      "storage_cost": {
+        "logical_bytes": "100",
+        "physical_bytes": 50,
+        "index_entries": 1
+      },
+      "created_at": "2026-03-29T14:00:00Z"
+    },
+    "invalid_enum_or_const": {
+      "schema_version": "snapshot-record.v1",
+      "snapshot_id": "snap_invalid_enum",
+      "action_id": "act_missing",
+      "snapshot_class": "full_copy",
+      "fidelity": "review_only",
+      "scope": {
+        "breadth": "single"
+      },
+      "artifacts": {
+        "manifest_id": "manifest_invalid_enum",
+        "journal_ids": [],
+        "anchor_ref": null
+      },
+      "storage_cost": {
+        "logical_bytes": 100,
+        "physical_bytes": 50,
+        "index_entries": 1
+      },
+      "created_at": "2026-03-29T14:00:00Z"
+    }
+  }
+}

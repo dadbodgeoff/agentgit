@@ -1,0 +1,115 @@
+{
+  "schema": "policy-outcome",
+  "cases": {
+    "happy_path": {
+      "schema_version": "policy-outcome.v1",
+      "policy_outcome_id": "pol_0195c7b0b001",
+      "action_id": "act_0195c7b0a001",
+      "decision": "allow_with_snapshot",
+      "reasons": [
+        {
+          "code": "FS_DESTRUCTIVE_WORKSPACE_MUTATION",
+          "severity": "moderate",
+          "message": "Mutation is recoverable but should be guarded by a snapshot."
+        }
+      ],
+      "trust_requirements": {
+        "wrapped_path_required": true,
+        "brokered_credentials_required": false,
+        "direct_credentials_forbidden": false
+      },
+      "preconditions": {
+        "snapshot_required": true,
+        "approval_required": false,
+        "simulation_supported": false
+      },
+      "approval": null,
+      "budget_effects": {
+        "budget_check": "passed",
+        "estimated_cost": 0.0
+      },
+      "policy_context": {
+        "matched_rules": [
+          "filesystem.safe.small_write",
+          "snapshot.required.for_mutation"
+        ],
+        "sticky_decision_applied": false
+      },
+      "evaluated_at": "2026-03-29T14:00:00.150Z"
+    },
+    "edge_case": {
+      "schema_version": "policy-outcome.v1",
+      "policy_outcome_id": "pol_0195c7b0b101",
+      "action_id": "act_0195c7b0a101",
+      "decision": "ask",
+      "reasons": [
+        {
+          "code": "UNKNOWN_SCOPE_REQUIRES_APPROVAL",
+          "severity": "high",
+          "message": "Observed command has unknown mutation scope."
+        },
+        {
+          "code": "BUDGET_SOFT_LIMIT_REQUIRES_APPROVAL",
+          "severity": "moderate",
+          "message": "The run is near its configured side-effect budget."
+        }
+      ],
+      "trust_requirements": {
+        "wrapped_path_required": true,
+        "brokered_credentials_required": true,
+        "direct_credentials_forbidden": true
+      },
+      "preconditions": {
+        "snapshot_required": false,
+        "approval_required": true,
+        "simulation_supported": false
+      },
+      "approval": {
+        "approval_id": "approval_0195c7b0b102",
+        "approval_kind": "one_time",
+        "status": "pending",
+        "expires_at": "2026-03-29T14:20:00Z",
+        "sticky_scope": "one_time"
+      },
+      "budget_effects": {
+        "budget_check": "soft_limit",
+        "estimated_cost": 0.02
+      },
+      "policy_context": {
+        "matched_rules": [
+          "shell.unknown_scope.ask",
+          "trust.direct_credentials.deny_or_ask"
+        ],
+        "sticky_decision_applied": false
+      },
+      "evaluated_at": "2026-03-29T14:05:01Z"
+    },
+    "minimal_valid": {
+      "schema_version": "policy-outcome.v1",
+      "policy_outcome_id": "pol_0195c7b0b201",
+      "action_id": "act_0195c7b0a201",
+      "decision": "allow",
+      "reasons": [],
+      "trust_requirements": {
+        "wrapped_path_required": false,
+        "brokered_credentials_required": false,
+        "direct_credentials_forbidden": false
+      },
+      "preconditions": {
+        "snapshot_required": false,
+        "approval_required": false,
+        "simulation_supported": false
+      },
+      "approval": null,
+      "budget_effects": {
+        "budget_check": "passed",
+        "estimated_cost": null
+      },
+      "policy_context": {
+        "matched_rules": [],
+        "sticky_decision_applied": false
+      },
+      "evaluated_at": "2026-03-29T14:10:00.020Z"
+    }
+  }
+}

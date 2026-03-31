@@ -1,0 +1,85 @@
+{
+  "schema": "policy-outcome",
+  "cases": {
+    "missing_required": {
+      "schema_version": "policy-outcome.v1",
+      "policy_outcome_id": "pol_invalid_missing",
+      "action_id": "act_missing",
+      "reasons": [],
+      "trust_requirements": {
+        "wrapped_path_required": false,
+        "brokered_credentials_required": false,
+        "direct_credentials_forbidden": false
+      },
+      "preconditions": {
+        "snapshot_required": false,
+        "approval_required": false,
+        "simulation_supported": false
+      },
+      "approval": null,
+      "budget_effects": {
+        "budget_check": "passed",
+        "estimated_cost": null
+      },
+      "policy_context": {
+        "matched_rules": [],
+        "sticky_decision_applied": false
+      },
+      "evaluated_at": "2026-03-29T14:00:00Z"
+    },
+    "wrong_type": {
+      "schema_version": "policy-outcome.v1",
+      "policy_outcome_id": "pol_invalid_type",
+      "action_id": "act_missing",
+      "decision": 7,
+      "reasons": [],
+      "trust_requirements": {
+        "wrapped_path_required": false,
+        "brokered_credentials_required": false,
+        "direct_credentials_forbidden": false
+      },
+      "preconditions": {
+        "snapshot_required": false,
+        "approval_required": false,
+        "simulation_supported": false
+      },
+      "approval": null,
+      "budget_effects": {
+        "budget_check": "passed",
+        "estimated_cost": null
+      },
+      "policy_context": {
+        "matched_rules": [],
+        "sticky_decision_applied": false
+      },
+      "evaluated_at": "2026-03-29T14:00:00Z"
+    },
+    "invalid_enum_or_const": {
+      "schema_version": "policy-outcome.v1",
+      "policy_outcome_id": "pol_invalid_enum",
+      "action_id": "act_missing",
+      "decision": "permit",
+      "reasons": [],
+      "trust_requirements": {
+        "wrapped_path_required": false,
+        "brokered_credentials_required": false,
+        "direct_credentials_forbidden": false
+      },
+      "preconditions": {
+        "snapshot_required": false,
+        "approval_required": false,
+        "simulation_supported": false
+      },
+      "approval": null,
+      "budget_effects": {
+        "budget_check": "passed",
+        "estimated_cost": null
+      },
+      "policy_context": {
+        "matched_rules": [],
+        "sticky_decision_applied": false
+      },
+      "evaluated_at": "2026-03-29T14:00:00Z"
+    }
+  }
+}

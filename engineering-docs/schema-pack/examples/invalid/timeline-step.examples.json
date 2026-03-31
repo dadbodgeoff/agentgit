@@ -1,0 +1,84 @@
+{
+  "schema": "timeline-step",
+  "cases": {
+    "missing_required": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_invalid_missing",
+      "run_id": "run_missing",
+      "sequence": 1,
+      "step_type": "action_step",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": null,
+      "reversibility_class": "reversible",
+      "confidence": 0.99,
+      "summary": "ok",
+      "primary_artifacts": [],
+      "artifact_previews": [],
+      "external_effects": [],
+      "related": {
+        "recovery_plan_ids": []
+      },
+      "occurred_at": "2026-03-29T14:00:00Z"
+    },
+    "wrong_type": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_invalid_type",
+      "run_id": "run_missing",
+      "sequence": "1",
+      "step_type": "action_step",
+      "title": "Bad sequence",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": null,
+      "reversibility_class": "reversible",
+      "confidence": 0.91,
+      "summary": "ok",
+      "primary_artifacts": [],
+      "artifact_previews": [],
+      "external_effects": [],
+      "related": {
+        "recovery_plan_ids": []
+      }
+    },
+    "invalid_enum_or_const": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_invalid_enum",
+      "run_id": "run_missing",
+      "sequence": 1,
+      "step_type": "log_step",
+      "title": "Bad type",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": null,
+      "reversibility_class": "reversible",
+      "confidence": 0.8,
+      "summary": "ok",
+      "primary_artifacts": [],
+      "artifact_previews": [],
+      "external_effects": [],
+      "related": {
+        "recovery_plan_ids": []
+      },
+      "occurred_at": "2026-03-29T14:00:00Z"
+    },
+    "missing_new_runtime_fields": {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_invalid_missing_runtime_fields",
+      "run_id": "run_missing",
+      "sequence": 1,
+      "step_type": "action_step",
+      "title": "Missing runtime fields",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": null,
+      "reversibility_class": "reversible",
+      "confidence": 0.93,
+      "summary": "ok",
+      "primary_artifacts": [],
+      "related": {
+        "recovery_plan_ids": []
+      }
+    }
+  }
+}

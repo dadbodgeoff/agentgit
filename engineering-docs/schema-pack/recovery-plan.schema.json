@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/recovery-plan.schema.json",
+  "title": "RecoveryPlan",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "recovery-plan.v1"
+    },
+    "recovery_plan_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "target": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "action_boundary"
+            },
+            "action_id": {
+              "$ref": "./common.schema.json#/$defs/idString"
+            }
+          },
+          "required": [
+            "type",
+            "action_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "snapshot_id"
+            },
+            "snapshot_id": {
+              "$ref": "./common.schema.json#/$defs/idString"
+            }
+          },
+          "required": [
+            "type",
+            "snapshot_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "run_checkpoint"
+            },
+            "run_checkpoint": {
+              "$ref": "./common.schema.json#/$defs/idString"
+            }
+          },
+          "required": [
+            "type",
+            "run_checkpoint"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "branch_point"
+            },
+            "run_id": {
+              "$ref": "./common.schema.json#/$defs/idString"
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "type",
+            "run_id",
+            "sequence"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "path_subset"
+            },
+            "snapshot_id": {
+              "$ref": "./common.schema.json#/$defs/idString"
+            },
+            "paths": {
+              "$ref": "./common.schema.json#/$defs/stringArray"
+            }
+          },
+          "required": [
+            "type",
+            "snapshot_id",
+            "paths"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "external_object"
+            },
+            "external_object_id": {
+              "$ref": "./common.schema.json#/$defs/idString"
+            }
+          },
+          "required": [
+            "type",
+            "external_object_id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "recovery_class": {
+      "$ref": "./common.schema.json#/$defs/reversibilityClass"
+    },
+    "strategy": {
+      "type": "string"
+    },
+    "confidence": {
+      "$ref": "./common.schema.json#/$defs/confidenceLevel"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step_id": {
+            "$ref": "./common.schema.json#/$defs/idString"
+          },
+          "type": {
+            "type": "string"
+          },
+          "idempotent": {
+            "type": "boolean"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "$ref": "./common.schema.json#/$defs/idString"
+            }
+          }
+        },
+        "required": [
+          "step_id",
+          "type",
+          "idempotent",
+          "depends_on"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "impact_preview": {
+      "type": "object",
+      "properties": {
+        "paths_to_change": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "later_actions_affected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "overlapping_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "external_effects": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        },
+        "data_loss_risk": {
+          "type": "string",
+          "enum": [
+            "low",
+            "moderate",
+            "high",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "later_actions_affected",
+        "overlapping_paths",
+        "external_effects",
+        "data_loss_risk"
+      ],
+      "additionalProperties": false
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "downgrade_reason": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "review_guidance": {
+      "type": "object",
+      "properties": {
+        "systems_touched": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        },
+        "objects_touched": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        },
+        "manual_steps": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        },
+        "uncertainty": {
+          "$ref": "./common.schema.json#/$defs/stringArray"
+        }
+      },
+      "required": [
+        "systems_touched",
+        "objects_touched",
+        "manual_steps",
+        "uncertainty"
+      ],
+      "additionalProperties": false
+    },
+    "created_at": {
+      "$ref": "./common.schema.json#/$defs/timestamp"
+    }
+  },
+  "required": [
+    "schema_version",
+    "recovery_plan_id",
+    "target",
+    "recovery_class",
+    "strategy",
+    "confidence",
+    "steps",
+    "impact_preview",
+    "warnings",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

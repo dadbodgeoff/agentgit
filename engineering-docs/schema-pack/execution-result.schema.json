@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentgit.local/schemas/execution-result.schema.json",
+  "title": "ExecutionResult",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": "execution-result.v1"
+    },
+    "execution_result_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "action_id": {
+      "$ref": "./common.schema.json#/$defs/idString"
+    },
+    "adapter_kind": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "timed_out",
+        "cancelled",
+        "blocked",
+        "partial"
+      ]
+    },
+    "started_at": {
+      "$ref": "./common.schema.json#/$defs/timestamp"
+    },
+    "completed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "outcome": {
+      "type": "object",
+      "properties": {
+        "result_type": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "result_type",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "tool_result": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "structured_content": {},
+        "is_error": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "content",
+        "structured_content",
+        "is_error"
+      ],
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "./common.schema.json#/$defs/artifactRef"
+      }
+    },
+    "resource_usage": {
+      "type": "object",
+      "properties": {
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bytes_written": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "network_requests": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "duration_ms"
+      ],
+      "additionalProperties": false
+    },
+    "execution_trace": {
+      "type": "object",
+      "properties": {
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "execution_result_id",
+    "action_id",
+    "adapter_kind",
+    "status",
+    "started_at",
+    "outcome",
+    "tool_result",
+    "artifacts",
+    "resource_usage"
+  ],
+  "additionalProperties": false
+}

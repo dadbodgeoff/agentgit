@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentgit-authority"
+version = "0.1.0"
+description = "Thin Python SDK for the local AgentGit authority daemon"
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["agent", "sdk", "governance", "daemon", "local-first"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.scripts]
+agentgit-authority-demo = "agentgit_authority.demo:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["agentgit_authority*"]
+
+[tool.setuptools.package-data]
+agentgit_authority = ["py.typed"]
