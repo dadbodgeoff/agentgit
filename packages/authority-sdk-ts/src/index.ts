@@ -13,8 +13,21 @@ import {
   type GetCapabilitiesResponsePayload,
   type GetRunSummaryRequestPayload,
   type GetRunSummaryResponsePayload,
+  type ListMcpHostPoliciesRequestPayload,
+  type ListMcpHostPoliciesResponsePayload,
+  type ListMcpSecretsRequestPayload,
+  type ListMcpSecretsResponsePayload,
+  type ListMcpServersRequestPayload,
+  type ListMcpServersResponsePayload,
   type ListApprovalsRequestPayload,
   type ListApprovalsResponsePayload,
+  type McpPublicHostPolicy,
+  type McpSecretInput,
+  type McpServerDefinition,
+  type RemoveMcpHostPolicyRequestPayload,
+  type RemoveMcpHostPolicyResponsePayload,
+  type RemoveMcpSecretRequestPayload,
+  type RemoveMcpSecretResponsePayload,
   type QueryApprovalInboxRequestPayload,
   type QueryApprovalInboxResponsePayload,
   type QueryArtifactRequestPayload,
@@ -35,10 +48,18 @@ import {
   type HelloResponsePayload,
   type RegisterRunRequestPayload,
   type RegisterRunResponsePayload,
+  type RemoveMcpServerRequestPayload,
+  type RemoveMcpServerResponsePayload,
   type ResolveApprovalRequestPayload,
   type ResolveApprovalResponsePayload,
   type RequestEnvelope,
   type ResponseEnvelope,
+  type UpsertMcpHostPolicyRequestPayload,
+  type UpsertMcpHostPolicyResponsePayload,
+  type UpsertMcpSecretRequestPayload,
+  type UpsertMcpSecretResponsePayload,
+  type UpsertMcpServerRequestPayload,
+  type UpsertMcpServerResponsePayload,
   isResponseEnvelope,
 } from "@agentgit/schemas";
 import { v7 as uuidv7 } from "uuid";
@@ -172,6 +193,159 @@ export class AuthorityClient {
       "get_capabilities",
       payload,
       this.sessionId,
+    );
+  }
+
+  async listMcpServers(): Promise<ListMcpServersResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListMcpServersRequestPayload = {};
+    return this.sendRequest<ListMcpServersRequestPayload, ListMcpServersResponsePayload>(
+      "list_mcp_servers",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async listMcpSecrets(): Promise<ListMcpSecretsResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListMcpSecretsRequestPayload = {};
+    return this.sendRequest<ListMcpSecretsRequestPayload, ListMcpSecretsResponsePayload>(
+      "list_mcp_secrets",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async upsertMcpSecret(
+    secret: McpSecretInput,
+    options: MutatingRequestOptions = {},
+  ): Promise<UpsertMcpSecretResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: UpsertMcpSecretRequestPayload = {
+      secret,
+    };
+    return this.sendRequest<UpsertMcpSecretRequestPayload, UpsertMcpSecretResponsePayload>(
+      "upsert_mcp_secret",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async removeMcpSecret(
+    secretId: string,
+    options: MutatingRequestOptions = {},
+  ): Promise<RemoveMcpSecretResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: RemoveMcpSecretRequestPayload = {
+      secret_id: secretId,
+    };
+    return this.sendRequest<RemoveMcpSecretRequestPayload, RemoveMcpSecretResponsePayload>(
+      "remove_mcp_secret",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async listMcpHostPolicies(): Promise<ListMcpHostPoliciesResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListMcpHostPoliciesRequestPayload = {};
+    return this.sendRequest<ListMcpHostPoliciesRequestPayload, ListMcpHostPoliciesResponsePayload>(
+      "list_mcp_host_policies",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async upsertMcpHostPolicy(
+    policy: McpPublicHostPolicy,
+    options: MutatingRequestOptions = {},
+  ): Promise<UpsertMcpHostPolicyResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: UpsertMcpHostPolicyRequestPayload = {
+      policy,
+    };
+    return this.sendRequest<UpsertMcpHostPolicyRequestPayload, UpsertMcpHostPolicyResponsePayload>(
+      "upsert_mcp_host_policy",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async removeMcpHostPolicy(
+    host: string,
+    options: MutatingRequestOptions = {},
+  ): Promise<RemoveMcpHostPolicyResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: RemoveMcpHostPolicyRequestPayload = {
+      host,
+    };
+    return this.sendRequest<RemoveMcpHostPolicyRequestPayload, RemoveMcpHostPolicyResponsePayload>(
+      "remove_mcp_host_policy",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async upsertMcpServer(
+    server: McpServerDefinition,
+    options: MutatingRequestOptions = {},
+  ): Promise<UpsertMcpServerResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: UpsertMcpServerRequestPayload = {
+      server,
+    };
+    return this.sendRequest<UpsertMcpServerRequestPayload, UpsertMcpServerResponsePayload>(
+      "upsert_mcp_server",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async removeMcpServer(
+    serverId: string,
+    options: MutatingRequestOptions = {},
+  ): Promise<RemoveMcpServerResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: RemoveMcpServerRequestPayload = {
+      server_id: serverId,
+    };
+    return this.sendRequest<RemoveMcpServerRequestPayload, RemoveMcpServerResponsePayload>(
+      "remove_mcp_server",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
     );
   }
 
@@ -336,6 +510,9 @@ export class AuthorityClient {
   async queryArtifact(
     artifactId: string,
     visibilityScope?: QueryArtifactRequestPayload["visibility_scope"],
+    options: {
+      fullContent?: boolean;
+    } = {},
   ): Promise<QueryArtifactResponsePayload> {
     if (!this.sessionId) {
       await this.hello();
@@ -344,6 +521,7 @@ export class AuthorityClient {
     const payload: QueryArtifactRequestPayload = {
       artifact_id: artifactId,
       ...(visibilityScope ? { visibility_scope: visibilityScope } : {}),
+      ...(options.fullContent ? { full_content: true } : {}),
     };
 
     return this.sendRequest<QueryArtifactRequestPayload, QueryArtifactResponsePayload>(

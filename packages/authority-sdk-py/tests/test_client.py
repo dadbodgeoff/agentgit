@@ -2242,6 +2242,15 @@ class AuthorityClientTest(unittest.TestCase):
                                 "query_helper",
                                 "query_artifact",
                                 "get_capabilities",
+                                "list_mcp_servers",
+                                "list_mcp_secrets",
+                                "list_mcp_host_policies",
+                                "upsert_mcp_secret",
+                                "remove_mcp_secret",
+                                "upsert_mcp_host_policy",
+                                "remove_mcp_host_policy",
+                                "upsert_mcp_server",
+                                "remove_mcp_server",
                                 "diagnostics",
                                 "run_maintenance",
                             ],
@@ -2278,6 +2287,22 @@ class AuthorityClientTest(unittest.TestCase):
         )
         artifact = client.query_artifact("artifact_secret", visibility_scope="internal")
         capabilities = client.get_capabilities("/tmp")
+        mcp_servers = client.list_mcp_servers()
+        upserted_server = client.upsert_mcp_server(
+            {
+                "server_id": "notes_http",
+                "transport": "streamable_http",
+                "url": "http://127.0.0.1:3010/mcp",
+                "tools": [
+                    {
+                        "tool_name": "echo_note",
+                        "side_effect_level": "read_only",
+                        "approval_mode": "allow",
+                    }
+                ],
+            }
+        )
+        removed_server = client.remove_mcp_server("notes_http")
         diagnostics = client.diagnostics(["storage_summary", "journal_health"])
         maintenance = client.run_maintenance(
             ["artifact_expiry", "sqlite_wal_checkpoint"],
@@ -2309,6 +2334,43 @@ class AuthorityClientTest(unittest.TestCase):
         self.assertEqual(artifact["echo_payload"]["visibility_scope"], "internal")
         self.assertEqual(capabilities["echo_method"], "get_capabilities")
         self.assertEqual(capabilities["echo_payload"]["workspace_root"], "/tmp")
+        self.assertEqual(mcp_servers["echo_method"], "list_mcp_servers")
+        self.assertEqual(mcp_servers["echo_payload"], {})
+        mcp_secrets = client.list_mcp_secrets()
+        upserted_secret = client.upsert_mcp_secret(
+            {
+                "secret_id": "mcp_secret_notion",
+                "display_name": "Notion MCP",
+                "bearer_token": "redacted-in-transport-test",
+            }
+        )
+        removed_secret = client.remove_mcp_secret("mcp_secret_notion")
+        mcp_host_policies = client.list_mcp_host_policies()
+        upserted_host_policy = client.upsert_mcp_host_policy(
+            {
+                "host": "api.notion.com",
+                "display_name": "Notion API",
+                "allow_subdomains": False,
+                "allowed_ports": [443],
+            }
+        )
+        removed_host_policy = client.remove_mcp_host_policy("api.notion.com")
+        self.assertEqual(upserted_server["echo_method"], "upsert_mcp_server")
+        self.assertEqual(upserted_server["echo_payload"]["server"]["server_id"], "notes_http")
+        self.assertEqual(removed_server["echo_method"], "remove_mcp_server")
+        self.assertEqual(removed_server["echo_payload"]["server_id"], "notes_http")
+        self.assertEqual(mcp_secrets["echo_method"], "list_mcp_secrets")
+        self.assertEqual(mcp_secrets["echo_payload"], {})
+        self.assertEqual(upserted_secret["echo_method"], "upsert_mcp_secret")
+        self.assertEqual(upserted_secret["echo_payload"]["secret"]["secret_id"], "mcp_secret_notion")
+        self.assertEqual(removed_secret["echo_method"], "remove_mcp_secret")
+        self.assertEqual(removed_secret["echo_payload"]["secret_id"], "mcp_secret_notion")
+        self.assertEqual(mcp_host_policies["echo_method"], "list_mcp_host_policies")
+        self.assertEqual(mcp_host_policies["echo_payload"], {})
+        self.assertEqual(upserted_host_policy["echo_method"], "upsert_mcp_host_policy")
+        self.assertEqual(upserted_host_policy["echo_payload"]["policy"]["host"], "api.notion.com")
+        self.assertEqual(removed_host_policy["echo_method"], "remove_mcp_host_policy")
+        self.assertEqual(removed_host_policy["echo_payload"]["host"], "api.notion.com")
         self.assertEqual(diagnostics["echo_method"], "diagnostics")
         self.assertEqual(diagnostics["echo_payload"]["sections"], ["storage_summary", "journal_health"])
         self.assertEqual(maintenance["echo_method"], "run_maintenance")

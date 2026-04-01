@@ -12,11 +12,16 @@
     "test": "vitest run --dir src",
     "start": "node dist/main.js"
   },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
   "dependencies": {
     "@agentgit/action-normalizer": "workspace:*",
     "@agentgit/credential-broker": "workspace:*",
     "@agentgit/execution-adapters": "workspace:*",
     "@agentgit/integration-state": "workspace:*",
+    "@agentgit/mcp-registry": "workspace:*",
     "@agentgit/policy-engine": "workspace:*",
     "@agentgit/recovery-engine": "workspace:*",
     "@agentgit/run-journal": "workspace:*",

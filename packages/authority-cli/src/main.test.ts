@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash } from "node:crypto";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   formatArtifact,
@@ -6,9 +11,13 @@ import {
   formatDiagnostics,
   formatHelper,
   formatMaintenance,
+  formatMcpHostPolicies,
+  formatMcpSecrets,
+  formatMcpServers,
   formatRecoveryPlan,
   formatRunSummary,
   formatTimeline,
+  runCli,
 } from "./main.js";
 
 type TimelineResult = Parameters<typeof formatTimeline>[0];
@@ -182,6 +191,92 @@ describe("authority cli formatting", () => {
 
     expect(output).toContain("Primary reason: UNKNOWN_SCOPE_REQUIRES_APPROVAL");
     expect(output).toContain("Unknown scope requires approval before execution.");
+  });
+
+  it("formats governed MCP registry listings with transport and source details", () => {
+    const output = formatMcpServers({
+      servers: [
+        {
+          source: "operator_api",
+          created_at: "2026-03-31T12:00:00.000Z",
+          updated_at: "2026-03-31T12:05:00.000Z",
+          server: {
+            server_id: "notes_http",
+            display_name: "Notes HTTP server",
+            transport: "streamable_http",
+            url: "http://127.0.0.1:3010/mcp",
+            network_scope: "private",
+            max_concurrent_calls: 2,
+            auth: {
+              type: "bearer_env",
+              bearer_env_var: "AGENTGIT_TEST_MCP_HTTP_TOKEN",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(output).toContain("Local governed MCP servers");
+    expect(output).toContain("notes_http [streamable_http]");
+    expect(output).toContain("Source: operator_api");
+    expect(output).toContain("Transport target: http://127.0.0.1:3010/mcp");
+    expect(output).toContain("Network scope: private");
+    expect(output).toContain("Max concurrent calls: 2");
+  });
+
+  it("formats governed MCP secret listings without exposing secret values", () => {
+    const output = formatMcpSecrets({
+      secrets: [
+        {
+          secret_id: "mcp_secret_notion",
+          display_name: "Notion MCP",
+          auth_type: "bearer",
+          status: "active",
+          version: 3,
+          created_at: "2026-03-31T12:00:00.000Z",
+          updated_at: "2026-03-31T12:05:00.000Z",
+          rotated_at: "2026-03-31T12:05:00.000Z",
+          last_used_at: "2026-03-31T12:06:00.000Z",
+          source: "operator_api",
+        },
+      ],
+    });
+
+    expect(output).toContain("Governed MCP secrets");
+    expect(output).toContain("mcp_secret_notion [bearer]");
+    expect(output).toContain("Version: 3");
+    expect(output).toContain("Last used: 2026-03-31T12:06:00.000Z");
+    expect(output).not.toContain("bearer_token");
+  });
+
+  it("formats governed MCP public host policy listings", () => {
+    const output = formatMcpHostPolicies({
+      policies: [
+        {
+          policy: {
+            host: "api.notion.com",
+            display_name: "Notion API",
+            allow_subdomains: false,
+            allowed_ports: [443],
+          },
+          source: "operator_api",
+          created_at: "2026-03-31T12:00:00.000Z",
+          updated_at: "2026-03-31T12:05:00.000Z",
+        },
+      ],
+    });
+
+    expect(output).toContain("Governed MCP public host policies");
+    expect(output).toContain("api.notion.com");
+    expect(output).toContain("Allow subdomains: no");
+    expect(output).toContain("Allowed ports: 443");
   });
 
   it("formats structured recovery downgrade reasons in timeline and recovery plan output", () => {
@@ -594,5 +689,398 @@ describe("authority cli formatting", () => {
     const output = formatTimeline(timeline);
     expect(output).toContain("Recovery target: branch_point (branch point run_cli#7)");
     expect(output).toContain("Recovery scope: src/config.json, README.md");
+  });
+});
+
+async function captureCliRun(argv: string[], client: Record<string, unknown>): Promise<{ stdout: string; stderr: string }> {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const stdoutSpy = vi.spyOn(console, "log").mockImplementation((value?: unknown) => {
+    stdout.push(typeof value === "string" ? value : JSON.stringify(value));
+  });
+  const stderrSpy = vi.spyOn(console, "error").mockImplementation((value?: unknown) => {
+    stderr.push(typeof value === "string" ? value : JSON.stringify(value));
+  });
+
+  try {
+    await runCli(argv, client as never);
+    return {
+      stdout: stdout.join("\n"),
+      stderr: stderr.join("\n"),
+    };
+  } finally {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    process.exitCode = 0;
+  }
+}
+
+afterEach(() => {
+  process.exitCode = 0;
+});
+
+describe("authority cli commands", () => {
+  it("runs the list-mcp-secrets command end to end", async () => {
+    const output = await captureCliRun(["list-mcp-secrets"], {
+      listMcpSecrets: vi.fn().mockResolvedValue({
+        secrets: [
+          {
+            secret_id: "mcp_secret_notion",
+            display_name: "Notion MCP",
+            auth_type: "bearer",
+            status: "active",
+            version: 2,
+            created_at: "2026-03-31T12:00:00.000Z",
+            updated_at: "2026-03-31T12:05:00.000Z",
+            rotated_at: "2026-03-31T12:05:00.000Z",
+            last_used_at: null,
+            source: "operator_api",
+          },
+        ],
+      }),
+    });
+
+    expect(output.stderr).toBe("");
+    expect(output.stdout).toContain("Governed MCP secrets");
+    expect(output.stdout).toContain("mcp_secret_notion [bearer]");
+  });
+
+  it("runs the upsert-mcp-host-policy command end to end", async () => {
+    const client = {
+      upsertMcpHostPolicy: vi.fn().mockResolvedValue({
+        created: true,
+        policy: {
+          policy: {
+            host: "api.notion.com",
+            display_name: "Notion API",
+            allow_subdomains: false,
+            allowed_ports: [443],
+          },
+          source: "operator_api",
+          created_at: "2026-03-31T12:00:00.000Z",
+          updated_at: "2026-03-31T12:00:00.000Z",
+        },
+      }),
+    };
+
+    const output = await captureCliRun(
+      [
+        "upsert-mcp-host-policy",
+        JSON.stringify({
+          host: "api.notion.com",
+          display_name: "Notion API",
+          allow_subdomains: false,
+          allowed_ports: [443],
+        }),
+      ],
+      client,
+    );
+
+    expect(client.upsertMcpHostPolicy).toHaveBeenCalledWith({
+      host: "api.notion.com",
+      display_name: "Notion API",
+      allow_subdomains: false,
+      allowed_ports: [443],
+    });
+    expect(output.stdout).toContain("Registered MCP host policy api.notion.com");
+  });
+
+  it("runs the remove-mcp-secret command end to end", async () => {
+    const client = {
+      removeMcpSecret: vi.fn().mockResolvedValue({
+        removed: true,
+        removed_secret: {
+          secret_id: "mcp_secret_notion",
+        },
+      }),
+    };
+
+    const output = await captureCliRun(["remove-mcp-secret", "mcp_secret_notion"], client);
+
+    expect(client.removeMcpSecret).toHaveBeenCalledWith("mcp_secret_notion");
+    expect(output.stdout).toContain("Removed MCP secret mcp_secret_notion");
+  });
+
+  it("runs the submit-mcp-tool command end to end", async () => {
+    const client = {
+      submitActionAttempt: vi.fn().mockResolvedValue({
+        action: {
+          action_id: "act_mcp_cli",
+          operation: {
+            display_name: "Call MCP tool notes_stdio/echo_note",
+            name: "mcp.notes_stdio.echo_note",
+            domain: "mcp",
+          },
+          target: {
+            primary: {
+              locator: "mcp://server/notes_stdio/tools/echo_note",
+            },
+          },
+          actor: {
+            tool_name: "mcp_call_tool",
+            tool_kind: "mcp",
+          },
+          risk_hints: {
+            side_effect_level: "read_only",
+          },
+        },
+        policy_outcome: {
+          decision: "allow",
+          reasons: [],
+        },
+        approval_request: null,
+        snapshot_record: null,
+        execution_result: {
+          mode: "executed",
+          success: true,
+          execution_id: "exec_mcp_cli",
+          output: {
+            server_id: "notes_stdio",
+            tool_name: "echo_note",
+            summary: "echo:launch blocker",
+          },
+        },
+      }),
+    };
+
+    const output = await captureCliRun(
+      ["submit-mcp-tool", "run_cli", "notes_stdio", "echo_note", '{"note":"launch blocker"}'],
+      client,
+    );
+
+    expect(client.submitActionAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        run_id: "run_cli",
+        tool_registration: {
+          tool_name: "mcp_call_tool",
+          tool_kind: "mcp",
+        },
+        raw_call: {
+          server_id: "notes_stdio",
+          tool_name: "echo_note",
+          arguments: {
+            note: "launch blocker",
+          },
+        },
+      }),
+    );
+    expect(output.stdout).toContain("Operation: Call MCP tool notes_stdio/echo_note");
+    expect(output.stdout).toContain("Execution: executed successfully (exec_mcp_cli)");
+  });
+
+  it("runs the artifact-export command end to end without requesting truncated content", async () => {
+    const exportRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cli-export-unit-"));
+    const destinationPath = path.join(exportRoot, "artifact.txt");
+    const client = {
+      queryArtifact: vi.fn().mockResolvedValue({
+        artifact: {
+          artifact_id: "artifact_stdout_1",
+          run_id: "run_cli",
+          action_id: "act_cli",
+          execution_id: "exec_cli",
+          type: "stdout",
+          content_ref: "artifact://stdout/1",
+          byte_size: 18,
+          integrity: {
+            schema_version: "artifact-integrity.v1",
+            digest_algorithm: "sha256",
+            digest: "deadbeef",
+          },
+          visibility: "internal",
+          expires_at: null,
+          expired_at: null,
+          created_at: "2026-03-31T13:00:00.000Z",
+        },
+        artifact_status: "available",
+        visibility_scope: "internal",
+        content_available: true,
+        content: "full artifact body",
+        content_truncated: false,
+        returned_chars: 18,
+        max_inline_chars: 8192,
+      }),
+    };
+
+    try {
+      const output = await captureCliRun(["artifact-export", "artifact_stdout_1", destinationPath, "internal"], client);
+
+      expect(client.queryArtifact).toHaveBeenCalledWith("artifact_stdout_1", "internal", {
+        fullContent: true,
+      });
+      expect(fs.readFileSync(destinationPath, "utf8")).toBe("full artifact body");
+      expect(output.stdout).toContain("Exported artifact artifact_stdout_1");
+      expect(output.stdout).toContain(`Output path: ${destinationPath}`);
+    } finally {
+      fs.rmSync(exportRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the run-audit-export command end to end and writes a complete audit bundle", async () => {
+    const exportRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cli-audit-unit-"));
+    const outputDir = path.join(exportRoot, "bundle");
+    const client = {
+      getRunSummary: vi.fn().mockResolvedValue({
+        run: {
+          ...makeTimelineResult([]).run_summary,
+          run_id: "run_cli",
+        },
+      }),
+      queryTimeline: vi.fn().mockResolvedValue({
+        ...makeTimelineResult([
+          makeStep({
+            primary_artifacts: [
+              {
+                type: "stdout",
+                artifact_id: "artifact_stdout_1",
+                artifact_status: "available",
+              },
+            ],
+          }),
+        ]),
+        visibility_scope: "internal",
+      }),
+      listApprovals: vi.fn().mockResolvedValue({
+        approvals: [],
+      }),
+      queryApprovalInbox: vi.fn().mockResolvedValue({
+        counts: {
+          pending: 0,
+          approved: 0,
+          denied: 0,
+        },
+        items: [],
+      }),
+      diagnostics: vi.fn().mockResolvedValue({
+        daemon_health: {
+          status: "healthy",
+          active_sessions: 1,
+          active_runs: 1,
+          primary_reason: null,
+          warnings: [],
+        },
+      }),
+      queryArtifact: vi.fn().mockResolvedValue({
+        artifact: {
+          artifact_id: "artifact_stdout_1",
+          run_id: "run_cli",
+          action_id: "act_cli",
+          execution_id: "exec_cli",
+          type: "stdout",
+          content_ref: "artifact://stdout/1",
+          byte_size: 18,
+          integrity: {
+            schema_version: "artifact-integrity.v1",
+            digest_algorithm: "sha256",
+            digest: "deadbeef",
+          },
+          visibility: "internal",
+          expires_at: null,
+          expired_at: null,
+          created_at: "2026-03-31T13:00:00.000Z",
+        },
+        artifact_status: "available",
+        visibility_scope: "internal",
+        content_available: true,
+        content: "audit artifact body",
+        content_truncated: false,
+        returned_chars: 19,
+        max_inline_chars: 8192,
+      }),
+    };
+
+    try {
+      const output = await captureCliRun(["run-audit-export", "run_cli", outputDir, "internal"], client);
+
+      expect(client.getRunSummary).toHaveBeenCalledWith("run_cli");
+      expect(client.queryTimeline).toHaveBeenCalledWith("run_cli", "internal");
+      expect(client.listApprovals).toHaveBeenCalledWith({ run_id: "run_cli" });
+      expect(client.queryApprovalInbox).toHaveBeenCalledWith({ run_id: "run_cli" });
+      expect(client.queryArtifact).toHaveBeenCalledWith("artifact_stdout_1", "internal", {
+        fullContent: true,
+      });
+      expect(fs.existsSync(path.join(outputDir, "manifest.json"))).toBe(true);
+      expect(fs.existsSync(path.join(outputDir, "timeline.txt"))).toBe(true);
+      expect(fs.readFileSync(path.join(outputDir, "artifacts", "artifact_stdout_1.stdout.txt"), "utf8")).toBe(
+        "audit artifact body",
+      );
+      expect(output.stdout).toContain("Exported run audit bundle for run_cli");
+      expect(output.stdout).toContain("Artifacts exported: 1");
+    } finally {
+      fs.rmSync(exportRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the run-audit-verify command end to end and detects tampering", async () => {
+    const exportRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cli-audit-verify-unit-"));
+    const outputDir = path.join(exportRoot, "bundle");
+    const artifactDir = path.join(outputDir, "artifacts");
+    const artifactPath = path.join(artifactDir, "artifact_stdout_1.stdout.txt");
+    const artifactContent = "audit artifact body";
+    const artifactSha256 = createHash("sha256").update(artifactContent).digest("hex");
+
+    fs.mkdirSync(artifactDir, { recursive: true });
+    fs.writeFileSync(path.join(outputDir, "run-summary.json"), "{}", "utf8");
+    fs.writeFileSync(path.join(outputDir, "run-summary.txt"), "summary", "utf8");
+    fs.writeFileSync(path.join(outputDir, "timeline.json"), "{}", "utf8");
+    fs.writeFileSync(path.join(outputDir, "timeline.txt"), "timeline", "utf8");
+    fs.writeFileSync(path.join(outputDir, "approvals.json"), "{}", "utf8");
+    fs.writeFileSync(path.join(outputDir, "approvals.txt"), "approvals", "utf8");
+    fs.writeFileSync(path.join(outputDir, "approval-inbox.json"), "{}", "utf8");
+    fs.writeFileSync(path.join(outputDir, "approval-inbox.txt"), "inbox", "utf8");
+    fs.writeFileSync(path.join(outputDir, "diagnostics.json"), "{}", "utf8");
+    fs.writeFileSync(path.join(outputDir, "diagnostics.txt"), "diagnostics", "utf8");
+    fs.writeFileSync(artifactPath, artifactContent, "utf8");
+    fs.writeFileSync(
+      path.join(outputDir, "manifest.json"),
+      JSON.stringify(
+        {
+          run_id: "run_cli",
+          output_dir: outputDir,
+          visibility_scope: "internal",
+          exported_at: "2026-04-01T00:00:00.000Z",
+          files_written: [],
+          exported_artifacts: [
+            {
+              artifact_id: "artifact_stdout_1",
+              type: "stdout",
+              output_path: artifactPath,
+              relative_path: path.join("artifacts", "artifact_stdout_1.stdout.txt"),
+              bytes_written: Buffer.byteLength(artifactContent, "utf8"),
+              visibility_scope: "internal",
+              sha256: artifactSha256,
+              integrity_digest: artifactSha256,
+            },
+          ],
+          skipped_artifacts: [],
+          counts: {
+            timeline_steps: 1,
+            approvals: 0,
+            approval_inbox_items: 0,
+            exported_artifacts: 1,
+            skipped_artifacts: 0,
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    try {
+      const verifiedOutput = await captureCliRun(["run-audit-verify", outputDir], {});
+      expect(verifiedOutput.stderr).toBe("");
+      expect(verifiedOutput.stdout).toContain("Verified run audit bundle for run_cli");
+      expect(verifiedOutput.stdout).toContain("Audit bundle verified: yes");
+
+      fs.writeFileSync(artifactPath, "tampered", "utf8");
+
+      const tamperedOutput = await captureCliRun(["run-audit-verify", outputDir], {});
+      expect(tamperedOutput.stderr).toBe("");
+      expect(tamperedOutput.stdout).toContain("Audit bundle verified: no");
+      expect(tamperedOutput.stdout).toContain("ARTIFACT_SHA256_MISMATCH");
+      expect(tamperedOutput.stdout).toContain("ARTIFACT_INTEGRITY_MISMATCH");
+    } finally {
+      fs.rmSync(exportRoot, { recursive: true, force: true });
+    }
   });
 });

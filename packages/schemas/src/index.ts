@@ -18,6 +18,15 @@ export const DaemonMethodSchema = z.enum([
   "register_run",
   "get_run_summary",
   "get_capabilities",
+  "list_mcp_servers",
+  "upsert_mcp_server",
+  "remove_mcp_server",
+  "list_mcp_secrets",
+  "upsert_mcp_secret",
+  "remove_mcp_secret",
+  "list_mcp_host_policies",
+  "upsert_mcp_host_policy",
+  "remove_mcp_host_policy",
   "diagnostics",
   "run_maintenance",
   "submit_action_attempt",
@@ -273,6 +282,9 @@ export const GetCapabilitiesResponsePayloadSchema = z
   .strict();
 export type GetCapabilitiesResponsePayload = z.infer<typeof GetCapabilitiesResponsePayloadSchema>;
 
+export const McpRegistrySourceSchema = z.enum(["operator_api", "bootstrap_env"]);
+export type McpRegistrySource = z.infer<typeof McpRegistrySourceSchema>;
+
 export const DiagnosticsSectionSchema = z.enum([
   "daemon_health",
   "journal_health",
@@ -484,8 +496,10 @@ export const ReversibilityHintSchema = z.enum([
 export const SensitivityHintSchema = z.enum(["low", "moderate", "high", "unknown"]);
 export const ScopeBreadthSchema = z.enum(["single", "set", "workspace", "repository", "origin", "external", "unknown"]);
 
-export const McpServerTransportSchema = z.enum(["stdio"]);
+export const McpServerTransportSchema = z.enum(["stdio", "streamable_http"]);
 export type McpServerTransport = z.infer<typeof McpServerTransportSchema>;
+export const McpNetworkScopeSchema = z.enum(["loopback", "private", "public_https"]);
+export type McpNetworkScope = z.infer<typeof McpNetworkScopeSchema>;
 
 export const McpToolPolicySchema = z
   .object({
@@ -496,19 +510,234 @@ export const McpToolPolicySchema = z
   .strict();
 export type McpToolPolicy = z.infer<typeof McpToolPolicySchema>;
 
+export const McpStreamableHttpAuthSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("none"),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("bearer_env"),
+      bearer_env_var: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("bearer_secret_ref"),
+      secret_id: z.string().min(1),
+    })
+    .strict(),
+]);
+export type McpStreamableHttpAuth = z.infer<typeof McpStreamableHttpAuthSchema>;
+
 export const McpServerDefinitionSchema = z
+  .discriminatedUnion("transport", [
+    z
+      .object({
+        server_id: z.string().min(1),
+        display_name: z.string().min(1).optional(),
+        transport: z.literal("stdio"),
+        command: z.string().min(1),
+        args: z.array(z.string().min(1)).optional(),
+        cwd: z.string().min(1).optional(),
+        env: z.record(z.string(), z.string()).optional(),
+        timeout_ms: z.number().int().positive().optional(),
+        tools: z.array(McpToolPolicySchema).min(1),
+      })
+      .strict(),
+    z
+      .object({
+        server_id: z.string().min(1),
+        display_name: z.string().min(1).optional(),
+        transport: z.literal("streamable_http"),
+        url: z.string().url(),
+        headers: z.record(z.string(), z.string()).optional(),
+        network_scope: McpNetworkScopeSchema.optional(),
+        max_concurrent_calls: z.number().int().positive().optional(),
+        auth: McpStreamableHttpAuthSchema.optional(),
+        timeout_ms: z.number().int().positive().optional(),
+        tools: z.array(McpToolPolicySchema).min(1),
+      })
+      .strict(),
+  ]);
+export type McpServerDefinition = z.infer<typeof McpServerDefinitionSchema>;
+
+export const McpServerRegistrationRecordSchema = z
   .object({
-    server_id: z.string().min(1),
-    display_name: z.string().min(1).optional(),
-    transport: McpServerTransportSchema,
-    command: z.string().min(1),
-    args: z.array(z.string().min(1)).optional(),
-    cwd: z.string().min(1).optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    tools: z.array(McpToolPolicySchema).min(1),
+    server: McpServerDefinitionSchema,
+    source: McpRegistrySourceSchema,
+    created_at: TimestampStringSchema,
+    updated_at: TimestampStringSchema,
   })
   .strict();
-export type McpServerDefinition = z.infer<typeof McpServerDefinitionSchema>;
+export type McpServerRegistrationRecord = z.infer<typeof McpServerRegistrationRecordSchema>;
+
+export const ListMcpServersRequestPayloadSchema = z.object({}).strict();
+export type ListMcpServersRequestPayload = z.infer<typeof ListMcpServersRequestPayloadSchema>;
+
+export const ListMcpServersResponsePayloadSchema = z
+  .object({
+    servers: z.array(McpServerRegistrationRecordSchema),
+  })
+  .strict();
+export type ListMcpServersResponsePayload = z.infer<typeof ListMcpServersResponsePayloadSchema>;
+
+export const UpsertMcpServerRequestPayloadSchema = z
+  .object({
+    server: McpServerDefinitionSchema,
+  })
+  .strict();
+export type UpsertMcpServerRequestPayload = z.infer<typeof UpsertMcpServerRequestPayloadSchema>;
+
+export const UpsertMcpServerResponsePayloadSchema = z
+  .object({
+    server: McpServerRegistrationRecordSchema,
+    created: z.boolean(),
+  })
+  .strict();
+export type UpsertMcpServerResponsePayload = z.infer<typeof UpsertMcpServerResponsePayloadSchema>;
+
+export const RemoveMcpServerRequestPayloadSchema = z
+  .object({
+    server_id: z.string().min(1),
+  })
+  .strict();
+export type RemoveMcpServerRequestPayload = z.infer<typeof RemoveMcpServerRequestPayloadSchema>;
+
+export const RemoveMcpServerResponsePayloadSchema = z
+  .object({
+    removed: z.boolean(),
+    removed_server: McpServerRegistrationRecordSchema.nullable(),
+  })
+  .strict();
+export type RemoveMcpServerResponsePayload = z.infer<typeof RemoveMcpServerResponsePayloadSchema>;
+
+export const McpSecretInputSchema = z
+  .object({
+    secret_id: z.string().min(1),
+    display_name: z.string().min(1).optional(),
+    bearer_token: z.string().min(1),
+  })
+  .strict();
+export type McpSecretInput = z.infer<typeof McpSecretInputSchema>;
+
+export const McpSecretMetadataSchema = z
+  .object({
+    secret_id: z.string().min(1),
+    display_name: z.string().min(1).nullable(),
+    auth_type: z.literal("bearer"),
+    status: z.literal("active"),
+    version: z.number().int().positive(),
+    created_at: TimestampStringSchema,
+    updated_at: TimestampStringSchema,
+    rotated_at: TimestampStringSchema.nullable(),
+    last_used_at: TimestampStringSchema.nullable(),
+    source: z.literal("operator_api"),
+  })
+  .strict();
+export type McpSecretMetadata = z.infer<typeof McpSecretMetadataSchema>;
+
+export const ListMcpSecretsRequestPayloadSchema = z.object({}).strict();
+export type ListMcpSecretsRequestPayload = z.infer<typeof ListMcpSecretsRequestPayloadSchema>;
+
+export const ListMcpSecretsResponsePayloadSchema = z
+  .object({
+    secrets: z.array(McpSecretMetadataSchema),
+  })
+  .strict();
+export type ListMcpSecretsResponsePayload = z.infer<typeof ListMcpSecretsResponsePayloadSchema>;
+
+export const UpsertMcpSecretRequestPayloadSchema = z
+  .object({
+    secret: McpSecretInputSchema,
+  })
+  .strict();
+export type UpsertMcpSecretRequestPayload = z.infer<typeof UpsertMcpSecretRequestPayloadSchema>;
+
+export const UpsertMcpSecretResponsePayloadSchema = z
+  .object({
+    secret: McpSecretMetadataSchema,
+    created: z.boolean(),
+    rotated: z.boolean(),
+  })
+  .strict();
+export type UpsertMcpSecretResponsePayload = z.infer<typeof UpsertMcpSecretResponsePayloadSchema>;
+
+export const RemoveMcpSecretRequestPayloadSchema = z
+  .object({
+    secret_id: z.string().min(1),
+  })
+  .strict();
+export type RemoveMcpSecretRequestPayload = z.infer<typeof RemoveMcpSecretRequestPayloadSchema>;
+
+export const RemoveMcpSecretResponsePayloadSchema = z
+  .object({
+    removed: z.boolean(),
+    removed_secret: McpSecretMetadataSchema.nullable(),
+  })
+  .strict();
+export type RemoveMcpSecretResponsePayload = z.infer<typeof RemoveMcpSecretResponsePayloadSchema>;
+
+export const McpPublicHostPolicySchema = z
+  .object({
+    host: z.string().min(1),
+    display_name: z.string().min(1).optional(),
+    allow_subdomains: z.boolean().optional(),
+    allowed_ports: z.array(z.number().int().positive().max(65_535)).min(1).optional(),
+  })
+  .strict();
+export type McpPublicHostPolicy = z.infer<typeof McpPublicHostPolicySchema>;
+
+export const McpPublicHostPolicyRecordSchema = z
+  .object({
+    policy: McpPublicHostPolicySchema,
+    source: z.literal("operator_api"),
+    created_at: TimestampStringSchema,
+    updated_at: TimestampStringSchema,
+  })
+  .strict();
+export type McpPublicHostPolicyRecord = z.infer<typeof McpPublicHostPolicyRecordSchema>;
+
+export const ListMcpHostPoliciesRequestPayloadSchema = z.object({}).strict();
+export type ListMcpHostPoliciesRequestPayload = z.infer<typeof ListMcpHostPoliciesRequestPayloadSchema>;
+
+export const ListMcpHostPoliciesResponsePayloadSchema = z
+  .object({
+    policies: z.array(McpPublicHostPolicyRecordSchema),
+  })
+  .strict();
+export type ListMcpHostPoliciesResponsePayload = z.infer<typeof ListMcpHostPoliciesResponsePayloadSchema>;
+
+export const UpsertMcpHostPolicyRequestPayloadSchema = z
+  .object({
+    policy: McpPublicHostPolicySchema,
+  })
+  .strict();
+export type UpsertMcpHostPolicyRequestPayload = z.infer<typeof UpsertMcpHostPolicyRequestPayloadSchema>;
+
+export const UpsertMcpHostPolicyResponsePayloadSchema = z
+  .object({
+    policy: McpPublicHostPolicyRecordSchema,
+    created: z.boolean(),
+  })
+  .strict();
+export type UpsertMcpHostPolicyResponsePayload = z.infer<typeof UpsertMcpHostPolicyResponsePayloadSchema>;
+
+export const RemoveMcpHostPolicyRequestPayloadSchema = z
+  .object({
+    host: z.string().min(1),
+  })
+  .strict();
+export type RemoveMcpHostPolicyRequestPayload = z.infer<typeof RemoveMcpHostPolicyRequestPayloadSchema>;
+
+export const RemoveMcpHostPolicyResponsePayloadSchema = z
+  .object({
+    removed: z.boolean(),
+    removed_policy: McpPublicHostPolicyRecordSchema.nullable(),
+  })
+  .strict();
+export type RemoveMcpHostPolicyResponsePayload = z.infer<typeof RemoveMcpHostPolicyResponsePayloadSchema>;
 
 export const ActionRecordSchema = z
   .object({
@@ -739,6 +968,7 @@ export const QueryArtifactRequestPayloadSchema = z
   .object({
     artifact_id: z.string().min(1),
     visibility_scope: VisibilityScopeSchema.optional(),
+    full_content: z.boolean().optional(),
   })
   .strict();
 export type QueryArtifactRequestPayload = z.infer<typeof QueryArtifactRequestPayloadSchema>;

@@ -1,5 +1,5 @@
 {
-  "name": "@agentgit/credential-broker",
+  "name": "@agentgit/mcp-registry",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,9 +11,11 @@
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "test": "vitest run --dir src"
   },
+  "devDependencies": {
+    "@agentgit/test-fixtures": "workspace:*"
+  },
   "dependencies": {
     "@agentgit/integration-state": "workspace:*",
-    "@agentgit/schemas": "workspace:*",
-    "uuid": "^13.0.0"
+    "@agentgit/schemas": "workspace:*"
   }
 }

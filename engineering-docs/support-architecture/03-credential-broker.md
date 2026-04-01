@@ -1,5 +1,11 @@
 # 03. Credential Broker
 
+Status note:
+
+- current runtime reality is a local encrypted MCP bearer-secret store plus legacy session-env ticket profiles
+- operator-managed MCP secret rotation metadata is real today
+- OS-native secure store integration is still future work, so this document includes planned posture beyond the current shipped slice
+
 ## Working Thesis
 
 The credential broker should expose scoped runtime handles to owned integrations while keeping raw secrets out of agent-visible paths and general-purpose application storage.

@@ -18,6 +18,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@agentgit/credential-broker": "workspace:*",
     "@agentgit/integration-state": "workspace:*",
+    "@agentgit/mcp-registry": "workspace:*",
     "@agentgit/schemas": "workspace:*",
     "zod": "^4.3.6"
   }

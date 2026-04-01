@@ -4,8 +4,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 
-import { SessionCredentialBroker } from "@agentgit/credential-broker";
+import { LocalEncryptedSecretStore, SessionCredentialBroker } from "@agentgit/credential-broker";
 import { IntegrationState } from "@agentgit/integration-state";
 import type { ActionRecord, PolicyOutcomeRecord } from "@agentgit/schemas";
 import { createTempDirTracker } from "@agentgit/test-fixtures";
@@ -414,6 +417,151 @@ async function startTicketService(options: {
       ticketServers.delete(server);
     },
     requests,
+  };
+}
+
+async function startMcpHttpService(options: {
+  requireBearerToken?: string;
+  scenario?: "default" | "missing_tool" | "call_error";
+  toolDelayMs?: number;
+} = {}): Promise<{
+  url: string;
+  close: () => Promise<void>;
+  waitForCallCount: (count: number) => Promise<void>;
+}> {
+  let startedCallCount = 0;
+  const waiters: Array<{ count: number; resolve: () => void }> = [];
+
+  const notifyWaiters = () => {
+    for (let index = waiters.length - 1; index >= 0; index -= 1) {
+      if (startedCallCount >= waiters[index]!.count) {
+        waiters.splice(index, 1)[0]!.resolve();
+      }
+    }
+  };
+
+  const server = http.createServer(async (req, res) => {
+    if (options.requireBearerToken && req.headers.authorization !== `Bearer ${options.requireBearerToken}`) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
+            message: "Unauthorized",
+          },
+          id: null,
+        }),
+      );
+      return;
+    }
+
+    const mcpServer = new McpServer({
+      name: "agentgit-test-http-mcp-server",
+      version: "1.0.0",
+    });
+    const scenario = options.scenario ?? "default";
+
+    if (scenario === "missing_tool") {
+      mcpServer.registerTool(
+        "other_tool",
+        {
+          description: "A different tool than requested.",
+          inputSchema: {
+            note: z.string(),
+          },
+          annotations: {
+            readOnlyHint: true,
+          },
+        },
+        async ({ note }) => ({
+          content: [{ type: "text", text: `other:${note}` }],
+        }),
+      );
+    } else {
+      mcpServer.registerTool(
+        "echo_note",
+        {
+          description: "Echo a note back to the caller.",
+          inputSchema: {
+            note: z.string(),
+          },
+          annotations: {
+            readOnlyHint: true,
+          },
+        },
+        async ({ note }) => {
+          startedCallCount += 1;
+          notifyWaiters();
+          if ((options.toolDelayMs ?? 0) > 0) {
+            await new Promise((resolve) => setTimeout(resolve, options.toolDelayMs));
+          }
+
+          if (scenario === "call_error") {
+            return {
+              isError: true,
+              content: [{ type: "text", text: `http-upstream-error:${note}` }],
+            };
+          }
+
+          return {
+            content: [{ type: "text", text: `http-echo:${note}` }],
+            structuredContent: { echoed_note: note },
+          };
+        },
+      );
+    }
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+
+    try {
+      await mcpServer.connect(transport);
+      if (req.method === "POST") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const bodyText = Buffer.concat(chunks).toString("utf8");
+        await transport.handleRequest(req, res, bodyText.length > 0 ? JSON.parse(bodyText) : undefined);
+      } else {
+        await transport.handleRequest(req, res);
+      }
+    } finally {
+      res.on("close", () => {
+        void transport.close().catch(() => undefined);
+        void mcpServer.close().catch(() => undefined);
+      });
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+    server.once("error", reject);
+  });
+  ticketServers.add(server);
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("MCP HTTP service did not start with a TCP address.");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp`,
+    close: async () => {
+      await closeTicketServer(server);
+      ticketServers.delete(server);
+    },
+    waitForCallCount: async (count: number) => {
+      if (startedCallCount >= count) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        waiters.push({ count, resolve });
+      });
+    },
   };
 }
 
@@ -4195,6 +4343,165 @@ describe("OwnedNoteStore", () => {
     expect(result.artifacts.map((artifact) => artifact.type)).toContain("stderr");
   });
 
+  it("executes a governed MCP streamable_http tool call with operator-owned bearer auth", async () => {
+    const service = await startMcpHttpService({
+      requireBearerToken: "http-secret-token",
+    });
+    process.env.AGENTGIT_TEST_MCP_HTTP_TOKEN = "http-secret-token";
+
+    try {
+      const adapter = new McpExecutionAdapter([
+        {
+          server_id: "notes_http",
+          display_name: "Notes HTTP server",
+          transport: "streamable_http",
+          url: service.url,
+          network_scope: "private",
+          max_concurrent_calls: 2,
+          auth: {
+            type: "bearer_env",
+            bearer_env_var: "AGENTGIT_TEST_MCP_HTTP_TOKEN",
+          },
+          headers: {
+            "x-agentgit-origin": "test",
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]);
+      const action = makeMcpAction({
+        facets: {
+          mcp: {
+            server_id: "notes_http",
+            tool_name: "echo_note",
+          },
+        },
+      });
+      const policyOutcome = makeMcpPolicyOutcome(action);
+
+      await adapter.verifyPreconditions({
+        action,
+        policy_outcome: policyOutcome,
+        workspace_root: process.cwd(),
+      });
+      const result = await adapter.execute({
+        action,
+        policy_outcome: policyOutcome,
+        workspace_root: process.cwd(),
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toMatchObject({
+        domain: "mcp",
+        server_id: "notes_http",
+        tool_name: "echo_note",
+        transport: "streamable_http",
+        network_scope: "private",
+        max_concurrent_calls: 2,
+        is_error: false,
+        summary: "http-echo:launch blocker",
+      });
+      expect(result.artifacts.map((artifact) => artifact.type)).toContain("request_response");
+    } finally {
+      delete process.env.AGENTGIT_TEST_MCP_HTTP_TOKEN;
+      await service.close();
+    }
+  });
+
+  it("executes a governed MCP streamable_http tool call with a durable bearer secret reference", async () => {
+    const service = await startMcpHttpService({
+      requireBearerToken: "http-secret-ref-token",
+    });
+    const secretsRoot = tempDirs.make();
+    const secretStore = trackStore(
+      new LocalEncryptedSecretStore({
+        dbPath: path.join(secretsRoot, "mcp-secrets.db"),
+        keyPath: path.join(secretsRoot, "mcp-secrets.key"),
+      }),
+    );
+    const broker = new SessionCredentialBroker({
+      mcpSecretStore: secretStore,
+    });
+    broker.upsertMcpBearerSecret({
+      secret_id: "mcp_secret_notes_http",
+      display_name: "Notes HTTP MCP",
+      bearer_token: "http-secret-ref-token",
+    });
+
+    try {
+      const adapter = new McpExecutionAdapter(
+        [
+          {
+            server_id: "notes_http_secret_ref",
+            display_name: "Notes HTTP server",
+            transport: "streamable_http",
+            url: service.url,
+            network_scope: "private",
+            auth: {
+              type: "bearer_secret_ref",
+              secret_id: "mcp_secret_notes_http",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        ],
+        {
+          credentialBroker: broker,
+        },
+      );
+      const action = makeMcpAction({
+        facets: {
+          mcp: {
+            server_id: "notes_http_secret_ref",
+            tool_name: "echo_note",
+          },
+        },
+      });
+      const policyOutcome = makeMcpPolicyOutcome(action);
+
+      await adapter.verifyPreconditions({
+        action,
+        policy_outcome: policyOutcome,
+        workspace_root: process.cwd(),
+      });
+      const result = await adapter.execute({
+        action,
+        policy_outcome: policyOutcome,
+        workspace_root: process.cwd(),
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output).toMatchObject({
+        domain: "mcp",
+        server_id: "notes_http_secret_ref",
+        tool_name: "echo_note",
+        transport: "streamable_http",
+        auth_type: "bearer_secret_ref",
+        network_scope: "private",
+        is_error: false,
+        summary: "http-echo:launch blocker",
+      });
+      expect(broker.listMcpBearerSecrets()).toEqual([
+        expect.objectContaining({
+          secret_id: "mcp_secret_notes_http",
+          last_used_at: expect.any(String),
+        }),
+      ]);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("fails closed when the upstream MCP server does not advertise the requested tool", async () => {
     const adapter = new McpExecutionAdapter([
       {
@@ -4280,5 +4587,230 @@ describe("OwnedNoteStore", () => {
         },
       ]),
     ).toThrow("Only explicitly read-only MCP tools can be auto-approved in the governed runtime.");
+  });
+
+  it("fails closed before execution when a streamable_http MCP bearer env var is missing", async () => {
+    delete process.env.AGENTGIT_TEST_MCP_HTTP_TOKEN;
+    const adapter = new McpExecutionAdapter([
+      {
+        server_id: "notes_http",
+        transport: "streamable_http",
+        url: "http://127.0.0.1:3010/mcp",
+        auth: {
+          type: "bearer_env",
+          bearer_env_var: "AGENTGIT_TEST_MCP_HTTP_TOKEN",
+        },
+        tools: [
+          {
+            tool_name: "echo_note",
+            side_effect_level: "read_only",
+            approval_mode: "allow",
+          },
+        ],
+      },
+    ]);
+    const action = makeMcpAction({
+      facets: {
+        mcp: {
+          server_id: "notes_http",
+          tool_name: "echo_note",
+        },
+      },
+    });
+
+    await expect(
+      adapter.verifyPreconditions({
+        action,
+        policy_outcome: makeMcpPolicyOutcome(action),
+        workspace_root: process.cwd(),
+      }),
+    ).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+    });
+  });
+
+  it("accepts explicitly private-network streamable_http targets with concurrency settings", () => {
+    expect(
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_private_http",
+          transport: "streamable_http",
+          url: "http://10.24.3.11:3010/mcp",
+          network_scope: "private",
+          max_concurrent_calls: 3,
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        server_id: "notes_private_http",
+        transport: "streamable_http",
+        url: "http://10.24.3.11:3010/mcp",
+        network_scope: "private",
+        max_concurrent_calls: 3,
+      }),
+    ]);
+  });
+
+  it("accepts explicitly public HTTPS streamable_http targets with bearer auth", () => {
+    expect(
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_public_http",
+          transport: "streamable_http",
+          url: "https://api.example.com/mcp",
+          network_scope: "public_https",
+          auth: {
+            type: "bearer_env",
+            bearer_env_var: "AGENTGIT_PUBLIC_MCP_TOKEN",
+          },
+          max_concurrent_calls: 2,
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        server_id: "notes_public_http",
+        transport: "streamable_http",
+        url: "https://api.example.com/mcp",
+        network_scope: "public_https",
+        max_concurrent_calls: 2,
+      }),
+    ]);
+  });
+
+  it("rejects public HTTPS streamable_http targets without operator bearer auth", () => {
+    expect(() =>
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_public_http_no_auth",
+          transport: "streamable_http",
+          url: "https://api.example.com/mcp",
+          network_scope: "public_https",
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toThrow("requires operator-managed bearer authentication backed by a secret reference or legacy env configuration");
+  });
+
+  it("fails closed when streamable_http MCP concurrency would exceed the configured limit", async () => {
+    const service = await startMcpHttpService({
+      toolDelayMs: 200,
+    });
+
+    try {
+      const adapter = new McpExecutionAdapter([
+        {
+          server_id: "notes_http",
+          transport: "streamable_http",
+          url: service.url,
+          max_concurrent_calls: 1,
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]);
+
+      const firstAction = makeMcpAction({
+        action_id: "act_mcp_concurrent_1",
+        facets: {
+          mcp: {
+            server_id: "notes_http",
+            tool_name: "echo_note",
+          },
+        },
+        input: {
+          raw: {
+            server_id: "notes_http",
+            tool_name: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          },
+          redacted: {
+            server_id: "notes_http",
+            tool_name: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          },
+          schema_ref: null,
+          contains_sensitive_data: false,
+        },
+      });
+      const secondAction = makeMcpAction({
+        action_id: "act_mcp_concurrent_2",
+        facets: {
+          mcp: {
+            server_id: "notes_http",
+            tool_name: "echo_note",
+          },
+        },
+        input: {
+          raw: {
+            server_id: "notes_http",
+            tool_name: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          },
+          redacted: {
+            server_id: "notes_http",
+            tool_name: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          },
+          schema_ref: null,
+          contains_sensitive_data: false,
+        },
+      });
+      const firstExecution = adapter.execute({
+        action: firstAction,
+        policy_outcome: makeMcpPolicyOutcome(firstAction),
+        workspace_root: process.cwd(),
+      });
+
+      await service.waitForCallCount(1);
+
+      await expect(
+        adapter.execute({
+          action: secondAction,
+          policy_outcome: makeMcpPolicyOutcome(secondAction),
+          workspace_root: process.cwd(),
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        retryable: true,
+      });
+
+      await expect(firstExecution).resolves.toMatchObject({
+        success: true,
+      });
+    } finally {
+      await service.close();
+    }
   });
 });

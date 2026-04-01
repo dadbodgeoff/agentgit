@@ -299,6 +299,260 @@ describe("AuthorityClient transport", () => {
     expect(seenRequests.find((request) => request.method === "execute_recovery")?.idempotency_key).toBe("idem_recover");
   });
 
+  it("sends MCP registry management requests with the expected methods and payloads", async () => {
+    const harness = createHarness();
+    const seenRequests: Array<Record<string, unknown>> = [];
+
+    await startJsonServer(harness, (request, socket) => {
+      seenRequests.push(request);
+      const method = request.method;
+      const result =
+        method === "hello"
+          ? {
+              session_id: "sess_test",
+              accepted_api_version: API_VERSION,
+              runtime_version: "0.1.0",
+              schema_pack_version: "schema-pack.v1",
+              capabilities: {
+                local_only: true,
+                methods: ["hello", "list_mcp_servers", "upsert_mcp_server", "remove_mcp_server"],
+              },
+            }
+          : method === "list_mcp_servers"
+            ? {
+                servers: [],
+              }
+            : method === "upsert_mcp_server"
+              ? {
+                  created: true,
+                  server: {
+                    source: "operator_api",
+                    created_at: "2026-03-31T12:00:00.000Z",
+                    updated_at: "2026-03-31T12:00:00.000Z",
+                    server: (request.payload as { server: Record<string, unknown> }).server,
+                  },
+                }
+              : {
+                  removed: true,
+                  removed_server: {
+                    source: "operator_api",
+                    created_at: "2026-03-31T12:00:00.000Z",
+                    updated_at: "2026-03-31T12:00:00.000Z",
+                    server: {
+                      server_id: "notes_http",
+                      transport: "streamable_http",
+                      url: "http://127.0.0.1:3010/mcp",
+                      tools: [],
+                    },
+                  },
+                };
+
+      socket.write(
+        `${JSON.stringify({
+          api_version: API_VERSION,
+          request_id: request.request_id,
+          session_id: request.session_id ?? "sess_test",
+          ok: true,
+          result,
+          error: null,
+        })}\n`,
+      );
+      socket.end();
+    });
+
+    const client = new AuthorityClient({
+      socketPath: harness.socketPath,
+      connectTimeoutMs: 50,
+      responseTimeoutMs: 100,
+      maxConnectRetries: 0,
+    });
+
+    await client.listMcpServers();
+    await client.upsertMcpServer(
+      {
+        server_id: "notes_http",
+        transport: "streamable_http",
+        url: "http://127.0.0.1:3010/mcp",
+        tools: [
+          {
+            tool_name: "echo_note",
+            side_effect_level: "read_only",
+            approval_mode: "allow",
+          },
+        ],
+      },
+      { idempotencyKey: "idem_mcp_upsert" },
+    );
+    await client.removeMcpServer("notes_http", { idempotencyKey: "idem_mcp_remove" });
+
+    expect(seenRequests.find((request) => request.method === "list_mcp_servers")?.payload).toEqual({});
+    expect(seenRequests.find((request) => request.method === "upsert_mcp_server")?.idempotency_key).toBe("idem_mcp_upsert");
+    expect(seenRequests.find((request) => request.method === "remove_mcp_server")?.payload).toEqual({
+      server_id: "notes_http",
+    });
+  });
+
+  it("sends MCP secret and host-policy management requests with the expected methods and payloads", async () => {
+    const harness = createHarness();
+    const seenRequests: Array<Record<string, unknown>> = [];
+
+    await startJsonServer(harness, (request, socket) => {
+      seenRequests.push(request);
+      const method = request.method;
+      const result =
+        method === "hello"
+          ? {
+              session_id: "sess_test",
+              accepted_api_version: API_VERSION,
+              runtime_version: "0.1.0",
+              schema_pack_version: "schema-pack.v1",
+              capabilities: {
+                local_only: true,
+                methods: [
+                  "hello",
+                  "list_mcp_secrets",
+                  "upsert_mcp_secret",
+                  "remove_mcp_secret",
+                  "list_mcp_host_policies",
+                  "upsert_mcp_host_policy",
+                  "remove_mcp_host_policy",
+                ],
+              },
+            }
+          : method === "list_mcp_secrets"
+            ? {
+                secrets: [],
+              }
+            : method === "upsert_mcp_secret"
+              ? {
+                  created: true,
+                  rotated: false,
+                  secret: {
+                    secret_id: "mcp_secret_notion",
+                    display_name: "Notion MCP",
+                    auth_type: "bearer",
+                    status: "active",
+                    version: 1,
+                    created_at: "2026-03-31T12:00:00.000Z",
+                    updated_at: "2026-03-31T12:00:00.000Z",
+                    rotated_at: null,
+                    last_used_at: null,
+                    source: "operator_api",
+                  },
+                }
+              : method === "remove_mcp_secret"
+                ? {
+                    removed: true,
+                    removed_secret: {
+                      secret_id: "mcp_secret_notion",
+                      display_name: "Notion MCP",
+                      auth_type: "bearer",
+                      status: "active",
+                      version: 1,
+                      created_at: "2026-03-31T12:00:00.000Z",
+                      updated_at: "2026-03-31T12:00:00.000Z",
+                      rotated_at: null,
+                      last_used_at: null,
+                      source: "operator_api",
+                    },
+                  }
+                : method === "list_mcp_host_policies"
+                  ? {
+                      policies: [],
+                    }
+                  : method === "upsert_mcp_host_policy"
+                    ? {
+                        created: true,
+                        policy: {
+                          policy: {
+                            host: "api.notion.com",
+                            display_name: "Notion API",
+                            allow_subdomains: false,
+                            allowed_ports: [443],
+                          },
+                          source: "operator_api",
+                          created_at: "2026-03-31T12:00:00.000Z",
+                          updated_at: "2026-03-31T12:00:00.000Z",
+                        },
+                      }
+                    : {
+                        removed: true,
+                        removed_policy: {
+                          policy: {
+                            host: "api.notion.com",
+                            display_name: "Notion API",
+                            allow_subdomains: false,
+                            allowed_ports: [443],
+                          },
+                          source: "operator_api",
+                          created_at: "2026-03-31T12:00:00.000Z",
+                          updated_at: "2026-03-31T12:00:00.000Z",
+                        },
+                      };
+
+      socket.write(
+        `${JSON.stringify({
+          api_version: API_VERSION,
+          request_id: request.request_id,
+          session_id: request.session_id ?? "sess_test",
+          ok: true,
+          result,
+          error: null,
+        })}\n`,
+      );
+      socket.end();
+    });
+
+    const client = new AuthorityClient({
+      socketPath: harness.socketPath,
+      connectTimeoutMs: 50,
+      responseTimeoutMs: 100,
+      maxConnectRetries: 0,
+    });
+
+    await client.listMcpSecrets();
+    await client.upsertMcpSecret(
+      {
+        secret_id: "mcp_secret_notion",
+        display_name: "Notion MCP",
+        bearer_token: "redacted-in-transport-test",
+      },
+      { idempotencyKey: "idem_mcp_secret_upsert" },
+    );
+    await client.removeMcpSecret("mcp_secret_notion", { idempotencyKey: "idem_mcp_secret_remove" });
+    await client.listMcpHostPolicies();
+    await client.upsertMcpHostPolicy(
+      {
+        host: "api.notion.com",
+        display_name: "Notion API",
+        allow_subdomains: false,
+        allowed_ports: [443],
+      },
+      { idempotencyKey: "idem_mcp_host_upsert" },
+    );
+    await client.removeMcpHostPolicy("api.notion.com", { idempotencyKey: "idem_mcp_host_remove" });
+
+    expect(seenRequests.find((request) => request.method === "list_mcp_secrets")?.payload).toEqual({});
+    expect(seenRequests.find((request) => request.method === "upsert_mcp_secret")?.idempotency_key).toBe(
+      "idem_mcp_secret_upsert",
+    );
+    expect(seenRequests.find((request) => request.method === "remove_mcp_secret")?.payload).toEqual({
+      secret_id: "mcp_secret_notion",
+    });
+    expect(seenRequests.find((request) => request.method === "list_mcp_host_policies")?.payload).toEqual({});
+    expect(seenRequests.find((request) => request.method === "upsert_mcp_host_policy")?.payload).toEqual({
+      policy: {
+        host: "api.notion.com",
+        display_name: "Notion API",
+        allow_subdomains: false,
+        allowed_ports: [443],
+      },
+    });
+    expect(seenRequests.find((request) => request.method === "remove_mcp_host_policy")?.idempotency_key).toBe(
+      "idem_mcp_host_remove",
+    );
+  });
+
   it("normalizes action-boundary recovery targets for the daemon", async () => {
     const harness = createHarness();
     const seenRequests: Array<Record<string, unknown>> = [];
@@ -698,7 +952,7 @@ describe("AuthorityClient transport", () => {
 
     await client.queryTimeline("run_vis", "internal");
     await client.queryHelper("run_vis", "step_details", "step_1", undefined, "sensitive_internal");
-    await client.queryArtifact("artifact_1", "internal");
+    await client.queryArtifact("artifact_1", "internal", { fullContent: true });
     await client.getCapabilities("/tmp/workspace");
     await client.diagnostics(["storage_summary", "journal_health"]);
     await client.runMaintenance(["artifact_expiry", "sqlite_wal_checkpoint"], {
@@ -727,6 +981,7 @@ describe("AuthorityClient transport", () => {
     expect(artifactRequest?.payload).toEqual({
       artifact_id: "artifact_1",
       visibility_scope: "internal",
+      full_content: true,
     });
     expect(capabilitiesRequest?.payload).toEqual({
       workspace_root: "/tmp/workspace",

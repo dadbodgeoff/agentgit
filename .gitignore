@@ -4,4 +4,7 @@ dist
 .DS_Store
 .agentgit
 *.tsbuildinfo
-
+__pycache__
+*.pyc
+packages/authority-daemon/.dt
+packages/authority-daemon/.tmp-daemon-tests

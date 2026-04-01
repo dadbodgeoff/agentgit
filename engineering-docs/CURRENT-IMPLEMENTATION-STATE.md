@@ -41,6 +41,9 @@ The repo has real durable local state, not an in-memory demo:
 - SQLite-backed run journal
 - durable artifact storage and artifact integrity state
 - SQLite-backed owned integration state
+- SQLite-backed MCP registry state
+- SQLite-backed MCP public host policy state
+- durable local encrypted MCP secret state with rotation metadata
 - persisted workspace snapshot metadata
 - daemon restart reconciliation
 - request idempotency for mutating daemon methods
@@ -58,6 +61,7 @@ The launch-owned governed pipeline is real for these execution domains:
 
 - `filesystem`
 - `shell`
+- `mcp`
 - owned `function` integrations
 
 The real execution adapters live in:
@@ -123,12 +127,15 @@ If we describe the repo conservatively and truthfully, the following surface is 
 - local-first daemon-based governance
 - governed filesystem mutations
 - governed shell mutations
+- governed MCP proxy execution for operator-managed servers and configured tools over `stdio` and `streamable_http` with explicit `loopback`, `private`, or `public_https` network scope
+- daemon/CLI/SDK management of MCP servers, MCP bearer secrets, and MCP public host policies
+- first-class CLI submission of governed MCP tool calls through the daemon
 - owned function integrations for drafts, notes, and tickets
 - snapshot-backed local recovery
 - compensating recovery for owned integrations
 - journaled approvals, diagnostics, helper, and timeline views
 - inline maintenance and startup reconciliation
-- TypeScript/Python SDK access to the daemon
+- TypeScript/Python SDK access to the daemon, including MCP server/secret/host-policy management
 
 ## Explicitly Unsupported Or De-Scoped Launch Surfaces
 
@@ -173,7 +180,8 @@ If the goal is a strict day-one production claim, define the supported surface a
 - CLI and inspector UI
 - filesystem governance
 - shell governance
-- governed MCP proxy execution for operator-registered stdio servers and configured tools
+- governed MCP proxy execution for operator-managed servers and configured tools over `stdio` and `streamable_http` with explicit `loopback`, `private`, or `public_https` network scope
+- first-class CLI invocation of governed MCP tools once operators have registered the server/secret/policy surface
 - owned draft/note/ticket integrations
 - snapshot-backed and compensating recovery
 - timeline/helper/diagnostics/maintenance
@@ -182,7 +190,6 @@ And explicitly exclude from the production claim until built:
 
 - governed browser/computer execution
 - generic governed HTTP adapter
-- Streamable HTTP MCP transport
 - hosted MCP execution
 - arbitrary remote MCP server registration from agent or user input
 - durable queued worker architecture
@@ -199,8 +206,8 @@ The repo is no longer a scaffold. It is a substantial, working local-first autho
 
 For the current launch scope, the code and docs now line up cleanly:
 
-- supported governed execution is real for filesystem, shell, owned function integrations, and operator-registered stdio MCP tools
+- supported governed execution is real for filesystem, shell, owned function integrations, and operator-managed MCP tools over `stdio` and `streamable_http`
 - unsupported governed surfaces fail closed instead of simulating
-- browser/computer, generic HTTP, Streamable HTTP MCP, hosted MCP, and durable workers are excluded from launch truth until they are actually built
+- browser/computer, generic HTTP, hosted MCP, arbitrary remote agent/user registration, and durable workers are excluded from launch truth until they are actually built
 
-The current MCP claim is intentionally narrow: operator-owned stdio registry, `tools/list`, `tools/call`, direct-credential denial, and approval-first mutation policy are real today. Streamable HTTP transport and broader MCP surfaces remain future work.
+The current MCP claim is still intentionally controlled: operator-owned durable registry state, durable local encrypted bearer-secret storage with rotation metadata, daemon/CLI/SDK management of servers/secrets/public-host policies, `tools/list`, `tools/call`, direct-credential denial, approval-first mutation policy, and per-server concurrency limits are real today. `streamable_http` is supported for explicit operator-managed `loopback`, `private`, and `public_https` targets alongside `stdio`, with public HTTPS requiring `https`, an explicit host allowlist policy, and governed bearer auth via either durable `bearer_secret_ref` or legacy `bearer_env`, with secret refs now the production path and env auth remaining a degraded compatibility path. Hosted MCP execution and arbitrary remote registration from agent or user input remain future work.

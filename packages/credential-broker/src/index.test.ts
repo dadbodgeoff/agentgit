@@ -1,6 +1,18 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-import { SessionCredentialBroker } from "./index.js";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { LocalEncryptedSecretStore, SessionCredentialBroker } from "./index.js";
+
+const dirs: string[] = [];
+
+afterEach(() => {
+  while (dirs.length > 0) {
+    fs.rmSync(dirs.pop()!, { recursive: true, force: true });
+  }
+});
 
 describe("SessionCredentialBroker", () => {
   it("registers and resolves brokered bearer access without exposing token metadata", () => {
@@ -54,5 +66,47 @@ describe("SessionCredentialBroker", () => {
         required_scope: "tickets:write",
       }),
     ).toThrow("required scope");
+  });
+
+  it("stores, rotates, and resolves MCP bearer secrets without listing the raw token", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-credential-broker-"));
+    dirs.push(root);
+    const broker = new SessionCredentialBroker({
+      mcpSecretStore: new LocalEncryptedSecretStore({
+        dbPath: path.join(root, "mcp-secrets.db"),
+        keyPath: path.join(root, "mcp-secrets.key"),
+      }),
+    });
+
+    const created = broker.upsertMcpBearerSecret({
+      secret_id: "mcp_secret_notion",
+      display_name: "Notion MCP",
+      bearer_token: "secret-token-v1",
+    });
+    expect(created.created).toBe(true);
+    expect(created.rotated).toBe(false);
+    expect(created.secret.version).toBe(1);
+
+    const rotated = broker.upsertMcpBearerSecret({
+      secret_id: "mcp_secret_notion",
+      display_name: "Notion MCP",
+      bearer_token: "secret-token-v2",
+    });
+    expect(rotated.created).toBe(false);
+    expect(rotated.rotated).toBe(true);
+    expect(rotated.secret.version).toBe(2);
+
+    const listed = broker.listMcpBearerSecrets();
+    expect(listed).toEqual([
+      expect.objectContaining({
+        secret_id: "mcp_secret_notion",
+        version: 2,
+      }),
+    ]);
+    expect(JSON.stringify(listed)).not.toContain("secret-token-v2");
+
+    const resolved = broker.resolveMcpBearerSecret("mcp_secret_notion");
+    expect(resolved.authorization_header).toBe("Bearer secret-token-v2");
+    expect(resolved.secret.last_used_at).toBeTruthy();
   });
 });

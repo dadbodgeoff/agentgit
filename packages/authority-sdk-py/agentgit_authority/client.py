@@ -75,6 +75,72 @@ class AuthorityClient:
         payload: JSONObject = {"workspace_root": workspace_root} if workspace_root else {}
         return self._send_request("get_capabilities", payload, self._session_id)
 
+    def list_mcp_servers(self) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("list_mcp_servers", {}, self._session_id)
+
+    def list_mcp_secrets(self) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("list_mcp_secrets", {}, self._session_id)
+
+    def upsert_mcp_secret(self, secret: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "upsert_mcp_secret",
+            {"secret": secret},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def remove_mcp_secret(self, secret_id: str, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "remove_mcp_secret",
+            {"secret_id": secret_id},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def list_mcp_host_policies(self) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("list_mcp_host_policies", {}, self._session_id)
+
+    def upsert_mcp_host_policy(self, policy: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "upsert_mcp_host_policy",
+            {"policy": policy},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def remove_mcp_host_policy(self, host: str, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "remove_mcp_host_policy",
+            {"host": host},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def upsert_mcp_server(self, server: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "upsert_mcp_server",
+            {"server": server},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def remove_mcp_server(self, server_id: str, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "remove_mcp_server",
+            {"server_id": server_id},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
     def diagnostics(self, sections: list[str] | None = None) -> JSONObject:
         self._ensure_session()
         payload: JSONObject = {"sections": cast(JSONValue, sections)} if sections else {}

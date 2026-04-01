@@ -4,6 +4,7 @@ Status note:
 
 - this document is the historical implementation plan
 - for audited current runtime truth, use `/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CURRENT-IMPLEMENTATION-STATE.md`
+- the currently built MCP slice is local operator-owned only; it now includes durable MCP server registry state, durable local encrypted MCP secret storage, and explicit public host policy management, while hosted and arbitrary remote MCP remain future work
 
 ## Purpose
 
@@ -54,6 +55,7 @@ Recommended top-level layout:
 │   ├── policy-engine/
 │   ├── snapshot-engine/
 │   ├── execution-adapters/
+│   ├── mcp-registry/
 │   ├── run-journal/
 │   ├── recovery-engine/
 │   ├── timeline-helper/
@@ -90,6 +92,7 @@ These should start internal and move slowly:
 - `authority-daemon`
 - `snapshot-engine`
 - `execution-adapters`
+- `mcp-registry`
 - `run-journal`
 - `recovery-engine`
 - `timeline-helper`

@@ -49,6 +49,7 @@ The SDK intentionally stays thin:
 - it speaks newline-delimited JSON over the local authority socket
 - it mirrors the TypeScript SDK method surface
 - it does not reimplement policy, snapshot, journal, or recovery logic
+- it now includes MCP server/secret/host-policy management wrappers like `list_mcp_servers`, `list_mcp_secrets`, `list_mcp_host_policies`, `upsert_mcp_server`, `upsert_mcp_secret`, and `upsert_mcp_host_policy`
 
 There are also thin workflow helpers for common operations:
 

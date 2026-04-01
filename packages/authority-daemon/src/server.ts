@@ -3,7 +3,7 @@ import net from "node:net";
 import path from "node:path";
 
 import { normalizeActionAttempt } from "@agentgit/action-normalizer";
-import { SessionCredentialBroker } from "@agentgit/credential-broker";
+import { LocalEncryptedSecretStore, SessionCredentialBroker } from "@agentgit/credential-broker";
 import {
   AdapterRegistry,
   FilesystemExecutionAdapter,
@@ -21,6 +21,11 @@ import {
   parseTicketLocator,
   ShellExecutionAdapter,
 } from "@agentgit/execution-adapters";
+import {
+  McpPublicHostPolicyRegistry,
+  McpServerRegistry,
+  validateMcpServerDefinitions,
+} from "@agentgit/mcp-registry";
 import { evaluatePolicy } from "@agentgit/policy-engine";
 import {
   type CachedCapabilityState,
@@ -49,6 +54,12 @@ import {
   type ExecuteRecoveryResponsePayload,
   GetCapabilitiesRequestPayloadSchema,
   type GetCapabilitiesResponsePayload,
+  ListMcpHostPoliciesRequestPayloadSchema,
+  type ListMcpHostPoliciesResponsePayload,
+  ListMcpSecretsRequestPayloadSchema,
+  type ListMcpSecretsResponsePayload,
+  ListMcpServersRequestPayloadSchema,
+  type ListMcpServersResponsePayload,
   type HelperQuestionType,
   GetRunSummaryRequestPayloadSchema,
   type GetRunSummaryResponsePayload,
@@ -71,7 +82,15 @@ import {
   PlanRecoveryRequestPayloadSchema,
   type PlanRecoveryResponsePayload,
   McpServerDefinitionSchema,
+  type McpPublicHostPolicy,
   type McpServerDefinition,
+  type McpSecretMetadata,
+  RemoveMcpHostPolicyRequestPayloadSchema,
+  type RemoveMcpHostPolicyResponsePayload,
+  RemoveMcpSecretRequestPayloadSchema,
+  type RemoveMcpSecretResponsePayload,
+  RemoveMcpServerRequestPayloadSchema,
+  type RemoveMcpServerResponsePayload,
   type PolicyOutcomeRecord,
   PolicyOutcomeRecordSchema,
   PreconditionError,
@@ -90,6 +109,12 @@ import {
   type ExecutionArtifact,
   type TimelineStep,
   type SubmitActionAttemptResponsePayload,
+  UpsertMcpHostPolicyRequestPayloadSchema,
+  type UpsertMcpHostPolicyResponsePayload,
+  UpsertMcpSecretRequestPayloadSchema,
+  type UpsertMcpSecretResponsePayload,
+  UpsertMcpServerRequestPayloadSchema,
+  type UpsertMcpServerResponsePayload,
   ValidationError,
   validate,
   type VisibilityScope,
@@ -103,6 +128,15 @@ const METHODS: DaemonMethod[] = [
   "register_run",
   "get_run_summary",
   "get_capabilities",
+  "list_mcp_servers",
+  "upsert_mcp_server",
+  "remove_mcp_server",
+  "list_mcp_secrets",
+  "upsert_mcp_secret",
+  "remove_mcp_secret",
+  "list_mcp_host_policies",
+  "upsert_mcp_host_policy",
+  "remove_mcp_host_policy",
   "diagnostics",
   "run_maintenance",
   "submit_action_attempt",
@@ -117,6 +151,12 @@ const METHODS: DaemonMethod[] = [
 ];
 const IDEMPOTENT_MUTATION_METHODS = new Set<DaemonMethod>([
   "register_run",
+  "upsert_mcp_server",
+  "remove_mcp_server",
+  "upsert_mcp_secret",
+  "remove_mcp_secret",
+  "upsert_mcp_host_policy",
+  "remove_mcp_host_policy",
   "run_maintenance",
   "submit_action_attempt",
   "resolve_approval",
@@ -774,8 +814,22 @@ function createActionBoundaryPlan(journal: RunJournal, actionId: string): Recove
   });
 }
 
-function createCredentialBrokerFromEnv(env: NodeJS.ProcessEnv = process.env): SessionCredentialBroker {
-  const broker = new SessionCredentialBroker();
+function createCredentialBroker(options: {
+  env?: NodeJS.ProcessEnv;
+  mcpSecretStorePath?: string;
+  mcpSecretKeyPath?: string;
+} = {}): SessionCredentialBroker {
+  const env = options.env ?? process.env;
+  const mcpSecretStore =
+    options.mcpSecretStorePath && options.mcpSecretKeyPath
+      ? new LocalEncryptedSecretStore({
+          dbPath: options.mcpSecretStorePath,
+          keyPath: options.mcpSecretKeyPath,
+        })
+      : null;
+  const broker = new SessionCredentialBroker({
+    mcpSecretStore,
+  });
   const ticketsBaseUrl = env.AGENTGIT_TICKETS_BASE_URL?.trim() ?? "";
   const ticketsToken = env.AGENTGIT_TICKETS_BEARER_TOKEN?.trim() ?? "";
 
@@ -815,41 +869,18 @@ function createMcpServerRegistryFromEnv(env: NodeJS.ProcessEnv = process.env): M
     });
   }
 
-  const servers = validate(McpServerDefinitionSchema.array(), parsed);
-  const seenServerIds = new Set<string>();
-
-  for (const server of servers) {
-    if (seenServerIds.has(server.server_id)) {
-      throw new InternalError("Duplicate MCP server_id configured for governed execution.", {
-        server_id: server.server_id,
+  try {
+    return validateMcpServerDefinitions(validate(McpServerDefinitionSchema.array(), parsed));
+  } catch (error) {
+    if (error instanceof AgentGitError) {
+      throw new InternalError(error.message, {
+        env_var: "AGENTGIT_MCP_SERVERS_JSON",
+        ...(error.details ?? {}),
       });
     }
-    seenServerIds.add(server.server_id);
 
-    const seenToolNames = new Set<string>();
-    for (const tool of server.tools) {
-      if (seenToolNames.has(tool.tool_name)) {
-        throw new InternalError("Duplicate MCP tool_name configured for a governed MCP server.", {
-          server_id: server.server_id,
-          tool_name: tool.tool_name,
-        });
-      }
-      seenToolNames.add(tool.tool_name);
-
-      if (tool.approval_mode === "allow" && tool.side_effect_level !== "read_only") {
-        throw new InternalError(
-          "Only read-only MCP tools may be configured for automatic governed execution.",
-          {
-            server_id: server.server_id,
-            tool_name: tool.tool_name,
-            side_effect_level: tool.side_effect_level,
-          },
-        );
-      }
-    }
+    throw error;
   }
-
-  return servers;
 }
 
 function createOwnedCompensationRegistry(
@@ -2007,6 +2038,8 @@ function canWriteDirectoryOrCreate(targetPath: string): boolean {
 function detectCapabilities(
   broker: SessionCredentialBroker,
   runtimeOptions: Pick<StartServerOptions, "socketPath" | "journalPath" | "snapshotRootPath">,
+  mcpRegistry: McpServerRegistry,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   workspaceRoot?: string,
 ): GetCapabilitiesResponsePayload {
   const startedAt = new Date().toISOString();
@@ -2034,18 +2067,26 @@ function detectCapabilities(
     degradedModeWarnings.push("Local runtime storage is not fully writable; daemon behavior may degrade or fail closed.");
   }
 
+  const credentialStoreDetails = broker.durableSecretStorageDetails();
+  const credentialBrokerMode = broker.durableSecretStorageMode();
+  const durableSecretStorageAvailable = broker.supportsDurableSecretStorage();
   capabilities.push({
     capability_name: "host.credential_broker_mode",
-    status: "degraded",
+    status: durableSecretStorageAvailable ? "available" : "degraded",
     scope: "host",
     detected_at: startedAt,
     source: "authority_daemon",
     details: {
-      mode: "session_env_only",
-      secure_store: false,
+      mode: credentialBrokerMode,
+      secure_store: durableSecretStorageAvailable,
+      encrypted_at_rest: durableSecretStorageAvailable,
+      key_path: credentialStoreDetails?.key_path ?? null,
+      legacy_session_env_profiles_enabled: true,
     },
   });
-  degradedModeWarnings.push("Credential brokering is launch-scoped to session environment profiles rather than secure OS-backed storage.");
+  if (!durableSecretStorageAvailable) {
+    degradedModeWarnings.push("Credential brokering is operating without durable MCP secret storage; only legacy session environment profiles are available.");
+  }
 
   const ticketsConfigured = broker.hasProfile("tickets");
   capabilities.push({
@@ -2062,6 +2103,164 @@ function detectCapabilities(
   });
   if (!ticketsConfigured) {
     degradedModeWarnings.push("Owned ticket mutations are unavailable until brokered ticket credentials are configured.");
+  }
+
+  const registeredMcpServers = mcpRegistry.listServers();
+  const registeredMcpToolCount = registeredMcpServers.reduce((total, record) => total + record.server.tools.length, 0);
+  const transportCounts = {
+    stdio: registeredMcpServers.filter((record) => record.server.transport === "stdio").length,
+    streamable_http: registeredMcpServers.filter((record) => record.server.transport === "streamable_http").length,
+  };
+  const streamableHttpNetworkScopes = [
+    ...new Set(
+      registeredMcpServers
+        .filter((record) => record.server.transport === "streamable_http")
+        .map((record) => (record.server.transport === "streamable_http" ? record.server.network_scope ?? "loopback" : "loopback")),
+    ),
+  ];
+  const bootstrapEnvServerCount = registeredMcpServers.filter((record) => record.source === "bootstrap_env").length;
+  const operatorManagedServerCount = registeredMcpServers.filter((record) => record.source === "operator_api").length;
+  const streamableHttpMissingAuth = registeredMcpServers
+    .filter((record) => {
+      if (record.server.transport !== "streamable_http") {
+        return false;
+      }
+
+      return record.server.auth?.type === "bearer_env";
+    })
+    .filter((record) => {
+      if (record.server.transport !== "streamable_http") {
+        return false;
+      }
+
+      const envVar = record.server.auth?.type === "bearer_env" ? record.server.auth.bearer_env_var.trim() : "";
+      return envVar.length > 0 && (process.env[envVar]?.trim() ?? "").length === 0;
+    });
+  const streamableHttpLegacyEnvAuthServers = registeredMcpServers.filter((record) => {
+    return record.server.transport === "streamable_http" && record.server.auth?.type === "bearer_env";
+  });
+  const streamableHttpSecretRefServers = registeredMcpServers.filter((record) => {
+    return record.server.transport === "streamable_http" && record.server.auth?.type === "bearer_secret_ref";
+  });
+  const streamableHttpMissingSecretRefs = streamableHttpSecretRefServers.filter((record) => {
+    const server = record.server;
+    const auth = server.transport === "streamable_http" ? server.auth : undefined;
+    if (server.transport !== "streamable_http" || auth?.type !== "bearer_secret_ref") {
+      return false;
+    }
+
+    return !broker.listMcpBearerSecrets().some((secret) => secret.secret_id === auth.secret_id);
+  });
+  const publicHttpsPolicyMismatches = registeredMcpServers.filter((record) => {
+    if (record.server.transport !== "streamable_http" || (record.server.network_scope ?? "loopback") !== "public_https") {
+      return false;
+    }
+
+    return publicHostPolicyRegistry.findPolicyForUrl(new URL(record.server.url)) === null;
+  });
+
+  capabilities.push({
+    capability_name: "adapter.mcp_registry",
+    status: "available",
+    scope: "adapter",
+    detected_at: startedAt,
+    source: "mcp_registry",
+    details: {
+      registered_server_count: registeredMcpServers.length,
+      registered_tool_count: registeredMcpToolCount,
+      bootstrap_env_servers: bootstrapEnvServerCount,
+      operator_managed_servers: operatorManagedServerCount,
+      launch_scope: "local_operator_owned",
+      transport_counts: transportCounts,
+      streamable_http_network_scopes: streamableHttpNetworkScopes,
+      registered_secret_count: broker.listMcpBearerSecrets().length,
+      public_host_policy_count: publicHostPolicyRegistry.listPolicies().length,
+      public_https_requirements: {
+        https_only: true,
+        bearer_secret_ref_recommended: true,
+        supported_auth_types: ["bearer_secret_ref", "bearer_env"],
+        disallowed_custom_headers: ["authorization", "proxy-authorization", "cookie"],
+      },
+    },
+  });
+
+  capabilities.push({
+    capability_name: "adapter.mcp_streamable_http",
+    status:
+      streamableHttpMissingAuth.length > 0 ||
+      streamableHttpMissingSecretRefs.length > 0 ||
+      publicHttpsPolicyMismatches.length > 0 ||
+      (streamableHttpSecretRefServers.length > 0 && !durableSecretStorageAvailable) ||
+      streamableHttpLegacyEnvAuthServers.length > 0
+        ? "degraded"
+        : "available",
+    scope: "adapter",
+    detected_at: startedAt,
+    source: "mcp_registry",
+    details: {
+      supported: true,
+      launch_scope: "local_operator_owned",
+      supported_network_scopes: ["loopback", "private", "public_https"],
+      concurrency_limits_enforced: true,
+      supported_auth_types: ["none", "bearer_secret_ref", "bearer_env"],
+      durable_secret_storage_available: durableSecretStorageAvailable,
+      public_https_requirements: {
+        https_only: true,
+        explicit_host_policy_required: true,
+        bearer_secret_ref_recommended: true,
+        disallowed_custom_headers: ["authorization", "proxy-authorization", "cookie"],
+      },
+      legacy_bearer_env_servers: streamableHttpLegacyEnvAuthServers.map((record) => record.server.server_id),
+      missing_secret_ref_servers: streamableHttpMissingSecretRefs.map((record) => record.server.server_id),
+      missing_public_host_policy_servers: publicHttpsPolicyMismatches.map((record) => record.server.server_id),
+      registered_server_count: transportCounts.streamable_http,
+      missing_bearer_env_servers: streamableHttpMissingAuth.map((record) => {
+        if (record.server.transport !== "streamable_http") {
+          return {
+            server_id: record.server.server_id,
+            bearer_env_var: null,
+            network_scope: null,
+            max_concurrent_calls: null,
+          };
+        }
+
+        return {
+          server_id: record.server.server_id,
+          bearer_env_var: record.server.auth?.type === "bearer_env" ? record.server.auth.bearer_env_var : null,
+          network_scope: record.server.network_scope ?? "loopback",
+          max_concurrent_calls: record.server.max_concurrent_calls ?? 1,
+        };
+      }),
+    },
+  });
+
+  if (streamableHttpMissingAuth.length > 0) {
+    degradedModeWarnings.push(
+      `Some registered streamable_http MCP servers are missing required bearer token env vars: ${streamableHttpMissingAuth
+        .map((record) => record.server.server_id)
+        .join(", ")}.`,
+    );
+  }
+  if (streamableHttpLegacyEnvAuthServers.length > 0) {
+    degradedModeWarnings.push(
+      `Some registered streamable_http MCP servers still use legacy bearer_env authentication instead of durable secret references: ${streamableHttpLegacyEnvAuthServers
+        .map((record) => record.server.server_id)
+        .join(", ")}.`,
+    );
+  }
+  if (streamableHttpMissingSecretRefs.length > 0) {
+    degradedModeWarnings.push(
+      `Some registered streamable_http MCP servers reference missing durable secret records: ${streamableHttpMissingSecretRefs
+        .map((record) => record.server.server_id)
+        .join(", ")}.`,
+    );
+  }
+  if (publicHttpsPolicyMismatches.length > 0) {
+    degradedModeWarnings.push(
+      `Some registered public_https MCP servers are missing an active host allowlist policy: ${publicHttpsPolicyMismatches
+        .map((record) => record.server.server_id)
+        .join(", ")}.`,
+    );
   }
 
   if (workspaceRoot) {
@@ -2104,14 +2303,152 @@ function detectCapabilities(
 function handleGetCapabilities(
   broker: SessionCredentialBroker,
   runtimeOptions: Pick<StartServerOptions, "socketPath" | "journalPath" | "snapshotRootPath">,
+  mcpRegistry: McpServerRegistry,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<GetCapabilitiesResponsePayload> {
   const payload = validate(GetCapabilitiesRequestPayloadSchema, request.payload);
   return makeSuccessResponse(
     request.request_id,
     request.session_id,
-    detectCapabilities(broker, runtimeOptions, payload.workspace_root),
+    detectCapabilities(broker, runtimeOptions, mcpRegistry, publicHostPolicyRegistry, payload.workspace_root),
   );
+}
+
+function handleListMcpServers(
+  mcpRegistry: McpServerRegistry,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<ListMcpServersResponsePayload> {
+  validate(ListMcpServersRequestPayloadSchema, request.payload);
+  return makeSuccessResponse(request.request_id, request.session_id, {
+    servers: mcpRegistry.listServers(),
+  });
+}
+
+function requireValidSession(
+  state: AuthorityState,
+  method:
+    | "upsert_mcp_server"
+    | "remove_mcp_server"
+    | "upsert_mcp_secret"
+    | "remove_mcp_secret"
+    | "upsert_mcp_host_policy"
+    | "remove_mcp_host_policy",
+  sessionId: string | undefined,
+): string {
+  const session = state.getSession(sessionId);
+  if (!session) {
+    throw new PreconditionError(`A valid session_id is required before ${method}.`, {
+      session_id: sessionId,
+    });
+  }
+
+  return session.session_id;
+}
+
+function handleListMcpSecrets(
+  broker: SessionCredentialBroker,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<ListMcpSecretsResponsePayload> {
+  validate(ListMcpSecretsRequestPayloadSchema, request.payload);
+  return makeSuccessResponse(request.request_id, request.session_id, {
+    secrets: broker.listMcpBearerSecrets(),
+  });
+}
+
+function handleUpsertMcpSecret(
+  state: AuthorityState,
+  broker: SessionCredentialBroker,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<UpsertMcpSecretResponsePayload> {
+  const payload = validate(UpsertMcpSecretRequestPayloadSchema, request.payload);
+  const sessionId = requireValidSession(state, "upsert_mcp_secret", request.session_id);
+  const result = broker.upsertMcpBearerSecret(payload.secret);
+
+  return makeSuccessResponse(request.request_id, sessionId, result);
+}
+
+function handleRemoveMcpSecret(
+  state: AuthorityState,
+  broker: SessionCredentialBroker,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<RemoveMcpSecretResponsePayload> {
+  const payload = validate(RemoveMcpSecretRequestPayloadSchema, request.payload);
+  const sessionId = requireValidSession(state, "remove_mcp_secret", request.session_id);
+  const removedSecret = broker.removeMcpBearerSecret(payload.secret_id);
+
+  return makeSuccessResponse(request.request_id, sessionId, {
+    removed: removedSecret !== null,
+    removed_secret: removedSecret,
+  });
+}
+
+function handleListMcpHostPolicies(
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<ListMcpHostPoliciesResponsePayload> {
+  validate(ListMcpHostPoliciesRequestPayloadSchema, request.payload);
+  return makeSuccessResponse(request.request_id, request.session_id, {
+    policies: publicHostPolicyRegistry.listPolicies(),
+  });
+}
+
+function handleUpsertMcpHostPolicy(
+  state: AuthorityState,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<UpsertMcpHostPolicyResponsePayload> {
+  const payload = validate(UpsertMcpHostPolicyRequestPayloadSchema, request.payload);
+  const sessionId = requireValidSession(state, "upsert_mcp_host_policy", request.session_id);
+  const result = publicHostPolicyRegistry.upsertPolicy(payload.policy as McpPublicHostPolicy);
+
+  return makeSuccessResponse(request.request_id, sessionId, result);
+}
+
+function handleRemoveMcpHostPolicy(
+  state: AuthorityState,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<RemoveMcpHostPolicyResponsePayload> {
+  const payload = validate(RemoveMcpHostPolicyRequestPayloadSchema, request.payload);
+  const sessionId = requireValidSession(state, "remove_mcp_host_policy", request.session_id);
+  const removedPolicy = publicHostPolicyRegistry.removePolicy(payload.host);
+
+  return makeSuccessResponse(request.request_id, sessionId, {
+    removed: removedPolicy !== null,
+    removed_policy: removedPolicy,
+  });
+}
+
+function handleUpsertMcpServer(
+  state: AuthorityState,
+  mcpRegistry: McpServerRegistry,
+  broker: SessionCredentialBroker,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<UpsertMcpServerResponsePayload> {
+  const payload = validate(UpsertMcpServerRequestPayloadSchema, request.payload);
+  const sessionId = requireValidSession(state, "upsert_mcp_server", request.session_id);
+  if (payload.server.transport === "streamable_http" && payload.server.auth?.type === "bearer_secret_ref") {
+    broker.resolveMcpBearerSecret(payload.server.auth.secret_id);
+  }
+  const result = mcpRegistry.upsertServer(payload.server);
+
+  return makeSuccessResponse(request.request_id, sessionId, result);
+}
+
+function handleRemoveMcpServer(
+  state: AuthorityState,
+  mcpRegistry: McpServerRegistry,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<RemoveMcpServerResponsePayload> {
+  const payload = validate(RemoveMcpServerRequestPayloadSchema, request.payload);
+  const sessionId = requireValidSession(state, "remove_mcp_server", request.session_id);
+  const removedServer = mcpRegistry.removeServer(payload.server_id);
+
+  return makeSuccessResponse(request.request_id, sessionId, {
+    removed: removedServer !== null,
+    removed_server: removedServer,
+  });
 }
 
 function handleDiagnostics(
@@ -2293,6 +2630,8 @@ async function handleRunMaintenance(
   journal: RunJournal,
   snapshotEngine: LocalSnapshotEngine,
   broker: SessionCredentialBroker,
+  mcpRegistry: McpServerRegistry,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   draftStore: OwnedDraftStore,
   noteStore: OwnedNoteStore,
   ticketStore: OwnedTicketStore,
@@ -2412,15 +2751,24 @@ async function handleRunMaintenance(
         const draftCheckpoint = draftStore.checkpointWal();
         const noteCheckpoint = noteStore.checkpointWal();
         const ticketCheckpoint = ticketStore.checkpointWal();
+        const mcpRegistryCheckpoint = mcpRegistry.checkpointWal();
+        const mcpHostPolicyCheckpoint = publicHostPolicyRegistry.checkpointWal();
+        const mcpSecretStoreCheckpoint = broker.checkpointMcpSecretStore();
         const checkpointedDatabases =
           (journalCheckpoint.checkpointed ? 1 : 0) +
           snapshotCheckpoint.checkpointed_databases +
+          (mcpRegistryCheckpoint.checkpointed ? 1 : 0) +
+          (mcpHostPolicyCheckpoint.checkpointed ? 1 : 0) +
+          (mcpSecretStoreCheckpoint?.checkpointed ? 1 : 0) +
           (draftCheckpoint.checkpointed ? 1 : 0) +
           (noteCheckpoint.checkpointed ? 1 : 0) +
           (ticketCheckpoint.checkpointed ? 1 : 0);
         const skippedDatabases =
           (journalCheckpoint.checkpointed ? 0 : 1) +
           snapshotCheckpoint.skipped_databases +
+          (mcpRegistryCheckpoint.checkpointed ? 0 : 1) +
+          (mcpHostPolicyCheckpoint.checkpointed ? 0 : 1) +
+          (mcpSecretStoreCheckpoint?.checkpointed ? 0 : 1) +
           (draftCheckpoint.checkpointed ? 0 : 1) +
           (noteCheckpoint.checkpointed ? 0 : 1) +
           (ticketCheckpoint.checkpointed ? 0 : 1);
@@ -2438,6 +2786,9 @@ async function handleRunMaintenance(
             skipped_databases: skippedDatabases,
             journal: journalCheckpoint,
             snapshots: snapshotCheckpoint,
+            mcp_registry: mcpRegistryCheckpoint,
+            mcp_host_policies: mcpHostPolicyCheckpoint,
+            mcp_secrets: mcpSecretStoreCheckpoint,
             drafts: draftCheckpoint,
             notes: noteCheckpoint,
             tickets: ticketCheckpoint,
@@ -2567,7 +2918,13 @@ async function handleRunMaintenance(
         break;
       }
       case "capability_refresh": {
-        const snapshot = detectCapabilities(broker, runtimeOptions, payload.scope?.workspace_root);
+        const snapshot = detectCapabilities(
+          broker,
+          runtimeOptions,
+          mcpRegistry,
+          publicHostPolicyRegistry,
+          payload.scope?.workspace_root,
+        );
         const degradedCount = snapshot.capabilities.filter((capability) => capability.status === "degraded").length;
         const unavailableCount = snapshot.capabilities.filter((capability) => capability.status === "unavailable").length;
         journal.storeCapabilitySnapshot({
@@ -2845,7 +3202,14 @@ function handleQueryArtifact(
           returned_chars: 0,
           max_inline_chars: MAX_ARTIFACT_RESPONSE_CHARS,
         }
-      : clipArtifactContent(artifact.content);
+      : payload.full_content
+        ? {
+            content: artifact.content,
+            content_truncated: false,
+            returned_chars: artifact.content.length,
+            max_inline_chars: MAX_ARTIFACT_RESPONSE_CHARS,
+          }
+        : clipArtifactContent(artifact.content);
   return makeSuccessResponse(request.request_id, request.session_id, {
     artifact: {
       artifact_id: artifact.artifact_id,
@@ -3687,7 +4051,7 @@ async function handleSubmitActionAttempt(
   draftStore: OwnedDraftStore,
   noteStore: OwnedNoteStore,
   ticketStore: OwnedTicketStore,
-  mcpServers: McpServerDefinition[],
+  mcpRegistry: McpServerRegistry,
   runtimeOptions: Pick<StartServerOptions, "capabilityRefreshStaleMs">,
   request: RequestEnvelope<unknown>,
 ): Promise<ResponseEnvelope<SubmitActionAttemptResponsePayload>> {
@@ -3719,7 +4083,7 @@ async function handleSubmitActionAttempt(
         budget_usage: runSummary.budget_usage,
       },
       mcp_server_registry: {
-        servers: mcpServers,
+        servers: mcpRegistry.listDefinitions(),
       },
       cached_capability_state: cachedCapabilityState,
     }),
@@ -3797,10 +4161,11 @@ async function handleRequest(
   snapshotEngine: LocalSnapshotEngine,
   compensationRegistry: StaticCompensationRegistry,
   broker: SessionCredentialBroker,
+  mcpRegistry: McpServerRegistry,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   draftStore: OwnedDraftStore,
   noteStore: OwnedNoteStore,
   ticketStore: OwnedTicketStore,
-  mcpServers: McpServerDefinition[],
   runtimeOptions: Pick<StartServerOptions, "socketPath" | "journalPath" | "snapshotRootPath" | "capabilityRefreshStaleMs">,
   rawRequest: unknown,
 ): Promise<ResponseEnvelope<unknown>> {
@@ -3862,7 +4227,34 @@ async function handleRequest(
           response = handleGetRunSummary(journal, request);
           break;
         case "get_capabilities":
-          response = handleGetCapabilities(broker, runtimeOptions, request);
+          response = handleGetCapabilities(broker, runtimeOptions, mcpRegistry, publicHostPolicyRegistry, request);
+          break;
+        case "list_mcp_servers":
+          response = handleListMcpServers(mcpRegistry, request);
+          break;
+        case "upsert_mcp_server":
+          response = handleUpsertMcpServer(state, mcpRegistry, broker, request);
+          break;
+        case "remove_mcp_server":
+          response = handleRemoveMcpServer(state, mcpRegistry, request);
+          break;
+        case "list_mcp_secrets":
+          response = handleListMcpSecrets(broker, request);
+          break;
+        case "upsert_mcp_secret":
+          response = handleUpsertMcpSecret(state, broker, request);
+          break;
+        case "remove_mcp_secret":
+          response = handleRemoveMcpSecret(state, broker, request);
+          break;
+        case "list_mcp_host_policies":
+          response = handleListMcpHostPolicies(publicHostPolicyRegistry, request);
+          break;
+        case "upsert_mcp_host_policy":
+          response = handleUpsertMcpHostPolicy(state, publicHostPolicyRegistry, request);
+          break;
+        case "remove_mcp_host_policy":
+          response = handleRemoveMcpHostPolicy(state, publicHostPolicyRegistry, request);
           break;
         case "diagnostics":
           response = handleDiagnostics(state, journal, runtimeOptions, request);
@@ -3873,6 +4265,8 @@ async function handleRequest(
             journal,
             snapshotEngine,
             broker,
+            mcpRegistry,
+            publicHostPolicyRegistry,
             draftStore,
             noteStore,
             ticketStore,
@@ -3915,7 +4309,7 @@ async function handleRequest(
             draftStore,
             noteStore,
             ticketStore,
-            mcpServers,
+            mcpRegistry,
             runtimeOptions,
             request,
           );
@@ -4052,6 +4446,10 @@ export interface StartServerOptions {
   socketPath: string;
   journalPath: string;
   snapshotRootPath: string;
+  mcpRegistryPath?: string;
+  mcpSecretStorePath?: string;
+  mcpSecretKeyPath?: string;
+  mcpHostPolicyPath?: string;
   artifactRetentionMs?: number | null;
   capabilityRefreshStaleMs?: number | null;
 }
@@ -4067,8 +4465,26 @@ export function startServer(options: StartServerOptions): Promise<net.Server> {
     rootDir: options.snapshotRootPath,
   });
   const integrationsDbPath = path.join(path.dirname(options.snapshotRootPath), "integrations", "state.db");
-  const credentialBroker = createCredentialBrokerFromEnv();
-  const mcpServers = createMcpServerRegistryFromEnv();
+  const mcpRegistryPath = options.mcpRegistryPath ?? path.join(path.dirname(options.snapshotRootPath), "mcp", "registry.db");
+  const mcpSecretStorePath =
+    options.mcpSecretStorePath ?? path.join(path.dirname(options.snapshotRootPath), "mcp", "secret-store.db");
+  const mcpSecretKeyPath =
+    options.mcpSecretKeyPath ?? path.join(path.dirname(options.snapshotRootPath), "mcp", "secret-store.key");
+  const mcpHostPolicyPath =
+    options.mcpHostPolicyPath ?? path.join(path.dirname(options.snapshotRootPath), "mcp", "host-policies.db");
+  const credentialBroker = createCredentialBroker({
+    mcpSecretStorePath,
+    mcpSecretKeyPath,
+  });
+  const publicHostPolicyRegistry = new McpPublicHostPolicyRegistry({
+    dbPath: mcpHostPolicyPath,
+  });
+  const mcpRegistry = new McpServerRegistry({
+    dbPath: mcpRegistryPath,
+    publicHostPolicyRegistry,
+  });
+  const bootstrapMcpServers = createMcpServerRegistryFromEnv();
+  mcpRegistry.bootstrapServers(bootstrapMcpServers);
   const draftStore = new OwnedDraftStore(integrationsDbPath);
   const noteStore = new OwnedNoteStore(integrationsDbPath);
   const ticketStore = new OwnedTicketStore(integrationsDbPath);
@@ -4078,7 +4494,12 @@ export function startServer(options: StartServerOptions): Promise<net.Server> {
 
   adapterRegistry.register(new FilesystemExecutionAdapter());
   adapterRegistry.register(new ShellExecutionAdapter());
-  adapterRegistry.register(new McpExecutionAdapter(mcpServers));
+  adapterRegistry.register(
+    new McpExecutionAdapter(mcpRegistry, {
+      credentialBroker,
+      publicHostPolicyRegistry,
+    }),
+  );
   adapterRegistry.register(new FunctionExecutionAdapter(draftStore, noteStore, ticketIntegration));
   rehydrateState(state, journal);
   recoverInterruptedActions(journal);
@@ -4130,10 +4551,11 @@ export function startServer(options: StartServerOptions): Promise<net.Server> {
           snapshotEngine,
           compensationRegistry,
           credentialBroker,
+          mcpRegistry,
+          publicHostPolicyRegistry,
           draftStore,
           noteStore,
           ticketStore,
-          mcpServers,
           {
             socketPath: options.socketPath,
             journalPath: options.journalPath,
@@ -4152,6 +4574,7 @@ export function startServer(options: StartServerOptions): Promise<net.Server> {
     draftStore.close();
     noteStore.close();
     ticketStore.close();
+    mcpRegistry.close();
     journal.close();
   });
 

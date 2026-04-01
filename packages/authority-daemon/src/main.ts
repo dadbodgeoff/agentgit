@@ -8,6 +8,17 @@ const socketPath = process.env.AGENTGIT_SOCKET_PATH ?? path.resolve(projectRoot,
 const journalPath = process.env.AGENTGIT_JOURNAL_PATH ?? path.resolve(projectRoot, ".agentgit", "state", "authority.db");
 const snapshotRootPath =
   process.env.AGENTGIT_SNAPSHOT_ROOT ?? path.resolve(projectRoot, ".agentgit", "state", "snapshots");
+const mcpRegistryPath =
+  process.env.AGENTGIT_MCP_REGISTRY_PATH ?? path.resolve(projectRoot, ".agentgit", "state", "mcp", "registry.db");
+const mcpSecretStorePath =
+  process.env.AGENTGIT_MCP_SECRET_STORE_PATH ??
+  path.resolve(projectRoot, ".agentgit", "state", "mcp", "secret-store.db");
+const mcpSecretKeyPath =
+  process.env.AGENTGIT_MCP_SECRET_KEY_PATH ??
+  path.resolve(projectRoot, ".agentgit", "state", "mcp", "secret-store.key");
+const mcpHostPolicyPath =
+  process.env.AGENTGIT_MCP_HOST_POLICY_PATH ??
+  path.resolve(projectRoot, ".agentgit", "state", "mcp", "host-policies.db");
 const artifactRetentionMs =
   process.env.AGENTGIT_ARTIFACT_RETENTION_MS === undefined
     ? null
@@ -17,7 +28,16 @@ if (process.env.AGENTGIT_ARTIFACT_RETENTION_MS !== undefined && Number.isNaN(art
   throw new Error("AGENTGIT_ARTIFACT_RETENTION_MS must be an integer number of milliseconds when provided.");
 }
 
-const server = await startServer({ socketPath, journalPath, snapshotRootPath, artifactRetentionMs });
+const server = await startServer({
+  socketPath,
+  journalPath,
+  snapshotRootPath,
+  mcpRegistryPath,
+  mcpSecretStorePath,
+  mcpSecretKeyPath,
+  mcpHostPolicyPath,
+  artifactRetentionMs,
+});
 
 console.log(
   JSON.stringify({
@@ -25,6 +45,10 @@ console.log(
     socket_path: socketPath,
     journal_path: journalPath,
     snapshot_root_path: snapshotRootPath,
+    mcp_registry_path: mcpRegistryPath,
+    mcp_secret_store_path: mcpSecretStorePath,
+    mcp_secret_key_path: mcpSecretKeyPath,
+    mcp_host_policy_path: mcpHostPolicyPath,
     artifact_retention_ms: artifactRetentionMs,
   }),
 );

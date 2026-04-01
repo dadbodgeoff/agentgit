@@ -79,9 +79,9 @@ Design implication:
 
 Launch note:
 
-- the current runtime owns a real governed MCP proxy slice for operator-registered stdio servers
-- launch scope today is `tools/list`, `tools/call`, tool-list cache validation, and approval-first mutation policy
-- Streamable HTTP MCP transport and broader remote MCP registration remain out of launch truth until built
+- the current runtime owns a real governed MCP proxy slice for operator-managed servers over `stdio` and `streamable_http`
+- launch scope today is durable registry-backed operator management, durable local encrypted MCP bearer-secret storage, explicit public host allowlist policy, CLI/SDK/daemon registration flows plus first-class CLI MCP tool submission, `tools/list`, `tools/call`, tool-list cache validation, approval-first mutation policy, explicit `streamable_http` network scope (`loopback`, `private`, or `public_https`), and per-server concurrency limits
+- hosted MCP execution and arbitrary remote MCP registration from agent or user input remain out of launch truth until built
 
 ### Runtime tools can produce rich artifacts
 
@@ -438,7 +438,7 @@ Purpose:
 Launch-owned scope today:
 
 - operator-owned server registry only
-- stdio transport only
+- `stdio` and `streamable_http` transports
 - upstream `tools/list`
 - upstream `tools/call`
 - explicit read-only allowlist or approval-required mutation policy
@@ -446,7 +446,6 @@ Launch-owned scope today:
 
 Not in launch scope yet:
 
-- Streamable HTTP MCP transport
 - hosted MCP execution
 - arbitrary model-supplied or user-supplied upstream server definitions
 

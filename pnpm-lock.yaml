@@ -56,6 +56,9 @@ importers:
       '@agentgit/integration-state':
         specifier: workspace:*
         version: link:../integration-state
+      '@agentgit/mcp-registry':
+        specifier: workspace:*
+        version: link:../mcp-registry
       '@agentgit/policy-engine':
         specifier: workspace:*
         version: link:../policy-engine
@@ -77,6 +80,13 @@ importers:
       uuid:
         specifier: ^13.0.0
         version: 13.0.0
+    devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
 
   packages/authority-sdk-ts:
     dependencies:
@@ -89,12 +99,19 @@ importers:
 
   packages/credential-broker:
     dependencies:
+      '@agentgit/integration-state':
+        specifier: workspace:*
+        version: link:../integration-state
       '@agentgit/schemas':
         specifier: workspace:*
         version: link:../schemas
       uuid:
         specifier: ^13.0.0
         version: 13.0.0
+    devDependencies:
+      '@agentgit/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
 
   packages/execution-adapters:
     dependencies:
@@ -104,6 +121,9 @@ importers:
       '@agentgit/integration-state':
         specifier: workspace:*
         version: link:../integration-state
+      '@agentgit/mcp-registry':
+        specifier: workspace:*
+        version: link:../mcp-registry
       '@agentgit/schemas':
         specifier: workspace:*
         version: link:../schemas
@@ -130,6 +150,19 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
+
+  packages/mcp-registry:
+    dependencies:
+      '@agentgit/integration-state':
+        specifier: workspace:*
+        version: link:../integration-state
+      '@agentgit/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+    devDependencies:
+      '@agentgit/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
 
   packages/policy-engine:
     dependencies:

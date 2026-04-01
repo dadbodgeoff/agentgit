@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { AuthorityClient } from "@agentgit/authority-sdk";
+import { AuthorityClient, AuthorityDaemonResponseError } from "@agentgit/authority-sdk";
 
 const USAGE = [
   "Usage: agentgit-authority [--json] <command> [args]",
@@ -12,10 +15,22 @@ const USAGE = [
   "  register-run [workflow-name] [max-mutating] [max-destructive]",
   "  run-summary <run-id>",
   "  capabilities [workspace-root]",
+  "  list-mcp-servers",
+  "  list-mcp-secrets",
+  "  list-mcp-host-policies",
+  "  upsert-mcp-secret <definition-json-or-path>",
+  "  remove-mcp-secret <secret-id>",
+  "  upsert-mcp-host-policy <definition-json-or-path>",
+  "  remove-mcp-host-policy <host>",
+  "  upsert-mcp-server <definition-json-or-path>",
+  "  remove-mcp-server <server-id>",
   "  diagnostics [daemon_health|journal_health|maintenance_backlog|projection_lag|storage_summary|capability_summary...]",
   "  maintenance <job-type...>",
   "  timeline <run-id> [user|model|internal|sensitive_internal]",
   "  artifact <artifact-id> [user|model|internal|sensitive_internal]",
+  "  artifact-export <artifact-id> <destination-path> [user|model|internal|sensitive_internal]",
+  "  run-audit-export <run-id> <output-dir> [user|model|internal|sensitive_internal]",
+  "  run-audit-verify <bundle-dir>",
   "  list-approvals [run-id] [pending|approved|denied]",
   "  approval-inbox [run-id] [pending|approved|denied]",
   "  approve <approval-id> [note]",
@@ -24,6 +39,7 @@ const USAGE = [
   "  submit-filesystem-write <run-id> <path> <content>",
   "  submit-filesystem-delete <run-id> <path>",
   "  submit-shell <run-id> <command...>",
+  "  submit-mcp-tool <run-id> <server-id> <tool-name> [arguments-json-or-path]",
   "  submit-draft-create <run-id> <subject> <body>",
   "  submit-draft-archive <run-id> <draft-id>",
   "  submit-draft-delete <run-id> <draft-id>",
@@ -56,6 +72,15 @@ type HelloResult = Awaited<ReturnType<AuthorityClient["hello"]>>;
 type RegisterRunResult = Awaited<ReturnType<AuthorityClient["registerRun"]>>;
 type RunSummaryResult = Awaited<ReturnType<AuthorityClient["getRunSummary"]>>;
 type CapabilitiesResult = Awaited<ReturnType<AuthorityClient["getCapabilities"]>>;
+type ListMcpServersResult = Awaited<ReturnType<AuthorityClient["listMcpServers"]>>;
+type ListMcpSecretsResult = Awaited<ReturnType<AuthorityClient["listMcpSecrets"]>>;
+type ListMcpHostPoliciesResult = Awaited<ReturnType<AuthorityClient["listMcpHostPolicies"]>>;
+type UpsertMcpSecretResult = Awaited<ReturnType<AuthorityClient["upsertMcpSecret"]>>;
+type RemoveMcpSecretResult = Awaited<ReturnType<AuthorityClient["removeMcpSecret"]>>;
+type UpsertMcpHostPolicyResult = Awaited<ReturnType<AuthorityClient["upsertMcpHostPolicy"]>>;
+type RemoveMcpHostPolicyResult = Awaited<ReturnType<AuthorityClient["removeMcpHostPolicy"]>>;
+type UpsertMcpServerResult = Awaited<ReturnType<AuthorityClient["upsertMcpServer"]>>;
+type RemoveMcpServerResult = Awaited<ReturnType<AuthorityClient["removeMcpServer"]>>;
 type DiagnosticsResult = Awaited<ReturnType<AuthorityClient["diagnostics"]>>;
 type MaintenanceResult = Awaited<ReturnType<AuthorityClient["runMaintenance"]>>;
 type SubmitActionResult = Awaited<ReturnType<AuthorityClient["submitActionAttempt"]>>;
@@ -65,6 +90,59 @@ type ResolveApprovalResult = Awaited<ReturnType<AuthorityClient["resolveApproval
 type TimelineResult = Awaited<ReturnType<AuthorityClient["queryTimeline"]>>;
 type HelperResult = Awaited<ReturnType<AuthorityClient["queryHelper"]>>;
 type ArtifactResult = Awaited<ReturnType<AuthorityClient["queryArtifact"]>>;
+interface ArtifactExportResult {
+  artifact_id: string;
+  output_path: string;
+  bytes_written: number;
+  visibility_scope: ArtifactResult["visibility_scope"];
+  artifact_status: ArtifactResult["artifact_status"];
+  integrity_digest: string | null;
+}
+interface RunAuditExportedArtifact {
+  artifact_id: string;
+  type: string;
+  output_path: string;
+  relative_path: string;
+  bytes_written: number;
+  visibility_scope: ArtifactResult["visibility_scope"];
+  sha256: string;
+  integrity_digest: string | null;
+}
+interface RunAuditSkippedArtifact {
+  artifact_id: string;
+  type: string;
+  reason: string;
+  artifact_status: ArtifactResult["artifact_status"] | "not_found";
+}
+interface RunAuditExportResult {
+  run_id: string;
+  output_dir: string;
+  visibility_scope: TimelineResult["visibility_scope"];
+  files_written: string[];
+  exported_artifacts: RunAuditExportedArtifact[];
+  skipped_artifacts: RunAuditSkippedArtifact[];
+}
+interface RunAuditVerifyIssue {
+  code:
+    | "MANIFEST_MISSING"
+    | "MANIFEST_INVALID"
+    | "MISSING_BUNDLE_FILE"
+    | "MISSING_ARTIFACT_FILE"
+    | "ARTIFACT_SIZE_MISMATCH"
+    | "ARTIFACT_SHA256_MISMATCH"
+    | "ARTIFACT_INTEGRITY_MISMATCH";
+  message: string;
+  file_path?: string;
+  artifact_id?: string;
+}
+interface RunAuditVerifyResult {
+  run_id: string;
+  output_dir: string;
+  verified: boolean;
+  files_checked: number;
+  exported_artifacts_checked: number;
+  issues: RunAuditVerifyIssue[];
+}
 type PlanRecoveryResult = Awaited<ReturnType<AuthorityClient["planRecovery"]>>;
 type ExecuteRecoveryResult = Awaited<ReturnType<AuthorityClient["executeRecovery"]>>;
 type HelperQuestionType = Parameters<AuthorityClient["queryHelper"]>[1];
@@ -80,6 +158,9 @@ type RecoveryPlanStep = RecoveryPlan["steps"][number];
 type DiagnosticsSection = NonNullable<Parameters<AuthorityClient["diagnostics"]>[0]>[number];
 type MaintenanceJobType = Parameters<AuthorityClient["runMaintenance"]>[0][number];
 type CapabilityRecord = CapabilitiesResult["capabilities"][number];
+type RegisteredMcpServer = ListMcpServersResult["servers"][number];
+type RegisteredMcpSecret = ListMcpSecretsResult["secrets"][number];
+type RegisteredMcpHostPolicy = ListMcpHostPoliciesResult["policies"][number];
 type ReasonDetail = NonNullable<DiagnosticsResult["daemon_health"]>["primary_reason"];
 
 interface TimelineTrustSummary {
@@ -199,6 +280,11 @@ function maybeLine(label: string, value: string | null | undefined): string | nu
   return value ? `${label}: ${value}` : null;
 }
 
+function parseJsonArgOrFile(value: string): unknown {
+  const source = fs.existsSync(value) ? fs.readFileSync(value, "utf8") : value;
+  return JSON.parse(source);
+}
+
 function formatReasonDetail(reason: ReasonDetail | null | undefined): string | null {
   return reason ? `${reason.code}: ${reason.message}` : null;
 }
@@ -288,6 +374,370 @@ export function formatArtifact(result: ArtifactResult): string {
   );
 }
 
+function formatArtifactExport(result: ArtifactExportResult): string {
+  return lines(
+    `Exported artifact ${result.artifact_id}`,
+    `Output path: ${result.output_path}`,
+    `Bytes written: ${result.bytes_written}`,
+    `Visibility: ${result.visibility_scope}`,
+    `Status: ${result.artifact_status}`,
+    maybeLine("Integrity digest", result.integrity_digest),
+  );
+}
+
+function formatRunAuditExport(result: RunAuditExportResult): string {
+  const exportedArtifacts =
+    result.exported_artifacts.length === 0
+      ? "none"
+      : `\n${bulletList(
+          result.exported_artifacts.map(
+            (artifact) => `${artifact.artifact_id} [${artifact.type}] -> ${artifact.output_path} (${artifact.bytes_written} bytes)`,
+          ),
+        )}`;
+  const skippedArtifacts =
+    result.skipped_artifacts.length === 0
+      ? "none"
+      : `\n${bulletList(
+          result.skipped_artifacts.map(
+            (artifact) =>
+              `${artifact.artifact_id} [${artifact.type}] ${artifact.artifact_status}: ${artifact.reason}`,
+          ),
+        )}`;
+
+  return lines(
+    `Exported run audit bundle for ${result.run_id}`,
+    `Output dir: ${result.output_dir}`,
+    `Visibility: ${result.visibility_scope}`,
+    `Files written: ${result.files_written.length}`,
+    `Artifacts exported: ${result.exported_artifacts.length}`,
+    `Artifacts skipped: ${result.skipped_artifacts.length}`,
+    `Exported artifacts:${exportedArtifacts}`,
+    `Skipped artifacts:${skippedArtifacts}`,
+  );
+}
+
+function formatRunAuditVerify(result: RunAuditVerifyResult): string {
+  const issues =
+    result.issues.length === 0
+      ? "none"
+      : `\n${bulletList(
+          result.issues.map((issue) =>
+            `${issue.code}: ${issue.message}${issue.file_path ? ` [${issue.file_path}]` : ""}`,
+          ),
+        )}`;
+
+  return lines(
+    `Verified run audit bundle for ${result.run_id}`,
+    `Output dir: ${result.output_dir}`,
+    `Audit bundle verified: ${result.verified ? "yes" : "no"}`,
+    `Files checked: ${result.files_checked}`,
+    `Exported artifacts checked: ${result.exported_artifacts_checked}`,
+    `Issues:${issues}`,
+  );
+}
+
+function ensurePathDoesNotExist(targetPath: string, commandName: string): void {
+  if (fs.existsSync(targetPath)) {
+    throw new Error(`${commandName} refuses to overwrite existing path: ${targetPath}`);
+  }
+}
+
+function writeJsonFile(targetPath: string, value: unknown): void {
+  fs.writeFileSync(targetPath, JSON.stringify(value, null, 2), "utf8");
+}
+
+function sha256Hex(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function safeFileComponent(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+async function exportRunAuditBundle(
+  client: AuthorityClient,
+  runId: string,
+  outputDir: string,
+  visibilityScope: TimelineResult["visibility_scope"],
+): Promise<RunAuditExportResult> {
+  const runSummary = await client.getRunSummary(runId);
+  const timeline = await client.queryTimeline(runId, visibilityScope);
+  const approvals = await client.listApprovals({ run_id: runId });
+  const approvalInbox = await client.queryApprovalInbox({ run_id: runId });
+  const diagnostics = await client.diagnostics([
+    "daemon_health",
+    "journal_health",
+    "maintenance_backlog",
+    "projection_lag",
+    "storage_summary",
+    "capability_summary",
+  ]);
+
+  ensurePathDoesNotExist(outputDir, "run-audit-export");
+  fs.mkdirSync(outputDir, { recursive: true });
+  const artifactsDir = path.join(outputDir, "artifacts");
+  fs.mkdirSync(artifactsDir, { recursive: true });
+
+  const filesWritten: string[] = [];
+  const writeAuditFile = (fileName: string, content: string): void => {
+    const targetPath = path.join(outputDir, fileName);
+    fs.writeFileSync(targetPath, content, "utf8");
+    filesWritten.push(targetPath);
+  };
+
+  writeAuditFile("run-summary.json", JSON.stringify(runSummary, null, 2));
+  writeAuditFile("run-summary.txt", formatRunSummary(runSummary));
+  writeAuditFile("timeline.json", JSON.stringify(timeline, null, 2));
+  writeAuditFile("timeline.txt", formatTimeline(timeline));
+  writeAuditFile("approvals.json", JSON.stringify(approvals, null, 2));
+  writeAuditFile("approvals.txt", formatApprovalList(approvals));
+  writeAuditFile("approval-inbox.json", JSON.stringify(approvalInbox, null, 2));
+  writeAuditFile("approval-inbox.txt", formatApprovalInbox(approvalInbox));
+  writeAuditFile("diagnostics.json", JSON.stringify(diagnostics, null, 2));
+  writeAuditFile("diagnostics.txt", formatDiagnostics(diagnostics));
+
+  const seenArtifactIds = new Set<string>();
+  const exportedArtifacts: RunAuditExportedArtifact[] = [];
+  const skippedArtifacts: RunAuditSkippedArtifact[] = [];
+
+  for (const step of timeline.steps) {
+    for (const artifact of step.primary_artifacts) {
+      if (typeof artifact.artifact_id !== "string" || seenArtifactIds.has(artifact.artifact_id)) {
+        continue;
+      }
+      seenArtifactIds.add(artifact.artifact_id);
+
+      try {
+        const artifactResult = await client.queryArtifact(artifact.artifact_id, visibilityScope, {
+          fullContent: true,
+        });
+
+        if (artifactResult.content_truncated) {
+          throw new Error(
+            `Artifact ${artifact.artifact_id} export returned truncated content even though full export was requested.`,
+          );
+        }
+
+        if (!artifactResult.content_available) {
+          skippedArtifacts.push({
+            artifact_id: artifact.artifact_id,
+            type: artifact.type,
+            reason: "artifact content is not durably available",
+            artifact_status: artifactResult.artifact_status,
+          });
+          continue;
+        }
+
+        const artifactPath = path.join(
+          artifactsDir,
+          `${safeFileComponent(artifact.artifact_id)}.${safeFileComponent(artifact.type)}.txt`,
+        );
+        fs.writeFileSync(artifactPath, artifactResult.content, "utf8");
+        filesWritten.push(artifactPath);
+        const contentSha256 = sha256Hex(artifactResult.content);
+        exportedArtifacts.push({
+          artifact_id: artifact.artifact_id,
+          type: artifact.type,
+          output_path: artifactPath,
+          relative_path: path.relative(outputDir, artifactPath),
+          bytes_written: Buffer.byteLength(artifactResult.content, "utf8"),
+          visibility_scope: artifactResult.visibility_scope,
+          sha256: contentSha256,
+          integrity_digest: artifactResult.artifact.integrity.digest,
+        });
+      } catch (error) {
+        if (error instanceof AuthorityDaemonResponseError && error.code === "NOT_FOUND") {
+          skippedArtifacts.push({
+            artifact_id: artifact.artifact_id,
+            type: artifact.type,
+            reason: error.message,
+            artifact_status: "not_found",
+          });
+          continue;
+        }
+
+        throw error;
+      }
+    }
+  }
+
+  const manifestPath = path.join(outputDir, "manifest.json");
+  writeJsonFile(manifestPath, {
+    run_id: runId,
+    output_dir: outputDir,
+    visibility_scope: visibilityScope,
+    exported_at: new Date().toISOString(),
+    files_written: filesWritten,
+    exported_artifacts: exportedArtifacts,
+    skipped_artifacts: skippedArtifacts,
+    counts: {
+      timeline_steps: timeline.steps.length,
+      approvals: approvals.approvals.length,
+      approval_inbox_items: approvalInbox.items.length,
+      exported_artifacts: exportedArtifacts.length,
+      skipped_artifacts: skippedArtifacts.length,
+    },
+  });
+  filesWritten.push(manifestPath);
+
+  return {
+    run_id: runId,
+    output_dir: outputDir,
+    visibility_scope: visibilityScope,
+    files_written: filesWritten,
+    exported_artifacts: exportedArtifacts,
+    skipped_artifacts: skippedArtifacts,
+  };
+}
+
+function verifyRunAuditBundle(outputDir: string): RunAuditVerifyResult {
+  const manifestPath = path.join(outputDir, "manifest.json");
+  const issues: RunAuditVerifyIssue[] = [];
+  const requiredBundleFiles = [
+    "manifest.json",
+    "run-summary.json",
+    "run-summary.txt",
+    "timeline.json",
+    "timeline.txt",
+    "approvals.json",
+    "approvals.txt",
+    "approval-inbox.json",
+    "approval-inbox.txt",
+    "diagnostics.json",
+    "diagnostics.txt",
+  ];
+
+  let filesChecked = 0;
+  for (const fileName of requiredBundleFiles) {
+    filesChecked += 1;
+    const targetPath = path.join(outputDir, fileName);
+    if (!fs.existsSync(targetPath)) {
+      issues.push({
+        code: "MISSING_BUNDLE_FILE",
+        message: `Required audit bundle file is missing: ${fileName}`,
+        file_path: targetPath,
+      });
+    }
+  }
+
+  if (!fs.existsSync(manifestPath)) {
+    return {
+      run_id: "unknown",
+      output_dir: outputDir,
+      verified: false,
+      files_checked: filesChecked,
+      exported_artifacts_checked: 0,
+      issues: [
+        {
+          code: "MANIFEST_MISSING",
+          message: "Audit bundle manifest.json is missing.",
+          file_path: manifestPath,
+        },
+        ...issues,
+      ],
+    };
+  }
+
+  let manifest: {
+    run_id?: unknown;
+    exported_artifacts?: unknown;
+  };
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      run_id?: unknown;
+      exported_artifacts?: unknown;
+    };
+  } catch (error) {
+    return {
+      run_id: "unknown",
+      output_dir: outputDir,
+      verified: false,
+      files_checked: filesChecked,
+      exported_artifacts_checked: 0,
+      issues: [
+        {
+          code: "MANIFEST_INVALID",
+          message: error instanceof Error ? error.message : String(error),
+          file_path: manifestPath,
+        },
+        ...issues,
+      ],
+    };
+  }
+
+  const runId = typeof manifest.run_id === "string" ? manifest.run_id : "unknown";
+  const exportedArtifacts = Array.isArray(manifest.exported_artifacts) ? manifest.exported_artifacts : [];
+  let exportedArtifactsChecked = 0;
+
+  for (const record of exportedArtifacts) {
+    if (!record || typeof record !== "object") {
+      continue;
+    }
+
+    const artifact = record as Partial<RunAuditExportedArtifact>;
+    if (typeof artifact.artifact_id !== "string" || typeof artifact.type !== "string") {
+      continue;
+    }
+
+    exportedArtifactsChecked += 1;
+    filesChecked += 1;
+    const artifactPath =
+      typeof artifact.relative_path === "string"
+        ? path.resolve(outputDir, artifact.relative_path)
+        : typeof artifact.output_path === "string"
+          ? artifact.output_path
+          : null;
+
+    if (!artifactPath || !fs.existsSync(artifactPath)) {
+      issues.push({
+        code: "MISSING_ARTIFACT_FILE",
+        artifact_id: artifact.artifact_id,
+        message: `Exported artifact file is missing for ${artifact.artifact_id}.`,
+        file_path: artifactPath ?? undefined,
+      });
+      continue;
+    }
+
+    const content = fs.readFileSync(artifactPath);
+    if (typeof artifact.bytes_written === "number" && content.byteLength !== artifact.bytes_written) {
+      issues.push({
+        code: "ARTIFACT_SIZE_MISMATCH",
+        artifact_id: artifact.artifact_id,
+        message: `Expected ${artifact.bytes_written} bytes but found ${content.byteLength}.`,
+        file_path: artifactPath,
+      });
+    }
+
+    const digest = sha256Hex(content);
+    if (typeof artifact.sha256 === "string" && digest !== artifact.sha256) {
+      issues.push({
+        code: "ARTIFACT_SHA256_MISMATCH",
+        artifact_id: artifact.artifact_id,
+        message: `Expected SHA256 ${artifact.sha256} but found ${digest}.`,
+        file_path: artifactPath,
+      });
+    }
+
+    if (typeof artifact.integrity_digest === "string" && digest !== artifact.integrity_digest) {
+      issues.push({
+        code: "ARTIFACT_INTEGRITY_MISMATCH",
+        artifact_id: artifact.artifact_id,
+        message: `Expected integrity digest ${artifact.integrity_digest} but found ${digest}.`,
+        file_path: artifactPath,
+      });
+    }
+  }
+
+  return {
+    run_id: runId,
+    output_dir: outputDir,
+    verified: issues.length === 0,
+    files_checked: filesChecked,
+    exported_artifacts_checked: exportedArtifactsChecked,
+    issues,
+  };
+}
+
 function formatTimestamp(value: string | null | undefined): string {
   return value ?? "unknown";
 }
@@ -367,6 +817,79 @@ export function formatCapabilities(result: CapabilitiesResult): string {
     "",
     capabilityLines,
   );
+}
+
+export function formatMcpServers(result: ListMcpServersResult): string {
+  const serverLines =
+    result.servers.length === 0
+      ? "No local governed MCP servers are registered."
+      : result.servers
+          .map((record: RegisteredMcpServer) => {
+            const transportTarget =
+              record.server.transport === "streamable_http" ? record.server.url : record.server.command;
+            return lines(
+              `- ${record.server.server_id} [${record.server.transport}]`,
+              maybeLine("  Display name", record.server.display_name),
+              `  Source: ${record.source}`,
+              `  Transport target: ${transportTarget}`,
+              record.server.transport === "streamable_http"
+                ? `  Network scope: ${record.server.network_scope ?? "loopback"}`
+                : null,
+              record.server.transport === "streamable_http"
+                ? `  Max concurrent calls: ${record.server.max_concurrent_calls ?? 1}`
+                : null,
+              `  Tools: ${record.server.tools.map((tool) => `${tool.tool_name}:${tool.side_effect_level}:${tool.approval_mode ?? "ask"}`).join(", ")}`,
+              `  Created: ${record.created_at}`,
+              `  Updated: ${record.updated_at}`,
+            );
+          })
+          .join("\n\n");
+
+  return lines("Local governed MCP servers", serverLines);
+}
+
+export function formatMcpSecrets(result: ListMcpSecretsResult): string {
+  const secretLines =
+    result.secrets.length === 0
+      ? "No governed MCP secrets are stored."
+      : result.secrets
+          .map((secret: RegisteredMcpSecret) =>
+            lines(
+              `- ${secret.secret_id} [${secret.auth_type}]`,
+              maybeLine("  Display name", secret.display_name ?? undefined),
+              `  Version: ${secret.version}`,
+              `  Status: ${secret.status}`,
+              `  Source: ${secret.source}`,
+              `  Created: ${secret.created_at}`,
+              `  Updated: ${secret.updated_at}`,
+              `  Rotated: ${secret.rotated_at ?? "never"}`,
+              `  Last used: ${secret.last_used_at ?? "never"}`,
+            ),
+          )
+          .join("\n\n");
+
+  return lines("Governed MCP secrets", secretLines);
+}
+
+export function formatMcpHostPolicies(result: ListMcpHostPoliciesResult): string {
+  const policyLines =
+    result.policies.length === 0
+      ? "No governed MCP public host policies are registered."
+      : result.policies
+          .map((record: RegisteredMcpHostPolicy) =>
+            lines(
+              `- ${record.policy.host}`,
+              maybeLine("  Display name", record.policy.display_name),
+              `  Allow subdomains: ${record.policy.allow_subdomains ? "yes" : "no"}`,
+              `  Allowed ports: ${record.policy.allowed_ports?.join(", ") ?? "any"}`,
+              `  Source: ${record.source}`,
+              `  Created: ${record.created_at}`,
+              `  Updated: ${record.updated_at}`,
+            ),
+          )
+          .join("\n\n");
+
+  return lines("Governed MCP public host policies", policyLines);
 }
 
 export function formatDiagnostics(result: DiagnosticsResult): string {
@@ -811,9 +1334,11 @@ function formatExecuteRecovery(result: ExecuteRecoveryResult): string {
   );
 }
 
-async function main(): Promise<void> {
-  const { jsonOutput, command, rest } = parseCliArgs(process.argv.slice(2));
-  const client = new AuthorityClient({ clientType: "cli" });
+export async function runCli(
+  argv: string[] = process.argv.slice(2),
+  client: AuthorityClient = new AuthorityClient({ clientType: "cli" }),
+): Promise<void> {
+  const { jsonOutput, command, rest } = parseCliArgs(argv);
   const workspaceRoot = process.env.AGENTGIT_ROOT ?? process.env.INIT_CWD ?? process.cwd();
 
   if (!command || command === "help" || command === "--help" || command === "-h") {
@@ -866,6 +1391,134 @@ async function main(): Promise<void> {
     case "capabilities": {
       const result = await client.getCapabilities(rest[0]);
       printResult(result, jsonOutput, formatCapabilities);
+      return;
+    }
+    case "list-mcp-servers": {
+      const result = await client.listMcpServers();
+      printResult(result, jsonOutput, formatMcpServers);
+      return;
+    }
+    case "list-mcp-secrets": {
+      const result = await client.listMcpSecrets();
+      printResult(result, jsonOutput, formatMcpSecrets);
+      return;
+    }
+    case "list-mcp-host-policies": {
+      const result = await client.listMcpHostPolicies();
+      printResult(result, jsonOutput, formatMcpHostPolicies);
+      return;
+    }
+    case "upsert-mcp-secret": {
+      const definitionArg = rest[0];
+
+      if (!definitionArg) {
+        console.error("Usage: agentgit-authority [--json] upsert-mcp-secret <definition-json-or-path>");
+        process.exitCode = 1;
+        return;
+      }
+
+      const result = await client.upsertMcpSecret(
+        parseJsonArgOrFile(definitionArg) as Parameters<AuthorityClient["upsertMcpSecret"]>[0],
+      );
+      printResult(result, jsonOutput, (value: UpsertMcpSecretResult) =>
+        lines(
+          `${value.created ? "Stored" : value.rotated ? "Rotated" : "Updated"} MCP secret ${value.secret.secret_id}`,
+          `Version: ${value.secret.version}`,
+          `Updated: ${value.secret.updated_at}`,
+        ),
+      );
+      return;
+    }
+    case "remove-mcp-secret": {
+      const secretId = rest[0];
+
+      if (!secretId) {
+        console.error("Usage: agentgit-authority [--json] remove-mcp-secret <secret-id>");
+        process.exitCode = 1;
+        return;
+      }
+
+      const result = await client.removeMcpSecret(secretId);
+      printResult(result, jsonOutput, (value: RemoveMcpSecretResult) =>
+        value.removed
+          ? `Removed MCP secret ${value.removed_secret?.secret_id ?? secretId}`
+          : `No MCP secret named ${secretId} was stored.`,
+      );
+      return;
+    }
+    case "upsert-mcp-host-policy": {
+      const definitionArg = rest[0];
+
+      if (!definitionArg) {
+        console.error("Usage: agentgit-authority [--json] upsert-mcp-host-policy <definition-json-or-path>");
+        process.exitCode = 1;
+        return;
+      }
+
+      const result = await client.upsertMcpHostPolicy(
+        parseJsonArgOrFile(definitionArg) as Parameters<AuthorityClient["upsertMcpHostPolicy"]>[0],
+      );
+      printResult(result, jsonOutput, (value: UpsertMcpHostPolicyResult) =>
+        lines(
+          `${value.created ? "Registered" : "Updated"} MCP host policy ${value.policy.policy.host}`,
+          `Allow subdomains: ${value.policy.policy.allow_subdomains ? "yes" : "no"}`,
+          `Updated: ${value.policy.updated_at}`,
+        ),
+      );
+      return;
+    }
+    case "remove-mcp-host-policy": {
+      const host = rest[0];
+
+      if (!host) {
+        console.error("Usage: agentgit-authority [--json] remove-mcp-host-policy <host>");
+        process.exitCode = 1;
+        return;
+      }
+
+      const result = await client.removeMcpHostPolicy(host);
+      printResult(result, jsonOutput, (value: RemoveMcpHostPolicyResult) =>
+        value.removed
+          ? `Removed MCP host policy ${value.removed_policy?.policy.host ?? host}`
+          : `No MCP host policy for ${host} was registered.`,
+      );
+      return;
+    }
+    case "upsert-mcp-server": {
+      const definitionArg = rest[0];
+
+      if (!definitionArg) {
+        console.error("Usage: agentgit-authority [--json] upsert-mcp-server <definition-json-or-path>");
+        process.exitCode = 1;
+        return;
+      }
+
+      const result = await client.upsertMcpServer(parseJsonArgOrFile(definitionArg) as Parameters<AuthorityClient["upsertMcpServer"]>[0]);
+      printResult(result, jsonOutput, (value: UpsertMcpServerResult) =>
+        lines(
+          `${value.created ? "Registered" : "Updated"} MCP server ${value.server.server.server_id}`,
+          `Transport: ${value.server.server.transport}`,
+          `Source: ${value.server.source}`,
+          `Updated: ${value.server.updated_at}`,
+        ),
+      );
+      return;
+    }
+    case "remove-mcp-server": {
+      const serverId = rest[0];
+
+      if (!serverId) {
+        console.error("Usage: agentgit-authority [--json] remove-mcp-server <server-id>");
+        process.exitCode = 1;
+        return;
+      }
+
+      const result = await client.removeMcpServer(serverId);
+      printResult(result, jsonOutput, (value: RemoveMcpServerResult) =>
+        value.removed
+          ? `Removed MCP server ${value.removed_server?.server.server_id ?? serverId}`
+          : `No MCP server named ${serverId} was registered.`,
+      );
       return;
     }
     case "diagnostics": {
@@ -960,6 +1613,86 @@ async function main(): Promise<void> {
       const visibilityScope = parseVisibilityScopeArg(rest[1]);
       const result = await client.queryArtifact(artifactId, visibilityScope);
       printResult(result, jsonOutput, formatArtifact);
+      return;
+    }
+    case "artifact-export": {
+      const artifactId = rest[0];
+      const destinationPath = rest[1];
+      const visibilityScope = parseVisibilityScopeArg(rest[2]);
+
+      if (!artifactId || !destinationPath) {
+        throw new Error("artifact-export requires <artifact-id> <destination-path> [visibility-scope].");
+      }
+
+      const result = await client.queryArtifact(artifactId, visibilityScope, {
+        fullContent: true,
+      });
+
+      if (!result.content_available) {
+        throw new Error(
+          `Artifact ${artifactId} content is not available for export (${result.artifact_status}).`,
+        );
+      }
+
+      if (result.content_truncated) {
+        throw new Error(`Artifact ${artifactId} export returned truncated content; export aborted.`);
+      }
+
+      const resolvedDestinationPath = path.isAbsolute(destinationPath)
+        ? destinationPath
+        : path.resolve(workspaceRoot, destinationPath);
+      if (fs.existsSync(resolvedDestinationPath)) {
+        throw new Error(`artifact-export refuses to overwrite existing file: ${resolvedDestinationPath}`);
+      }
+
+      fs.mkdirSync(path.dirname(resolvedDestinationPath), { recursive: true });
+      fs.writeFileSync(resolvedDestinationPath, result.content, "utf8");
+
+      printResult(
+        {
+          artifact_id: artifactId,
+          output_path: resolvedDestinationPath,
+          bytes_written: Buffer.byteLength(result.content, "utf8"),
+          visibility_scope: result.visibility_scope,
+          artifact_status: result.artifact_status,
+          integrity_digest: result.artifact.integrity.digest,
+        } satisfies ArtifactExportResult,
+        jsonOutput,
+        formatArtifactExport,
+      );
+      return;
+    }
+    case "run-audit-export": {
+      const runId = rest[0];
+      const rawOutputDir = rest[1];
+      const visibilityScope = parseVisibilityScopeArg(rest[2]) ?? "user";
+
+      if (!runId || !rawOutputDir) {
+        throw new Error("run-audit-export requires <run-id> <output-dir> [visibility-scope].");
+      }
+
+      const resolvedOutputDir = path.isAbsolute(rawOutputDir)
+        ? rawOutputDir
+        : path.resolve(workspaceRoot, rawOutputDir);
+      const result = await exportRunAuditBundle(client, runId, resolvedOutputDir, visibilityScope);
+      printResult(result, jsonOutput, formatRunAuditExport);
+      return;
+    }
+    case "run-audit-verify": {
+      const rawOutputDir = rest[0];
+
+      if (!rawOutputDir) {
+        throw new Error("run-audit-verify requires <bundle-dir>.");
+      }
+
+      const resolvedOutputDir = path.isAbsolute(rawOutputDir)
+        ? rawOutputDir
+        : path.resolve(workspaceRoot, rawOutputDir);
+      const result = verifyRunAuditBundle(resolvedOutputDir);
+      printResult(result, jsonOutput, formatRunAuditVerify);
+      if (!result.verified) {
+        process.exitCode = 1;
+      }
       return;
     }
     case "helper": {
@@ -1075,6 +1808,61 @@ async function main(): Promise<void> {
         raw_call: {
           command: commandParts.join(" "),
           argv: commandParts,
+        },
+        environment_context: {
+          workspace_roots: [workspaceRoot],
+          cwd: workspaceRoot,
+          credential_mode: "none",
+        },
+        framework_context: {
+          agent_name: "agentgit-cli",
+          agent_framework: "cli",
+        },
+        received_at: new Date().toISOString(),
+      });
+      printResult(result, jsonOutput, formatSubmitAction);
+      return;
+    }
+    case "submit-mcp-tool": {
+      const [runId, serverId, toolName, ...argumentParts] = rest;
+
+      if (!runId || !serverId || !toolName) {
+        console.error(
+          "Usage: agentgit-authority [--json] submit-mcp-tool <run-id> <server-id> <tool-name> [arguments-json-or-path]",
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      let toolArguments: Record<string, unknown> = {};
+      if (argumentParts.length > 0) {
+        try {
+          const parsed = parseJsonArgOrFile(argumentParts.join(" "));
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("arguments must be a JSON object");
+          }
+          toolArguments = parsed as Record<string, unknown>;
+        } catch (error) {
+          console.error(
+            `submit-mcp-tool expects JSON like {"note":"launch blocker"} for tool arguments: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      const result = await client.submitActionAttempt({
+        run_id: runId,
+        tool_registration: {
+          tool_name: "mcp_call_tool",
+          tool_kind: "mcp",
+        },
+        raw_call: {
+          server_id: serverId,
+          tool_name: toolName,
+          arguments: toolArguments,
         },
         environment_context: {
           workspace_roots: [workspaceRoot],
@@ -2012,6 +2800,10 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   }
+}
+
+async function main(): Promise<void> {
+  await runCli();
 }
 
 const invokedPath = process.argv[1];

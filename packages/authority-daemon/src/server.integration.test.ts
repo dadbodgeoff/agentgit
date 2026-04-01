@@ -5,6 +5,9 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { z } from "zod";
 
 import { OwnedDraftStore, OwnedNoteStore, OwnedTicketStore } from "@agentgit/execution-adapters";
 import { IntegrationState } from "@agentgit/integration-state";
@@ -179,6 +182,139 @@ async function closeTicketServer(server: http.Server): Promise<void> {
       resolve();
     });
   });
+}
+
+async function startMcpHttpService(options: {
+  requireBearerToken?: string;
+  scenario?: "default" | "missing_tool" | "call_error";
+} = {}): Promise<{
+  url: string;
+  close: () => Promise<void>;
+}> {
+  const server = http.createServer(async (req, res) => {
+    if (options.requireBearerToken && req.headers.authorization !== `Bearer ${options.requireBearerToken}`) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
+            message: "Unauthorized",
+          },
+          id: null,
+        }),
+      );
+      return;
+    }
+
+    const mcpServer = new McpServer({
+      name: "agentgit-test-http-mcp-server",
+      version: "1.0.0",
+    });
+    const scenario = options.scenario ?? "default";
+
+    if (scenario === "missing_tool") {
+      mcpServer.registerTool(
+        "other_tool",
+        {
+          description: "A different tool than requested.",
+          inputSchema: {
+            note: z.string(),
+          },
+          annotations: {
+            readOnlyHint: true,
+          },
+        },
+        async ({ note }) => ({
+          content: [{ type: "text", text: `other:${note}` }],
+        }),
+      );
+    } else {
+      mcpServer.registerTool(
+        "echo_note",
+        {
+          description: "Echo a note back to the caller.",
+          inputSchema: {
+            note: z.string(),
+          },
+          annotations: {
+            readOnlyHint: true,
+          },
+        },
+        async ({ note }) => {
+          if (scenario === "call_error") {
+            return {
+              isError: true,
+              content: [{ type: "text", text: `http-upstream-error:${note}` }],
+            };
+          }
+
+          return {
+            content: [{ type: "text", text: `http-echo:${note}` }],
+            structuredContent: { echoed_note: note },
+          };
+        },
+      );
+
+      mcpServer.registerTool(
+        "delete_remote",
+        {
+          description: "Pretend to delete a remote record.",
+          inputSchema: {
+            record_id: z.string(),
+          },
+          annotations: {
+            destructiveHint: true,
+          },
+        },
+        async ({ record_id }) => ({
+          content: [{ type: "text", text: `deleted:${record_id}` }],
+        }),
+      );
+    }
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+
+    try {
+      await mcpServer.connect(transport);
+      if (req.method === "POST") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const bodyText = Buffer.concat(chunks).toString("utf8");
+        await transport.handleRequest(req, res, bodyText.length > 0 ? JSON.parse(bodyText) : undefined);
+      } else {
+        await transport.handleRequest(req, res);
+      }
+    } finally {
+      res.on("close", () => {
+        void transport.close().catch(() => undefined);
+        void mcpServer.close().catch(() => undefined);
+      });
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+    server.once("error", reject);
+  });
+  ticketServers.add(server);
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("MCP HTTP service did not start with a TCP address.");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp`,
+    close: async () => {
+      await closeTicketServer(server);
+      ticketServers.delete(server);
+    },
+  };
 }
 
 async function restartHarness(harness: TestHarness): Promise<void> {
@@ -1624,6 +1760,683 @@ describe("authority daemon integration", () => {
     expect(submitResponse.result?.approval_request).toBeNull();
     expect(submitResponse.result?.policy_outcome.decision).toBe("deny");
     expect(submitResponse.result?.policy_outcome.reasons[0]?.code).toBe("DIRECT_CREDENTIALS_FORBIDDEN");
+  });
+
+  it("registers, lists, and removes governed MCP servers through daemon APIs", async () => {
+    const harness = await createHarness();
+    const helloResponse = await sendRequest<{ session_id: string }>(harness, "hello", {
+      client_type: "cli",
+      client_version: "0.1.0",
+      requested_api_version: API_VERSION,
+      workspace_roots: [harness.workspaceRoot],
+    });
+
+    if (!helloResponse.ok) {
+      throw new Error(JSON.stringify(helloResponse.error));
+    }
+    const sessionId = helloResponse.result!.session_id;
+
+    const upsertResponse = await sendRequest<{
+      created: boolean;
+      server: {
+        source: string;
+        server: { server_id: string; transport: string };
+      };
+    }>(
+      harness,
+      "upsert_mcp_server",
+      {
+        server: {
+          server_id: "notes_server",
+          transport: "stdio",
+          command: process.execPath,
+          args: [MCP_TEST_SERVER_SCRIPT],
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      },
+      sessionId,
+      "idem_mcp_upsert",
+    );
+
+    expect(upsertResponse.ok).toBe(true);
+    expect(upsertResponse.result?.created).toBe(true);
+    expect(upsertResponse.result?.server.source).toBe("operator_api");
+
+    const listResponse = await sendRequest<{
+      servers: Array<{ source: string; server: { server_id: string; transport: string } }>;
+    }>(harness, "list_mcp_servers", {}, sessionId);
+    expect(listResponse.ok).toBe(true);
+    expect(listResponse.result?.servers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "operator_api",
+          server: expect.objectContaining({
+            server_id: "notes_server",
+            transport: "stdio",
+          }),
+        }),
+      ]),
+    );
+
+    const removeResponse = await sendRequest<{
+      removed: boolean;
+      removed_server: { server: { server_id: string } } | null;
+    }>(
+      harness,
+      "remove_mcp_server",
+      {
+        server_id: "notes_server",
+      },
+      sessionId,
+      "idem_mcp_remove",
+    );
+    expect(removeResponse.ok).toBe(true);
+    expect(removeResponse.result?.removed).toBe(true);
+    expect(removeResponse.result?.removed_server?.server.server_id).toBe("notes_server");
+  });
+
+  it("manages MCP secrets and public host policies through the daemon API without leaking bearer values", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-admin-surfaces");
+
+    const upsertSecretResponse = await sendRequest<{
+      created: boolean;
+      rotated: boolean;
+      secret: {
+        secret_id: string;
+        version: number;
+        rotated_at: string | null;
+        last_used_at: string | null;
+      };
+    }>(
+      harness,
+      "upsert_mcp_secret",
+      {
+        secret: {
+          secret_id: "mcp_secret_notion",
+          display_name: "Notion MCP",
+          bearer_token: "notion-secret-token",
+        },
+      },
+      sessionId,
+    );
+    expect(upsertSecretResponse.ok).toBe(true);
+    expect(upsertSecretResponse.result?.created).toBe(true);
+    expect(upsertSecretResponse.result?.rotated).toBe(false);
+    expect(upsertSecretResponse.result?.secret.secret_id).toBe("mcp_secret_notion");
+
+    const listSecretsResponse = await sendRequest<{
+      secrets: Array<Record<string, unknown>>;
+    }>(harness, "list_mcp_secrets", {}, sessionId);
+    expect(listSecretsResponse.ok).toBe(true);
+    expect(listSecretsResponse.result?.secrets).toEqual([
+      expect.objectContaining({
+        secret_id: "mcp_secret_notion",
+        version: 1,
+        last_used_at: null,
+      }),
+    ]);
+    expect(JSON.stringify(listSecretsResponse.result?.secrets)).not.toContain("notion-secret-token");
+
+    const upsertHostPolicyResponse = await sendRequest<{
+      created: boolean;
+      policy: {
+        policy: {
+          host: string;
+          allowed_ports: number[];
+        };
+      };
+    }>(
+      harness,
+      "upsert_mcp_host_policy",
+      {
+        policy: {
+          host: "api.notion.com",
+          display_name: "Notion API",
+          allow_subdomains: false,
+          allowed_ports: [443],
+        },
+      },
+      sessionId,
+    );
+    expect(upsertHostPolicyResponse.ok).toBe(true);
+    expect(upsertHostPolicyResponse.result?.created).toBe(true);
+    expect(upsertHostPolicyResponse.result?.policy.policy.host).toBe("api.notion.com");
+
+    const listHostPoliciesResponse = await sendRequest<{
+      policies: Array<Record<string, unknown>>;
+    }>(harness, "list_mcp_host_policies", {}, sessionId);
+    expect(listHostPoliciesResponse.ok).toBe(true);
+    expect(listHostPoliciesResponse.result?.policies).toEqual([
+      expect.objectContaining({
+        policy: expect.objectContaining({
+          host: "api.notion.com",
+          allowed_ports: [443],
+        }),
+      }),
+    ]);
+
+    const removeHostPolicyResponse = await sendRequest<{
+      removed: boolean;
+      removed_policy: { policy: { host: string } } | null;
+    }>(
+      harness,
+      "remove_mcp_host_policy",
+      {
+        host: "api.notion.com",
+      },
+      sessionId,
+    );
+    expect(removeHostPolicyResponse.ok).toBe(true);
+    expect(removeHostPolicyResponse.result?.removed).toBe(true);
+    expect(removeHostPolicyResponse.result?.removed_policy?.policy.host).toBe("api.notion.com");
+
+    const removeSecretResponse = await sendRequest<{
+      removed: boolean;
+      removed_secret: { secret_id: string } | null;
+    }>(
+      harness,
+      "remove_mcp_secret",
+      {
+        secret_id: "mcp_secret_notion",
+      },
+      sessionId,
+    );
+    expect(removeSecretResponse.ok).toBe(true);
+    expect(removeSecretResponse.result?.removed).toBe(true);
+    expect(removeSecretResponse.result?.removed_secret?.secret_id).toBe("mcp_secret_notion");
+  });
+
+  it("executes an operator-registered streamable_http MCP tool through the full request pipeline", async () => {
+    const service = await startMcpHttpService({
+      requireBearerToken: "daemon-http-secret",
+    });
+    process.env.AGENTGIT_TEST_MCP_HTTP_TOKEN = "daemon-http-secret";
+
+    try {
+      const harness = await createHarness();
+      const { sessionId, runId } = await createSessionAndRun(harness, "mcp-http-read-only");
+
+      const upsertResponse = await sendRequest<{
+        created: boolean;
+      }>(
+        harness,
+        "upsert_mcp_server",
+        {
+          server: {
+            server_id: "notes_http",
+            display_name: "Notes HTTP server",
+            transport: "streamable_http",
+            url: service.url,
+            auth: {
+              type: "bearer_env",
+              bearer_env_var: "AGENTGIT_TEST_MCP_HTTP_TOKEN",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        },
+        sessionId,
+      );
+      expect(upsertResponse.ok).toBe(true);
+
+      const submitResponse = await sendRequest<{
+        execution_result: { mode: string; success: boolean; output: Record<string, unknown> } | null;
+      }>(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: makeMcpAttempt(runId, harness.workspaceRoot, {
+            serverId: "notes_http",
+            toolName: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          }),
+        },
+        sessionId,
+      );
+
+      expect(submitResponse.ok).toBe(true);
+      expect(submitResponse.result?.execution_result?.mode).toBe("executed");
+      expect(submitResponse.result?.execution_result?.success).toBe(true);
+      expect(submitResponse.result?.execution_result?.output.server_id).toBe("notes_http");
+      expect(submitResponse.result?.execution_result?.output.transport).toBe("streamable_http");
+      expect(submitResponse.result?.execution_result?.output.summary).toBe("http-echo:launch blocker");
+    } finally {
+      delete process.env.AGENTGIT_TEST_MCP_HTTP_TOKEN;
+      await service.close();
+    }
+  });
+
+  it("executes an operator-registered streamable_http MCP tool with a durable secret reference", async () => {
+    const service = await startMcpHttpService({
+      requireBearerToken: "daemon-secret-ref-token",
+    });
+
+    try {
+      const harness = await createHarness();
+      const { sessionId, runId } = await createSessionAndRun(harness, "mcp-http-secret-ref");
+
+      const upsertSecretResponse = await sendRequest<{
+        created: boolean;
+      }>(
+        harness,
+        "upsert_mcp_secret",
+        {
+          secret: {
+            secret_id: "mcp_secret_notes_http",
+            display_name: "Notes HTTP MCP",
+            bearer_token: "daemon-secret-ref-token",
+          },
+        },
+        sessionId,
+      );
+      expect(upsertSecretResponse.ok).toBe(true);
+
+      const upsertServerResponse = await sendRequest<{
+        created: boolean;
+      }>(
+        harness,
+        "upsert_mcp_server",
+        {
+          server: {
+            server_id: "notes_http_secret_ref",
+            display_name: "Notes HTTP secret ref",
+            transport: "streamable_http",
+            url: service.url,
+            network_scope: "private",
+            auth: {
+              type: "bearer_secret_ref",
+              secret_id: "mcp_secret_notes_http",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        },
+        sessionId,
+      );
+      expect(upsertServerResponse.ok).toBe(true);
+
+      const submitResponse = await sendRequest<{
+        execution_result: { mode: string; success: boolean; output: Record<string, unknown> } | null;
+      }>(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: makeMcpAttempt(runId, harness.workspaceRoot, {
+            serverId: "notes_http_secret_ref",
+            toolName: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          }),
+        },
+        sessionId,
+      );
+
+      expect(submitResponse.ok).toBe(true);
+      expect(submitResponse.result?.execution_result?.mode).toBe("executed");
+      expect(submitResponse.result?.execution_result?.success).toBe(true);
+      expect(submitResponse.result?.execution_result?.output.server_id).toBe("notes_http_secret_ref");
+      expect(submitResponse.result?.execution_result?.output.transport).toBe("streamable_http");
+      expect(submitResponse.result?.execution_result?.output.summary).toBe("http-echo:launch blocker");
+      expect(submitResponse.result?.execution_result?.output.auth_type).toBe("bearer_secret_ref");
+
+      const listSecretsResponse = await sendRequest<{
+        secrets: Array<{
+          secret_id: string;
+          last_used_at: string | null;
+        }>;
+      }>(harness, "list_mcp_secrets", {}, sessionId);
+      expect(listSecretsResponse.ok).toBe(true);
+      expect(listSecretsResponse.result?.secrets).toEqual([
+        expect.objectContaining({
+          secret_id: "mcp_secret_notes_http",
+          last_used_at: expect.any(String),
+        }),
+      ]);
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("fails closed when an operator attempts to register a non-local streamable_http MCP server", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-http-non-local");
+
+    const upsertResponse = await sendRequest(
+      harness,
+      "upsert_mcp_server",
+      {
+        server: {
+          server_id: "notes_remote",
+          transport: "streamable_http",
+          url: "https://example.com/mcp",
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      },
+      sessionId,
+    );
+
+    expect(upsertResponse.ok).toBe(false);
+    expect(upsertResponse.error?.code).toBe("CAPABILITY_UNAVAILABLE");
+    expect(upsertResponse.error?.message).toContain("local loopback URLs");
+    expect(upsertResponse.error?.details).toMatchObject({
+      server_id: "notes_remote",
+      transport: "streamable_http",
+      hostname: "example.com",
+    });
+  });
+
+  it("allows explicit private-network streamable_http MCP registration through daemon APIs", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-http-private-network");
+
+    const upsertResponse = await sendRequest<{
+      created: boolean;
+      server: {
+        server: {
+          server_id: string;
+          transport: string;
+          url: string;
+          network_scope: string;
+          max_concurrent_calls: number;
+        };
+      };
+    }>(
+      harness,
+      "upsert_mcp_server",
+      {
+        server: {
+          server_id: "notes_private",
+          transport: "streamable_http",
+          url: "http://10.24.3.11:3010/mcp",
+          network_scope: "private",
+          max_concurrent_calls: 2,
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      },
+      sessionId,
+    );
+
+    expect(upsertResponse.ok).toBe(true);
+    expect(upsertResponse.result?.created).toBe(true);
+    expect(upsertResponse.result?.server.server).toMatchObject({
+      server_id: "notes_private",
+      transport: "streamable_http",
+      url: "http://10.24.3.11:3010/mcp",
+      network_scope: "private",
+      max_concurrent_calls: 2,
+    });
+  });
+
+  it("allows explicit public HTTPS streamable_http MCP registration with bearer auth", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-http-public-https");
+
+    const hostPolicyResponse = await sendRequest<{
+      created: boolean;
+    }>(
+      harness,
+      "upsert_mcp_host_policy",
+      {
+        policy: {
+          host: "api.example.com",
+          display_name: "Example API",
+          allow_subdomains: false,
+          allowed_ports: [443],
+        },
+      },
+      sessionId,
+    );
+    expect(hostPolicyResponse.ok).toBe(true);
+
+    const upsertResponse = await sendRequest<{
+      created: boolean;
+      server: {
+        server: {
+          server_id: string;
+          transport: string;
+          url: string;
+          network_scope: string;
+          max_concurrent_calls: number;
+          auth: {
+            type: string;
+            bearer_env_var: string;
+          };
+        };
+      };
+    }>(
+      harness,
+      "upsert_mcp_server",
+      {
+        server: {
+          server_id: "notes_public",
+          transport: "streamable_http",
+          url: "https://api.example.com/mcp",
+          network_scope: "public_https",
+          max_concurrent_calls: 2,
+          auth: {
+            type: "bearer_env",
+            bearer_env_var: "AGENTGIT_PUBLIC_MCP_TOKEN",
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      },
+      sessionId,
+    );
+
+    expect(upsertResponse.ok).toBe(true);
+    expect(upsertResponse.result?.created).toBe(true);
+    expect(upsertResponse.result?.server.server).toMatchObject({
+      server_id: "notes_public",
+      transport: "streamable_http",
+      url: "https://api.example.com/mcp",
+      network_scope: "public_https",
+      max_concurrent_calls: 2,
+      auth: {
+        type: "bearer_env",
+        bearer_env_var: "AGENTGIT_PUBLIC_MCP_TOKEN",
+      },
+    });
+  });
+
+  it("fails closed for public HTTPS streamable_http MCP registration without bearer auth", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-http-public-https-no-auth");
+
+    const upsertResponse = await sendRequest(
+      harness,
+      "upsert_mcp_server",
+      {
+        server: {
+          server_id: "notes_public_no_auth",
+          transport: "streamable_http",
+          url: "https://api.example.com/mcp",
+          network_scope: "public_https",
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      },
+      sessionId,
+    );
+
+    expect(upsertResponse.ok).toBe(false);
+    expect(upsertResponse.error?.code).toBe("CAPABILITY_UNAVAILABLE");
+    expect(upsertResponse.error?.message).toContain(
+      "requires operator-managed bearer authentication backed by a secret reference or legacy env configuration",
+    );
+  });
+
+  it("persists operator-registered MCP servers across daemon restart", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-registry-persist");
+
+    const upsertResponse = await sendRequest<{
+      created: boolean;
+    }>(
+      harness,
+      "upsert_mcp_server",
+      {
+        server: {
+          server_id: "notes_server",
+          transport: "stdio",
+          command: process.execPath,
+          args: [MCP_TEST_SERVER_SCRIPT],
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      },
+      sessionId,
+    );
+    expect(upsertResponse.ok).toBe(true);
+
+    await restartHarness(harness);
+    const { sessionId: restartedSessionId, runId } = await createSessionAndRun(harness, "mcp-registry-persist-restarted");
+
+    const listResponse = await sendRequest<{
+      servers: Array<{ server: { server_id: string } }>;
+    }>(harness, "list_mcp_servers", {}, restartedSessionId);
+    expect(listResponse.ok).toBe(true);
+    expect(listResponse.result?.servers.map((record) => record.server.server_id)).toContain("notes_server");
+
+    const submitResponse = await sendRequest<{
+      execution_result: { success: boolean; output: Record<string, unknown> } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeMcpAttempt(runId, harness.workspaceRoot, {
+          toolName: "echo_note",
+          arguments: {
+            note: "after restart",
+          },
+        }),
+      },
+      restartedSessionId,
+    );
+
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.execution_result?.success).toBe(true);
+    expect(submitResponse.result?.execution_result?.output.summary).toBe("echo:after restart");
+  });
+
+  it("imports bootstrap MCP env config into the durable registry and keeps it after restart", async () => {
+    process.env.AGENTGIT_MCP_SERVERS_JSON = JSON.stringify([
+      {
+        server_id: "notes_server",
+        transport: "stdio",
+        command: process.execPath,
+        args: [MCP_TEST_SERVER_SCRIPT],
+        tools: [
+          {
+            tool_name: "echo_note",
+            side_effect_level: "read_only",
+            approval_mode: "allow",
+          },
+        ],
+      },
+    ]);
+
+    const harness = await createHarness();
+    const helloResponse = await sendRequest<{ session_id: string }>(harness, "hello", {
+      client_type: "cli",
+      client_version: "0.1.0",
+      requested_api_version: API_VERSION,
+      workspace_roots: [harness.workspaceRoot],
+    });
+    if (!helloResponse.ok) {
+      throw new Error(JSON.stringify(helloResponse.error));
+    }
+
+    const sessionId = helloResponse.result!.session_id;
+    const initialList = await sendRequest<{
+      servers: Array<{ source: string; server: { server_id: string } }>;
+    }>(harness, "list_mcp_servers", {}, sessionId);
+    expect(initialList.ok).toBe(true);
+    expect(initialList.result?.servers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "bootstrap_env",
+          server: expect.objectContaining({
+            server_id: "notes_server",
+          }),
+        }),
+      ]),
+    );
+
+    delete process.env.AGENTGIT_MCP_SERVERS_JSON;
+    await restartHarness(harness);
+
+    const restartedHello = await sendRequest<{ session_id: string }>(harness, "hello", {
+      client_type: "cli",
+      client_version: "0.1.0",
+      requested_api_version: API_VERSION,
+      workspace_roots: [harness.workspaceRoot],
+    });
+    if (!restartedHello.ok) {
+      throw new Error(JSON.stringify(restartedHello.error));
+    }
+
+    const restartedList = await sendRequest<{
+      servers: Array<{ source: string; server: { server_id: string } }>;
+    }>(harness, "list_mcp_servers", {}, restartedHello.result!.session_id);
+    expect(restartedList.ok).toBe(true);
+    expect(restartedList.result?.servers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "bootstrap_env",
+          server: expect.objectContaining({
+            server_id: "notes_server",
+          }),
+        }),
+      ]),
+    );
   });
 
   it("returns a retryable storage failure when destructive snapshot capture hits low disk pressure", async () => {
@@ -3767,11 +4580,11 @@ describe("authority daemon integration", () => {
         performed_inline: true,
       }),
     ]);
-    expect(maintenanceResponse.result?.jobs[0]?.summary).toContain("Refreshed 4 capability record");
+    expect(maintenanceResponse.result?.jobs[0]?.summary).toContain("Refreshed 6 capability record");
     expect(maintenanceResponse.result?.jobs[0]?.stats).toEqual(
       expect.objectContaining({
-        capability_count: 4,
-        degraded_capabilities: 1,
+        capability_count: 6,
+        degraded_capabilities: 0,
         unavailable_capabilities: 1,
         workspace_root: harness.workspaceRoot,
       }),
@@ -3805,14 +4618,14 @@ describe("authority daemon integration", () => {
     expect(diagnosticsResponse.result?.daemon_health?.primary_reason?.code).toBe("BROKERED_CAPABILITY_UNAVAILABLE");
     expect(
       diagnosticsResponse.result?.daemon_health?.warnings.some((warning) =>
-        warning.includes("Latest capability refresh reported 1 degraded and 1 unavailable"),
+        warning.includes("Latest capability refresh reported 0 degraded and 1 unavailable"),
       ),
     ).toBe(true);
     expect(
       diagnosticsResponse.result?.maintenance_backlog?.warnings.some((warning) =>
         warning.includes("session environment profiles"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       diagnosticsResponse.result?.maintenance_backlog?.warnings.some((warning) =>
         warning.includes("has not been refreshed durably yet"),
@@ -3822,8 +4635,8 @@ describe("authority daemon integration", () => {
     expect(diagnosticsResponse.result?.capability_summary).toEqual(
       expect.objectContaining({
         cached: true,
-        capability_count: 4,
-        degraded_capabilities: 1,
+        capability_count: 6,
+        degraded_capabilities: 0,
         unavailable_capabilities: 1,
         stale_after_ms: 300000,
         is_stale: false,
@@ -3871,11 +4684,11 @@ describe("authority daemon integration", () => {
         }),
         expect.objectContaining({
           capability_name: "host.credential_broker_mode",
-          status: "degraded",
+          status: "available",
           scope: "host",
           details: expect.objectContaining({
-            mode: "session_env_only",
-            secure_store: false,
+            mode: "local_encrypted_store",
+            secure_store: true,
           }),
         }),
         expect.objectContaining({
@@ -3905,7 +4718,7 @@ describe("authority daemon integration", () => {
       capabilitiesResponse.result?.degraded_mode_warnings.some((warning) =>
         warning.includes("session environment profiles"),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       capabilitiesResponse.result?.degraded_mode_warnings.some((warning) =>
         warning.includes("Owned ticket mutations are unavailable"),
@@ -3996,8 +4809,8 @@ describe("authority daemon integration", () => {
     expect(maintenanceResponse.result?.jobs[0]?.status).toBe("completed");
     expect(maintenanceResponse.result?.jobs[0]?.stats).toEqual(
       expect.objectContaining({
-        capability_count: 4,
-        degraded_capabilities: 1,
+        capability_count: 6,
+        degraded_capabilities: 0,
         unavailable_capabilities: 1,
         workspace_root: missingWorkspaceRoot,
       }),

@@ -3,9 +3,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SessionCredentialBroker } from "@agentgit/credential-broker";
 import { IntegrationState } from "@agentgit/integration-state";
+import {
+  McpPublicHostPolicyRegistry,
+  McpServerRegistry,
+  validateMcpServerDefinitions,
+} from "@agentgit/mcp-registry";
 import {
   AgentGitError,
   type ActionRecord,
@@ -18,6 +24,7 @@ import {
 } from "@agentgit/schemas";
 
 export type { ExecutionArtifact, ExecutionResult } from "@agentgit/schemas";
+export { validateMcpServerDefinitions } from "@agentgit/mcp-registry";
 
 interface FilesystemFacet {
   operation?: string;
@@ -141,6 +148,7 @@ export class AdapterRegistry {
 
 const DEFAULT_MCP_TIMEOUT_MS = 30_000;
 const MAX_MCP_STDERR_BYTES = 16 * 1024;
+type McpClientTransport = StdioClientTransport | StreamableHTTPClientTransport;
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, buildError: () => AgentGitError): Promise<T> {
   let timeout: NodeJS.Timeout | null = null;
@@ -171,68 +179,111 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeMcpServerId(value: string, field: string): string {
-  const normalized = value.trim();
-  if (normalized.length === 0) {
-    throw new AgentGitError("MCP server configuration is malformed.", "CAPABILITY_UNAVAILABLE", {
-      field,
+function resolveMcpTimeoutMs(server: McpServerDefinition): number {
+  return server.timeout_ms ?? DEFAULT_MCP_TIMEOUT_MS;
+}
+
+function assertStreamableHttpPublicEgressAllowed(
+  server: Extract<McpServerDefinition, { transport: "streamable_http" }>,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry | null,
+): void {
+  if ((server.network_scope ?? "loopback") !== "public_https") {
+    return;
+  }
+
+  if (!publicHostPolicyRegistry) {
+    throw new PreconditionError("Governed public HTTPS MCP execution requires a configured host allowlist registry.", {
+      server_id: server.server_id,
+      transport: server.transport,
+      network_scope: server.network_scope ?? "public_https",
+      url: server.url,
     });
   }
 
-  return normalized;
+  publicHostPolicyRegistry.assertUrlAllowed(new URL(server.url), server.server_id);
 }
 
-export function validateMcpServerDefinitions(servers: McpServerDefinition[]): McpServerDefinition[] {
-  const seenServerIds = new Set<string>();
+function resolveStreamableHttpHeaders(
+  server: Extract<McpServerDefinition, { transport: "streamable_http" }>,
+  broker: SessionCredentialBroker | null,
+): Record<string, string> {
+  const headers = {
+    ...(server.headers ?? {}),
+  };
 
-  return servers.map((server) => {
-    const serverId = normalizeMcpServerId(server.server_id, "server_id");
-    if (seenServerIds.has(serverId)) {
-      throw new AgentGitError("Duplicate MCP server_id configured for governed execution.", "CAPABILITY_UNAVAILABLE", {
-        server_id: serverId,
+  if (server.auth?.type === "bearer_env") {
+    const envVar = server.auth.bearer_env_var?.trim() ?? "";
+    const token = envVar.length > 0 ? process.env[envVar]?.trim() ?? "" : "";
+    if (token.length === 0) {
+      throw new PreconditionError("Governed streamable_http MCP execution requires an operator-configured bearer token env var.", {
+        server_id: server.server_id,
+        transport: server.transport,
+        bearer_env_var: envVar || null,
       });
     }
-    seenServerIds.add(serverId);
+    headers.authorization = `Bearer ${token}`;
+  }
 
-    const seenToolNames = new Set<string>();
-    const normalizedTools = server.tools.map((tool) => {
-      const toolName = normalizeMcpServerId(tool.tool_name, "tool_name");
-      if (seenToolNames.has(toolName)) {
-        throw new AgentGitError("Duplicate MCP tool_name configured for a governed server.", "CAPABILITY_UNAVAILABLE", {
-          server_id: serverId,
-          tool_name: toolName,
-        });
-      }
-      seenToolNames.add(toolName);
+  if (server.auth?.type === "bearer_secret_ref") {
+    if (!broker) {
+      throw new PreconditionError("Governed MCP bearer secret references require a configured credential broker.", {
+        server_id: server.server_id,
+        transport: server.transport,
+        secret_id: server.auth.secret_id,
+      });
+    }
 
-      if (tool.approval_mode === "allow" && tool.side_effect_level !== "read_only") {
-        throw new AgentGitError(
-          "Only explicitly read-only MCP tools can be auto-approved in the governed runtime.",
-          "CAPABILITY_UNAVAILABLE",
-          {
-            server_id: serverId,
-            tool_name: toolName,
-            side_effect_level: tool.side_effect_level,
-          },
-        );
-      }
+    const access = broker.resolveMcpBearerSecret(server.auth.secret_id);
+    headers.authorization = access.authorization_header;
+  }
 
-      return {
-        ...tool,
-        tool_name: toolName,
-      };
+  return headers;
+}
+
+function createMcpTransport(
+  server: McpServerDefinition,
+  workspaceRoot: string,
+  broker: SessionCredentialBroker | null,
+): {
+  transport: McpClientTransport;
+  readStderr: () => string;
+} {
+  if (server.transport === "stdio") {
+    const transport = new StdioClientTransport({
+      command: server.command,
+      args: server.args,
+      cwd: server.cwd ?? workspaceRoot,
+      env: {
+        ...getDefaultEnvironment(),
+        ...server.env,
+      },
+      stderr: "pipe",
     });
+    let stderr = "";
+    const stderrStream = transport.stderr;
+    if (stderrStream) {
+      stderrStream.on("data", (chunk: string | Buffer) => {
+        const value = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        stderr = `${stderr}${value}`.slice(0, MAX_MCP_STDERR_BYTES);
+      });
+    }
 
     return {
-      ...server,
-      server_id: serverId,
-      display_name: server.display_name?.trim() || undefined,
-      command: normalizeMcpServerId(server.command, "command"),
-      args: server.args ?? [],
-      env: server.env ?? {},
-      tools: normalizedTools,
+      transport,
+      readStderr: () => stderr,
     };
+  }
+
+  const transport = new StreamableHTTPClientTransport(new URL(server.url), {
+    requestInit: {
+      headers: resolveStreamableHttpHeaders(server, broker),
+    },
   });
+
+  return {
+    transport,
+    readStderr: () => "",
+  };
 }
 
 function summarizeMcpContent(result: unknown): string {
@@ -273,11 +324,78 @@ function summarizeMcpContent(result: unknown): string {
 export class McpExecutionAdapter implements ExecutionAdapter {
   readonly supported_domains = ["mcp"];
   private readonly serversById = new Map<string, McpServerDefinition>();
+  private readonly registry: McpServerRegistry | null;
+  private readonly activeStreamableHttpCallsByServerId = new Map<string, number>();
+  private readonly broker: SessionCredentialBroker | null;
+  private readonly publicHostPolicyRegistry: McpPublicHostPolicyRegistry | null;
 
-  constructor(servers: McpServerDefinition[]) {
+  constructor(
+    servers: McpServerDefinition[] | McpServerRegistry,
+    options: {
+      credentialBroker?: SessionCredentialBroker | null;
+      publicHostPolicyRegistry?: McpPublicHostPolicyRegistry | null;
+    } = {},
+  ) {
+    this.broker = options.credentialBroker ?? null;
+    this.publicHostPolicyRegistry = options.publicHostPolicyRegistry ?? null;
+    if (servers instanceof McpServerRegistry) {
+      this.registry = servers;
+      return;
+    }
+
+    this.registry = null;
     for (const server of validateMcpServerDefinitions(servers)) {
       this.serversById.set(server.server_id, server);
     }
+  }
+
+  private getRegisteredServer(serverId: string): McpServerDefinition | null {
+    if (this.registry) {
+      return this.registry.getServer(serverId)?.server ?? null;
+    }
+
+    return this.serversById.get(serverId) ?? null;
+  }
+
+  private acquireStreamableHttpExecutionSlot(server: McpServerDefinition): () => void {
+    if (server.transport !== "streamable_http") {
+      return () => undefined;
+    }
+
+    const maxConcurrentCalls = server.max_concurrent_calls ?? 1;
+    const activeCalls = this.activeStreamableHttpCallsByServerId.get(server.server_id) ?? 0;
+    if (activeCalls >= maxConcurrentCalls) {
+      throw new AgentGitError(
+        "Governed MCP server concurrency limit reached. Retry after an in-flight call completes.",
+        "PRECONDITION_FAILED",
+        {
+          server_id: server.server_id,
+          transport: server.transport,
+          network_scope: server.network_scope ?? "loopback",
+          active_calls: activeCalls,
+          max_concurrent_calls: maxConcurrentCalls,
+        },
+        true,
+      );
+    }
+
+    this.activeStreamableHttpCallsByServerId.set(server.server_id, activeCalls + 1);
+    let released = false;
+
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+
+      const currentActiveCalls = this.activeStreamableHttpCallsByServerId.get(server.server_id) ?? 0;
+      if (currentActiveCalls <= 1) {
+        this.activeStreamableHttpCallsByServerId.delete(server.server_id);
+        return;
+      }
+
+      this.activeStreamableHttpCallsByServerId.set(server.server_id, currentActiveCalls - 1);
+    };
   }
 
   canHandle(action: ActionRecord): boolean {
@@ -286,14 +404,14 @@ export class McpExecutionAdapter implements ExecutionAdapter {
     }
 
     const mcpFacet = action.facets.mcp as McpFacet | undefined;
-    return typeof mcpFacet?.server_id === "string" && this.serversById.has(mcpFacet.server_id);
+    return typeof mcpFacet?.server_id === "string" && this.getRegisteredServer(mcpFacet.server_id) !== null;
   }
 
   async verifyPreconditions(context: ExecutionContext): Promise<void> {
     const mcpFacet = context.action.facets.mcp as McpFacet | undefined;
     const serverId = typeof mcpFacet?.server_id === "string" ? mcpFacet.server_id : "";
     const toolName = typeof mcpFacet?.tool_name === "string" ? mcpFacet.tool_name : "";
-    const server = this.serversById.get(serverId);
+    const server = this.getRegisteredServer(serverId);
 
     if (!server) {
       throw new PreconditionError("MCP action target is not backed by a registered governed server.", {
@@ -317,6 +435,11 @@ export class McpExecutionAdapter implements ExecutionAdapter {
         tool_name: toolName,
       });
     }
+
+    if (server.transport === "streamable_http") {
+      assertStreamableHttpPublicEgressAllowed(server, this.publicHostPolicyRegistry);
+      resolveStreamableHttpHeaders(server, this.broker);
+    }
   }
 
   async execute(context: ExecutionContext): Promise<ExecutionResult> {
@@ -324,7 +447,7 @@ export class McpExecutionAdapter implements ExecutionAdapter {
     const rawInput = context.action.input.raw as McpRawInput;
     const serverId = typeof mcpFacet?.server_id === "string" ? mcpFacet.server_id : "";
     const toolName = typeof mcpFacet?.tool_name === "string" ? mcpFacet.tool_name : "";
-    const server = this.serversById.get(serverId);
+    const server = this.getRegisteredServer(serverId);
     if (!server) {
       throw new AgentGitError("MCP server is not registered for governed execution.", "CAPABILITY_UNAVAILABLE", {
         action_id: context.action.action_id,
@@ -335,40 +458,28 @@ export class McpExecutionAdapter implements ExecutionAdapter {
     const executionId = `exec_mcp_${Date.now()}`;
     const startedAt = new Date().toISOString();
     const argumentsObject = isRecord(rawInput.arguments) ? rawInput.arguments : {};
-    const transport = new StdioClientTransport({
-      command: server.command,
-      args: server.args,
-      cwd: server.cwd ?? context.workspace_root,
-      env: {
-        ...getDefaultEnvironment(),
-        ...server.env,
-      },
-      stderr: "pipe",
-    });
+    const timeoutMs = resolveMcpTimeoutMs(server);
+    const releaseExecutionSlot = this.acquireStreamableHttpExecutionSlot(server);
+    if (server.transport === "streamable_http") {
+      assertStreamableHttpPublicEgressAllowed(server, this.publicHostPolicyRegistry);
+    }
+    const { transport, readStderr } = createMcpTransport(server, context.workspace_root, this.broker);
     const client = new Client({
       name: "agentgit-governed-mcp-proxy",
       version: "0.1.0",
     });
 
-    let stderr = "";
-    const stderrStream = transport.stderr;
-    if (stderrStream) {
-      stderrStream.on("data", (chunk: string | Buffer) => {
-        const value = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-        stderr = `${stderr}${value}`.slice(0, MAX_MCP_STDERR_BYTES);
-      });
-    }
-
     try {
       await withTimeout(
         client.connect(transport),
-        DEFAULT_MCP_TIMEOUT_MS,
+        timeoutMs,
         () =>
           new AgentGitError("Timed out while connecting to the governed MCP server.", "PRECONDITION_FAILED", {
             action_id: context.action.action_id,
             server_id: server.server_id,
             tool_name: toolName,
-            timeout_ms: DEFAULT_MCP_TIMEOUT_MS,
+            timeout_ms: timeoutMs,
+            transport: server.transport,
           }),
       );
 
@@ -377,12 +488,13 @@ export class McpExecutionAdapter implements ExecutionAdapter {
       do {
         const listed = await withTimeout(
           client.listTools(cursor ? { cursor } : undefined),
-          DEFAULT_MCP_TIMEOUT_MS,
+          timeoutMs,
           () =>
             new AgentGitError("Timed out while listing tools from the governed MCP server.", "PRECONDITION_FAILED", {
               action_id: context.action.action_id,
               server_id: server.server_id,
-              timeout_ms: DEFAULT_MCP_TIMEOUT_MS,
+              timeout_ms: timeoutMs,
+              transport: server.transport,
             }),
         );
         listedTools.push(...listed.tools);
@@ -403,21 +515,25 @@ export class McpExecutionAdapter implements ExecutionAdapter {
           name: toolName,
           arguments: argumentsObject,
         }),
-        DEFAULT_MCP_TIMEOUT_MS,
+        timeoutMs,
         () =>
           new AgentGitError("Timed out while waiting for the governed MCP tool response.", "PRECONDITION_FAILED", {
             action_id: context.action.action_id,
             server_id: server.server_id,
             tool_name: toolName,
-            timeout_ms: DEFAULT_MCP_TIMEOUT_MS,
+            timeout_ms: timeoutMs,
+            transport: server.transport,
           }),
       );
+      const stderr = readStderr();
       const preview = JSON.stringify(
         {
           request: {
             server_id: server.server_id,
             tool_name: toolName,
             arguments: argumentsObject,
+            transport: server.transport,
+            transport_target: server.transport === "streamable_http" ? server.url : server.command,
           },
           response: {
             isError: result.isError ?? false,
@@ -446,6 +562,11 @@ export class McpExecutionAdapter implements ExecutionAdapter {
           domain: "mcp",
           server_id: server.server_id,
           tool_name: toolName,
+          transport: server.transport,
+          transport_target: server.transport === "streamable_http" ? server.url : server.command,
+          auth_type: server.transport === "streamable_http" ? server.auth?.type ?? "none" : "none",
+          network_scope: server.transport === "streamable_http" ? server.network_scope ?? "loopback" : null,
+          max_concurrent_calls: server.transport === "streamable_http" ? server.max_concurrent_calls ?? 1 : null,
           tool_display_name: server.display_name ?? server.server_id,
           listed_tool_count: listedTools.length,
           upstream_annotations: upstreamTool.annotations ?? null,
@@ -477,9 +598,12 @@ export class McpExecutionAdapter implements ExecutionAdapter {
         action_id: context.action.action_id,
         server_id: server.server_id,
         tool_name: toolName,
+        transport: server.transport,
+        network_scope: server.transport === "streamable_http" ? server.network_scope ?? "loopback" : null,
         cause: error instanceof Error ? error.message : String(error),
       });
     } finally {
+      releaseExecutionSlot();
       await transport.close().catch(() => undefined);
     }
   }
