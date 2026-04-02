@@ -70,6 +70,7 @@ export interface SnapshotSelectionResult {
     scope_breadth: ActionRecord["target"]["scope"]["breadth"];
     scope_unknowns: string[];
     normalization_confidence: number;
+    confidence_score: number;
     side_effect_level: ActionRecord["risk_hints"]["side_effect_level"];
     external_effects: ActionRecord["risk_hints"]["external_effects"];
     reversibility_hint: ActionRecord["risk_hints"]["reversibility_hint"];
@@ -282,7 +283,10 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
   const scopeBreadth = input.action.target.scope.breadth;
   const scopeUnknowns = input.action.target.scope.unknowns;
   const normalizationConfidence = input.action.normalization.normalization_confidence;
+  const confidenceScore = input.action.confidence_assessment.score;
   const { side_effect_level, external_effects, reversibility_hint } = input.action.risk_hints;
+  const usesWorkspaceSnapshot =
+    input.action.operation.domain === "filesystem" || input.action.operation.domain === "shell";
   const reasonCodes: string[] = [];
   let snapshotClass: SnapshotClass = "metadata_only";
 
@@ -294,9 +298,15 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
   } else if (explicitBranchPoint) {
     snapshotClass = "exact_anchor";
     reasonCodes.push("snapshot.explicit_branch_point");
+  } else if (confidenceScore < 0.45) {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.low_confidence_branch_point");
   } else if (operationFamily === "shell/package_manager" || operationFamily === "shell/build_tool") {
     snapshotClass = "exact_anchor";
     reasonCodes.push("snapshot.opaque_workspace_wide_tooling");
+  } else if (usesWorkspaceSnapshot && external_effects !== "none" && external_effects !== "unknown") {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.remote_side_effect_branch_point");
   } else if (
     input.action.operation.domain === "filesystem" &&
     (scopeBreadth === "workspace" ||
@@ -311,6 +321,7 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
     input.action.operation.domain === "filesystem" &&
     scopeBreadth === "single" &&
     scopeUnknowns.length === 0 &&
+    confidenceScore >= 0.9 &&
     normalizationConfidence >= 0.9 &&
     side_effect_level === "mutating" &&
     external_effects === "none" &&
@@ -322,8 +333,13 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
     snapshotClass = "journal_plus_anchor";
     reasonCodes.push("snapshot.filesystem_recovery_boundary");
   } else if (input.action.operation.domain === "shell") {
-    snapshotClass = "journal_plus_anchor";
-    reasonCodes.push("snapshot.shell_mutation_boundary");
+    if (confidenceScore < 0.7 || input.action.risk_hints.batch || scopeUnknowns.length > 0) {
+      snapshotClass = "exact_anchor";
+      reasonCodes.push("snapshot.shell_opaque_boundary");
+    } else {
+      snapshotClass = "journal_plus_anchor";
+      reasonCodes.push("snapshot.shell_mutation_boundary");
+    }
   } else {
     snapshotClass = "metadata_only";
     reasonCodes.push("snapshot.non_filesystem_metadata_only");
@@ -351,6 +367,7 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
       scope_breadth: scopeBreadth,
       scope_unknowns: scopeUnknowns,
       normalization_confidence: normalizationConfidence,
+      confidence_score: confidenceScore,
       side_effect_level,
       external_effects,
       reversibility_hint,

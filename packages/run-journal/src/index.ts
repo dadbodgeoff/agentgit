@@ -2417,6 +2417,8 @@ export class RunJournal {
         const recovery = recoveryByActionId.get(actionId) ?? null;
         const normalizationConfidence =
           typeof payload.normalization_confidence === "number" ? payload.normalization_confidence : 0;
+        const confidenceScore =
+          typeof payload.confidence_score === "number" ? payload.confidence_score : normalizationConfidence;
 
         return {
           sample_id: `${row.run_id}:${actionId}`,
@@ -2426,6 +2428,7 @@ export class RunJournal {
           action_family: actionFamily,
           decision,
           normalization_confidence: normalizationConfidence,
+          confidence_score: confidenceScore,
           matched_rules: matchedRules,
           reason_codes: reasonCodes,
           snapshot_class: snapshotClass,
@@ -2477,16 +2480,12 @@ export class RunJournal {
         updateCalibrationDecisionCounts(totalsDecisionCounts, sample.decision);
         updateCalibrationApprovalCounts(totalsApprovalCounts, sample);
 
-        confidenceSum += sample.normalization_confidence;
+        confidenceSum += sample.confidence_score;
         confidenceCount += 1;
         confidenceMin =
-          confidenceMin === null
-            ? sample.normalization_confidence
-            : Math.min(confidenceMin, sample.normalization_confidence);
+          confidenceMin === null ? sample.confidence_score : Math.min(confidenceMin, sample.confidence_score);
         confidenceMax =
-          confidenceMax === null
-            ? sample.normalization_confidence
-            : Math.max(confidenceMax, sample.normalization_confidence);
+          confidenceMax === null ? sample.confidence_score : Math.max(confidenceMax, sample.confidence_score);
         if (sample.recovery_attempted) {
           recoveryAttemptedCount += 1;
         }
@@ -2514,16 +2513,16 @@ export class RunJournal {
         accumulator.sample_count += 1;
         updateCalibrationDecisionCounts(accumulator.decisions, sample.decision);
         updateCalibrationApprovalCounts(accumulator.approvals, sample);
-        accumulator.confidence_sum += sample.normalization_confidence;
+        accumulator.confidence_sum += sample.confidence_score;
         accumulator.confidence_count += 1;
         accumulator.confidence_min =
           accumulator.confidence_min === null
-            ? sample.normalization_confidence
-            : Math.min(accumulator.confidence_min, sample.normalization_confidence);
+            ? sample.confidence_score
+            : Math.min(accumulator.confidence_min, sample.confidence_score);
         accumulator.confidence_max =
           accumulator.confidence_max === null
-            ? sample.normalization_confidence
-            : Math.max(accumulator.confidence_max, sample.normalization_confidence);
+            ? sample.confidence_score
+            : Math.max(accumulator.confidence_max, sample.confidence_score);
         if (sample.recovery_attempted) {
           accumulator.recovery_attempted_count += 1;
         }

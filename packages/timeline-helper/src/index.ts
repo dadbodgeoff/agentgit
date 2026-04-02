@@ -568,6 +568,23 @@ function provenanceConfidence(event: JournalEventRecord | undefined, fallback = 
   return typeof value === "number" ? value : fallback;
 }
 
+function actionConfidenceScore(event: JournalEventRecord | undefined, fallback = 0.97): number {
+  const payload = payloadRecord(event ?? { sequence: 0, event_type: "", occurred_at: "", recorded_at: "" });
+  if (typeof payload.confidence_score === "number") {
+    return payload.confidence_score;
+  }
+
+  if (
+    payload.confidence_assessment &&
+    typeof payload.confidence_assessment === "object" &&
+    typeof (payload.confidence_assessment as { score?: unknown }).score === "number"
+  ) {
+    return (payload.confidence_assessment as { score: number }).score;
+  }
+
+  return fallback;
+}
+
 function provenanceSummary(provenance: TimelineStep["provenance"], displayName: string): string {
   switch (provenance) {
     case "observed":
@@ -978,9 +995,12 @@ function buildActionStep(
         : provenance === "governed"
           ? null
           : "review_only",
-    confidence: provenanceConfidence(
-      normalizedEvent ?? importedEvent ?? observedEvent ?? firstEvent,
-      provenance === "governed" ? 0.97 : 0.61,
+    confidence: actionConfidenceScore(
+      normalizedEvent ?? policyEvent ?? importedEvent ?? observedEvent ?? firstEvent,
+      provenanceConfidence(
+        normalizedEvent ?? importedEvent ?? observedEvent ?? firstEvent,
+        provenance === "governed" ? 0.97 : 0.61,
+      ),
     ),
     summary,
     warnings,

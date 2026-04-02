@@ -10,6 +10,12 @@ import {
 } from "@agentgit/schemas";
 import { v7 as uuidv7 } from "uuid";
 
+type NormalizedActionRecord = Omit<ActionRecord, "confidence_assessment">;
+type ActionConfidenceAssessment = ActionRecord["confidence_assessment"];
+type ActionConfidenceFactor = ActionConfidenceAssessment["factors"][number];
+
+const ACTION_CONFIDENCE_ENGINE_VERSION = "action-confidence/v1";
+
 function createActionId(): string {
   return `act_${uuidv7().replaceAll("-", "")}`;
 }
@@ -57,7 +63,370 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function normalizeFilesystemAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+function roundConfidence(value: number): number {
+  return Number(Math.max(0, Math.min(1, value)).toFixed(3));
+}
+
+function pushConfidenceFactor(
+  factors: ActionConfidenceFactor[],
+  factor: Omit<ActionConfidenceFactor, "delta"> & { delta: number },
+): void {
+  factors.push({
+    ...factor,
+    delta: roundConfidence(factor.delta),
+  });
+}
+
+function assessActionConfidence(action: NormalizedActionRecord): ActionConfidenceAssessment {
+  const factors: ActionConfidenceFactor[] = [];
+  pushConfidenceFactor(factors, {
+    factor_id: "normalization_baseline",
+    label: "Normalization baseline",
+    kind: "baseline",
+    delta: action.normalization.normalization_confidence,
+    rationale: `Started from mapper confidence ${action.normalization.normalization_confidence.toFixed(3)}.`,
+  });
+
+  if (action.provenance.confidence >= 0.95) {
+    pushConfidenceFactor(factors, {
+      factor_id: "provenance_governed_high",
+      label: "Strong provenance",
+      kind: "boost",
+      delta: 0.04,
+      rationale: "Governed provenance is high-confidence and strengthens trust in the action envelope.",
+    });
+  } else if (action.provenance.confidence < 0.75) {
+    pushConfidenceFactor(factors, {
+      factor_id: "provenance_uncertain",
+      label: "Weak provenance",
+      kind: "penalty",
+      delta: -0.08,
+      rationale: "Low provenance confidence weakens trust in the normalized action context.",
+    });
+  }
+
+  if (action.target.scope.unknowns.includes("scope")) {
+    pushConfidenceFactor(factors, {
+      factor_id: "scope_unknown",
+      label: "Opaque scope",
+      kind: "penalty",
+      delta: -0.22,
+      rationale: "Unknown scope makes blast radius estimation unreliable.",
+    });
+  } else if (action.target.scope.breadth === "single") {
+    pushConfidenceFactor(factors, {
+      factor_id: "scope_single",
+      label: "Single-target scope",
+      kind: "boost",
+      delta: 0.04,
+      rationale: "Single-target actions are easier to reason about and recover from.",
+    });
+  } else if (action.target.scope.breadth === "workspace" || action.target.scope.breadth === "repository") {
+    pushConfidenceFactor(factors, {
+      factor_id: "scope_broad_workspace",
+      label: "Broad workspace scope",
+      kind: "penalty",
+      delta: -0.06,
+      rationale: "Workspace-wide scope expands ambiguity and recovery cost.",
+    });
+  } else if (action.target.scope.breadth === "unknown" || action.target.scope.breadth === "external") {
+    pushConfidenceFactor(factors, {
+      factor_id: "scope_external_or_unknown",
+      label: "External or unknown scope",
+      kind: "penalty",
+      delta: -0.1,
+      rationale: "External or unknown scope increases uncertainty about downstream effects.",
+    });
+  }
+
+  if (action.risk_hints.side_effect_level === "read_only") {
+    pushConfidenceFactor(factors, {
+      factor_id: "side_effect_read_only",
+      label: "Read-only execution",
+      kind: "boost",
+      delta: 0.05,
+      rationale: "Read-only actions are easier to classify and carry lower risk.",
+    });
+  } else if (action.risk_hints.side_effect_level === "destructive") {
+    pushConfidenceFactor(factors, {
+      factor_id: "side_effect_destructive",
+      label: "Destructive execution",
+      kind: "penalty",
+      delta: -0.12,
+      rationale: "Destructive actions reduce confidence that automated execution should proceed without review.",
+    });
+  } else if (action.risk_hints.side_effect_level === "unknown") {
+    pushConfidenceFactor(factors, {
+      factor_id: "side_effect_unknown",
+      label: "Unknown side effects",
+      kind: "penalty",
+      delta: -0.14,
+      rationale: "Unknown side effects make it unsafe to trust the classification strongly.",
+    });
+  }
+
+  if (action.risk_hints.external_effects === "network") {
+    pushConfidenceFactor(factors, {
+      factor_id: "external_network",
+      label: "Network side effects",
+      kind: "penalty",
+      delta: -0.06,
+      rationale: "Remote side effects reduce determinism and complicate recovery.",
+    });
+  } else if (action.risk_hints.external_effects === "communication") {
+    pushConfidenceFactor(factors, {
+      factor_id: "external_communication",
+      label: "Communication side effects",
+      kind: "penalty",
+      delta: -0.08,
+      rationale: "Communication side effects usually escape local rollback guarantees.",
+    });
+  } else if (action.risk_hints.external_effects === "financial") {
+    pushConfidenceFactor(factors, {
+      factor_id: "external_financial",
+      label: "Financial side effects",
+      kind: "penalty",
+      delta: -0.14,
+      rationale: "Financial effects are high-stakes and demand conservative confidence.",
+    });
+  } else if (action.risk_hints.external_effects === "unknown") {
+    pushConfidenceFactor(factors, {
+      factor_id: "external_unknown",
+      label: "Unknown external effects",
+      kind: "penalty",
+      delta: -0.1,
+      rationale: "Uncertain external effects weaken operator trust in autonomous execution.",
+    });
+  }
+
+  if (action.risk_hints.reversibility_hint === "reversible") {
+    pushConfidenceFactor(factors, {
+      factor_id: "reversibility_reversible",
+      label: "Clearly reversible",
+      kind: "boost",
+      delta: 0.03,
+      rationale: "Clear rollback paths improve confidence in automated handling.",
+    });
+  } else if (action.risk_hints.reversibility_hint === "compensatable") {
+    pushConfidenceFactor(factors, {
+      factor_id: "reversibility_compensatable",
+      label: "Compensatable",
+      kind: "boost",
+      delta: 0.015,
+      rationale: "Trusted compensators partially reduce operational ambiguity.",
+    });
+  } else if (action.risk_hints.reversibility_hint === "potentially_reversible") {
+    pushConfidenceFactor(factors, {
+      factor_id: "reversibility_partial",
+      label: "Partially reversible",
+      kind: "penalty",
+      delta: -0.03,
+      rationale: "Partial reversibility still leaves meaningful uncertainty about recovery quality.",
+    });
+  } else if (action.risk_hints.reversibility_hint === "irreversible") {
+    pushConfidenceFactor(factors, {
+      factor_id: "reversibility_irreversible",
+      label: "Irreversible",
+      kind: "penalty",
+      delta: -0.12,
+      rationale: "Irreversible actions require conservative confidence handling.",
+    });
+  } else {
+    pushConfidenceFactor(factors, {
+      factor_id: "reversibility_unknown",
+      label: "Unknown reversibility",
+      kind: "penalty",
+      delta: -0.08,
+      rationale: "Unknown rollback characteristics reduce confidence in safe automation.",
+    });
+  }
+
+  if (action.risk_hints.batch) {
+    pushConfidenceFactor(factors, {
+      factor_id: "batch_effects",
+      label: "Batch effects",
+      kind: "penalty",
+      delta: -0.06,
+      rationale: "Batch execution raises blast radius and makes partial failures harder to reason about.",
+    });
+  }
+
+  if (action.risk_hints.sensitivity_hint === "moderate") {
+    pushConfidenceFactor(factors, {
+      factor_id: "sensitivity_moderate",
+      label: "Moderate sensitivity",
+      kind: "penalty",
+      delta: -0.03,
+      rationale: "Moderately sensitive targets deserve more conservative confidence.",
+    });
+  } else if (action.risk_hints.sensitivity_hint === "high") {
+    pushConfidenceFactor(factors, {
+      factor_id: "sensitivity_high",
+      label: "High sensitivity",
+      kind: "penalty",
+      delta: -0.07,
+      rationale: "Highly sensitive targets reduce tolerance for uncertainty.",
+    });
+  } else if (action.risk_hints.sensitivity_hint === "unknown") {
+    pushConfidenceFactor(factors, {
+      factor_id: "sensitivity_unknown",
+      label: "Unknown sensitivity",
+      kind: "penalty",
+      delta: -0.04,
+      rationale: "Unknown sensitivity introduces avoidable uncertainty into autonomous execution.",
+    });
+  }
+
+  if (action.execution_path.credential_mode === "direct") {
+    pushConfidenceFactor(factors, {
+      factor_id: "credentials_direct",
+      label: "Direct credentials",
+      kind: "penalty",
+      delta: -0.12,
+      rationale: "Direct credentials bypass brokered controls and reduce operational trust.",
+    });
+  } else if (action.execution_path.credential_mode === "delegated") {
+    pushConfidenceFactor(factors, {
+      factor_id: "credentials_delegated",
+      label: "Delegated credentials",
+      kind: "penalty",
+      delta: -0.04,
+      rationale: "Delegated credentials are safer than direct credentials but still reduce local certainty.",
+    });
+  } else if (action.execution_path.credential_mode === "brokered") {
+    pushConfidenceFactor(factors, {
+      factor_id: "credentials_brokered",
+      label: "Brokered credentials",
+      kind: "boost",
+      delta: 0.01,
+      rationale: "Brokered credentials preserve policy control and auditability.",
+    });
+  }
+
+  if (action.execution_path.surface === "governed_fs") {
+    pushConfidenceFactor(factors, {
+      factor_id: "surface_governed_fs",
+      label: "Governed filesystem surface",
+      kind: "boost",
+      delta: 0.03,
+      rationale: "The governed filesystem surface exposes narrow, inspectable semantics.",
+    });
+  } else if (action.execution_path.surface === "provider_hosted") {
+    pushConfidenceFactor(factors, {
+      factor_id: "surface_provider_hosted",
+      label: "Provider-hosted surface",
+      kind: "penalty",
+      delta: -0.08,
+      rationale: "Provider-hosted execution reduces local observability and rollback certainty.",
+    });
+  } else if (action.execution_path.surface === "mcp_proxy") {
+    pushConfidenceFactor(factors, {
+      factor_id: "surface_mcp_proxy",
+      label: "MCP proxy surface",
+      kind: "penalty",
+      delta: -0.04,
+      rationale: "Remote tool mediation adds operational uncertainty compared with local governed execution.",
+    });
+  }
+
+  if (action.normalization.warnings.includes("opaque_execution")) {
+    pushConfidenceFactor(factors, {
+      factor_id: "warning_opaque_execution",
+      label: "Opaque execution",
+      kind: "penalty",
+      delta: -0.12,
+      rationale: "Opaque execution hides effective scope and weakens confidence in autonomous handling.",
+    });
+  }
+  if (action.normalization.warnings.includes("workspace_wide_effects")) {
+    pushConfidenceFactor(factors, {
+      factor_id: "warning_workspace_wide",
+      label: "Workspace-wide effects",
+      kind: "penalty",
+      delta: -0.05,
+      rationale: "Workspace-wide effects reduce precision in scope and recovery planning.",
+    });
+  }
+  if (action.normalization.warnings.includes("mcp_read_only_hint_untrusted")) {
+    pushConfidenceFactor(factors, {
+      factor_id: "warning_untrusted_mcp_hint",
+      label: "Untrusted MCP hint",
+      kind: "penalty",
+      delta: -0.03,
+      rationale: "An unverified read-only hint should not materially raise trust.",
+    });
+  }
+
+  const functionFacet =
+    action.operation.domain === "function" && isRecord(action.facets.function) ? action.facets.function : null;
+  if (
+    functionFacet &&
+    typeof functionFacet.trusted_compensator === "string" &&
+    functionFacet.trusted_compensator.length > 0
+  ) {
+    pushConfidenceFactor(factors, {
+      factor_id: "function_trusted_compensator",
+      label: "Trusted compensator",
+      kind: "boost",
+      delta: 0.03,
+      rationale: "Trusted compensators improve recoverability and operator confidence.",
+    });
+  }
+
+  const mcpFacet = action.operation.domain === "mcp" && isRecord(action.facets.mcp) ? action.facets.mcp : null;
+  if (mcpFacet && mcpFacet.trust_tier_at_submit === "operator_owned") {
+    pushConfidenceFactor(factors, {
+      factor_id: "mcp_operator_owned",
+      label: "Operator-owned MCP server",
+      kind: "boost",
+      delta: 0.02,
+      rationale: "Operator-owned MCP registrations are more trustworthy than anonymous remote tools.",
+    });
+  }
+  if (mcpFacet && mcpFacet.drift_state_at_submit === "drifted") {
+    pushConfidenceFactor(factors, {
+      factor_id: "mcp_drifted",
+      label: "Drifted MCP profile",
+      kind: "penalty",
+      delta: -0.08,
+      rationale: "Profile drift at submit time weakens confidence in the tool contract.",
+    });
+  }
+  if (mcpFacet && mcpFacet.profile_status === "pending_approval") {
+    pushConfidenceFactor(factors, {
+      factor_id: "mcp_pending_profile",
+      label: "Pending MCP profile approval",
+      kind: "penalty",
+      delta: -0.08,
+      rationale: "Pending MCP approval indicates that trust establishment is incomplete.",
+    });
+  }
+
+  const total = roundConfidence(factors.reduce((sum, factor) => sum + factor.delta, 0));
+  const band: ActionConfidenceAssessment["band"] = total >= 0.85 ? "high" : total >= 0.65 ? "guarded" : "low";
+  const requiresHumanReview =
+    total < 0.65 ||
+    action.target.scope.unknowns.includes("scope") ||
+    action.risk_hints.side_effect_level === "unknown" ||
+    action.normalization.warnings.includes("opaque_execution");
+
+  return {
+    engine_version: ACTION_CONFIDENCE_ENGINE_VERSION,
+    score: total,
+    band,
+    requires_human_review: requiresHumanReview,
+    factors,
+  };
+}
+
+function withConfidenceAssessment(action: NormalizedActionRecord): ActionRecord {
+  return {
+    ...action,
+    confidence_assessment: assessActionConfidence(action),
+  };
+}
+
+function normalizeFilesystemAttempt(attempt: RawActionAttempt, sessionId: string): NormalizedActionRecord {
   const rawOperation = String(attempt.raw_call.operation ?? "write");
   const rawPath = String(attempt.raw_call.path ?? "");
   const normalizedPath = normalizePath(rawPath, attempt.environment_context.cwd);
@@ -464,7 +833,7 @@ function classifyShellCommand(argv: string[]): ShellClassification {
   };
 }
 
-function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): NormalizedActionRecord {
   const rawArgv = Array.isArray(attempt.raw_call.argv)
     ? attempt.raw_call.argv.map((value: unknown) => String(value))
     : typeof attempt.raw_call.command === "string"
@@ -552,7 +921,7 @@ function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): Ac
   };
 }
 
-function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): NormalizedActionRecord {
   const rawCall = attempt.raw_call as McpRawCall;
   const serverId = typeof rawCall.server_id === "string" ? rawCall.server_id.trim() : "";
   const serverProfileId = typeof rawCall.server_profile_id === "string" ? rawCall.server_profile_id.trim() : "";
@@ -752,7 +1121,7 @@ function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): Acti
   };
 }
 
-function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
+function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string): NormalizedActionRecord {
   const rawCall = attempt.raw_call as FunctionRawCall;
   const integration = typeof rawCall.integration === "string" ? rawCall.integration : "";
   const operation = typeof rawCall.operation === "string" ? rawCall.operation : "";
@@ -1487,19 +1856,19 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
 export function normalizeActionAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
   try {
     if (attempt.tool_registration.tool_kind === "filesystem") {
-      return normalizeFilesystemAttempt(attempt, sessionId);
+      return withConfidenceAssessment(normalizeFilesystemAttempt(attempt, sessionId));
     }
 
     if (attempt.tool_registration.tool_kind === "shell") {
-      return normalizeShellAttempt(attempt, sessionId);
+      return withConfidenceAssessment(normalizeShellAttempt(attempt, sessionId));
     }
 
     if (attempt.tool_registration.tool_kind === "function") {
-      return normalizeFunctionAttempt(attempt, sessionId);
+      return withConfidenceAssessment(normalizeFunctionAttempt(attempt, sessionId));
     }
 
     if (attempt.tool_registration.tool_kind === "mcp") {
-      return normalizeMcpAttempt(attempt, sessionId);
+      return withConfidenceAssessment(normalizeMcpAttempt(attempt, sessionId));
     }
 
     if (attempt.tool_registration.tool_kind === "browser") {
