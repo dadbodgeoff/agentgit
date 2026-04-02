@@ -122,8 +122,26 @@ async function installTarballs(installRoot, tarballs) {
   });
 }
 
+async function buildCompatibilityTargets(targetRepoRoot) {
+  await runCommand(
+    "pnpm",
+    [
+      "--filter",
+      "@agentgit/schemas...",
+      "--filter",
+      "@agentgit/authority-sdk...",
+      "--filter",
+      "@agentgit/authority-cli...",
+      "--filter",
+      "@agentgit/authority-daemon...",
+      "build",
+    ],
+    { cwd: targetRepoRoot },
+  );
+}
+
 async function packRepoArtifacts(targetRepoRoot, outDir) {
-  await runCommand("pnpm", ["build"], { cwd: targetRepoRoot });
+  await buildCompatibilityTargets(targetRepoRoot);
   await fsp.rm(outDir, { recursive: true, force: true });
   await fsp.mkdir(outDir, { recursive: true });
 

@@ -264,6 +264,10 @@ function actionFamilyForAction(action: ActionRecord): string {
   return `${action.operation.domain}/${action.operation.kind}`;
 }
 
+function actionConfidenceScore(action: ActionRecord): number {
+  return action.confidence_assessment?.score ?? action.normalization.normalization_confidence;
+}
+
 export function resolvePolicyLowConfidenceThreshold(
   compiledPolicy: CompiledPolicyPack | null | undefined,
   actionFamilyOrAction: string | ActionRecord,
@@ -316,9 +320,9 @@ export function recommendPolicyThresholds(
     const deniedSamples = samples.filter((sample) => sample.approval_status === "denied");
     const approvedSamples = samples.filter((sample) => sample.approval_status === "approved");
     const deniedConfidenceMax =
-      deniedSamples.length > 0 ? Math.max(...deniedSamples.map((sample) => sample.normalization_confidence)) : null;
+      deniedSamples.length > 0 ? Math.max(...deniedSamples.map((sample) => sample.confidence_score)) : null;
     const approvedConfidenceMin =
-      approvedSamples.length > 0 ? Math.min(...approvedSamples.map((sample) => sample.normalization_confidence)) : null;
+      approvedSamples.length > 0 ? Math.min(...approvedSamples.map((sample) => sample.confidence_score)) : null;
 
     if (family.sample_count < minSamples) {
       return {
@@ -706,7 +710,7 @@ function evaluateShellCapabilityState(
 
 function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
   const locator = action.target.primary.locator;
-  const normalizationConfidence = action.normalization.normalization_confidence;
+  const confidenceScore = actionConfidenceScore(action);
   const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(
     context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
     action,
@@ -715,7 +719,7 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
   const operation = fsFacet?.operation ?? action.operation.kind;
   const byteLength = fsFacet?.byte_length ?? 0;
 
-  if (lowConfidenceThreshold !== null && normalizationConfidence < lowConfidenceThreshold) {
+  if (lowConfidenceThreshold !== null && confidenceScore < lowConfidenceThreshold) {
     return makeOutcome(
       action,
       "ask",
@@ -723,7 +727,7 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
         {
           code: "LOW_NORMALIZATION_CONFIDENCE",
           severity: "high",
-          message: "Filesystem action could not be normalized confidently.",
+          message: "Filesystem action confidence is below the configured automation threshold and requires approval.",
         },
       ],
       ["normalization.low_confidence.ask"],
@@ -806,7 +810,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
     action,
   );
 
-  if (lowConfidenceThreshold !== null && action.normalization.normalization_confidence < lowConfidenceThreshold) {
+  if (lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold) {
     return makeOutcome(
       action,
       "ask",
@@ -814,7 +818,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         {
           code: "UNKNOWN_SCOPE_REQUIRES_APPROVAL",
           severity: "high",
-          message: "Shell command scope is opaque and requires approval.",
+          message: "Shell command confidence is below the configured automation threshold and requires approval.",
         },
       ],
       ["shell.unknown_scope.ask"],
@@ -932,7 +936,7 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
     action,
   );
 
-  if (lowConfidenceThreshold !== null && action.normalization.normalization_confidence < lowConfidenceThreshold) {
+  if (lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold) {
     return makeOutcome(
       action,
       "ask",
@@ -940,7 +944,7 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
         {
           code: "FUNCTION_LOW_CONFIDENCE_REQUIRES_APPROVAL",
           severity: "high",
-          message: "Function action could not be normalized confidently enough for automatic execution.",
+          message: "Function action confidence is below the configured automation threshold and requires approval.",
         },
       ],
       ["function.low_confidence.ask"],

@@ -518,7 +518,7 @@ export const DiagnosticsResponsePayloadSchema = z
         loaded_sources: z.array(
           z
             .object({
-              scope: z.enum(["builtin_default", "user_global", "workspace", "explicit_path"]),
+              scope: z.enum(["builtin_default", "user_global", "workspace", "workspace_generated", "explicit_path"]),
               path: z.string().min(1).nullable(),
               profile_name: z.string().min(1),
               policy_version: z.string().min(1),
@@ -1491,6 +1491,25 @@ export const ActionRecordSchema = z
         normalization_confidence: z.number().min(0).max(1),
       })
       .strict(),
+    confidence_assessment: z
+      .object({
+        engine_version: z.string().min(1),
+        score: z.number().min(0).max(1),
+        band: z.enum(["high", "guarded", "low"]),
+        requires_human_review: z.boolean(),
+        factors: z.array(
+          z
+            .object({
+              factor_id: z.string().min(1),
+              label: z.string().min(1),
+              kind: z.enum(["baseline", "boost", "penalty"]),
+              delta: z.number().gte(-1).lte(1),
+              rationale: z.string().min(1),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
   })
   .strict();
 export type ActionRecord = z.infer<typeof ActionRecordSchema>;
@@ -1776,6 +1795,7 @@ export const PolicyCalibrationSampleSchema = z
     action_family: z.string().min(1),
     decision: PolicyDecisionSchema,
     normalization_confidence: z.number().min(0).max(1),
+    confidence_score: z.number().min(0).max(1),
     matched_rules: z.array(z.string().min(1)),
     reason_codes: z.array(z.string().min(1)),
     snapshot_class: z.enum(["metadata_only", "journal_only", "journal_plus_anchor", "exact_anchor"]).nullable(),
@@ -2269,6 +2289,7 @@ export const SnapshotSelectionBasisSchema = z
     scope_breadth: ScopeBreadthSchema,
     scope_unknowns: z.array(z.string().min(1)),
     normalization_confidence: z.number().min(0).max(1),
+    confidence_score: z.number().min(0).max(1),
     side_effect_level: SideEffectLevelSchema,
     external_effects: ExternalEffectSchema,
     reversibility_hint: ReversibilityHintSchema,
@@ -2325,6 +2346,7 @@ export const ExplainPolicyActionResponsePayloadSchema = z
     action_family: z.string().min(1),
     effective_policy_profile: z.string().min(1),
     low_confidence_threshold: z.number().min(0).max(1).nullable(),
+    confidence_score: z.number().min(0).max(1),
     confidence_triggered: z.boolean(),
     snapshot_selection: SnapshotSelectionResultSchema.nullable(),
   })

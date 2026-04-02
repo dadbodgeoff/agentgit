@@ -2216,6 +2216,7 @@ function handleExplainPolicyAction(
       })
     : null;
   const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(policyRuntime.compiled_policy, action);
+  const confidenceScore = action.confidence_assessment.score;
 
   return makeSuccessResponse(request.request_id, request.session_id, {
     action,
@@ -2223,8 +2224,8 @@ function handleExplainPolicyAction(
     action_family: `${action.operation.domain}/${action.operation.kind}`,
     effective_policy_profile: policyRuntime.effective_policy.summary.profile_name,
     low_confidence_threshold: lowConfidenceThreshold,
-    confidence_triggered:
-      lowConfidenceThreshold !== null && action.normalization.normalization_confidence < lowConfidenceThreshold,
+    confidence_score: confidenceScore,
+    confidence_triggered: lowConfidenceThreshold !== null && confidenceScore < lowConfidenceThreshold,
     snapshot_selection: snapshotSelection,
   });
 }
@@ -6177,6 +6178,8 @@ function appendActionEvents(journal: RunJournal, action: ActionRecord): void {
       input_preview: filesystemInputPreview,
       input_preview_visibility: action.input.contains_sensitive_data ? "sensitive_internal" : "user",
       normalization: action.normalization,
+      confidence_score: action.confidence_assessment.score,
+      confidence_assessment: action.confidence_assessment,
       risk_hints: action.risk_hints,
     },
   });
@@ -6711,6 +6714,7 @@ async function handleSubmitActionAttempt(
       reasons: policyOutcome.reasons,
       matched_rules: policyOutcome.policy_context.matched_rules,
       normalization_confidence: action.normalization.normalization_confidence,
+      confidence_score: action.confidence_assessment.score,
       action_family: `${action.operation.domain}/${action.operation.kind}`,
       snapshot_required: policyOutcome.preconditions.snapshot_required,
       snapshot_selection:
