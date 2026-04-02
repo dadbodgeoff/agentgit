@@ -36,6 +36,7 @@ import {
 } from "@agentgit/mcp-registry";
 import {
   evaluatePolicy,
+  replayPolicyThresholds,
   recommendPolicyThresholds,
   resolvePolicyLowConfidenceThreshold,
   validatePolicyConfigDocument,
@@ -79,6 +80,8 @@ import {
   type GetEffectivePolicyResponsePayload,
   GetPolicyCalibrationReportRequestPayloadSchema,
   type GetPolicyCalibrationReportResponsePayload,
+  GetPolicyThresholdReplayRequestPayloadSchema,
+  type GetPolicyThresholdReplayResponsePayload,
   GetPolicyThresholdRecommendationsRequestPayloadSchema,
   type GetPolicyThresholdRecommendationsResponsePayload,
   GetCapabilitiesRequestPayloadSchema,
@@ -211,6 +214,7 @@ const METHODS: DaemonMethod[] = [
   "get_policy_calibration_report",
   "explain_policy_action",
   "get_policy_threshold_recommendations",
+  "replay_policy_thresholds",
   "list_mcp_servers",
   "list_mcp_server_candidates",
   "submit_mcp_server_candidate",
@@ -2253,6 +2257,36 @@ function handleGetPolicyThresholdRecommendations(
     recommendations: recommendPolicyThresholds(calibrationReport.report, policyRuntime.compiled_policy, {
       min_samples: minSamples,
     }),
+  });
+}
+
+function handleReplayPolicyThresholds(
+  journal: RunJournal,
+  policyRuntime: PolicyRuntimeState,
+  request: RequestEnvelope<unknown>,
+): ResponseEnvelope<GetPolicyThresholdReplayResponsePayload> {
+  const payload = validate(GetPolicyThresholdReplayRequestPayloadSchema, request.payload);
+  const replay = replayPolicyThresholds(
+    journal.getPolicyThresholdReplayRecords({
+      run_id: payload.run_id,
+    }),
+    policyRuntime.compiled_policy,
+    payload.candidate_thresholds,
+    {
+      include_changed_samples: payload.include_changed_samples,
+      sample_limit: payload.sample_limit ?? null,
+    },
+  );
+
+  return makeSuccessResponse(request.request_id, request.session_id, {
+    generated_at: new Date().toISOString(),
+    filters: {
+      run_id: payload.run_id ?? null,
+      include_changed_samples: payload.include_changed_samples ?? false,
+      sample_limit: payload.include_changed_samples ? (payload.sample_limit ?? 200) : null,
+    },
+    effective_policy_profile: policyRuntime.effective_policy.summary.profile_name,
+    ...replay,
   });
 }
 
@@ -6167,6 +6201,7 @@ function appendActionEvents(journal: RunJournal, action: ActionRecord): void {
     occurred_at: action.timestamps.normalized_at,
     recorded_at: action.timestamps.normalized_at,
     payload: {
+      action,
       action_id: action.action_id,
       operation: action.operation,
       provenance_mode: action.provenance.mode,
@@ -6700,6 +6735,9 @@ async function handleSubmitActionAttempt(
         journal_chain_depth: runSummary.event_count,
       })
     : null;
+  const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(policyRuntime.compiled_policy, action);
+  const confidenceTriggered =
+    lowConfidenceThreshold !== null && action.confidence_assessment.score < lowConfidenceThreshold;
 
   appendActionEvents(journal, action);
   journal.appendRunEvent(action.run_id, {
@@ -6715,6 +6753,8 @@ async function handleSubmitActionAttempt(
       matched_rules: policyOutcome.policy_context.matched_rules,
       normalization_confidence: action.normalization.normalization_confidence,
       confidence_score: action.confidence_assessment.score,
+      low_confidence_threshold: lowConfidenceThreshold,
+      confidence_triggered: confidenceTriggered,
       action_family: `${action.operation.domain}/${action.operation.kind}`,
       snapshot_required: policyOutcome.preconditions.snapshot_required,
       snapshot_selection:
@@ -6924,6 +6964,9 @@ async function handleRequest(
           break;
         case "get_policy_threshold_recommendations":
           response = handleGetPolicyThresholdRecommendations(journal, policyRuntime, request);
+          break;
+        case "replay_policy_thresholds":
+          response = handleReplayPolicyThresholds(journal, policyRuntime, request);
           break;
         case "list_mcp_servers":
           response = handleListMcpServers(mcpRegistry, request);

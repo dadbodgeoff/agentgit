@@ -38,6 +38,26 @@ import {
 type RunEventSummary = ReturnType<typeof RunEventSummarySchema.parse>;
 type RunMaintenanceStatus = ReturnType<typeof RunMaintenanceStatusSchema.parse>;
 type RunSummary = ReturnType<typeof RunSummarySchema.parse>;
+type PolicyCalibrationQuality = GetPolicyCalibrationReportResponsePayload["report"]["totals"]["calibration"];
+type PolicyCalibrationBin = PolicyCalibrationQuality["bins"][number];
+
+export interface PolicyReplayRecord {
+  run_id: string;
+  action_id: string;
+  evaluated_at: string;
+  action_family: string;
+  recorded_decision: PolicyCalibrationSample["decision"];
+  approval_status: ApprovalRequest["status"] | null;
+  confidence_score: number;
+  low_confidence_threshold: number | null;
+  confidence_triggered: boolean;
+  action: ActionRecord | null;
+}
+
+interface PolicyCalibrationEvidence {
+  samples: PolicyCalibrationSample[];
+  replay_records: PolicyReplayRecord[];
+}
 
 function primaryReasonFromPolicyOutcome(policyOutcome: PolicyOutcomeRecord): ReasonDetail | null {
   const firstReason = policyOutcome.reasons[0];
@@ -320,6 +340,173 @@ function finalizeCalibrationConfidenceStats(
     min,
     max,
   };
+}
+
+function emptyCalibrationQuality(): PolicyCalibrationQuality {
+  return {
+    resolved_sample_count: 0,
+    pending_sample_count: 0,
+    approved_count: 0,
+    denied_count: 0,
+    mean_confidence: null,
+    mean_observed_approval_rate: null,
+    brier_score: null,
+    expected_calibration_error: null,
+    max_calibration_error: null,
+    bins: [],
+  };
+}
+
+function roundCalibrationValue(value: number | null): number | null {
+  return value === null ? null : Number(value.toFixed(6));
+}
+
+function wilsonInterval(successes: number, total: number): { lower: number; upper: number } | null {
+  if (total === 0) {
+    return null;
+  }
+
+  const z = 1.96;
+  const p = successes / total;
+  const denominator = 1 + (z * z) / total;
+  const center = p + (z * z) / (2 * total);
+  const margin = z * Math.sqrt((p * (1 - p)) / total + (z * z) / (4 * total * total));
+  return {
+    lower: Math.max(0, Math.min(1, (center - margin) / denominator)),
+    upper: Math.max(0, Math.min(1, (center + margin) / denominator)),
+  };
+}
+
+function buildCalibrationBins(samples: PolicyCalibrationSample[], binCount = 10): PolicyCalibrationBin[] {
+  if (samples.length === 0) {
+    return [];
+  }
+
+  const bins = Array.from({ length: binCount }, (_, index) => ({
+    confidence_floor: index / binCount,
+    confidence_ceiling: index === binCount - 1 ? 1 : (index + 1) / binCount,
+    sample_count: 0,
+    resolved_sample_count: 0,
+    pending_sample_count: 0,
+    approved_count: 0,
+    denied_count: 0,
+    confidence_sum: 0,
+    brier_sum: 0,
+  }));
+
+  for (const sample of samples) {
+    const normalizedScore = Math.max(0, Math.min(1, sample.confidence_score));
+    const rawIndex = Math.floor(normalizedScore * binCount);
+    const binIndex = Math.min(binCount - 1, Math.max(0, rawIndex));
+    const bin = bins[binIndex]!;
+    bin.sample_count += 1;
+    bin.confidence_sum += normalizedScore;
+
+    if (sample.approval_status === "approved") {
+      bin.resolved_sample_count += 1;
+      bin.approved_count += 1;
+      bin.brier_sum += Math.pow(normalizedScore - 1, 2);
+    } else if (sample.approval_status === "denied") {
+      bin.resolved_sample_count += 1;
+      bin.denied_count += 1;
+      bin.brier_sum += Math.pow(normalizedScore, 2);
+    } else {
+      bin.pending_sample_count += 1;
+    }
+  }
+
+  return bins
+    .filter((bin) => bin.sample_count > 0)
+    .map((bin) => {
+      const averageConfidence = bin.sample_count > 0 ? bin.confidence_sum / bin.sample_count : null;
+      const approvalRate = bin.resolved_sample_count > 0 ? bin.approved_count / bin.resolved_sample_count : null;
+      const interval =
+        bin.resolved_sample_count > 0 ? wilsonInterval(bin.approved_count, bin.resolved_sample_count) : null;
+      return {
+        confidence_floor: Number(bin.confidence_floor.toFixed(3)),
+        confidence_ceiling: Number(bin.confidence_ceiling.toFixed(3)),
+        sample_count: bin.sample_count,
+        resolved_sample_count: bin.resolved_sample_count,
+        pending_sample_count: bin.pending_sample_count,
+        approved_count: bin.approved_count,
+        denied_count: bin.denied_count,
+        average_confidence: roundCalibrationValue(averageConfidence),
+        approval_rate: roundCalibrationValue(approvalRate),
+        approval_rate_lower_bound: roundCalibrationValue(interval?.lower ?? null),
+        approval_rate_upper_bound: roundCalibrationValue(interval?.upper ?? null),
+        absolute_gap:
+          averageConfidence !== null && approvalRate !== null
+            ? roundCalibrationValue(Math.abs(averageConfidence - approvalRate))
+            : null,
+      };
+    });
+}
+
+function buildCalibrationQuality(samples: PolicyCalibrationSample[]): PolicyCalibrationQuality {
+  const calibrationSamples = samples.filter((sample) => sample.approval_requested);
+  if (calibrationSamples.length === 0) {
+    return emptyCalibrationQuality();
+  }
+
+  const bins = buildCalibrationBins(calibrationSamples);
+  let resolvedSampleCount = 0;
+  let pendingSampleCount = 0;
+  let approvedCount = 0;
+  let deniedCount = 0;
+  let confidenceSum = 0;
+  let observedApprovalSum = 0;
+  let brierSum = 0;
+
+  for (const sample of calibrationSamples) {
+    confidenceSum += sample.confidence_score;
+    if (sample.approval_status === "approved") {
+      resolvedSampleCount += 1;
+      approvedCount += 1;
+      observedApprovalSum += 1;
+      brierSum += Math.pow(sample.confidence_score - 1, 2);
+    } else if (sample.approval_status === "denied") {
+      resolvedSampleCount += 1;
+      deniedCount += 1;
+      brierSum += Math.pow(sample.confidence_score, 2);
+    } else {
+      pendingSampleCount += 1;
+    }
+  }
+
+  const meanConfidence = calibrationSamples.length > 0 ? confidenceSum / calibrationSamples.length : null;
+  const meanObservedApprovalRate = resolvedSampleCount > 0 ? observedApprovalSum / resolvedSampleCount : null;
+  const brierScore = resolvedSampleCount > 0 ? brierSum / resolvedSampleCount : null;
+  const expectedCalibrationError =
+    resolvedSampleCount > 0
+      ? bins.reduce((total, bin) => {
+          if (bin.approval_rate === null || bin.average_confidence === null) {
+            return total;
+          }
+          return (
+            total +
+            Math.abs(bin.average_confidence - bin.approval_rate) * (bin.resolved_sample_count / resolvedSampleCount)
+          );
+        }, 0)
+      : null;
+  const maxCalibrationError =
+    resolvedSampleCount > 0 ? bins.reduce((maxGap, bin) => Math.max(maxGap, bin.absolute_gap ?? 0), 0) : null;
+
+  return {
+    resolved_sample_count: resolvedSampleCount,
+    pending_sample_count: pendingSampleCount,
+    approved_count: approvedCount,
+    denied_count: deniedCount,
+    mean_confidence: roundCalibrationValue(meanConfidence),
+    mean_observed_approval_rate: roundCalibrationValue(meanObservedApprovalRate),
+    brier_score: roundCalibrationValue(brierScore),
+    expected_calibration_error: roundCalibrationValue(expectedCalibrationError),
+    max_calibration_error: roundCalibrationValue(maxCalibrationError),
+    bins,
+  };
+}
+
+function policyEvidenceKey(runId: string, actionId: string): string {
+  return `${runId}:${actionId}`;
 }
 
 export class RunJournal {
@@ -2264,6 +2451,263 @@ export class RunJournal {
     }
   }
 
+  private buildPolicyCalibrationEvidence(filters: { run_id?: string } = {}): PolicyCalibrationEvidence {
+    const params = filters.run_id ? [filters.run_id] : [];
+    const runClause = filters.run_id ? "AND run_id = ?" : "";
+
+    const policyRows = (
+      this.db.prepare(
+        `
+          SELECT run_id, occurred_at, payload_json
+          FROM run_events
+          WHERE event_type = 'policy.evaluated'
+          ${runClause}
+          ORDER BY occurred_at ASC, sequence ASC
+        `,
+      ) as unknown as {
+        all(...boundParams: string[]): Array<{
+          run_id: string;
+          occurred_at: string;
+          payload_json: string;
+        }>;
+      }
+    ).all(...params);
+
+    const approvalRows = (
+      this.db.prepare(
+        `
+          SELECT run_id, approval_id, action_id, status, resolved_at
+          FROM approval_requests
+          ${filters.run_id ? "WHERE run_id = ?" : ""}
+          ORDER BY requested_at ASC
+        `,
+      ) as unknown as {
+        all(...boundParams: string[]): Array<{
+          run_id: string;
+          approval_id: string;
+          action_id: string;
+          status: ApprovalRequest["status"];
+          resolved_at: string | null;
+        }>;
+      }
+    ).all(...params);
+
+    const recoveryRows = (
+      this.db.prepare(
+        `
+          SELECT run_id, payload_json
+          FROM run_events
+          WHERE event_type = 'recovery.executed'
+          ${runClause}
+          ORDER BY occurred_at ASC, sequence ASC
+        `,
+      ) as unknown as {
+        all(...boundParams: string[]): Array<{
+          run_id: string;
+          payload_json: string;
+        }>;
+      }
+    ).all(...params);
+
+    const normalizedRows = (
+      this.db.prepare(
+        `
+          SELECT run_id, occurred_at, payload_json
+          FROM run_events
+          WHERE event_type = 'action.normalized'
+          ${runClause}
+          ORDER BY occurred_at ASC, sequence ASC
+        `,
+      ) as unknown as {
+        all(...boundParams: string[]): Array<{
+          run_id: string;
+          occurred_at: string;
+          payload_json: string;
+        }>;
+      }
+    ).all(...params);
+
+    const approvalByActionKey = new Map<
+      string,
+      {
+        approval_id: string;
+        status: ApprovalRequest["status"];
+        resolved_at: string | null;
+      }
+    >();
+    for (const row of approvalRows) {
+      approvalByActionKey.set(policyEvidenceKey(row.run_id, row.action_id), {
+        approval_id: row.approval_id,
+        status: row.status,
+        resolved_at: row.resolved_at,
+      });
+    }
+
+    const recoveryByActionKey = new Map<
+      string,
+      {
+        recovery_result: PolicyCalibrationSample["recovery_result"];
+        recovery_class: PolicyCalibrationSample["recovery_class"];
+        recovery_strategy: string | null;
+      }
+    >();
+    for (const row of recoveryRows) {
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      const actionId = typeof payload.action_id === "string" ? payload.action_id : "";
+      if (actionId.length === 0) {
+        continue;
+      }
+
+      const outcome = payload.outcome === "restored" || payload.outcome === "compensated" ? payload.outcome : null;
+      const recoveryClass =
+        payload.recovery_class === "reversible" ||
+        payload.recovery_class === "compensatable" ||
+        payload.recovery_class === "review_only" ||
+        payload.recovery_class === "irreversible"
+          ? payload.recovery_class
+          : null;
+      const recoveryStrategy = typeof payload.strategy === "string" ? payload.strategy : null;
+
+      recoveryByActionKey.set(policyEvidenceKey(row.run_id, actionId), {
+        recovery_result: outcome,
+        recovery_class: recoveryClass,
+        recovery_strategy: recoveryStrategy,
+      });
+    }
+
+    const normalizedActionByKey = new Map<string, ActionRecord>();
+    for (const row of normalizedRows) {
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      const nestedAction =
+        payload.action && typeof payload.action === "object" ? (payload.action as ActionRecord) : null;
+      const actionId =
+        typeof payload.action_id === "string"
+          ? payload.action_id
+          : typeof nestedAction?.action_id === "string"
+            ? nestedAction.action_id
+            : "";
+      if (actionId.length === 0 || !nestedAction) {
+        continue;
+      }
+
+      normalizedActionByKey.set(policyEvidenceKey(row.run_id, actionId), nestedAction);
+    }
+
+    const samples: PolicyCalibrationSample[] = [];
+    const replayRecords: PolicyReplayRecord[] = [];
+
+    for (const row of policyRows) {
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      const actionId = typeof payload.action_id === "string" ? payload.action_id : "unknown_action";
+      const actionKey = policyEvidenceKey(row.run_id, actionId);
+      const action = normalizedActionByKey.get(actionKey) ?? null;
+      const actionFamily =
+        typeof payload.action_family === "string" && payload.action_family.length > 0
+          ? payload.action_family
+          : action
+            ? `${action.operation.domain}/${action.operation.kind}`
+            : "unknown/unknown";
+      const decision =
+        payload.decision === "allow" ||
+        payload.decision === "allow_with_snapshot" ||
+        payload.decision === "ask" ||
+        payload.decision === "deny"
+          ? payload.decision
+          : "deny";
+      const reasons = Array.isArray(payload.reasons) ? payload.reasons : [];
+      const reasonCodes = reasons.flatMap((reason) =>
+        reason && typeof reason === "object" && typeof (reason as { code?: unknown }).code === "string"
+          ? [(reason as { code: string }).code]
+          : [],
+      );
+      const snapshotSelection =
+        payload.snapshot_selection && typeof payload.snapshot_selection === "object"
+          ? (payload.snapshot_selection as Record<string, unknown>)
+          : null;
+      const snapshotClass =
+        snapshotSelection?.snapshot_class === "metadata_only" ||
+        snapshotSelection?.snapshot_class === "journal_only" ||
+        snapshotSelection?.snapshot_class === "journal_plus_anchor" ||
+        snapshotSelection?.snapshot_class === "exact_anchor"
+          ? snapshotSelection.snapshot_class
+          : null;
+      const matchedRules = Array.isArray(payload.matched_rules)
+        ? payload.matched_rules.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+        : [];
+      const approval = approvalByActionKey.get(actionKey) ?? null;
+      const recovery = recoveryByActionKey.get(actionKey) ?? null;
+      const normalizationConfidence =
+        typeof payload.normalization_confidence === "number"
+          ? payload.normalization_confidence
+          : (action?.normalization.normalization_confidence ?? 0);
+      const confidenceScore =
+        typeof payload.confidence_score === "number"
+          ? payload.confidence_score
+          : (action?.confidence_assessment.score ?? normalizationConfidence);
+      const lowConfidenceThreshold =
+        typeof payload.low_confidence_threshold === "number" ? payload.low_confidence_threshold : null;
+      const confidenceTriggered =
+        typeof payload.confidence_triggered === "boolean"
+          ? payload.confidence_triggered
+          : lowConfidenceThreshold !== null && confidenceScore < lowConfidenceThreshold;
+      const evaluatedAt = typeof payload.evaluated_at === "string" ? payload.evaluated_at : row.occurred_at;
+      const approvalRequested = decision === "ask" || approval !== null;
+
+      samples.push({
+        sample_id: actionKey,
+        run_id: row.run_id,
+        action_id: actionId,
+        evaluated_at: evaluatedAt,
+        action_family: actionFamily,
+        decision,
+        normalization_confidence: normalizationConfidence,
+        confidence_score: confidenceScore,
+        matched_rules: matchedRules,
+        reason_codes: reasonCodes,
+        snapshot_class: snapshotClass,
+        approval_requested: approvalRequested,
+        approval_id: approval?.approval_id ?? null,
+        approval_status: approval?.status ?? null,
+        resolved_at: approval?.resolved_at ?? null,
+        recovery_attempted: recovery !== null,
+        recovery_result: recovery?.recovery_result ?? null,
+        recovery_class: recovery?.recovery_class ?? null,
+        recovery_strategy: recovery?.recovery_strategy ?? null,
+      });
+
+      replayRecords.push({
+        run_id: row.run_id,
+        action_id: actionId,
+        evaluated_at: evaluatedAt,
+        action_family: actionFamily,
+        recorded_decision: decision,
+        approval_status: approval?.status ?? null,
+        confidence_score: confidenceScore,
+        low_confidence_threshold: lowConfidenceThreshold,
+        confidence_triggered: confidenceTriggered,
+        action,
+      });
+    }
+
+    const sortByEvaluatedAtDesc = <T extends { evaluated_at: string; run_id: string; action_id: string }>(
+      left: T,
+      right: T,
+    ): number => {
+      const timeDelta = Date.parse(right.evaluated_at) - Date.parse(left.evaluated_at);
+      if (!Number.isNaN(timeDelta) && timeDelta !== 0) {
+        return timeDelta;
+      }
+      return policyEvidenceKey(left.run_id, left.action_id).localeCompare(
+        policyEvidenceKey(right.run_id, right.action_id),
+      );
+    };
+
+    return {
+      samples: samples.sort(sortByEvaluatedAtDesc),
+      replay_records: replayRecords.sort(sortByEvaluatedAtDesc),
+    };
+  }
+
   getPolicyCalibrationReport(
     filters: {
       run_id?: string;
@@ -2278,178 +2722,10 @@ export class RunJournal {
 
       const includeSamples = filters.include_samples ?? false;
       const sampleLimit = includeSamples ? (filters.sample_limit ?? 200) : null;
-      const params = filters.run_id ? [filters.run_id] : [];
-      const runClause = filters.run_id ? "AND run_id = ?" : "";
-
-      const policyRows = (
-        this.db.prepare(
-          `
-            SELECT run_id, occurred_at, payload_json
-            FROM run_events
-            WHERE event_type = 'policy.evaluated'
-            ${runClause}
-            ORDER BY occurred_at ASC, sequence ASC
-          `,
-        ) as unknown as {
-          all(...boundParams: string[]): Array<{
-            run_id: string;
-            occurred_at: string;
-            payload_json: string;
-          }>;
-        }
-      ).all(...params);
-
-      const approvalRows = (
-        this.db.prepare(
-          `
-            SELECT approval_id, action_id, status, resolved_at
-            FROM approval_requests
-            ${filters.run_id ? "WHERE run_id = ?" : ""}
-            ORDER BY requested_at ASC
-          `,
-        ) as unknown as {
-          all(...boundParams: string[]): Array<{
-            approval_id: string;
-            action_id: string;
-            status: ApprovalRequest["status"];
-            resolved_at: string | null;
-          }>;
-        }
-      ).all(...params);
-
-      const recoveryRows = (
-        this.db.prepare(
-          `
-            SELECT payload_json
-            FROM run_events
-            WHERE event_type = 'recovery.executed'
-            ${runClause}
-            ORDER BY occurred_at ASC, sequence ASC
-          `,
-        ) as unknown as {
-          all(...boundParams: string[]): Array<{ payload_json: string }>;
-        }
-      ).all(...params);
-
-      const approvalByActionId = new Map<
-        string,
-        {
-          approval_id: string;
-          status: ApprovalRequest["status"];
-          resolved_at: string | null;
-        }
-      >();
-      for (const row of approvalRows) {
-        approvalByActionId.set(row.action_id, {
-          approval_id: row.approval_id,
-          status: row.status,
-          resolved_at: row.resolved_at,
-        });
-      }
-
-      const recoveryByActionId = new Map<
-        string,
-        {
-          recovery_result: PolicyCalibrationSample["recovery_result"];
-          recovery_class: PolicyCalibrationSample["recovery_class"];
-          recovery_strategy: string | null;
-        }
-      >();
-      for (const row of recoveryRows) {
-        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-        const actionId = typeof payload.action_id === "string" ? payload.action_id : "";
-        if (actionId.length === 0) {
-          continue;
-        }
-
-        const outcome = payload.outcome === "restored" || payload.outcome === "compensated" ? payload.outcome : null;
-        const recoveryClass =
-          payload.recovery_class === "reversible" ||
-          payload.recovery_class === "compensatable" ||
-          payload.recovery_class === "review_only" ||
-          payload.recovery_class === "irreversible"
-            ? payload.recovery_class
-            : null;
-        const recoveryStrategy = typeof payload.strategy === "string" ? payload.strategy : null;
-
-        recoveryByActionId.set(actionId, {
-          recovery_result: outcome,
-          recovery_class: recoveryClass,
-          recovery_strategy: recoveryStrategy,
-        });
-      }
-
-      const samples: PolicyCalibrationSample[] = policyRows.map((row) => {
-        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-        const actionId = typeof payload.action_id === "string" ? payload.action_id : "unknown_action";
-        const actionFamily =
-          typeof payload.action_family === "string" && payload.action_family.length > 0
-            ? payload.action_family
-            : "unknown/unknown";
-        const decision =
-          payload.decision === "allow" ||
-          payload.decision === "allow_with_snapshot" ||
-          payload.decision === "ask" ||
-          payload.decision === "deny"
-            ? payload.decision
-            : "deny";
-        const reasons = Array.isArray(payload.reasons) ? payload.reasons : [];
-        const reasonCodes = reasons.flatMap((reason) =>
-          reason && typeof reason === "object" && typeof (reason as { code?: unknown }).code === "string"
-            ? [(reason as { code: string }).code]
-            : [],
-        );
-        const snapshotSelection =
-          payload.snapshot_selection && typeof payload.snapshot_selection === "object"
-            ? (payload.snapshot_selection as Record<string, unknown>)
-            : null;
-        const snapshotClass =
-          snapshotSelection?.snapshot_class === "metadata_only" ||
-          snapshotSelection?.snapshot_class === "journal_only" ||
-          snapshotSelection?.snapshot_class === "journal_plus_anchor" ||
-          snapshotSelection?.snapshot_class === "exact_anchor"
-            ? snapshotSelection.snapshot_class
-            : null;
-        const matchedRules = Array.isArray(payload.matched_rules)
-          ? payload.matched_rules.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
-          : [];
-        const approval = approvalByActionId.get(actionId) ?? null;
-        const recovery = recoveryByActionId.get(actionId) ?? null;
-        const normalizationConfidence =
-          typeof payload.normalization_confidence === "number" ? payload.normalization_confidence : 0;
-        const confidenceScore =
-          typeof payload.confidence_score === "number" ? payload.confidence_score : normalizationConfidence;
-
-        return {
-          sample_id: `${row.run_id}:${actionId}`,
-          run_id: row.run_id,
-          action_id: actionId,
-          evaluated_at: typeof payload.evaluated_at === "string" ? payload.evaluated_at : row.occurred_at,
-          action_family: actionFamily,
-          decision,
-          normalization_confidence: normalizationConfidence,
-          confidence_score: confidenceScore,
-          matched_rules: matchedRules,
-          reason_codes: reasonCodes,
-          snapshot_class: snapshotClass,
-          approval_requested: decision === "ask" || approval !== null,
-          approval_id: approval?.approval_id ?? null,
-          approval_status: approval?.status ?? null,
-          resolved_at: approval?.resolved_at ?? null,
-          recovery_attempted: recovery !== null,
-          recovery_result: recovery?.recovery_result ?? null,
-          recovery_class: recovery?.recovery_class ?? null,
-          recovery_strategy: recovery?.recovery_strategy ?? null,
-        };
+      const { samples } = this.buildPolicyCalibrationEvidence({
+        run_id: filters.run_id,
       });
-
-      const sortedSamples = [...samples].sort((left, right) => {
-        const timeDelta = Date.parse(right.evaluated_at) - Date.parse(left.evaluated_at);
-        if (!Number.isNaN(timeDelta) && timeDelta !== 0) {
-          return timeDelta;
-        }
-        return left.sample_id.localeCompare(right.sample_id);
-      });
+      const sortedSamples = samples;
 
       const totalsDecisionCounts = emptyCalibrationDecisionCounts();
       const totalsApprovalCounts = emptyCalibrationApprovalCounts();
@@ -2473,6 +2749,7 @@ export class RunJournal {
           matched_rules: Map<string, number>;
           reason_codes: Map<string, number>;
           recovery_attempted_count: number;
+          samples: PolicyCalibrationSample[];
         }
       >();
 
@@ -2505,12 +2782,14 @@ export class RunJournal {
               matched_rules: new Map<string, number>(),
               reason_codes: new Map<string, number>(),
               recovery_attempted_count: 0,
+              samples: [] as PolicyCalibrationSample[],
             };
             familyAccumulators.set(sample.action_family, created);
             return created;
           })();
 
         accumulator.sample_count += 1;
+        accumulator.samples.push(sample);
         updateCalibrationDecisionCounts(accumulator.decisions, sample.decision);
         updateCalibrationApprovalCounts(accumulator.approvals, sample);
         accumulator.confidence_sum += sample.confidence_score;
@@ -2559,6 +2838,7 @@ export class RunJournal {
             accumulator.approvals.requested > 0
               ? Number((accumulator.approvals.denied / accumulator.approvals.requested).toFixed(6))
               : null,
+          calibration: buildCalibrationQuality(accumulator.samples),
         }))
         .sort((left, right) => {
           if (right.sample_count !== left.sample_count) {
@@ -2581,6 +2861,7 @@ export class RunJournal {
           decisions: totalsDecisionCounts,
           approvals: totalsApprovalCounts,
           recovery_attempted_count: recoveryAttemptedCount,
+          calibration: buildCalibrationQuality(samples),
         },
         action_families: actionFamilies,
         samples: includeSamples ? sortedSamples.slice(0, sampleLimit ?? sortedSamples.length) : undefined,
@@ -2596,6 +2877,27 @@ export class RunJournal {
       }
 
       throw new InternalError("Failed to build policy calibration report.", {
+        cause: error instanceof Error ? error.message : String(error),
+        run_id: filters.run_id ?? null,
+      });
+    }
+  }
+
+  getPolicyThresholdReplayRecords(filters: { run_id?: string } = {}): PolicyReplayRecord[] {
+    try {
+      if (filters.run_id && !this.getRunSummary(filters.run_id)) {
+        throw new NotFoundError(`No run found for ${filters.run_id}.`, { run_id: filters.run_id });
+      }
+
+      return this.buildPolicyCalibrationEvidence({
+        run_id: filters.run_id,
+      }).replay_records;
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        throw error;
+      }
+
+      throw new InternalError("Failed to load policy threshold replay records.", {
         cause: error instanceof Error ? error.message : String(error),
         run_id: filters.run_id ?? null,
       });

@@ -15,6 +15,8 @@ import {
   type GetEffectivePolicyResponsePayload,
   type GetPolicyCalibrationReportRequestPayload,
   type GetPolicyCalibrationReportResponsePayload,
+  type GetPolicyThresholdReplayRequestPayload,
+  type GetPolicyThresholdReplayResponsePayload,
   type GetPolicyThresholdRecommendationsRequestPayload,
   type GetPolicyThresholdRecommendationsResponsePayload,
   type GetCapabilitiesRequestPayload,
@@ -327,6 +329,20 @@ export class AuthorityClient {
       GetPolicyThresholdRecommendationsRequestPayload,
       GetPolicyThresholdRecommendationsResponsePayload
     >("get_policy_threshold_recommendations", payload, this.sessionId);
+  }
+
+  async replayPolicyThresholds(
+    payload: GetPolicyThresholdReplayRequestPayload,
+  ): Promise<GetPolicyThresholdReplayResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<GetPolicyThresholdReplayRequestPayload, GetPolicyThresholdReplayResponsePayload>(
+      "replay_policy_thresholds",
+      payload,
+      this.sessionId,
+    );
   }
 
   async listMcpServers(): Promise<ListMcpServersResponsePayload> {

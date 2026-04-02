@@ -13,6 +13,10 @@ const signingModes = new Set(["if-key", "required", "none"]);
 
 const publishablePackages = [
   {
+    name: "@agentgit/authority-daemon",
+    dir: path.join(repoRoot, "packages", "authority-daemon"),
+  },
+  {
     name: "@agentgit/schemas",
     dir: path.join(repoRoot, "packages", "schemas"),
   },
@@ -157,6 +161,9 @@ async function packPackage(pkg, outDir) {
   const before = new Set(await fsp.readdir(outDir));
   await runCommand("pnpm", ["pack", "--pack-destination", outDir], {
     cwd: pkg.dir,
+    env: {
+      npm_config_ignore_scripts: "true",
+    },
   });
   const after = await fsp.readdir(outDir);
   const created = after.filter((entry) => !before.has(entry) && entry.endsWith(".tgz"));

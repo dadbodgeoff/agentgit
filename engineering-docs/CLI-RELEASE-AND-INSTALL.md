@@ -4,6 +4,7 @@
 
 This document describes the release/install path for the public TypeScript package surface:
 
+- `@agentgit/authority-daemon`
 - `@agentgit/schemas`
 - `@agentgit/authority-sdk`
 - `@agentgit/authority-cli`
@@ -43,11 +44,7 @@ The GitHub release workflow in [.github/workflows/release.yml](/Users/geoffreyfe
 
 ## Current Status (As Of 2026-04-02)
 
-Release verification is green end-to-end in this workspace:
-
-- `pnpm release:verify` passes
-- signed artifact pack+verify rehearsal passes using real cryptographic keys
-- install and compatibility smoke gates pass
+Release readiness is tracked by the live workspace verification commands below. Treat this document as the intended release contract, and rely on the actual command output for current pass/fail state.
 
 ## Signing Key Inputs
 
@@ -64,7 +61,8 @@ Release publish should remain blocked until both secrets are configured.
 
 - packing publishable tarballs
 - installing tarballs into a clean temp directory outside the monorepo
-- starting a real authority daemon from the repo
+- running `agentgit-authority setup`
+- starting the packaged authority daemon through the installed CLI
 - running installed `agentgit-authority` binary operations against that daemon
 
 `pnpm smoke:cli-compat` extends this with compatibility, upgrade, rollback, and audit-bundle behavior checks.

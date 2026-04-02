@@ -4,6 +4,7 @@
 
 This runbook is for operating the day-one local production CLI surface:
 
+- `@agentgit/authority-daemon`
 - `@agentgit/authority-cli`
 - `@agentgit/authority-sdk`
 - `@agentgit/schemas`
@@ -26,13 +27,20 @@ This runbook assumes the current audited launch truth:
 
 ## Day-Zero Bring-Up
 
-Start daemon and verify CLI contract:
+Recommended install/start path:
 
 ```bash
-pnpm daemon:start
-pnpm cli -- --json version
-pnpm cli -- --json ping
-pnpm cli -- --json doctor
+npm install -g @agentgit/authority-cli
+agentgit-authority setup
+agentgit-authority daemon start
+```
+
+In a second terminal, verify the CLI contract:
+
+```bash
+agentgit-authority --json version
+agentgit-authority --json ping
+agentgit-authority --json doctor
 ```
 
 Expected healthy baseline:
@@ -47,13 +55,13 @@ Expected healthy baseline:
 Use profiles instead of repeating socket/workspace flags:
 
 ```bash
-pnpm cli -- --json profile upsert local \
+agentgit-authority --json profile upsert local \
   --socket-path /absolute/path/to/authority.sock \
   --workspace-root /absolute/path/to/workspace
-pnpm cli -- --json profile use local
-pnpm cli -- --json profile show
-pnpm cli -- --json config validate
-pnpm cli -- --json doctor
+agentgit-authority --json profile use local
+agentgit-authority --json profile show
+agentgit-authority --json config validate
+agentgit-authority --json doctor
 ```
 
 If `config validate` fails, fix config before proceeding with mutating operations.
@@ -121,8 +129,9 @@ The operator policy loop is now:
 2. explain a candidate action before execution
 3. review calibration history
 4. review threshold recommendations
-5. diff a candidate policy file against the current effective policy
-6. render a report-only TOML threshold patch for manual review
+5. replay candidate thresholds against real journaled actions
+6. diff a candidate policy file against the current effective policy
+7. render a report-only TOML threshold patch for manual review
 
 Baseline commands:
 
@@ -131,6 +140,7 @@ pnpm cli -- --json policy show
 pnpm cli -- --json policy explain ./attempt.json
 pnpm cli -- --json policy calibration-report --run-id <run-id> --include-samples
 pnpm cli -- --json policy recommend-thresholds --run-id <run-id> --min-samples 5
+pnpm cli -- --json policy replay-thresholds --run-id <run-id> --min-samples 5 --direction all --include-changed-samples --sample-limit 20
 pnpm cli -- --json policy diff ./policy.toml
 pnpm cli -- --json policy render-threshold-patch --run-id <run-id> --min-samples 5 --direction all
 ```
@@ -139,6 +149,7 @@ Operational rules:
 
 - `policy explain` is preview-only and does not execute or journal the candidate action
 - `policy recommend-thresholds` is report-only and never changes live policy
+- `policy replay-thresholds` is report-only, re-evaluates real journaled actions, and should be reviewed before any threshold rollout
 - `policy render-threshold-patch` emits a suggested TOML patch and never applies it automatically
 - relaxation recommendations always require explicit human review and a durable policy file change
 - threshold tightening should still be reviewed before rollout, even when the report direction is `tighten`
@@ -146,12 +157,13 @@ Operational rules:
 Suggested operator sequence for a real policy change:
 
 1. capture a calibration report for the relevant run or review window
-2. inspect the recommendation rationale and confidence ranges
-3. render the patch snippet
-4. merge the reviewed threshold entries into the owned policy TOML
-5. run `policy diff` against the candidate file
-6. run `policy validate` on the candidate file before rollout
-7. restart or reload the daemon onto the reviewed policy source
+2. inspect the recommendation rationale, calibration error, and confidence bins
+3. run replay on the recommended thresholds or a candidate policy file
+4. render the patch snippet
+5. merge the reviewed threshold entries into the owned policy TOML
+6. run `policy diff` against the candidate file
+7. run `policy validate` on the candidate file before rollout
+8. restart or reload the daemon onto the reviewed policy source
 
 ## Upgrade And Rollback Operator Checks
 

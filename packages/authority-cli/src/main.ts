@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, createVerify } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as TOML from "@iarna/toml";
+import type { AuthorityDaemonListeningSummary } from "@agentgit/authority-daemon";
 import { AuthorityClient, AuthorityDaemonResponseError } from "@agentgit/authority-sdk";
 import { API_VERSION, type PolicyConfig, PolicyConfigSchema, type PolicyRule } from "@agentgit/schemas";
 
@@ -37,6 +38,10 @@ import {
 } from "./cli-config.js";
 import { parseSecretCommandOptions, secretUsage } from "./cli-secret-input.js";
 
+async function loadAuthorityDaemonModule(): Promise<typeof import("@agentgit/authority-daemon")> {
+  return await import("@agentgit/authority-daemon");
+}
+
 const USAGE = [
   "Usage: agentgit-authority [global-flags] <command> [args]",
   "",
@@ -55,6 +60,14 @@ const USAGE = [
   "  version",
   "  ping",
   "  doctor",
+  "  setup [--profile-name <name>] [--force]",
+  "  daemon start",
+  "  init --production [--profile-name <name>] [--force]",
+  "  trust-report [--run-id <run-id>] [--visibility <user|model|internal|sensitive_internal>]",
+  "  onboard-mcp <plan-json-or-path>",
+  "  trust-review-mcp <plan-json-or-path>",
+  "  release-verify-artifacts [artifacts-dir] [--signature-mode <required|allow-unsigned>] [--public-key-path <path>]",
+  "  cloud-roadmap",
   "  config show",
   "  config validate",
   "  profile list",
@@ -68,6 +81,7 @@ const USAGE = [
   "  policy explain <attempt-json-or-path>",
   "  policy calibration-report [--run-id <run-id>] [--include-samples] [--sample-limit <n>]",
   "  policy recommend-thresholds [--run-id <run-id>] [--min-samples <n>]",
+  "  policy replay-thresholds [--run-id <run-id>] [--candidate-policy <path>] [--min-samples <n>] [--direction <tighten|relax|all>] [--include-changed-samples] [--sample-limit <n>]",
   "  policy render-threshold-patch [--run-id <run-id>] [--min-samples <n>] [--direction <tighten|relax|all>]",
   "  register-run [workflow-name] [max-mutating] [max-destructive]",
   "  run-summary <run-id>",
@@ -155,6 +169,7 @@ type EffectivePolicyResult = Awaited<ReturnType<AuthorityClient["getEffectivePol
 type ExplainPolicyActionResult = Awaited<ReturnType<AuthorityClient["explainPolicyAction"]>>;
 type PolicyCalibrationReportResult = Awaited<ReturnType<AuthorityClient["getPolicyCalibrationReport"]>>;
 type PolicyThresholdRecommendationsResult = Awaited<ReturnType<AuthorityClient["getPolicyThresholdRecommendations"]>>;
+type PolicyThresholdReplayResult = Awaited<ReturnType<AuthorityClient["replayPolicyThresholds"]>>;
 interface PolicyValidationResult {
   valid: boolean;
   issues: string[];
@@ -198,6 +213,13 @@ type ResolveApprovalResult = Awaited<ReturnType<AuthorityClient["resolveApproval
 type TimelineResult = Awaited<ReturnType<AuthorityClient["queryTimeline"]>>;
 type HelperResult = Awaited<ReturnType<AuthorityClient["queryHelper"]>>;
 type ArtifactResult = Awaited<ReturnType<AuthorityClient["queryArtifact"]>>;
+type UpsertMcpSecretInput = Parameters<AuthorityClient["upsertMcpSecret"]>[0];
+type UpsertMcpHostPolicyInput = Parameters<AuthorityClient["upsertMcpHostPolicy"]>[0];
+type UpsertMcpServerInput = Parameters<AuthorityClient["upsertMcpServer"]>[0];
+type SubmitMcpServerCandidateInput = Parameters<AuthorityClient["submitMcpServerCandidate"]>[0];
+type ResolveMcpServerCandidateInput = Parameters<AuthorityClient["resolveMcpServerCandidate"]>[0];
+type ApproveMcpServerProfileInput = Parameters<AuthorityClient["approveMcpServerProfile"]>[0];
+type BindMcpServerCredentialsInput = Parameters<AuthorityClient["bindMcpServerCredentials"]>[0];
 interface ArtifactExportResult {
   artifact_id: string;
   output_path: string;
@@ -374,6 +396,15 @@ interface PolicyThresholdPatchResult {
   }>;
   patch_toml: string;
   report_only: true;
+  replay: {
+    replayable_samples: number;
+    skipped_samples: number;
+    changed_decisions: number;
+    approvals_reduced: number;
+    approvals_increased: number;
+    historically_denied_auto_allowed: number;
+    historically_allowed_newly_gated: number;
+  } | null;
 }
 interface ConfigShowResult {
   resolved: CliResolvedConfig;
@@ -412,6 +443,173 @@ interface DoctorResult {
   security_posture_status: "healthy" | "degraded" | "unknown";
   checks: DoctorCheck[];
   recommendations: string[];
+}
+interface InitCommandResult {
+  mode: "production";
+  profile_name: string;
+  config_path: string;
+  profile_created: boolean;
+  profile_overwritten: boolean;
+  readiness_passed: boolean;
+  doctor: DoctorResult;
+}
+interface SetupCommandResult {
+  mode: "local";
+  profile_name: string;
+  config_path: string;
+  profile_created: boolean;
+  profile_overwritten: boolean;
+  created_directories: string[];
+  workspace_root: string;
+  socket_path: string;
+  daemon_start_command: string;
+  doctor_command: string;
+}
+interface TrustReportResult {
+  generated_at: string;
+  workspace_root: string;
+  daemon: DoctorResult["daemon"];
+  security_posture_status: DoctorResult["security_posture_status"];
+  mcp: {
+    profile_count: number;
+    active_profile_count: number;
+    pending_profile_count: number;
+    quarantined_profile_count: number;
+    revoked_profile_count: number;
+    profiles_without_active_trust_decision: number;
+    profiles_requiring_credentials: number;
+    profiles_missing_credentials: number;
+    active_non_deny_trust_decision_count: number;
+    active_credential_binding_count: number;
+  };
+  timeline_trust: null | {
+    run_id: string;
+    visibility_scope: TimelineResult["visibility_scope"];
+    step_count: number;
+    trust_summary: TimelineTrustSummary;
+  };
+  recommendations: string[];
+}
+interface McpSmokeTestPlan {
+  run_id?: string;
+  workflow_name?: string;
+  tool_name: string;
+  arguments?: Record<string, unknown>;
+}
+interface McpOnboardPlan {
+  secrets?: UpsertMcpSecretInput[];
+  host_policies?: UpsertMcpHostPolicyInput[];
+  server: UpsertMcpServerInput;
+  smoke_test?: McpSmokeTestPlan;
+}
+interface McpOnboardResult {
+  executed_at: string;
+  workspace_root: string;
+  secrets: Array<{
+    secret_id: string;
+    created: boolean;
+    status: string;
+  }>;
+  host_policies: Array<{
+    host: string;
+    created: boolean;
+  }>;
+  server: {
+    server_id: string;
+    created: boolean;
+    transport: string;
+  };
+  smoke_test: null | {
+    run_id: string;
+    tool_name: string;
+    mode: NonNullable<SubmitActionResult["execution_result"]>["mode"] | null;
+    success: boolean;
+    summary: string | null;
+  };
+}
+interface McpTrustReviewPlan {
+  secrets?: UpsertMcpSecretInput[];
+  host_policies?: UpsertMcpHostPolicyInput[];
+  candidate?: SubmitMcpServerCandidateInput;
+  resolve: Omit<ResolveMcpServerCandidateInput, "candidate_id"> & {
+    candidate_id?: string;
+  };
+  approval: Omit<ApproveMcpServerProfileInput, "server_profile_id"> & {
+    server_profile_id?: string;
+  };
+  credential_binding?: Omit<BindMcpServerCredentialsInput, "server_profile_id"> & {
+    server_profile_id?: string;
+  };
+  activate?: boolean;
+  smoke_test?: McpSmokeTestPlan;
+}
+interface McpTrustReviewResult {
+  executed_at: string;
+  workspace_root: string;
+  secrets: McpOnboardResult["secrets"];
+  host_policies: McpOnboardResult["host_policies"];
+  candidate_submission: null | {
+    candidate_id: string;
+    source_kind: string;
+    submitted: true;
+    resolution_state: string;
+  };
+  resolution: {
+    candidate_id: string;
+    profile_id: string;
+    created_profile: boolean;
+    drift_detected: boolean;
+    profile_status: string;
+    drift_state: string;
+    canonical_endpoint: string;
+    network_scope: string;
+  };
+  trust_decision: {
+    trust_decision_id: string;
+    decision: string;
+    created: boolean;
+    profile_status: string;
+  };
+  credential_binding: null | {
+    credential_binding_id: string;
+    binding_mode: string;
+    status: string;
+  };
+  activation: null | {
+    attempted: true;
+    profile_status: string;
+  };
+  smoke_test: McpOnboardResult["smoke_test"];
+  review: GetMcpServerReviewResult;
+}
+type ReleaseSignatureMode = "required" | "allow-unsigned";
+interface ReleaseArtifactVerifyResult {
+  ok: true;
+  artifacts_dir: string;
+  manifest_path: string;
+  manifest_sha256_verified: true;
+  signature_mode: ReleaseSignatureMode;
+  signature_present: boolean;
+  signature_verified: boolean;
+  packages: Array<{
+    name: string;
+    tarball_path: string;
+    sha256: string;
+    verified: true;
+  }>;
+}
+interface CloudRoadmapResult {
+  generated_at: string;
+  launch_contract: "local-first-mvp";
+  mvp_scope_exclusions: string[];
+  phases: Array<{
+    phase_id: string;
+    title: string;
+    status: "deferred";
+    target_window: string;
+    deliverables: string[];
+    entry_criteria: string[];
+  }>;
 }
 type PlanRecoveryResult = Awaited<ReturnType<AuthorityClient["planRecovery"]>>;
 type ExecuteRecoveryResult = Awaited<ReturnType<AuthorityClient["executeRecovery"]>>;
@@ -522,6 +720,7 @@ const MAINTENANCE_JOB_TYPES = new Set<MaintenanceJobType>([
   "capability_refresh",
   "helper_fact_warm",
 ]);
+const RELEASE_SIGNATURE_MODES = new Set<ReleaseSignatureMode>(["required", "allow-unsigned"]);
 
 function wantsJsonOutput(argv: string[]): boolean {
   return argv.includes("--json");
@@ -1742,6 +1941,291 @@ function formatDoctor(result: DoctorResult): string {
   );
 }
 
+function formatInitResult(result: InitCommandResult): string {
+  return lines(
+    `Initialized ${result.mode} profile ${result.profile_name}`,
+    `Config path: ${result.config_path}`,
+    `Profile created: ${result.profile_created ? "yes" : "no"}`,
+    `Profile overwritten: ${result.profile_overwritten ? "yes" : "no"}`,
+    `Readiness passed: ${result.readiness_passed ? "yes" : "no"}`,
+    "",
+    formatDoctor(result.doctor),
+  );
+}
+
+function formatSetupResult(result: SetupCommandResult): string {
+  const createdDirectories =
+    result.created_directories.length === 0 ? "none" : `\n${bulletList(result.created_directories)}`;
+  return lines(
+    "CLI setup complete",
+    `Profile: ${result.profile_name}`,
+    `Config path: ${result.config_path}`,
+    `Profile created: ${result.profile_created ? "yes" : "no"}`,
+    `Profile overwritten: ${result.profile_overwritten ? "yes" : "no"}`,
+    `Workspace root: ${result.workspace_root}`,
+    `Socket path: ${result.socket_path}`,
+    `Created directories:${createdDirectories}`,
+    `Next step: ${result.daemon_start_command}`,
+    `Health check: ${result.doctor_command}`,
+  );
+}
+
+function formatDaemonStart(result: AuthorityDaemonListeningSummary): string {
+  return lines(
+    "Authority daemon listening",
+    `Socket path: ${result.socket_path}`,
+    `Journal path: ${result.journal_path}`,
+    `Snapshot root: ${result.snapshot_root_path}`,
+    `MCP registry path: ${result.mcp_registry_path}`,
+    `MCP secret store path: ${result.mcp_secret_store_path}`,
+    `MCP host policy path: ${result.mcp_host_policy_path}`,
+    `Hosted worker endpoint: ${result.mcp_hosted_worker_endpoint}`,
+    `Policy workspace config: ${result.policy_workspace_config_path}`,
+  );
+}
+
+function formatTrustReport(result: TrustReportResult): string {
+  const timelineSummary = result.timeline_trust
+    ? lines(
+        `Run id: ${result.timeline_trust.run_id}`,
+        `Visibility: ${result.timeline_trust.visibility_scope}`,
+        `Timeline steps: ${result.timeline_trust.step_count}`,
+        `Non-governed steps: ${result.timeline_trust.trust_summary.nonGoverned}`,
+        `Imported: ${result.timeline_trust.trust_summary.imported}`,
+        `Observed: ${result.timeline_trust.trust_summary.observed}`,
+        `Unknown: ${result.timeline_trust.trust_summary.unknown}`,
+      )
+    : "none";
+  return lines(
+    "Trust report",
+    `Generated: ${result.generated_at}`,
+    `Workspace root: ${result.workspace_root}`,
+    `Daemon reachable: ${result.daemon.reachable ? "yes" : "no"}`,
+    maybeLine("Session", result.daemon.session_id),
+    `Security posture: ${result.security_posture_status}`,
+    `MCP profiles: ${result.mcp.profile_count}`,
+    `MCP active profiles: ${result.mcp.active_profile_count}`,
+    `MCP pending profiles: ${result.mcp.pending_profile_count}`,
+    `MCP quarantined profiles: ${result.mcp.quarantined_profile_count}`,
+    `MCP revoked profiles: ${result.mcp.revoked_profile_count}`,
+    `MCP profiles missing trust decision: ${result.mcp.profiles_without_active_trust_decision}`,
+    `MCP profiles requiring credentials: ${result.mcp.profiles_requiring_credentials}`,
+    `MCP profiles missing credentials: ${result.mcp.profiles_missing_credentials}`,
+    `Active non-deny trust decisions: ${result.mcp.active_non_deny_trust_decision_count}`,
+    `Active credential bindings: ${result.mcp.active_credential_binding_count}`,
+    `Timeline trust summary:\n${indentBlock(timelineSummary, 2)}`,
+    result.recommendations.length === 0
+      ? "Recommendations: none"
+      : `Recommendations:\n${bulletList(result.recommendations)}`,
+  );
+}
+
+function formatMcpOnboardResult(result: McpOnboardResult): string {
+  const secrets =
+    result.secrets.length === 0
+      ? "none"
+      : `\n${bulletList(result.secrets.map((secret) => `${secret.secret_id} [${secret.status}] created=${secret.created ? "yes" : "no"}`))}`;
+  const hostPolicies =
+    result.host_policies.length === 0
+      ? "none"
+      : `\n${bulletList(result.host_policies.map((policy) => `${policy.host} created=${policy.created ? "yes" : "no"}`))}`;
+  const smokeTest = !result.smoke_test
+    ? "none"
+    : lines(
+        `Run id: ${result.smoke_test.run_id}`,
+        `Tool: ${result.smoke_test.tool_name}`,
+        `Execution mode: ${result.smoke_test.mode ?? "none"}`,
+        `Success: ${result.smoke_test.success ? "yes" : "no"}`,
+        `Summary: ${result.smoke_test.summary ?? "none"}`,
+      );
+
+  return lines(
+    `MCP onboarding completed for ${result.server.server_id}`,
+    `Executed at: ${result.executed_at}`,
+    `Workspace root: ${result.workspace_root}`,
+    `Server transport: ${result.server.transport}`,
+    `Server created: ${result.server.created ? "yes" : "no"}`,
+    `Secrets:${secrets}`,
+    `Host policies:${hostPolicies}`,
+    `Smoke test:\n${indentBlock(smokeTest, 2)}`,
+  );
+}
+
+function formatMcpTrustReviewResult(result: McpTrustReviewResult): string {
+  const secrets =
+    result.secrets.length === 0
+      ? "none"
+      : `\n${bulletList(result.secrets.map((secret) => `${secret.secret_id} [${secret.status}] created=${secret.created ? "yes" : "no"}`))}`;
+  const hostPolicies =
+    result.host_policies.length === 0
+      ? "none"
+      : `\n${bulletList(result.host_policies.map((policy) => `${policy.host} created=${policy.created ? "yes" : "no"}`))}`;
+  const candidateSubmission = !result.candidate_submission
+    ? "Reused existing candidate"
+    : lines(
+        `Candidate: ${result.candidate_submission.candidate_id}`,
+        `Source: ${result.candidate_submission.source_kind}`,
+        `Resolution state: ${result.candidate_submission.resolution_state}`,
+      );
+  const credentialBinding = !result.credential_binding
+    ? "none"
+    : lines(
+        `Binding: ${result.credential_binding.credential_binding_id}`,
+        `Mode: ${result.credential_binding.binding_mode}`,
+        `Status: ${result.credential_binding.status}`,
+      );
+  const activation = !result.activation
+    ? "skipped"
+    : lines(`Attempted: yes`, `Profile status: ${result.activation.profile_status}`);
+  const smokeTest = !result.smoke_test
+    ? "none"
+    : lines(
+        `Run id: ${result.smoke_test.run_id}`,
+        `Tool: ${result.smoke_test.tool_name}`,
+        `Execution mode: ${result.smoke_test.mode ?? "none"}`,
+        `Success: ${result.smoke_test.success ? "yes" : "no"}`,
+        `Summary: ${result.smoke_test.summary ?? "none"}`,
+      );
+  const review = lines(
+    `Target: ${result.review.review.review_target}`,
+    `Executable: ${result.review.review.executable ? "yes" : "no"}`,
+    `Activation ready: ${result.review.review.activation_ready ? "yes" : "no"}`,
+    `Requires resolution: ${result.review.review.requires_resolution ? "yes" : "no"}`,
+    `Requires approval: ${result.review.review.requires_approval ? "yes" : "no"}`,
+    `Requires credentials: ${result.review.review.requires_credentials ? "yes" : "no"}`,
+    `Requires reapproval: ${result.review.review.requires_reapproval ? "yes" : "no"}`,
+    `Execution support: local_proxy=${result.review.review.local_proxy_supported ? "yes" : "no"}, hosted=${result.review.review.hosted_execution_supported ? "yes" : "no"}`,
+    result.review.review.warnings.length > 0
+      ? `Warnings:\n${bulletList(result.review.review.warnings)}`
+      : "Warnings: none",
+    result.review.review.recommended_actions.length > 0
+      ? `Recommended actions:\n${bulletList(result.review.review.recommended_actions)}`
+      : "Recommended actions: none",
+  );
+
+  return lines(
+    `MCP trust review completed for ${result.resolution.profile_id}`,
+    `Executed at: ${result.executed_at}`,
+    `Workspace root: ${result.workspace_root}`,
+    `Candidate submission:\n${indentBlock(candidateSubmission, 2)}`,
+    `Resolved endpoint: ${result.resolution.canonical_endpoint}`,
+    `Network scope: ${result.resolution.network_scope}`,
+    `Profile status after resolve: ${result.resolution.profile_status}`,
+    `Drift state after resolve: ${result.resolution.drift_state}`,
+    `Trust decision: ${result.trust_decision.trust_decision_id} [${result.trust_decision.decision}] created=${result.trust_decision.created ? "yes" : "no"}`,
+    `Profile status after approval: ${result.trust_decision.profile_status}`,
+    `Secrets:${secrets}`,
+    `Host policies:${hostPolicies}`,
+    `Credential binding:\n${indentBlock(credentialBinding, 2)}`,
+    `Activation:\n${indentBlock(activation, 2)}`,
+    `Smoke test:\n${indentBlock(smokeTest, 2)}`,
+    `Final review:\n${indentBlock(review, 2)}`,
+  );
+}
+
+function formatReleaseArtifactVerifyResult(result: ReleaseArtifactVerifyResult): string {
+  const packages =
+    result.packages.length === 0
+      ? "none"
+      : `\n${bulletList(result.packages.map((entry) => `${entry.name} ${entry.sha256} [${entry.tarball_path}]`))}`;
+  return lines(
+    "Release artifacts verified",
+    `Artifacts dir: ${result.artifacts_dir}`,
+    `Manifest: ${result.manifest_path}`,
+    `Manifest checksum: verified`,
+    `Signature mode: ${result.signature_mode}`,
+    `Signature present: ${result.signature_present ? "yes" : "no"}`,
+    `Signature verified: ${result.signature_verified ? "yes" : "no"}`,
+    `Packages verified: ${result.packages.length}`,
+    `Package checks:${packages}`,
+  );
+}
+
+function cloudRoadmapResult(): CloudRoadmapResult {
+  return {
+    generated_at: new Date().toISOString(),
+    launch_contract: "local-first-mvp",
+    mvp_scope_exclusions: [
+      "Hosted MCP execution control plane",
+      "Durable hosted worker orchestration",
+      "Browser/computer governance",
+      "Generic governed HTTP adapter",
+      "Cloud-owned journal or snapshot truth",
+    ],
+    phases: [
+      {
+        phase_id: "cloud-1",
+        title: "Hosted MCP Worker Reliability",
+        status: "deferred",
+        target_window: "post-mvp + 0-2 quarters",
+        deliverables: [
+          "Harden hosted worker control plane and queue lease semantics.",
+          "Add dead-letter replay guardrails and operator replay workflows.",
+          "Ship hosted worker disaster-recovery runbooks and game days.",
+        ],
+        entry_criteria: [
+          "Local-first MVP adoption and support load are stable.",
+          "Signed artifact and provenance requirements are enforced in hosted images.",
+        ],
+      },
+      {
+        phase_id: "cloud-2",
+        title: "Hosted Trust And Credential Brokering",
+        status: "deferred",
+        target_window: "post-mvp + 2-4 quarters",
+        deliverables: [
+          "Promote profile onboarding and trust review into hosted control workflows.",
+          "Add brokered token exchange for hosted delegated execution.",
+          "Ship tenant isolation and hosted audit narrative exports.",
+        ],
+        entry_criteria: [
+          "Hosted worker reliability phase is complete with SLOs.",
+          "Credential broker has rotation and revocation evidence hooks.",
+        ],
+      },
+      {
+        phase_id: "cloud-3",
+        title: "Extended Governance Surfaces",
+        status: "deferred",
+        target_window: "post-mvp + 4+ quarters",
+        deliverables: [
+          "Browser/computer governance with deterministic policy mapping.",
+          "Generic HTTP governance adapter with fail-closed semantics.",
+          "Cross-workspace policy packs and organization-level trust narratives.",
+        ],
+        entry_criteria: [
+          "Cloud phases 1 and 2 are production-stable.",
+          "Operator runbooks and audit artifacts cover the hosted boundary.",
+        ],
+      },
+    ],
+  };
+}
+
+function formatCloudRoadmapResult(result: CloudRoadmapResult): string {
+  const phaseLines =
+    result.phases.length === 0
+      ? "none"
+      : result.phases
+          .map((phase) =>
+            lines(
+              `- ${phase.phase_id}: ${phase.title} [${phase.status}]`,
+              `  Target window: ${phase.target_window}`,
+              `  Deliverables:\n${bulletList(phase.deliverables, "    ")}`,
+              `  Entry criteria:\n${bulletList(phase.entry_criteria, "    ")}`,
+            ),
+          )
+          .join("\n\n");
+
+  return lines(
+    "Cloud roadmap",
+    `Generated: ${result.generated_at}`,
+    `Launch contract: ${result.launch_contract}`,
+    `MVP scope exclusions:\n${bulletList(result.mvp_scope_exclusions)}`,
+    `Deferred phases:\n${phaseLines}`,
+  );
+}
+
 function formatRegisterRun(result: RegisterRunResult): string {
   return lines(
     `Registered run ${result.run_id}`,
@@ -1779,6 +2263,19 @@ function validatePolicyConfigDocument(document: unknown): PolicyValidationResult
       rules: parsed.data.rules,
     },
   };
+}
+
+function loadPolicyThresholdCandidates(policyPath: string): PolicyThresholdReplayResult["candidate_thresholds"] {
+  const validation = validatePolicyConfigDocument(loadPolicyDocument(policyPath));
+  if (!validation.valid || !validation.normalized_config) {
+    throw inputError(`Invalid policy config at ${path.resolve(policyPath)}.`, {
+      issues: validation.issues,
+    });
+  }
+
+  return [...(validation.normalized_config.thresholds?.low_confidence ?? [])].sort((left, right) =>
+    left.action_family.localeCompare(right.action_family),
+  );
 }
 
 function stableJson(value: unknown): string {
@@ -1870,6 +2367,7 @@ function buildPolicyDiffResult(
 function renderThresholdPatch(
   result: PolicyThresholdRecommendationsResult,
   directionFilter: "tighten" | "relax" | "all",
+  replay: PolicyThresholdReplayResult | null = null,
 ): PolicyThresholdPatchResult {
   const includedRecommendations = result.recommendations
     .filter((entry) => entry.requires_policy_update)
@@ -1910,6 +2408,17 @@ function renderThresholdPatch(
     included_recommendations: includedRecommendations,
     patch_toml: patchLines.join("\n"),
     report_only: true,
+    replay: replay
+      ? {
+          replayable_samples: replay.summary.replayable_samples,
+          skipped_samples: replay.summary.skipped_samples,
+          changed_decisions: replay.summary.changed_decisions,
+          approvals_reduced: replay.summary.approvals_reduced,
+          approvals_increased: replay.summary.approvals_increased,
+          historically_denied_auto_allowed: replay.summary.historically_denied_auto_allowed,
+          historically_allowed_newly_gated: replay.summary.historically_allowed_newly_gated,
+        }
+      : null,
   };
 }
 
@@ -1962,11 +2471,48 @@ function formatPolicyValidation(result: PolicyValidationResult): string {
 }
 
 function formatPolicyCalibrationReport(result: PolicyCalibrationReportResult): string {
+  const totalCalibration = result.report.totals.calibration ?? {
+    resolved_sample_count: 0,
+    pending_sample_count: 0,
+    approved_count: 0,
+    denied_count: 0,
+    mean_confidence: null,
+    mean_observed_approval_rate: null,
+    brier_score: null,
+    expected_calibration_error: null,
+    max_calibration_error: null,
+    bins: [],
+  };
+  const totalCalibrationLine =
+    totalCalibration.resolved_sample_count === 0
+      ? "n/a"
+      : `resolved=${totalCalibration.resolved_sample_count}, pending=${totalCalibration.pending_sample_count}, brier=${totalCalibration.brier_score?.toFixed(3) ?? "n/a"}, ece=${totalCalibration.expected_calibration_error?.toFixed(3) ?? "n/a"}, max_gap=${totalCalibration.max_calibration_error?.toFixed(3) ?? "n/a"}`;
+  const calibrationBins =
+    totalCalibration.bins.length === 0
+      ? "none"
+      : totalCalibration.bins
+          .map(
+            (bin) =>
+              `${bin.confidence_floor.toFixed(1)}-${bin.confidence_ceiling.toFixed(1)}: n=${bin.sample_count}, resolved=${bin.resolved_sample_count}, approval_rate=${bin.approval_rate?.toFixed(3) ?? "n/a"}, avg_confidence=${bin.average_confidence?.toFixed(3) ?? "n/a"}, gap=${bin.absolute_gap?.toFixed(3) ?? "n/a"}`,
+          )
+          .join("\n");
   const families =
     result.report.action_families.length === 0
       ? "none"
       : result.report.action_families
           .map((family) => {
+            const familyCalibration = family.calibration ?? {
+              resolved_sample_count: 0,
+              pending_sample_count: 0,
+              approved_count: 0,
+              denied_count: 0,
+              mean_confidence: null,
+              mean_observed_approval_rate: null,
+              brier_score: null,
+              expected_calibration_error: null,
+              max_calibration_error: null,
+              bins: [],
+            };
             const confidence =
               family.confidence.average === null
                 ? "n/a"
@@ -1976,6 +2522,7 @@ function formatPolicyCalibrationReport(result: PolicyCalibrationReportResult): s
               `  decisions: allow=${family.decisions.allow}, allow_with_snapshot=${family.decisions.allow_with_snapshot}, ask=${family.decisions.ask}, deny=${family.decisions.deny}`,
               `  approvals: requested=${family.approvals.requested}, pending=${family.approvals.pending}, approved=${family.approvals.approved}, denied=${family.approvals.denied}`,
               `  confidence: ${confidence}`,
+              `  calibration: resolved=${familyCalibration.resolved_sample_count}, brier=${familyCalibration.brier_score?.toFixed(3) ?? "n/a"}, ece=${familyCalibration.expected_calibration_error?.toFixed(3) ?? "n/a"}, max_gap=${familyCalibration.max_calibration_error?.toFixed(3) ?? "n/a"}`,
               `  snapshot classes: ${family.snapshot_classes.length === 0 ? "none" : family.snapshot_classes.map((entry) => `${entry.key}=${entry.count}`).join(", ")}`,
             ].join("\n");
           })
@@ -2001,6 +2548,8 @@ function formatPolicyCalibrationReport(result: PolicyCalibrationReportResult): s
     `Confidence average: ${result.report.totals.confidence.average === null ? "n/a" : result.report.totals.confidence.average.toFixed(3)}`,
     `Decisions: allow=${result.report.totals.decisions.allow}, allow_with_snapshot=${result.report.totals.decisions.allow_with_snapshot}, ask=${result.report.totals.decisions.ask}, deny=${result.report.totals.decisions.deny}`,
     `Approvals: requested=${result.report.totals.approvals.requested}, pending=${result.report.totals.approvals.pending}, approved=${result.report.totals.approvals.approved}, denied=${result.report.totals.approvals.denied}`,
+    `Calibration: ${totalCalibrationLine}`,
+    `Calibration bins:\n${calibrationBins}`,
     `Recovery attempted: ${result.report.totals.recovery_attempted_count}`,
     `Samples truncated: ${result.report.samples_truncated ? "yes" : "no"}`,
     `Action families:\n${families}`,
@@ -2070,6 +2619,52 @@ function formatPolicyThresholdRecommendations(result: PolicyThresholdRecommendat
   );
 }
 
+function formatPolicyThresholdReplay(result: PolicyThresholdReplayResult): string {
+  const familyLines =
+    result.action_families.length === 0
+      ? "none"
+      : result.action_families
+          .map((family) =>
+            [
+              `${family.action_family}: replayable=${family.replayable_samples}, skipped=${family.skipped_samples}`,
+              `  changed=${family.changed_decisions}, unchanged=${family.unchanged_decisions}`,
+              `  approvals: current=${family.current_approvals_requested}, candidate=${family.candidate_approvals_requested}, reduced=${family.approvals_reduced}, increased=${family.approvals_increased}`,
+              `  historical risk: denied_auto_allowed=${family.historically_denied_auto_allowed}, allowed_newly_gated=${family.historically_allowed_newly_gated}`,
+            ].join("\n"),
+          )
+          .join("\n");
+  const changedSampleLines =
+    result.changed_samples && result.changed_samples.length > 0
+      ? result.changed_samples
+          .map(
+            (sample) =>
+              `${sample.action_id} [${sample.action_family}] ${sample.current_decision} -> ${sample.candidate_decision} (${sample.change_kind}, confidence=${sample.confidence_score.toFixed(3)})`,
+          )
+          .join("\n")
+      : result.filters.include_changed_samples
+        ? "none"
+        : null;
+
+  return lines(
+    "Policy threshold replay",
+    `Generated: ${result.generated_at}`,
+    `Profile: ${result.effective_policy_profile}`,
+    `Run filter: ${result.filters.run_id ?? "all"}`,
+    `Candidate thresholds: ${result.candidate_thresholds.length === 0 ? "none" : result.candidate_thresholds.map((entry) => `${entry.action_family}=${entry.ask_below.toFixed(3)}`).join(", ")}`,
+    `Replayable samples: ${result.summary.replayable_samples}`,
+    `Skipped samples: ${result.summary.skipped_samples}`,
+    `Changed decisions: ${result.summary.changed_decisions}`,
+    `Current approvals: ${result.summary.current_approvals_requested}`,
+    `Candidate approvals: ${result.summary.candidate_approvals_requested}`,
+    `Approvals reduced: ${result.summary.approvals_reduced}`,
+    `Approvals increased: ${result.summary.approvals_increased}`,
+    `Historical risk: denied_auto_allowed=${result.summary.historically_denied_auto_allowed}, approved_auto_allowed=${result.summary.historically_approved_auto_allowed}, allowed_newly_gated=${result.summary.historically_allowed_newly_gated}`,
+    `Current-vs-recorded: matches=${result.summary.current_matches_recorded}, diverges=${result.summary.current_diverges_from_recorded}`,
+    `Action families:\n${familyLines}`,
+    changedSampleLines ? `Changed samples:\n${changedSampleLines}` : null,
+  );
+}
+
 function formatPolicyDiff(result: PolicyDiffResult): string {
   const thresholdAdditionLines =
     result.threshold_additions.length === 0
@@ -2113,6 +2708,9 @@ function formatPolicyThresholdPatch(result: PolicyThresholdPatchResult): string 
               `${entry.action_family}: ${entry.direction} ${entry.current_ask_below === null ? "unset" : entry.current_ask_below.toFixed(3)} -> ${entry.recommended_ask_below?.toFixed(3) ?? "none"}`,
           )
           .join("\n");
+  const replayLine = result.replay
+    ? `Replay summary: replayable=${result.replay.replayable_samples}, skipped=${result.replay.skipped_samples}, changed=${result.replay.changed_decisions}, approvals_reduced=${result.replay.approvals_reduced}, approvals_increased=${result.replay.approvals_increased}, denied_auto_allowed=${result.replay.historically_denied_auto_allowed}, allowed_newly_gated=${result.replay.historically_allowed_newly_gated}`
+    : null;
 
   return lines(
     "Policy threshold patch",
@@ -2123,6 +2721,7 @@ function formatPolicyThresholdPatch(result: PolicyThresholdPatchResult): string 
     `Direction filter: ${result.direction_filter}`,
     `Report only: ${result.report_only ? "yes" : "no"}`,
     `Included recommendations:\n${included}`,
+    replayLine,
     `Patch:\n${result.patch_toml}`,
     "Apply step: review this patch and merge it into your policy TOML manually.",
   );
@@ -2975,6 +3574,288 @@ function versionResult(): VersionResult {
   };
 }
 
+function parseInitCommandOptions(args: string[]): {
+  profileName: string;
+  force: boolean;
+} {
+  let productionMode = false;
+  let profileName = "production";
+  let force = false;
+  const rest = [...args];
+
+  while (rest.length > 0) {
+    const current = rest.shift()!;
+    switch (current) {
+      case "--production":
+        productionMode = true;
+        break;
+      case "--profile-name":
+        profileName = shiftCommandValue(rest, "--profile-name");
+        break;
+      case "--force":
+        force = true;
+        break;
+      default:
+        throw inputError(`Unknown init flag: ${current}`, {
+          flag: current,
+        });
+    }
+  }
+
+  if (!productionMode) {
+    throw usageError("Usage: agentgit-authority [global-flags] init --production [--profile-name <name>] [--force]");
+  }
+
+  return {
+    profileName,
+    force,
+  };
+}
+
+function parseSetupCommandOptions(args: string[]): {
+  profileName: string;
+  force: boolean;
+} {
+  let profileName = "local";
+  let force = false;
+  const rest = [...args];
+
+  while (rest.length > 0) {
+    const current = rest.shift()!;
+    switch (current) {
+      case "--profile-name":
+        profileName = shiftCommandValue(rest, "--profile-name");
+        break;
+      case "--force":
+        force = true;
+        break;
+      default:
+        throw inputError(`Unknown setup flag: ${current}`, {
+          flag: current,
+        });
+    }
+  }
+
+  return {
+    profileName,
+    force,
+  };
+}
+
+function parseTrustReportOptions(args: string[]): {
+  runId?: string;
+  visibilityScope: TimelineResult["visibility_scope"];
+} {
+  let runId: string | undefined;
+  let visibilityScope: TimelineResult["visibility_scope"] = "user";
+  const rest = [...args];
+
+  while (rest.length > 0) {
+    const current = rest.shift()!;
+    switch (current) {
+      case "--run-id":
+        runId = shiftCommandValue(rest, "--run-id");
+        break;
+      case "--visibility": {
+        const parsed = shiftCommandValue(rest, "--visibility");
+        const scope = parseVisibilityScopeArg(parsed);
+        if (!scope) {
+          throw inputError("--visibility expects one of user, model, internal, or sensitive_internal.", {
+            flag: "--visibility",
+            value: parsed,
+          });
+        }
+        visibilityScope = scope;
+        break;
+      }
+      default:
+        throw inputError(`Unknown trust-report flag: ${current}`, {
+          flag: current,
+        });
+    }
+  }
+
+  return {
+    runId,
+    visibilityScope,
+  };
+}
+
+function parseReleaseVerifyCommandArgs(
+  args: string[],
+  workspaceRoot: string,
+): {
+  artifactsDir: string;
+  signatureMode: ReleaseSignatureMode;
+  publicKeyPath: string | null;
+} {
+  const rest = [...args];
+  let artifactsDir = path.resolve(workspaceRoot, ".release-artifacts", "packed");
+  let signatureMode: ReleaseSignatureMode = "required";
+  let publicKeyPath: string | null = null;
+
+  if (rest.length > 0 && !rest[0]!.startsWith("--")) {
+    const provided = rest.shift()!;
+    artifactsDir = path.isAbsolute(provided) ? provided : path.resolve(workspaceRoot, provided);
+  }
+
+  while (rest.length > 0) {
+    const current = rest.shift()!;
+    switch (current) {
+      case "--signature-mode": {
+        const mode = shiftCommandValue(rest, "--signature-mode");
+        if (!RELEASE_SIGNATURE_MODES.has(mode as ReleaseSignatureMode)) {
+          throw inputError("--signature-mode expects one of: required, allow-unsigned.", {
+            flag: "--signature-mode",
+            value: mode,
+          });
+        }
+        signatureMode = mode as ReleaseSignatureMode;
+        break;
+      }
+      case "--public-key-path": {
+        const provided = shiftCommandValue(rest, "--public-key-path");
+        publicKeyPath = path.isAbsolute(provided) ? provided : path.resolve(workspaceRoot, provided);
+        break;
+      }
+      default:
+        throw inputError(`Unknown release-verify-artifacts flag: ${current}`, {
+          flag: current,
+        });
+    }
+  }
+
+  return {
+    artifactsDir,
+    signatureMode,
+    publicKeyPath,
+  };
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseMcpPlanObjectArray(
+  record: Record<string, unknown>,
+  field: string,
+  context: string,
+): Record<string, unknown>[] | undefined {
+  const raw = record[field];
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(raw)) {
+    throw inputError(`${context} field ${field} must be an array when provided.`);
+  }
+
+  return raw.map((entry, index) => {
+    if (!isObjectRecord(entry)) {
+      throw inputError(`${context} field ${field}[${index}] must be an object.`);
+    }
+    return entry;
+  });
+}
+
+function parseMcpSmokeTestPlan(value: unknown, context: string): McpSmokeTestPlan | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isObjectRecord(value)) {
+    throw inputError(`${context} field smoke_test must be an object.`);
+  }
+
+  const toolName = value.tool_name;
+  if (typeof toolName !== "string" || toolName.trim().length === 0) {
+    throw inputError(`${context} smoke_test.tool_name must be a non-empty string.`);
+  }
+
+  const smokeArguments = value.arguments;
+  if (smokeArguments !== undefined && !isObjectRecord(smokeArguments)) {
+    throw inputError(`${context} smoke_test.arguments must be a JSON object when provided.`);
+  }
+
+  return {
+    ...(typeof value.run_id === "string" ? { run_id: value.run_id } : {}),
+    ...(typeof value.workflow_name === "string" ? { workflow_name: value.workflow_name } : {}),
+    tool_name: toolName,
+    ...(smokeArguments ? { arguments: smokeArguments } : {}),
+  };
+}
+
+function parseMcpOnboardPlan(value: unknown): McpOnboardPlan {
+  if (!isObjectRecord(value)) {
+    throw inputError("onboard-mcp expects a JSON object plan.");
+  }
+
+  const record = value;
+  const server = record.server;
+  if (!isObjectRecord(server)) {
+    throw inputError("onboard-mcp plan requires a server object.");
+  }
+
+  const secrets = parseMcpPlanObjectArray(record, "secrets", "onboard-mcp plan");
+  const hostPolicies = parseMcpPlanObjectArray(record, "host_policies", "onboard-mcp plan");
+  const smokeTest = parseMcpSmokeTestPlan(record.smoke_test, "onboard-mcp plan");
+
+  return {
+    server: server as UpsertMcpServerInput,
+    ...(secrets ? { secrets: secrets as UpsertMcpSecretInput[] } : {}),
+    ...(hostPolicies ? { host_policies: hostPolicies as UpsertMcpHostPolicyInput[] } : {}),
+    ...(smokeTest ? { smoke_test: smokeTest } : {}),
+  };
+}
+
+function parseMcpTrustReviewPlan(value: unknown): McpTrustReviewPlan {
+  if (!isObjectRecord(value)) {
+    throw inputError("trust-review-mcp expects a JSON object plan.");
+  }
+
+  const candidate = value.candidate;
+  if (candidate !== undefined && !isObjectRecord(candidate)) {
+    throw inputError("trust-review-mcp plan field candidate must be an object when provided.");
+  }
+
+  const resolve = value.resolve;
+  if (!isObjectRecord(resolve)) {
+    throw inputError("trust-review-mcp plan requires a resolve object.");
+  }
+
+  const approval = value.approval;
+  if (!isObjectRecord(approval)) {
+    throw inputError("trust-review-mcp plan requires an approval object.");
+  }
+
+  const credentialBinding = value.credential_binding;
+  if (credentialBinding !== undefined && !isObjectRecord(credentialBinding)) {
+    throw inputError("trust-review-mcp plan field credential_binding must be an object when provided.");
+  }
+
+  if (value.activate !== undefined && typeof value.activate !== "boolean") {
+    throw inputError("trust-review-mcp plan field activate must be a boolean when provided.");
+  }
+
+  const secrets = parseMcpPlanObjectArray(value, "secrets", "trust-review-mcp plan");
+  const hostPolicies = parseMcpPlanObjectArray(value, "host_policies", "trust-review-mcp plan");
+  const smokeTest = parseMcpSmokeTestPlan(value.smoke_test, "trust-review-mcp plan");
+
+  const resolveCandidateId = typeof resolve.candidate_id === "string" ? resolve.candidate_id.trim() : "";
+  if (!candidate && resolveCandidateId.length === 0) {
+    throw inputError("trust-review-mcp requires either candidate input or resolve.candidate_id.");
+  }
+
+  return {
+    ...(secrets ? { secrets: secrets as UpsertMcpSecretInput[] } : {}),
+    ...(hostPolicies ? { host_policies: hostPolicies as UpsertMcpHostPolicyInput[] } : {}),
+    ...(candidate ? { candidate: candidate as SubmitMcpServerCandidateInput } : {}),
+    resolve: resolve as McpTrustReviewPlan["resolve"],
+    approval: approval as McpTrustReviewPlan["approval"],
+    ...(credentialBinding ? { credential_binding: credentialBinding as McpTrustReviewPlan["credential_binding"] } : {}),
+    ...(typeof value.activate === "boolean" ? { activate: value.activate } : {}),
+    ...(smokeTest ? { smoke_test: smokeTest } : {}),
+  };
+}
+
 function parseProfileUpsertArgs(args: string[]): { name: string; values: CliProfileRecord } {
   const [name, ...rest] = args;
   if (!name) {
@@ -3051,6 +3932,145 @@ function parseIntegerFlag(value: string, flag: string): number {
   }
 
   return parsed;
+}
+
+function readReleaseVerificationPublicKey(publicKeyPath: string | null): string | null {
+  if (publicKeyPath) {
+    return fs.readFileSync(publicKeyPath, "utf8");
+  }
+  if (process.env.AGENTGIT_RELEASE_SIGNING_PUBLIC_KEY_PEM_B64) {
+    return Buffer.from(process.env.AGENTGIT_RELEASE_SIGNING_PUBLIC_KEY_PEM_B64, "base64").toString("utf8");
+  }
+  if (process.env.AGENTGIT_RELEASE_SIGNING_PUBLIC_KEY_PEM) {
+    return process.env.AGENTGIT_RELEASE_SIGNING_PUBLIC_KEY_PEM;
+  }
+  return null;
+}
+
+function verifyReleaseManifestSignature(manifestJson: string, signature: string, publicKeyPem: string): boolean {
+  const verifier = createVerify("sha256");
+  verifier.update(manifestJson);
+  verifier.end();
+  return verifier.verify(createPublicKey(publicKeyPem), Buffer.from(signature, "base64"));
+}
+
+function verifyReleaseArtifacts(options: {
+  artifactsDir: string;
+  signatureMode: ReleaseSignatureMode;
+  publicKeyPath: string | null;
+}): ReleaseArtifactVerifyResult {
+  const manifestPath = path.join(options.artifactsDir, "manifest.json");
+  const manifestShaPath = path.join(options.artifactsDir, "manifest.sha256");
+  const manifestSigPath = path.join(options.artifactsDir, "manifest.sig");
+
+  if (!fs.existsSync(manifestPath)) {
+    throw ioError(`manifest.json is missing at ${manifestPath}.`);
+  }
+  if (!fs.existsSync(manifestShaPath)) {
+    throw ioError(`manifest.sha256 is missing at ${manifestShaPath}.`);
+  }
+
+  const manifestJson = fs.readFileSync(manifestPath, "utf8");
+  let manifest: {
+    packages?: Array<{
+      name?: unknown;
+      tarball_path?: unknown;
+      sha256?: unknown;
+    }>;
+  };
+  try {
+    manifest = JSON.parse(manifestJson) as {
+      packages?: Array<{
+        name?: unknown;
+        tarball_path?: unknown;
+        sha256?: unknown;
+      }>;
+    };
+  } catch (error) {
+    throw inputError(`manifest.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!Array.isArray(manifest.packages)) {
+    throw inputError("manifest.json is missing a packages array.");
+  }
+
+  const digestLine = fs.readFileSync(manifestShaPath, "utf8");
+  const expectedManifestSha = digestLine.trim().split(/\s+/u)[0];
+  const observedManifestSha = sha256Hex(manifestJson);
+  if (observedManifestSha !== expectedManifestSha) {
+    throw inputError(
+      `Manifest checksum mismatch. expected=${expectedManifestSha} observed=${observedManifestSha} path=${manifestPath}`,
+    );
+  }
+
+  const packageChecks: ReleaseArtifactVerifyResult["packages"] = [];
+  for (const pkg of manifest.packages) {
+    if (
+      !pkg ||
+      typeof pkg !== "object" ||
+      typeof pkg.name !== "string" ||
+      typeof pkg.tarball_path !== "string" ||
+      typeof pkg.sha256 !== "string"
+    ) {
+      throw inputError(`Manifest package entry is invalid: ${JSON.stringify(pkg)}`);
+    }
+
+    const resolvedTarballPath = path.isAbsolute(pkg.tarball_path)
+      ? pkg.tarball_path
+      : path.resolve(options.artifactsDir, pkg.tarball_path);
+    if (!fs.existsSync(resolvedTarballPath)) {
+      throw ioError(`Tarball file is missing for ${pkg.name}: ${resolvedTarballPath}`);
+    }
+
+    const observedSha = sha256Hex(fs.readFileSync(resolvedTarballPath));
+    if (observedSha !== pkg.sha256) {
+      throw inputError(
+        `Tarball checksum mismatch for ${pkg.name}. expected=${pkg.sha256} observed=${observedSha} path=${resolvedTarballPath}`,
+      );
+    }
+
+    packageChecks.push({
+      name: pkg.name,
+      tarball_path: resolvedTarballPath,
+      sha256: observedSha,
+      verified: true,
+    });
+  }
+
+  const signatureExists = fs.existsSync(manifestSigPath);
+  if (!signatureExists && options.signatureMode === "required") {
+    throw ioError(`manifest.sig is required but missing at ${manifestSigPath}`);
+  }
+
+  let signatureVerified = false;
+  if (signatureExists) {
+    const signature = fs.readFileSync(manifestSigPath, "utf8").trim();
+    if (!signature) {
+      throw ioError(`manifest.sig is empty at ${manifestSigPath}`);
+    }
+
+    const publicKeyPem = readReleaseVerificationPublicKey(options.publicKeyPath);
+    if (!publicKeyPem) {
+      throw inputError(
+        "Signature exists but no public key was provided. Set AGENTGIT_RELEASE_SIGNING_PUBLIC_KEY_PEM(_B64) or pass --public-key-path.",
+      );
+    }
+
+    signatureVerified = verifyReleaseManifestSignature(manifestJson, signature, publicKeyPem);
+    if (!signatureVerified) {
+      throw inputError("Release manifest signature verification failed.");
+    }
+  }
+
+  return {
+    ok: true,
+    artifacts_dir: options.artifactsDir,
+    manifest_path: manifestPath,
+    manifest_sha256_verified: true,
+    signature_mode: options.signatureMode,
+    signature_present: signatureExists,
+    signature_verified: signatureVerified,
+    packages: packageChecks,
+  };
 }
 
 async function buildDoctorResult(client: AuthorityClient, resolvedConfig: CliResolvedConfig): Promise<DoctorResult> {
@@ -3333,6 +4353,587 @@ async function buildDoctorResult(client: AuthorityClient, resolvedConfig: CliRes
   };
 }
 
+async function runInitProductionCommand(
+  client: AuthorityClient,
+  resolvedConfig: CliResolvedConfig,
+  options: {
+    profileName: string;
+    force: boolean;
+  },
+): Promise<InitCommandResult> {
+  const userConfig = readUserConfig(resolvedConfig.paths.configRoot, process.cwd(), process.env);
+  const existingProfile = userConfig.config.profiles?.[options.profileName];
+  if (existingProfile && !options.force) {
+    throw inputError(
+      `Profile ${options.profileName} already exists in ${userConfig.path}. Re-run with --force to overwrite it.`,
+      {
+        profile: options.profileName,
+        config_path: userConfig.path,
+      },
+    );
+  }
+
+  const configured = upsertUserProfile(userConfig.config, options.profileName, {
+    socket_path: resolvedConfig.socket_path.value,
+    workspace_root: resolvedConfig.workspace_root.value,
+    connect_timeout_ms: resolvedConfig.connect_timeout_ms.value,
+    response_timeout_ms: resolvedConfig.response_timeout_ms.value,
+    max_connect_retries: resolvedConfig.max_connect_retries.value,
+    connect_retry_delay_ms: resolvedConfig.connect_retry_delay_ms.value,
+  });
+  const activated = setActiveUserProfile(configured, options.profileName);
+  writeUserConfig(userConfig.path, activated);
+
+  const doctor = await buildDoctorResult(client, resolvedConfig);
+  return {
+    mode: "production",
+    profile_name: options.profileName,
+    config_path: userConfig.path,
+    profile_created: !existingProfile,
+    profile_overwritten: Boolean(existingProfile),
+    readiness_passed: doctor.checks.every((check) => check.status !== "fail"),
+    doctor,
+  };
+}
+
+function daemonStateLayout(workspaceRoot: string): {
+  agentgitRoot: string;
+  stateRoot: string;
+  mcpRoot: string;
+  journalPath: string;
+  snapshotRootPath: string;
+  mcpRegistryPath: string;
+  mcpSecretStorePath: string;
+  mcpSecretKeyPath: string;
+  mcpHostPolicyPath: string;
+  mcpConcurrencyLeasePath: string;
+  mcpHostedWorkerEndpoint: string;
+  mcpHostedWorkerAttestationKeyPath: string;
+  policyWorkspaceConfigPath: string;
+  policyCalibrationConfigPath: string;
+} {
+  const agentgitRoot = path.resolve(workspaceRoot, ".agentgit");
+  const stateRoot = path.join(agentgitRoot, "state");
+  const mcpRoot = path.join(stateRoot, "mcp");
+
+  return {
+    agentgitRoot,
+    stateRoot,
+    mcpRoot,
+    journalPath: path.join(stateRoot, "authority.db"),
+    snapshotRootPath: path.join(stateRoot, "snapshots"),
+    mcpRegistryPath: path.join(mcpRoot, "registry.db"),
+    mcpSecretStorePath: path.join(mcpRoot, "secret-store.db"),
+    mcpSecretKeyPath: path.join(mcpRoot, "secret-store.key"),
+    mcpHostPolicyPath: path.join(mcpRoot, "host-policies.db"),
+    mcpConcurrencyLeasePath: path.join(mcpRoot, "concurrency-leases.db"),
+    mcpHostedWorkerEndpoint: `unix:${path.join(mcpRoot, "hosted-worker.sock")}`,
+    mcpHostedWorkerAttestationKeyPath: path.join(mcpRoot, "hosted-worker-attestation-key.json"),
+    policyWorkspaceConfigPath: path.join(agentgitRoot, "policy.toml"),
+    policyCalibrationConfigPath: path.join(agentgitRoot, "policy.calibration.generated.json"),
+  };
+}
+
+function buildDaemonRuntimeEnvironment(
+  resolvedConfig: CliResolvedConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const workspaceRoot = resolvedConfig.workspace_root.value;
+  const layout = daemonStateLayout(workspaceRoot);
+
+  return {
+    ...env,
+    AGENTGIT_ROOT: workspaceRoot,
+    INIT_CWD: workspaceRoot,
+    AGENTGIT_SOCKET_PATH: resolvedConfig.socket_path.value,
+    AGENTGIT_JOURNAL_PATH: env.AGENTGIT_JOURNAL_PATH?.trim() || layout.journalPath,
+    AGENTGIT_SNAPSHOT_ROOT: env.AGENTGIT_SNAPSHOT_ROOT?.trim() || layout.snapshotRootPath,
+    AGENTGIT_MCP_REGISTRY_PATH: env.AGENTGIT_MCP_REGISTRY_PATH?.trim() || layout.mcpRegistryPath,
+    AGENTGIT_MCP_SECRET_STORE_PATH: env.AGENTGIT_MCP_SECRET_STORE_PATH?.trim() || layout.mcpSecretStorePath,
+    AGENTGIT_MCP_SECRET_KEY_PATH: env.AGENTGIT_MCP_SECRET_KEY_PATH?.trim() || layout.mcpSecretKeyPath,
+    AGENTGIT_MCP_HOST_POLICY_PATH: env.AGENTGIT_MCP_HOST_POLICY_PATH?.trim() || layout.mcpHostPolicyPath,
+    AGENTGIT_MCP_CONCURRENCY_LEASE_PATH:
+      env.AGENTGIT_MCP_CONCURRENCY_LEASE_PATH?.trim() || layout.mcpConcurrencyLeasePath,
+    AGENTGIT_MCP_HOSTED_WORKER_ENDPOINT:
+      env.AGENTGIT_MCP_HOSTED_WORKER_ENDPOINT?.trim() || layout.mcpHostedWorkerEndpoint,
+    AGENTGIT_MCP_HOSTED_WORKER_ATTESTATION_KEY_PATH:
+      env.AGENTGIT_MCP_HOSTED_WORKER_ATTESTATION_KEY_PATH?.trim() || layout.mcpHostedWorkerAttestationKeyPath,
+    AGENTGIT_POLICY_WORKSPACE_CONFIG_PATH:
+      env.AGENTGIT_POLICY_WORKSPACE_CONFIG_PATH?.trim() || layout.policyWorkspaceConfigPath,
+    AGENTGIT_POLICY_CALIBRATION_CONFIG_PATH:
+      env.AGENTGIT_POLICY_CALIBRATION_CONFIG_PATH?.trim() || layout.policyCalibrationConfigPath,
+  };
+}
+
+function profileValuesEqual(left: CliProfileRecord | undefined, right: CliProfileRecord): boolean {
+  return (
+    (left?.socket_path ?? undefined) === right.socket_path &&
+    (left?.workspace_root ?? undefined) === right.workspace_root &&
+    (left?.connect_timeout_ms ?? undefined) === right.connect_timeout_ms &&
+    (left?.response_timeout_ms ?? undefined) === right.response_timeout_ms &&
+    (left?.max_connect_retries ?? undefined) === right.max_connect_retries &&
+    (left?.connect_retry_delay_ms ?? undefined) === right.connect_retry_delay_ms
+  );
+}
+
+function ensureSetupDirectories(daemonEnv: NodeJS.ProcessEnv, configRoot: string): string[] {
+  const created = new Set<string>();
+
+  const ensureDir = (value: string | undefined, kind: "dir" | "file" | "unix-endpoint" = "dir") => {
+    if (!value) {
+      return;
+    }
+
+    const target =
+      kind === "dir"
+        ? value
+        : kind === "unix-endpoint"
+          ? value.startsWith("unix:")
+            ? path.dirname(value.slice("unix:".length))
+            : null
+          : path.dirname(value);
+    if (!target) {
+      return;
+    }
+
+    if (!fs.existsSync(target)) {
+      fs.mkdirSync(target, { recursive: true });
+      created.add(target);
+    }
+  };
+
+  ensureDir(configRoot);
+  ensureDir(path.resolve(daemonEnv.AGENTGIT_ROOT ?? process.cwd(), ".agentgit"));
+  ensureDir(daemonEnv.AGENTGIT_SOCKET_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_JOURNAL_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_SNAPSHOT_ROOT);
+  ensureDir(daemonEnv.AGENTGIT_MCP_REGISTRY_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_MCP_SECRET_STORE_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_MCP_SECRET_KEY_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_MCP_HOST_POLICY_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_MCP_CONCURRENCY_LEASE_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_MCP_HOSTED_WORKER_ENDPOINT, "unix-endpoint");
+  ensureDir(daemonEnv.AGENTGIT_MCP_HOSTED_WORKER_ATTESTATION_KEY_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_POLICY_WORKSPACE_CONFIG_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_POLICY_CALIBRATION_CONFIG_PATH, "file");
+  ensureDir(daemonEnv.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH, "file");
+
+  return [...created].sort();
+}
+
+function setupCommandExample(configRoot: string, command: string): string {
+  return `agentgit-authority --config-root ${JSON.stringify(configRoot)} ${command}`;
+}
+
+function runSetupCommand(
+  resolvedConfig: CliResolvedConfig,
+  options: {
+    profileName: string;
+    force: boolean;
+  },
+): SetupCommandResult {
+  const userConfig = readUserConfig(resolvedConfig.paths.configRoot, process.cwd(), process.env);
+  const nextProfile: CliProfileRecord = {
+    socket_path: resolvedConfig.socket_path.value,
+    workspace_root: resolvedConfig.workspace_root.value,
+    connect_timeout_ms: resolvedConfig.connect_timeout_ms.value,
+    response_timeout_ms: resolvedConfig.response_timeout_ms.value,
+    max_connect_retries: resolvedConfig.max_connect_retries.value,
+    connect_retry_delay_ms: resolvedConfig.connect_retry_delay_ms.value,
+  };
+  const existingProfile = userConfig.config.profiles?.[options.profileName];
+
+  if (existingProfile && !options.force && !profileValuesEqual(existingProfile, nextProfile)) {
+    throw inputError(
+      `Profile ${options.profileName} already exists in ${userConfig.path} with different settings. Re-run with --force to overwrite it.`,
+      {
+        profile: options.profileName,
+        config_path: userConfig.path,
+      },
+    );
+  }
+
+  const configured = upsertUserProfile(userConfig.config, options.profileName, nextProfile);
+  const activated = setActiveUserProfile(configured, options.profileName);
+  writeUserConfig(userConfig.path, activated);
+
+  const daemonEnv = buildDaemonRuntimeEnvironment(resolvedConfig);
+  const createdDirectories = ensureSetupDirectories(daemonEnv, resolvedConfig.paths.configRoot);
+
+  return {
+    mode: "local",
+    profile_name: options.profileName,
+    config_path: userConfig.path,
+    profile_created: !existingProfile,
+    profile_overwritten: Boolean(existingProfile && !profileValuesEqual(existingProfile, nextProfile)),
+    created_directories: createdDirectories,
+    workspace_root: resolvedConfig.workspace_root.value,
+    socket_path: resolvedConfig.socket_path.value,
+    daemon_start_command: setupCommandExample(resolvedConfig.paths.configRoot, "daemon start"),
+    doctor_command: setupCommandExample(resolvedConfig.paths.configRoot, "doctor"),
+  };
+}
+
+async function runDaemonStartCommand(resolvedConfig: CliResolvedConfig): Promise<AuthorityDaemonListeningSummary> {
+  const { runAuthorityDaemonFromEnv } = await loadAuthorityDaemonModule();
+  Object.assign(process.env, buildDaemonRuntimeEnvironment(resolvedConfig));
+  const daemon = await runAuthorityDaemonFromEnv({
+    registerSignalHandlers: true,
+  });
+  return daemon.summary;
+}
+
+async function buildTrustReport(
+  client: AuthorityClient,
+  resolvedConfig: CliResolvedConfig,
+  options: {
+    runId?: string;
+    visibilityScope: TimelineResult["visibility_scope"];
+  },
+): Promise<TrustReportResult> {
+  const [doctor, profilesResult, trustDecisionsResult, bindingsResult, timeline] = await Promise.all([
+    buildDoctorResult(client, resolvedConfig),
+    client.listMcpServerProfiles(),
+    client.listMcpServerTrustDecisions(),
+    client.listMcpServerCredentialBindings(),
+    options.runId ? client.queryTimeline(options.runId, options.visibilityScope) : Promise.resolve(null),
+  ]);
+
+  const activeTrustDecisions = new Set(
+    trustDecisionsResult.trust_decisions
+      .filter((decision) => decision.decision !== "deny")
+      .map((decision) => decision.trust_decision_id),
+  );
+  const activeCredentialBindings = new Set(
+    bindingsResult.credential_bindings
+      .filter((binding) => binding.status === "active" || binding.status === "degraded")
+      .map((binding) => binding.credential_binding_id),
+  );
+
+  let activeProfileCount = 0;
+  let pendingProfileCount = 0;
+  let quarantinedProfileCount = 0;
+  let revokedProfileCount = 0;
+  let profilesWithoutActiveTrustDecision = 0;
+  let profilesRequiringCredentials = 0;
+  let profilesMissingCredentials = 0;
+
+  for (const profile of profilesResult.profiles) {
+    if (profile.status === "active") {
+      activeProfileCount += 1;
+    } else if (profile.status === "pending_approval") {
+      pendingProfileCount += 1;
+    } else if (profile.status === "quarantined") {
+      quarantinedProfileCount += 1;
+    } else if (profile.status === "revoked") {
+      revokedProfileCount += 1;
+    }
+
+    if (!profile.active_trust_decision_id || !activeTrustDecisions.has(profile.active_trust_decision_id)) {
+      profilesWithoutActiveTrustDecision += 1;
+    }
+
+    if (profile.auth_descriptor.mode !== "none") {
+      profilesRequiringCredentials += 1;
+      if (
+        !profile.active_credential_binding_id ||
+        !activeCredentialBindings.has(profile.active_credential_binding_id)
+      ) {
+        profilesMissingCredentials += 1;
+      }
+    }
+  }
+
+  const recommendations = [...doctor.recommendations];
+  if (profilesWithoutActiveTrustDecision > 0) {
+    recommendations.push(
+      `Record non-deny trust decisions for ${profilesWithoutActiveTrustDecision} MCP profile(s) before production activation.`,
+    );
+  }
+  if (profilesMissingCredentials > 0) {
+    recommendations.push(
+      `Bind active credentials for ${profilesMissingCredentials} MCP profile(s) that declare non-none auth modes.`,
+    );
+  }
+  if (timeline) {
+    const summary = summarizeTimelineTrust(timeline.steps);
+    if (summary.nonGoverned > 0) {
+      recommendations.push(
+        `Run ${timeline.run_summary.run_id} includes ${summary.nonGoverned} non-governed timeline step(s); inspect imported/observed provenance before using it as control evidence.`,
+      );
+    }
+  }
+
+  return {
+    generated_at: new Date().toISOString(),
+    workspace_root: resolvedConfig.workspace_root.value,
+    daemon: doctor.daemon,
+    security_posture_status: doctor.security_posture_status,
+    mcp: {
+      profile_count: profilesResult.profiles.length,
+      active_profile_count: activeProfileCount,
+      pending_profile_count: pendingProfileCount,
+      quarantined_profile_count: quarantinedProfileCount,
+      revoked_profile_count: revokedProfileCount,
+      profiles_without_active_trust_decision: profilesWithoutActiveTrustDecision,
+      profiles_requiring_credentials: profilesRequiringCredentials,
+      profiles_missing_credentials: profilesMissingCredentials,
+      active_non_deny_trust_decision_count: activeTrustDecisions.size,
+      active_credential_binding_count: activeCredentialBindings.size,
+    },
+    timeline_trust: timeline
+      ? {
+          run_id: timeline.run_summary.run_id,
+          visibility_scope: timeline.visibility_scope,
+          step_count: timeline.steps.length,
+          trust_summary: summarizeTimelineTrust(timeline.steps),
+        }
+      : null,
+    recommendations,
+  };
+}
+
+function requireConsistentDerivedId(label: string, providedId: string | undefined, derivedId: string): string {
+  if (providedId && providedId !== derivedId) {
+    throw inputError(`${label} must match the resolved identifier ${derivedId}.`, {
+      label,
+      provided_id: providedId,
+      resolved_id: derivedId,
+    });
+  }
+
+  return derivedId;
+}
+
+async function executeMcpSmokeTest(
+  client: AuthorityClient,
+  workspaceRoot: string,
+  smokeTest: McpSmokeTestPlan,
+  workflowNamePrefix: string,
+  rawCall: {
+    server_id?: string;
+    server_profile_id?: string;
+  },
+): Promise<NonNullable<McpOnboardResult["smoke_test"]>> {
+  const runId =
+    smokeTest.run_id ??
+    (
+      await client.registerRun({
+        workflow_name: smokeTest.workflow_name ?? workflowNamePrefix,
+        agent_framework: "cli",
+        agent_name: "agentgit-cli",
+        workspace_roots: [workspaceRoot],
+        client_metadata: {
+          invoked_from: "authority-cli",
+        },
+      })
+    ).run_id;
+  const actionResult = await client.submitActionAttempt({
+    run_id: runId,
+    tool_registration: {
+      tool_name: "mcp_call_tool",
+      tool_kind: "mcp",
+    },
+    raw_call: {
+      ...rawCall,
+      tool_name: smokeTest.tool_name,
+      arguments: smokeTest.arguments ?? {},
+    },
+    environment_context: {
+      workspace_roots: [workspaceRoot],
+      cwd: workspaceRoot,
+      credential_mode: "none",
+    },
+    framework_context: {
+      agent_name: "agentgit-cli",
+      agent_framework: "cli",
+    },
+    received_at: new Date().toISOString(),
+  });
+  return {
+    run_id: runId,
+    tool_name: smokeTest.tool_name,
+    mode: actionResult.execution_result?.mode ?? null,
+    success: actionResult.execution_result?.success ?? false,
+    summary:
+      actionResult.execution_result && typeof actionResult.execution_result.output === "object"
+        ? JSON.stringify(actionResult.execution_result.output)
+        : null,
+  };
+}
+
+async function runMcpOnboardPlan(
+  client: AuthorityClient,
+  workspaceRoot: string,
+  plan: McpOnboardPlan,
+): Promise<McpOnboardResult> {
+  const secretResults: McpOnboardResult["secrets"] = [];
+  for (const secret of plan.secrets ?? []) {
+    const result = await client.upsertMcpSecret(secret);
+    secretResults.push({
+      secret_id: result.secret.secret_id,
+      created: result.created,
+      status: result.secret.status,
+    });
+  }
+
+  const hostPolicyResults: McpOnboardResult["host_policies"] = [];
+  for (const hostPolicy of plan.host_policies ?? []) {
+    const result = await client.upsertMcpHostPolicy(hostPolicy);
+    hostPolicyResults.push({
+      host: result.policy.policy.host,
+      created: result.created,
+    });
+  }
+
+  const serverResult = await client.upsertMcpServer(plan.server);
+  let smokeTestResult: McpOnboardResult["smoke_test"] = null;
+  if (plan.smoke_test) {
+    smokeTestResult = await executeMcpSmokeTest(
+      client,
+      workspaceRoot,
+      plan.smoke_test,
+      `mcp-onboard-${serverResult.server.server.server_id}`,
+      {
+        server_id: serverResult.server.server.server_id,
+      },
+    );
+  }
+
+  return {
+    executed_at: new Date().toISOString(),
+    workspace_root: workspaceRoot,
+    secrets: secretResults,
+    host_policies: hostPolicyResults,
+    server: {
+      server_id: serverResult.server.server.server_id,
+      created: serverResult.created,
+      transport: serverResult.server.server.transport,
+    },
+    smoke_test: smokeTestResult,
+  };
+}
+
+async function runMcpTrustReviewPlan(
+  client: AuthorityClient,
+  workspaceRoot: string,
+  plan: McpTrustReviewPlan,
+): Promise<McpTrustReviewResult> {
+  const secretResults: McpTrustReviewResult["secrets"] = [];
+  for (const secret of plan.secrets ?? []) {
+    const result = await client.upsertMcpSecret(secret);
+    secretResults.push({
+      secret_id: result.secret.secret_id,
+      created: result.created,
+      status: result.secret.status,
+    });
+  }
+
+  const hostPolicyResults: McpTrustReviewResult["host_policies"] = [];
+  for (const hostPolicy of plan.host_policies ?? []) {
+    const result = await client.upsertMcpHostPolicy(hostPolicy);
+    hostPolicyResults.push({
+      host: result.policy.policy.host,
+      created: result.created,
+    });
+  }
+
+  let candidateSubmission: McpTrustReviewResult["candidate_submission"] = null;
+  let candidateId = typeof plan.resolve.candidate_id === "string" ? plan.resolve.candidate_id.trim() : "";
+  if (plan.candidate) {
+    const submitted = await client.submitMcpServerCandidate(plan.candidate);
+    candidateId = submitted.candidate.candidate_id;
+    candidateSubmission = {
+      candidate_id: submitted.candidate.candidate_id,
+      source_kind: submitted.candidate.source_kind,
+      submitted: true,
+      resolution_state: submitted.candidate.resolution_state,
+    };
+  }
+
+  const resolvePayload = {
+    ...plan.resolve,
+    candidate_id: requireConsistentDerivedId("resolve.candidate_id", plan.resolve.candidate_id, candidateId),
+  } satisfies ResolveMcpServerCandidateInput;
+  const resolveResult = await client.resolveMcpServerCandidate(resolvePayload);
+  const profileId = resolveResult.profile.server_profile_id;
+
+  const approvalPayload = {
+    ...plan.approval,
+    server_profile_id: requireConsistentDerivedId(
+      "approval.server_profile_id",
+      plan.approval.server_profile_id,
+      profileId,
+    ),
+  } satisfies ApproveMcpServerProfileInput;
+  const approvalResult = await client.approveMcpServerProfile(approvalPayload);
+
+  let credentialBindingResult: McpTrustReviewResult["credential_binding"] = null;
+  if (plan.credential_binding) {
+    const bindingPayload = {
+      ...plan.credential_binding,
+      server_profile_id: requireConsistentDerivedId(
+        "credential_binding.server_profile_id",
+        plan.credential_binding.server_profile_id,
+        profileId,
+      ),
+    } satisfies BindMcpServerCredentialsInput;
+    const bindResult = await client.bindMcpServerCredentials(bindingPayload);
+    credentialBindingResult = {
+      credential_binding_id: bindResult.credential_binding.credential_binding_id,
+      binding_mode: bindResult.credential_binding.binding_mode,
+      status: bindResult.credential_binding.status,
+    };
+  }
+
+  let activationResult: McpTrustReviewResult["activation"] = null;
+  if (plan.activate !== false) {
+    const activated = await client.activateMcpServerProfile(profileId);
+    activationResult = {
+      attempted: true,
+      profile_status: activated.profile.status,
+    };
+  }
+
+  const smokeTestResult = !plan.smoke_test
+    ? null
+    : await executeMcpSmokeTest(client, workspaceRoot, plan.smoke_test, `mcp-trust-review-${profileId}`, {
+        server_profile_id: profileId,
+      });
+
+  const review = await client.getMcpServerReview({
+    server_profile_id: profileId,
+  });
+
+  return {
+    executed_at: new Date().toISOString(),
+    workspace_root: workspaceRoot,
+    secrets: secretResults,
+    host_policies: hostPolicyResults,
+    candidate_submission: candidateSubmission,
+    resolution: {
+      candidate_id: resolveResult.candidate.candidate_id,
+      profile_id: profileId,
+      created_profile: resolveResult.created_profile,
+      drift_detected: resolveResult.drift_detected,
+      profile_status: resolveResult.profile.status,
+      drift_state: resolveResult.profile.drift_state,
+      canonical_endpoint: resolveResult.profile.canonical_endpoint,
+      network_scope: resolveResult.profile.network_scope,
+    },
+    trust_decision: {
+      trust_decision_id: approvalResult.trust_decision.trust_decision_id,
+      decision: approvalResult.trust_decision.decision,
+      created: approvalResult.created,
+      profile_status: approvalResult.profile.status,
+    },
+    credential_binding: credentialBindingResult,
+    activation: activationResult,
+    smoke_test: smokeTestResult,
+    review,
+  };
+}
+
 function formatPlanRecovery(result: PlanRecoveryResult): string {
   return formatRecoveryPlan(result.recovery_plan);
 }
@@ -3359,6 +4960,21 @@ export async function runCli(argv: string[] = process.argv.slice(2), providedCli
   switch (command) {
     case "version": {
       printResult(versionResult(), jsonOutput, formatVersion);
+      return;
+    }
+    case "release-verify-artifacts": {
+      const workspaceRootForLocal = path.resolve(flags.workspaceRoot ?? process.cwd());
+      const options = parseReleaseVerifyCommandArgs(rest, workspaceRootForLocal);
+      const result = verifyReleaseArtifacts(options);
+      printResult(result, jsonOutput, formatReleaseArtifactVerifyResult);
+      return;
+    }
+    case "cloud-roadmap": {
+      if (rest.length > 0) {
+        throw usageError("Usage: agentgit-authority [global-flags] cloud-roadmap");
+      }
+      const result = cloudRoadmapResult();
+      printResult(result, jsonOutput, formatCloudRoadmapResult);
       return;
     }
     case "config": {
@@ -3399,6 +5015,26 @@ export async function runCli(argv: string[] = process.argv.slice(2), providedCli
 
   const resolvedConfig = resolveCliConfig(process.cwd(), flags);
   const workspaceRoot = resolvedConfig.workspace_root.value;
+
+  switch (command) {
+    case "setup": {
+      const result = runSetupCommand(resolvedConfig, parseSetupCommandOptions(rest));
+      printResult(result, jsonOutput, formatSetupResult);
+      return;
+    }
+    case "daemon": {
+      const subcommand = rest[0];
+      if (subcommand !== "start" || rest.length !== 1) {
+        throw usageError("Usage: agentgit-authority [global-flags] daemon start");
+      }
+      const result = await runDaemonStartCommand(resolvedConfig);
+      printResult(result, jsonOutput, formatDaemonStart);
+      return;
+    }
+    default:
+      break;
+  }
+
   const client =
     providedClient ??
     new AuthorityClient({
@@ -3416,6 +5052,55 @@ export async function runCli(argv: string[] = process.argv.slice(2), providedCli
       const result = await buildDoctorResult(client, resolvedConfig);
       printResult(result, jsonOutput, formatDoctor);
       if (result.checks.some((check) => check.status === "fail")) {
+        process.exitCode = CLI_EXIT_CODES.UNAVAILABLE;
+      }
+      return;
+    }
+    case "init": {
+      const options = parseInitCommandOptions(rest);
+      const result = await runInitProductionCommand(client, resolvedConfig, options);
+      printResult(result, jsonOutput, formatInitResult);
+      if (!result.readiness_passed) {
+        process.exitCode = CLI_EXIT_CODES.UNAVAILABLE;
+      }
+      return;
+    }
+    case "trust-report": {
+      const options = parseTrustReportOptions(rest);
+      const result = await buildTrustReport(client, resolvedConfig, options);
+      printResult(result, jsonOutput, formatTrustReport);
+      return;
+    }
+    case "onboard-mcp": {
+      const planArg = rest[0];
+      if (!planArg) {
+        throw usageError("Usage: agentgit-authority [global-flags] onboard-mcp <plan-json-or-path>");
+      }
+      if (rest.length > 1) {
+        throw usageError("Usage: agentgit-authority [global-flags] onboard-mcp <plan-json-or-path>");
+      }
+
+      const parsedPlan = parseMcpOnboardPlan(parseJsonArgOrFile(planArg));
+      const result = await runMcpOnboardPlan(client, workspaceRoot, parsedPlan);
+      printResult(result, jsonOutput, formatMcpOnboardResult);
+      if (result.smoke_test && !result.smoke_test.success) {
+        process.exitCode = CLI_EXIT_CODES.UNAVAILABLE;
+      }
+      return;
+    }
+    case "trust-review-mcp": {
+      const planArg = rest[0];
+      if (!planArg) {
+        throw usageError("Usage: agentgit-authority [global-flags] trust-review-mcp <plan-json-or-path>");
+      }
+      if (rest.length > 1) {
+        throw usageError("Usage: agentgit-authority [global-flags] trust-review-mcp <plan-json-or-path>");
+      }
+
+      const parsedPlan = parseMcpTrustReviewPlan(parseJsonArgOrFile(planArg));
+      const result = await runMcpTrustReviewPlan(client, workspaceRoot, parsedPlan);
+      printResult(result, jsonOutput, formatMcpTrustReviewResult);
+      if ((result.smoke_test && !result.smoke_test.success) || !result.review.review.executable) {
         process.exitCode = CLI_EXIT_CODES.UNAVAILABLE;
       }
       return;
@@ -3539,6 +5224,85 @@ export async function runCli(argv: string[] = process.argv.slice(2), providedCli
         printResult(result, jsonOutput, formatPolicyThresholdRecommendations);
         return;
       }
+      if (subcommand === "replay-thresholds") {
+        const args = rest.slice(1);
+        let runId: string | undefined;
+        let minSamples: number | undefined;
+        let directionFilter: "tighten" | "relax" | "all" = "all";
+        let candidatePolicyPath: string | undefined;
+        let includeChangedSamples = false;
+        let sampleLimit: number | undefined;
+
+        while (args.length > 0) {
+          const current = args.shift()!;
+          switch (current) {
+            case "--run-id":
+              runId = shiftCommandValue(args, "--run-id");
+              break;
+            case "--candidate-policy":
+              candidatePolicyPath = shiftCommandValue(args, "--candidate-policy");
+              break;
+            case "--min-samples":
+              minSamples = parseIntegerFlag(shiftCommandValue(args, "--min-samples"), "--min-samples");
+              if (minSamples <= 0) {
+                throw inputError("--min-samples expects a positive integer.", {
+                  flag: "--min-samples",
+                  value: minSamples,
+                });
+              }
+              break;
+            case "--direction": {
+              const parsed = shiftCommandValue(args, "--direction");
+              if (parsed !== "tighten" && parsed !== "relax" && parsed !== "all") {
+                throw inputError("--direction expects one of: tighten, relax, all.", {
+                  flag: "--direction",
+                  value: parsed,
+                });
+              }
+              directionFilter = parsed;
+              break;
+            }
+            case "--include-changed-samples":
+              includeChangedSamples = true;
+              break;
+            case "--sample-limit":
+              sampleLimit = parseIntegerFlag(shiftCommandValue(args, "--sample-limit"), "--sample-limit");
+              if (sampleLimit <= 0) {
+                throw inputError("--sample-limit expects a positive integer.", {
+                  flag: "--sample-limit",
+                  value: sampleLimit,
+                });
+              }
+              break;
+            default:
+              throw inputError(`Unknown policy replay-thresholds flag: ${current}`, {
+                flag: current,
+              });
+          }
+        }
+
+        const candidateThresholds = candidatePolicyPath
+          ? loadPolicyThresholdCandidates(candidatePolicyPath)
+          : renderThresholdPatch(
+              await client.getPolicyThresholdRecommendations({
+                ...(runId ? { run_id: runId } : {}),
+                ...(minSamples !== undefined ? { min_samples: minSamples } : {}),
+              }),
+              directionFilter,
+            ).included_recommendations.map((entry) => ({
+              action_family: entry.action_family,
+              ask_below: entry.recommended_ask_below!,
+            }));
+
+        const result = await client.replayPolicyThresholds({
+          ...(runId ? { run_id: runId } : {}),
+          candidate_thresholds: candidateThresholds,
+          ...(includeChangedSamples ? { include_changed_samples: true } : {}),
+          ...(sampleLimit !== undefined ? { sample_limit: sampleLimit } : {}),
+        });
+        printResult(result, jsonOutput, formatPolicyThresholdReplay);
+        return;
+      }
       if (subcommand === "render-threshold-patch") {
         const args = rest.slice(1);
         let runId: string | undefined;
@@ -3582,13 +5346,23 @@ export async function runCli(argv: string[] = process.argv.slice(2), providedCli
           ...(runId ? { run_id: runId } : {}),
           ...(minSamples !== undefined ? { min_samples: minSamples } : {}),
         });
-        const result = renderThresholdPatch(recommendations, directionFilter);
+        const candidateThresholds = renderThresholdPatch(recommendations, directionFilter).included_recommendations.map(
+          (entry) => ({
+            action_family: entry.action_family,
+            ask_below: entry.recommended_ask_below!,
+          }),
+        );
+        const replay = await client.replayPolicyThresholds({
+          ...(runId ? { run_id: runId } : {}),
+          candidate_thresholds: candidateThresholds,
+        });
+        const result = renderThresholdPatch(recommendations, directionFilter, replay);
         printResult(result, jsonOutput, formatPolicyThresholdPatch);
         return;
       }
 
       throw usageError(
-        "Usage: agentgit-authority [global-flags] policy <show|validate <path>|diff <path>|explain <attempt-json-or-path>|calibration-report [--run-id <run-id>] [--include-samples] [--sample-limit <n>]|recommend-thresholds [--run-id <run-id>] [--min-samples <n>]|render-threshold-patch [--run-id <run-id>] [--min-samples <n>] [--direction <tighten|relax|all>]>",
+        "Usage: agentgit-authority [global-flags] policy <show|validate <path>|diff <path>|explain <attempt-json-or-path>|calibration-report [--run-id <run-id>] [--include-samples] [--sample-limit <n>]|recommend-thresholds [--run-id <run-id>] [--min-samples <n>]|replay-thresholds [--run-id <run-id>] [--candidate-policy <path>] [--min-samples <n>] [--direction <tighten|relax|all>] [--include-changed-samples] [--sample-limit <n>]|render-threshold-patch [--run-id <run-id>] [--min-samples <n>] [--direction <tighten|relax|all>]>",
       );
     }
     case "profile": {

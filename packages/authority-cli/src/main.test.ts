@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createSign, generateKeyPairSync } from "node:crypto";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -1002,6 +1002,807 @@ describe("authority cli commands", () => {
     expect(output.stdout).toContain("mcp_secret_notion [bearer]");
   });
 
+  it("runs the init --production command end to end and writes an active profile", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cli-init-unit-"));
+    const configRoot = path.join(tempRoot, "config");
+    const workspaceRoot = path.join(tempRoot, "workspace");
+    const socketPath = path.join(tempRoot, "authority.sock");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    const output = await captureCliRun(
+      [
+        "--config-root",
+        configRoot,
+        "--workspace-root",
+        workspaceRoot,
+        "--socket-path",
+        socketPath,
+        "init",
+        "--production",
+        "--profile-name",
+        "prod",
+      ],
+      {
+        hello: vi.fn().mockResolvedValue({
+          schema_version: "authority.hello.v1",
+          session_id: "sess_init",
+          accepted_api_version: "authority.v1",
+          runtime_version: "1.0.0-test",
+          schema_pack_version: "1.0.0-test",
+        }),
+        getCapabilities: vi.fn().mockResolvedValue({
+          capabilities: [
+            {
+              capability_name: "host.credential_broker_mode",
+              status: "available",
+              scope: "host",
+              detected_at: "2026-04-01T12:00:00.000Z",
+              source: "authority_daemon",
+              details: {
+                mode: "local_encrypted_store",
+                key_provider: "macos_keychain",
+              },
+            },
+          ],
+          detection_timestamps: {
+            started_at: "2026-04-01T12:00:00.000Z",
+            completed_at: "2026-04-01T12:00:00.000Z",
+          },
+          degraded_mode_warnings: [],
+        }),
+        listMcpServers: vi.fn().mockResolvedValue({
+          servers: [],
+        }),
+        listMcpSecrets: vi.fn().mockResolvedValue({
+          secrets: [],
+        }),
+        listMcpHostPolicies: vi.fn().mockResolvedValue({
+          policies: [],
+        }),
+        diagnostics: vi.fn().mockResolvedValue({
+          policy_summary: null,
+          security_posture: {
+            status: "healthy",
+            secret_storage: {
+              mode: "local_encrypted_store",
+              provider: "macos_keychain",
+              durable: true,
+              encrypted_at_rest: true,
+              secret_expiry_enforced: true,
+              rotation_metadata_tracked: true,
+              legacy_key_path: null,
+            },
+            stdio_sandbox: {
+              registered_server_count: 0,
+              protected_server_count: 0,
+              production_ready_server_count: 0,
+              digest_pinned_server_count: 0,
+              mutable_tag_server_count: 0,
+              local_build_server_count: 0,
+              registry_policy_server_count: 0,
+              signature_verification_server_count: 0,
+              provenance_attestation_server_count: 0,
+              fallback_server_count: 0,
+              unconfigured_server_count: 0,
+              preferred_production_mode: "oci_container",
+              local_dev_fallback_mode: "oci_container_build",
+              current_host_mode: "oci_container_ready",
+              current_host_mode_reason: "OCI sandbox runtime is available.",
+              macos_seatbelt_available: false,
+              docker_runtime_usable: true,
+              podman_runtime_usable: false,
+              windows_plan: {
+                supported_via_oci: true,
+                recommended_runtime: "docker_desktop_wsl2_or_podman_machine",
+                native_fallback_available: false,
+                summary:
+                  "On Windows, use Docker Desktop with WSL2 or Podman machine for OCI sandboxing. No native host-process fallback is supported.",
+              },
+              degraded_servers: [],
+            },
+            streamable_http: {
+              registered_server_count: 0,
+              connect_time_dns_scope_validation: true,
+              redirect_chain_revalidation: true,
+              concurrency_limits_enforced: true,
+              shared_sqlite_leases: true,
+              lease_heartbeat_renewal: true,
+              legacy_bearer_env_servers: [],
+              missing_secret_ref_servers: [],
+              missing_public_host_policy_servers: [],
+            },
+            warnings: [],
+            primary_reason: null,
+          },
+          hosted_worker: null,
+          hosted_queue: null,
+        }),
+      },
+    );
+
+    expect(output.stderr).toBe("");
+    expect(output.stdout).toContain("Initialized production profile prod");
+    expect(output.stdout).toContain("Readiness passed: yes");
+
+    const configPath = path.join(configRoot, "authority-cli.toml");
+    expect(fs.existsSync(configPath)).toBe(true);
+    const configText = fs.readFileSync(configPath, "utf8");
+    expect(configText).toContain('active_profile = "prod"');
+    expect(configText).toContain("socket_path");
+    expect(configText).toContain("workspace_root");
+  });
+
+  it("runs the trust-report command end to end", async () => {
+    const output = await captureCliRun(["trust-report", "--run-id", "run_trust"], {
+      hello: vi.fn().mockResolvedValue({
+        schema_version: "authority.hello.v1",
+        session_id: "sess_trust",
+        accepted_api_version: "authority.v1",
+        runtime_version: "1.0.0-test",
+        schema_pack_version: "1.0.0-test",
+      }),
+      getCapabilities: vi.fn().mockResolvedValue({
+        capabilities: [
+          {
+            capability_name: "host.credential_broker_mode",
+            status: "available",
+            scope: "host",
+            detected_at: "2026-04-01T12:00:00.000Z",
+            source: "authority_daemon",
+            details: {
+              mode: "local_encrypted_store",
+              key_provider: "macos_keychain",
+            },
+          },
+        ],
+        detection_timestamps: {
+          started_at: "2026-04-01T12:00:00.000Z",
+          completed_at: "2026-04-01T12:00:00.000Z",
+        },
+        degraded_mode_warnings: [],
+      }),
+      listMcpServers: vi.fn().mockResolvedValue({
+        servers: [],
+      }),
+      listMcpSecrets: vi.fn().mockResolvedValue({
+        secrets: [],
+      }),
+      listMcpHostPolicies: vi.fn().mockResolvedValue({
+        policies: [],
+      }),
+      diagnostics: vi.fn().mockResolvedValue({
+        policy_summary: null,
+        security_posture: {
+          status: "degraded",
+          secret_storage: {
+            mode: "local_encrypted_store",
+            provider: "macos_keychain",
+            durable: true,
+            encrypted_at_rest: true,
+            secret_expiry_enforced: true,
+            rotation_metadata_tracked: true,
+            legacy_key_path: null,
+          },
+          stdio_sandbox: {
+            registered_server_count: 1,
+            protected_server_count: 1,
+            production_ready_server_count: 0,
+            digest_pinned_server_count: 0,
+            mutable_tag_server_count: 1,
+            local_build_server_count: 0,
+            registry_policy_server_count: 0,
+            signature_verification_server_count: 0,
+            provenance_attestation_server_count: 0,
+            fallback_server_count: 0,
+            unconfigured_server_count: 0,
+            preferred_production_mode: "oci_container",
+            local_dev_fallback_mode: "oci_container_build",
+            current_host_mode: "oci_container_ready",
+            current_host_mode_reason: "OCI sandbox runtime is available.",
+            macos_seatbelt_available: false,
+            docker_runtime_usable: true,
+            podman_runtime_usable: false,
+            windows_plan: {
+              supported_via_oci: true,
+              recommended_runtime: "docker_desktop_wsl2_or_podman_machine",
+              native_fallback_available: false,
+              summary:
+                "On Windows, use Docker Desktop with WSL2 or Podman machine for OCI sandboxing. No native host-process fallback is supported.",
+            },
+            degraded_servers: ["notes_stdio"],
+          },
+          streamable_http: {
+            registered_server_count: 1,
+            connect_time_dns_scope_validation: true,
+            redirect_chain_revalidation: true,
+            concurrency_limits_enforced: true,
+            shared_sqlite_leases: true,
+            lease_heartbeat_renewal: true,
+            legacy_bearer_env_servers: [],
+            missing_secret_ref_servers: [],
+            missing_public_host_policy_servers: [],
+          },
+          warnings: ["1 governed stdio MCP server does not have a usable sandbox on this host."],
+          primary_reason: {
+            code: "STDIO_SANDBOX_DEGRADED",
+            message: "1 governed stdio MCP server does not have a usable sandbox on this host.",
+          },
+        },
+        hosted_worker: null,
+        hosted_queue: null,
+      }),
+      listMcpServerProfiles: vi.fn().mockResolvedValue({
+        profiles: [
+          {
+            server_profile_id: "mcpprof_123",
+            candidate_id: "mcpcand_123",
+            display_name: "Example MCP",
+            transport: "streamable_http",
+            canonical_endpoint: "https://api.example.com/mcp",
+            network_scope: "public_https",
+            trust_tier: "operator_approved_public",
+            status: "active",
+            drift_state: "clean",
+            quarantine_reason_codes: [],
+            allowed_execution_modes: ["local_proxy"],
+            active_trust_decision_id: "mcptrust_123",
+            active_credential_binding_id: "mcpbind_123",
+            auth_descriptor: {
+              mode: "bearer_secret_ref",
+              audience: null,
+              scope_labels: ["remote:mcp"],
+            },
+            identity_baseline: {
+              canonical_host: "api.example.com",
+              canonical_port: 443,
+              tls_identity_summary: "platform_tls_validated",
+              auth_issuer: null,
+              publisher_identity: null,
+              tool_inventory_hash: "hash_tools",
+              fetched_at: "2026-04-01T12:00:00.000Z",
+            },
+            imported_tools: [],
+            tool_inventory_version: "hash_tools",
+            last_resolved_at: "2026-04-01T12:00:00.000Z",
+            created_at: "2026-04-01T12:00:00.000Z",
+            updated_at: "2026-04-01T12:00:00.000Z",
+          },
+        ],
+      }),
+      listMcpServerTrustDecisions: vi.fn().mockResolvedValue({
+        trust_decisions: [
+          {
+            trust_decision_id: "mcptrust_123",
+            server_profile_id: "mcpprof_123",
+            decision: "allow_policy_managed",
+            trust_tier: "operator_approved_public",
+            allowed_execution_modes: ["local_proxy"],
+            max_side_effect_level_without_approval: "read_only",
+            reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+            approved_by_session_id: "sess_trust",
+            approved_at: "2026-04-01T12:00:00.000Z",
+            valid_until: null,
+            reapproval_triggers: [],
+          },
+        ],
+      }),
+      listMcpServerCredentialBindings: vi.fn().mockResolvedValue({
+        credential_bindings: [
+          {
+            credential_binding_id: "mcpbind_123",
+            server_profile_id: "mcpprof_123",
+            binding_mode: "bearer_secret_ref",
+            broker_profile_id: "mcp_secret_123",
+            scope_labels: ["remote:mcp"],
+            audience: null,
+            status: "active",
+            created_at: "2026-04-01T12:00:00.000Z",
+            updated_at: "2026-04-01T12:00:00.000Z",
+            revoked_at: null,
+          },
+        ],
+      }),
+      queryTimeline: vi.fn().mockResolvedValue({
+        run_summary: {
+          run_id: "run_trust",
+          session_id: "sess_trust",
+          workflow_name: "trust",
+          agent_framework: "cli",
+          agent_name: "agentgit-cli",
+          workspace_roots: ["/tmp/workspace"],
+          event_count: 1,
+          latest_event: null,
+          budget_config: {
+            max_mutating_actions: null,
+            max_destructive_actions: null,
+          },
+          budget_usage: {
+            mutating_actions: 0,
+            destructive_actions: 0,
+          },
+          maintenance_status: {
+            projection_status: "fresh",
+            projection_lag_events: 0,
+            degraded_artifact_capture_actions: 0,
+            low_disk_pressure_signals: 0,
+            artifact_health: {
+              total: 0,
+              available: 0,
+              missing: 0,
+              expired: 0,
+              corrupted: 0,
+              tampered: 0,
+            },
+          },
+          created_at: "2026-04-01T12:00:00.000Z",
+          started_at: "2026-04-01T12:00:00.000Z",
+        },
+        steps: [],
+        projection_status: "fresh",
+        visibility_scope: "user",
+        redactions_applied: 0,
+        preview_budget: {
+          max_inline_preview_chars: 160,
+          max_total_inline_preview_chars: 1200,
+          preview_chars_used: 0,
+          truncated_previews: 0,
+          omitted_previews: 0,
+        },
+      }),
+    });
+
+    expect(output.stderr).toBe("");
+    expect(output.stdout).toContain("Trust report");
+    expect(output.stdout).toContain("MCP profiles: 1");
+    expect(output.stdout).toContain("Active non-deny trust decisions: 1");
+    expect(output.stdout).toContain("Timeline trust summary:");
+  });
+
+  it("runs the onboard-mcp command end to end", async () => {
+    const client = {
+      upsertMcpSecret: vi.fn().mockResolvedValue({
+        secret: {
+          secret_id: "mcp_secret_notion",
+          status: "active",
+        },
+        created: true,
+      }),
+      upsertMcpHostPolicy: vi.fn().mockResolvedValue({
+        policy: {
+          policy: {
+            host: "api.notion.com",
+          },
+        },
+        created: true,
+      }),
+      upsertMcpServer: vi.fn().mockResolvedValue({
+        server: {
+          server: {
+            server_id: "notes_public",
+            transport: "streamable_http",
+          },
+          source: "operator_api",
+          updated_at: "2026-04-01T12:00:00.000Z",
+        },
+        created: true,
+      }),
+      registerRun: vi.fn().mockResolvedValue({
+        run_id: "run_onboard",
+      }),
+      submitActionAttempt: vi.fn().mockResolvedValue({
+        execution_result: {
+          mode: "executed",
+          success: true,
+          execution_id: "exec_onboard",
+          output: {
+            summary: "echo:launch blocker",
+          },
+        },
+      }),
+    };
+
+    const output = await captureCliRun(
+      [
+        "onboard-mcp",
+        JSON.stringify({
+          secrets: [
+            {
+              secret_id: "mcp_secret_notion",
+              display_name: "Notion bearer",
+              bearer_token: "token-value",
+            },
+          ],
+          host_policies: [
+            {
+              host: "api.notion.com",
+              display_name: "Notion API",
+              allow_subdomains: false,
+              allowed_ports: [443],
+            },
+          ],
+          server: {
+            server_id: "notes_public",
+            display_name: "Notes public MCP",
+            transport: "streamable_http",
+            url: "https://api.notion.com/mcp",
+            network_scope: "public_https",
+            auth: {
+              type: "bearer_secret_ref",
+              secret_id: "mcp_secret_notion",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+          smoke_test: {
+            tool_name: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          },
+        }),
+      ],
+      client,
+    );
+
+    expect(client.upsertMcpSecret).toHaveBeenCalledTimes(1);
+    expect(client.upsertMcpHostPolicy).toHaveBeenCalledTimes(1);
+    expect(client.upsertMcpServer).toHaveBeenCalledTimes(1);
+    expect(client.registerRun).toHaveBeenCalledTimes(1);
+    expect(client.submitActionAttempt).toHaveBeenCalledTimes(1);
+    expect(output.stdout).toContain("MCP onboarding completed for notes_public");
+    expect(output.stdout).toContain("Smoke test:");
+  });
+
+  it("runs the trust-review-mcp command end to end", async () => {
+    const client = {
+      upsertMcpSecret: vi.fn().mockResolvedValue({
+        secret: {
+          secret_id: "mcp_secret_remote",
+          status: "active",
+        },
+        created: true,
+      }),
+      submitMcpServerCandidate: vi.fn().mockResolvedValue({
+        candidate: {
+          candidate_id: "mcpcand_123",
+          source_kind: "user_input",
+          raw_endpoint: "http://127.0.0.1:4319/mcp",
+          transport_hint: "streamable_http",
+          workspace_id: null,
+          submitted_by_session_id: "sess_cli",
+          submitted_by_run_id: null,
+          notes: null,
+          resolution_state: "submitted",
+          resolution_error: null,
+          submitted_at: "2026-04-01T12:00:00.000Z",
+          updated_at: "2026-04-01T12:00:00.000Z",
+        },
+      }),
+      resolveMcpServerCandidate: vi.fn().mockResolvedValue({
+        candidate: {
+          candidate_id: "mcpcand_123",
+          source_kind: "user_input",
+          raw_endpoint: "http://127.0.0.1:4319/mcp",
+          transport_hint: "streamable_http",
+          workspace_id: null,
+          submitted_by_session_id: "sess_cli",
+          submitted_by_run_id: null,
+          notes: null,
+          resolution_state: "resolved",
+          resolution_error: null,
+          submitted_at: "2026-04-01T12:00:00.000Z",
+          updated_at: "2026-04-01T12:05:00.000Z",
+        },
+        profile: {
+          server_profile_id: "mcpprof_123",
+          candidate_id: "mcpcand_123",
+          display_name: "Remote Example MCP",
+          transport: "streamable_http",
+          canonical_endpoint: "http://127.0.0.1:4319/mcp",
+          network_scope: "loopback",
+          trust_tier: "operator_approved_public",
+          status: "draft",
+          drift_state: "clean",
+          quarantine_reason_codes: [],
+          allowed_execution_modes: ["local_proxy"],
+          active_trust_decision_id: null,
+          active_credential_binding_id: null,
+          auth_descriptor: {
+            mode: "none",
+            audience: null,
+            scope_labels: [],
+          },
+          identity_baseline: {
+            canonical_host: "127.0.0.1",
+            canonical_port: 4319,
+            tls_identity_summary: null,
+            auth_issuer: null,
+            publisher_identity: null,
+            tool_inventory_hash: "hash_tools",
+            fetched_at: "2026-04-01T12:05:00.000Z",
+          },
+          imported_tools: [],
+          tool_inventory_version: "hash_tools",
+          last_resolved_at: "2026-04-01T12:05:00.000Z",
+          created_at: "2026-04-01T12:05:00.000Z",
+          updated_at: "2026-04-01T12:05:00.000Z",
+        },
+        created_profile: true,
+        drift_detected: false,
+      }),
+      approveMcpServerProfile: vi.fn().mockResolvedValue({
+        profile: {
+          server_profile_id: "mcpprof_123",
+          status: "pending_approval",
+        },
+        trust_decision: {
+          trust_decision_id: "mcptrust_123",
+          decision: "allow_policy_managed",
+        },
+        created: true,
+      }),
+      bindMcpServerCredentials: vi.fn().mockResolvedValue({
+        profile: {
+          server_profile_id: "mcpprof_123",
+        },
+        credential_binding: {
+          credential_binding_id: "mcpbind_123",
+          binding_mode: "bearer_secret_ref",
+          status: "active",
+        },
+      }),
+      activateMcpServerProfile: vi.fn().mockResolvedValue({
+        profile: {
+          server_profile_id: "mcpprof_123",
+          status: "active",
+        },
+      }),
+      registerRun: vi.fn().mockResolvedValue({
+        run_id: "run_trust_review",
+      }),
+      submitActionAttempt: vi.fn().mockResolvedValue({
+        execution_result: {
+          mode: "executed",
+          success: true,
+          execution_id: "exec_trust_review",
+          output: {
+            summary: "echo:launch blocker",
+          },
+        },
+      }),
+      getMcpServerReview: vi.fn().mockResolvedValue({
+        candidate: {
+          candidate_id: "mcpcand_123",
+          source_kind: "user_input",
+          raw_endpoint: "http://127.0.0.1:4319/mcp",
+          transport_hint: "streamable_http",
+          workspace_id: null,
+          submitted_by_session_id: "sess_cli",
+          submitted_by_run_id: null,
+          notes: null,
+          resolution_state: "resolved",
+          resolution_error: null,
+          submitted_at: "2026-04-01T12:00:00.000Z",
+          updated_at: "2026-04-01T12:05:00.000Z",
+        },
+        profile: {
+          server_profile_id: "mcpprof_123",
+          candidate_id: "mcpcand_123",
+          display_name: "Remote Example MCP",
+          transport: "streamable_http",
+          canonical_endpoint: "http://127.0.0.1:4319/mcp",
+          network_scope: "loopback",
+          trust_tier: "operator_approved_public",
+          status: "active",
+          drift_state: "clean",
+          quarantine_reason_codes: [],
+          allowed_execution_modes: ["local_proxy"],
+          active_trust_decision_id: "mcptrust_123",
+          active_credential_binding_id: "mcpbind_123",
+          auth_descriptor: {
+            mode: "bearer_secret_ref",
+            audience: null,
+            scope_labels: ["remote:mcp"],
+          },
+          identity_baseline: {
+            canonical_host: "127.0.0.1",
+            canonical_port: 4319,
+            tls_identity_summary: null,
+            auth_issuer: null,
+            publisher_identity: null,
+            tool_inventory_hash: "hash_tools",
+            fetched_at: "2026-04-01T12:05:00.000Z",
+          },
+          imported_tools: [],
+          tool_inventory_version: "hash_tools",
+          last_resolved_at: "2026-04-01T12:05:00.000Z",
+          created_at: "2026-04-01T12:05:00.000Z",
+          updated_at: "2026-04-01T12:05:00.000Z",
+        },
+        active_trust_decision: {
+          trust_decision_id: "mcptrust_123",
+          server_profile_id: "mcpprof_123",
+          decision: "allow_policy_managed",
+          trust_tier: "operator_approved_public",
+          allowed_execution_modes: ["local_proxy"],
+          max_side_effect_level_without_approval: "read_only",
+          reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+          approved_by_session_id: "sess_cli",
+          approved_at: "2026-04-01T12:05:00.000Z",
+          valid_until: null,
+          reapproval_triggers: [],
+        },
+        active_credential_binding: {
+          credential_binding_id: "mcpbind_123",
+          server_profile_id: "mcpprof_123",
+          binding_mode: "bearer_secret_ref",
+          broker_profile_id: "mcp_secret_remote",
+          scope_labels: ["remote:mcp"],
+          audience: null,
+          status: "active",
+          created_at: "2026-04-01T12:06:00.000Z",
+          updated_at: "2026-04-01T12:06:00.000Z",
+          revoked_at: null,
+        },
+        review: {
+          review_target: "candidate_profile",
+          executable: true,
+          activation_ready: true,
+          requires_approval: false,
+          requires_resolution: false,
+          requires_credentials: false,
+          requires_reapproval: false,
+          hosted_execution_supported: false,
+          local_proxy_supported: true,
+          drift_detected: false,
+          quarantined: false,
+          revoked: false,
+          warnings: [],
+          recommended_actions: [],
+        },
+      }),
+    };
+
+    const output = await captureCliRun(
+      [
+        "trust-review-mcp",
+        JSON.stringify({
+          secrets: [
+            {
+              secret_id: "mcp_secret_remote",
+              display_name: "Remote bearer",
+              bearer_token: "token-value",
+            },
+          ],
+          candidate: {
+            source_kind: "user_input",
+            raw_endpoint: "http://127.0.0.1:4319/mcp",
+            transport_hint: "streamable_http",
+          },
+          resolve: {
+            display_name: "Remote Example MCP",
+          },
+          approval: {
+            decision: "allow_policy_managed",
+            trust_tier: "operator_approved_public",
+            allowed_execution_modes: ["local_proxy"],
+            reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+          },
+          credential_binding: {
+            binding_mode: "bearer_secret_ref",
+            broker_profile_id: "mcp_secret_remote",
+            scope_labels: ["remote:mcp"],
+          },
+          smoke_test: {
+            tool_name: "echo_note",
+            arguments: {
+              note: "launch blocker",
+            },
+          },
+        }),
+      ],
+      client,
+    );
+
+    expect(client.submitMcpServerCandidate).toHaveBeenCalledTimes(1);
+    expect(client.resolveMcpServerCandidate).toHaveBeenCalledWith({
+      candidate_id: "mcpcand_123",
+      display_name: "Remote Example MCP",
+    });
+    expect(client.approveMcpServerProfile).toHaveBeenCalledWith({
+      server_profile_id: "mcpprof_123",
+      decision: "allow_policy_managed",
+      trust_tier: "operator_approved_public",
+      allowed_execution_modes: ["local_proxy"],
+      reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+    });
+    expect(client.bindMcpServerCredentials).toHaveBeenCalledWith({
+      server_profile_id: "mcpprof_123",
+      binding_mode: "bearer_secret_ref",
+      broker_profile_id: "mcp_secret_remote",
+      scope_labels: ["remote:mcp"],
+    });
+    expect(client.activateMcpServerProfile).toHaveBeenCalledWith("mcpprof_123");
+    expect(client.getMcpServerReview).toHaveBeenCalledWith({
+      server_profile_id: "mcpprof_123",
+    });
+    expect(output.stdout).toContain("MCP trust review completed for mcpprof_123");
+    expect(output.stdout).toContain("Credential binding:");
+    expect(output.stdout).toContain("Final review:");
+  });
+
+  it("runs the release-verify-artifacts command end to end", async () => {
+    const artifactsDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cli-release-verify-unit-"));
+    const tarballPath = path.join(artifactsDir, "pkg.tgz");
+    fs.writeFileSync(tarballPath, "package-content", "utf8");
+    const tarballSha = createHash("sha256").update(fs.readFileSync(tarballPath)).digest("hex");
+
+    const manifestPath = path.join(artifactsDir, "manifest.json");
+    const manifest = {
+      packages: [
+        {
+          name: "@agentgit/example",
+          tarball_path: tarballPath,
+          sha256: tarballSha,
+        },
+      ],
+    };
+    const manifestJson = JSON.stringify(manifest, null, 2);
+    fs.writeFileSync(manifestPath, manifestJson, "utf8");
+    const manifestSha = createHash("sha256").update(manifestJson, "utf8").digest("hex");
+    fs.writeFileSync(path.join(artifactsDir, "manifest.sha256"), `${manifestSha}  manifest.json\n`, "utf8");
+
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+    });
+    const signature = createSign("sha256").update(manifestJson).end().sign(privateKey).toString("base64");
+    fs.writeFileSync(path.join(artifactsDir, "manifest.sig"), `${signature}\n`, "utf8");
+    const publicKeyPath = path.join(artifactsDir, "release-public.pem");
+    fs.writeFileSync(publicKeyPath, publicKey.export({ format: "pem", type: "spki" }), "utf8");
+
+    const output = await captureCliRun(
+      [
+        "--json",
+        "release-verify-artifacts",
+        artifactsDir,
+        "--signature-mode",
+        "required",
+        "--public-key-path",
+        publicKeyPath,
+      ],
+      {},
+    );
+
+    expect(output.stderr).toBe("");
+    const parsed = JSON.parse(output.stdout) as {
+      ok: boolean;
+      signature_verified: boolean;
+      packages: Array<{ name: string }>;
+    };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.signature_verified).toBe(true);
+    expect(parsed.packages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "@agentgit/example",
+        }),
+      ]),
+    );
+  });
+
+  it("runs the cloud-roadmap command end to end", async () => {
+    const output = await captureCliRun(["cloud-roadmap"], {});
+    expect(output.stderr).toBe("");
+    expect(output.stdout).toContain("Cloud roadmap");
+    expect(output.stdout).toContain("Launch contract: local-first-mvp");
+    expect(output.stdout).toContain("cloud-1");
+  });
+
   it("runs the policy show command end to end", async () => {
     const output = await captureCliRun(["policy", "show"], {
       getEffectivePolicy: vi.fn().mockResolvedValue({
@@ -1346,6 +2147,21 @@ describe("authority cli commands", () => {
             warnings: [],
             normalization_confidence: 0.96,
           },
+          confidence_assessment: {
+            engine_version: "test-confidence/v1",
+            score: 0.96,
+            band: "high",
+            requires_human_review: false,
+            factors: [
+              {
+                factor_id: "test_baseline",
+                label: "Test baseline",
+                kind: "baseline",
+                delta: 0.96,
+                rationale: "Test confidence baseline.",
+              },
+            ],
+          },
         },
         policy_outcome: {
           schema_version: "policy-outcome.v1",
@@ -1385,6 +2201,7 @@ describe("authority cli commands", () => {
         action_family: "filesystem/write",
         effective_policy_profile: "workspace-hardening",
         low_confidence_threshold: 0.3,
+        confidence_score: 0.96,
         confidence_triggered: false,
         snapshot_selection: null,
       }),
@@ -1439,6 +2256,96 @@ describe("authority cli commands", () => {
     expect(output.stdout).toContain("Report only: yes");
   });
 
+  it("runs the policy replay-thresholds command end to end", async () => {
+    const output = await captureCliRun(
+      ["policy", "replay-thresholds", "--run-id", "run_policy", "--min-samples", "2", "--direction", "relax"],
+      {
+        getPolicyThresholdRecommendations: vi.fn().mockResolvedValue({
+          generated_at: "2026-04-01T12:00:00.000Z",
+          filters: {
+            run_id: "run_policy",
+            min_samples: 2,
+          },
+          effective_policy_profile: "workspace-hardening",
+          recommendations: [
+            {
+              action_family: "filesystem/write",
+              current_ask_below: 0.3,
+              recommended_ask_below: 0.4,
+              direction: "tighten",
+              sample_count: 1,
+              approvals_requested: 0,
+              approvals_approved: 0,
+              approvals_denied: 0,
+              observed_confidence_min: 0.35,
+              observed_confidence_max: 0.35,
+              denied_confidence_max: null,
+              approved_confidence_min: null,
+              rationale: "Tighten for replay coverage.",
+              requires_policy_update: true,
+              automatic_live_application_allowed: false,
+            },
+          ],
+        }),
+        replayPolicyThresholds: vi.fn().mockResolvedValue({
+          generated_at: "2026-04-01T12:00:01.000Z",
+          filters: {
+            run_id: "run_policy",
+            include_changed_samples: false,
+            sample_limit: null,
+          },
+          effective_policy_profile: "workspace-hardening",
+          candidate_thresholds: [
+            {
+              action_family: "filesystem/write",
+              ask_below: 0.4,
+            },
+          ],
+          summary: {
+            replayable_samples: 1,
+            skipped_samples: 0,
+            changed_decisions: 1,
+            unchanged_decisions: 0,
+            current_approvals_requested: 0,
+            candidate_approvals_requested: 1,
+            approvals_reduced: 0,
+            approvals_increased: 1,
+            historically_denied_auto_allowed: 0,
+            historically_approved_auto_allowed: 0,
+            historically_allowed_newly_gated: 1,
+            current_matches_recorded: 1,
+            current_diverges_from_recorded: 0,
+          },
+          action_families: [
+            {
+              action_family: "filesystem/write",
+              replayable_samples: 1,
+              skipped_samples: 0,
+              changed_decisions: 1,
+              unchanged_decisions: 0,
+              current_approvals_requested: 0,
+              candidate_approvals_requested: 1,
+              approvals_reduced: 0,
+              approvals_increased: 1,
+              historically_denied_auto_allowed: 0,
+              historically_approved_auto_allowed: 0,
+              historically_allowed_newly_gated: 1,
+              current_matches_recorded: 1,
+              current_diverges_from_recorded: 0,
+            },
+          ],
+          samples_truncated: false,
+        }),
+      },
+    );
+
+    expect(output.stderr).toBe("");
+    expect(output.stdout).toContain("Policy threshold replay");
+    expect(output.stdout).toContain("Candidate thresholds: filesystem/write=0.400");
+    expect(output.stdout).toContain("Approvals increased: 1");
+    expect(output.stdout).toContain("allowed_newly_gated=1");
+  });
+
   it("runs the policy render-threshold-patch command end to end", async () => {
     const output = await captureCliRun(
       ["policy", "render-threshold-patch", "--run-id", "run_policy", "--min-samples", "2", "--direction", "relax"],
@@ -1469,6 +2376,57 @@ describe("authority cli commands", () => {
               automatic_live_application_allowed: false,
             },
           ],
+        }),
+        replayPolicyThresholds: vi.fn().mockResolvedValue({
+          generated_at: "2026-04-01T12:00:01.000Z",
+          filters: {
+            run_id: "run_policy",
+            include_changed_samples: false,
+            sample_limit: null,
+          },
+          effective_policy_profile: "workspace-hardening",
+          candidate_thresholds: [
+            {
+              action_family: "shell/exec",
+              ask_below: 0.28,
+            },
+          ],
+          summary: {
+            replayable_samples: 4,
+            skipped_samples: 0,
+            changed_decisions: 1,
+            unchanged_decisions: 3,
+            current_approvals_requested: 4,
+            candidate_approvals_requested: 3,
+            approvals_reduced: 1,
+            approvals_increased: 0,
+            historically_denied_auto_allowed: 0,
+            historically_approved_auto_allowed: 0,
+            historically_allowed_newly_gated: 0,
+            current_matches_recorded: 4,
+            current_diverges_from_recorded: 0,
+          },
+          action_families: [
+            {
+              action_family: "shell/exec",
+              current_ask_below: 0.3,
+              candidate_ask_below: 0.28,
+              replayable_samples: 4,
+              skipped_samples: 0,
+              changed_decisions: 1,
+              unchanged_decisions: 3,
+              current_approvals_requested: 4,
+              candidate_approvals_requested: 3,
+              approvals_reduced: 1,
+              approvals_increased: 0,
+              historically_denied_auto_allowed: 0,
+              historically_approved_auto_allowed: 0,
+              historically_allowed_newly_gated: 0,
+              current_matches_recorded: 4,
+              current_diverges_from_recorded: 0,
+            },
+          ],
+          samples_truncated: false,
         }),
       },
     );

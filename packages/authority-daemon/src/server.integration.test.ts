@@ -658,6 +658,7 @@ function makeFilesystemDeleteAttempt(runId: string, workspaceRoot: string, targe
 }
 
 function makeFilesystemWriteAction(runId: string, targetPath: string): ActionRecord {
+  const confidenceScore = 0.99;
   return {
     schema_version: "action.v1",
     action_id: `act_test_${path.basename(targetPath).replaceAll(/[^a-z0-9]/gi, "_")}`,
@@ -722,7 +723,22 @@ function makeFilesystemWriteAction(runId: string, targetPath: string): ActionRec
       mapper: "test",
       inferred_fields: [],
       warnings: [],
-      normalization_confidence: 0.99,
+      normalization_confidence: confidenceScore,
+    },
+    confidence_assessment: {
+      engine_version: "test-confidence/v1",
+      score: confidenceScore,
+      band: "high",
+      requires_human_review: false,
+      factors: [
+        {
+          factor_id: "test_baseline",
+          label: "Test baseline",
+          kind: "baseline",
+          delta: confidenceScore,
+          rationale: "Test confidence baseline.",
+        },
+      ],
     },
   };
 }
@@ -1999,6 +2015,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
           decision: string;
           approval_status: string | null;
           normalization_confidence: number;
+          confidence_score: number;
         }>;
         samples_truncated: boolean;
       };
@@ -2041,12 +2058,14 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
         expect.objectContaining({
           action_family: "filesystem/write",
           normalization_confidence: expect.any(Number),
+          confidence_score: expect.any(Number),
         }),
         expect.objectContaining({
           action_family: "shell/exec",
           decision: "ask",
           approval_status: "approved",
           normalization_confidence: expect.any(Number),
+          confidence_score: expect.any(Number),
         }),
       ]),
     );
@@ -2143,8 +2162,131 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     );
   });
 
-  it("applies policy threshold calibration maintenance and reloads workspace-generated policy", async () => {
+  it("replays candidate thresholds against real journaled actions", async () => {
     const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "policy-threshold-replay");
+    const action = makeFilesystemWriteAction(runId, path.join(harness.workspaceRoot, "replay.txt"));
+    action.normalization.normalization_confidence = 0.35;
+    action.confidence_assessment = {
+      ...action.confidence_assessment,
+      score: 0.35,
+      band: "low",
+      requires_human_review: true,
+      factors: [
+        {
+          factor_id: "test_baseline",
+          label: "Test baseline",
+          kind: "baseline",
+          delta: 0.35,
+          rationale: "Replay test confidence baseline.",
+        },
+      ],
+    };
+
+    const journal = createRunJournal({ dbPath: harness.journalPath });
+    try {
+      journal.appendRunEvent(runId, {
+        event_type: "action.normalized",
+        occurred_at: action.timestamps.normalized_at,
+        recorded_at: action.timestamps.normalized_at,
+        payload: {
+          action_id: action.action_id,
+          action_family: "filesystem/write",
+          action,
+        },
+      });
+      journal.appendRunEvent(runId, {
+        event_type: "policy.evaluated",
+        occurred_at: "2026-04-01T12:00:02.000Z",
+        recorded_at: "2026-04-01T12:00:02.000Z",
+        payload: {
+          action_id: action.action_id,
+          evaluated_at: "2026-04-01T12:00:02.000Z",
+          decision: "allow",
+          reasons: [],
+          matched_rules: [],
+          normalization_confidence: 0.35,
+          confidence_score: 0.35,
+          action_family: "filesystem/write",
+          snapshot_required: false,
+          snapshot_selection: null,
+          low_confidence_threshold: 0.3,
+          confidence_triggered: false,
+        },
+      });
+    } finally {
+      journal.close();
+    }
+
+    const replayResponse = await sendRequest<{
+      filters: { run_id: string | null; include_changed_samples: boolean; sample_limit: number | null };
+      summary: {
+        replayable_samples: number;
+        approvals_increased: number;
+        historically_allowed_newly_gated: number;
+      };
+      changed_samples?: Array<{
+        action_id: string;
+        current_decision: string;
+        candidate_decision: string;
+        change_kind: string;
+      }>;
+    }>(
+      harness,
+      "replay_policy_thresholds",
+      {
+        run_id: runId,
+        candidate_thresholds: [
+          {
+            action_family: "filesystem/write",
+            ask_below: 0.4,
+          },
+        ],
+        include_changed_samples: true,
+        sample_limit: 10,
+      },
+      sessionId,
+    );
+
+    expect(replayResponse.ok).toBe(true);
+    expect(replayResponse.result?.filters).toEqual({
+      run_id: runId,
+      include_changed_samples: true,
+      sample_limit: 10,
+    });
+    expect(replayResponse.result?.summary.replayable_samples).toBe(1);
+    expect(replayResponse.result?.summary.approvals_increased).toBe(1);
+    expect(replayResponse.result?.summary.historically_allowed_newly_gated).toBe(1);
+    expect(replayResponse.result?.changed_samples).toEqual([
+      expect.objectContaining({
+        action_id: action.action_id,
+        current_decision: "allow",
+        candidate_decision: "ask",
+        change_kind: "historical_allow_now_gated",
+      }),
+    ]);
+  });
+
+  it("applies policy threshold calibration maintenance and reloads workspace-generated policy", async () => {
+    fs.mkdirSync(TEST_TMP_ROOT, { recursive: true });
+    const seededRoot = fs.mkdtempSync(path.join(TEST_TMP_ROOT, "policy-threshold-calibration-"));
+    const seededWorkspacePolicyPath = path.join(seededRoot, "workspace", ".agentgit", "policy.toml");
+    fs.mkdirSync(path.dirname(seededWorkspacePolicyPath), { recursive: true });
+    fs.writeFileSync(
+      seededWorkspacePolicyPath,
+      [
+        'profile_name = "workspace-seeded-calibration-policy"',
+        'policy_version = "workspace-seeded-calibration-policy.v1"',
+        "rules = []",
+        "",
+        "[thresholds]",
+        'low_confidence = [{ action_family = "shell/exec", ask_below = 0.0 }]',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const harness = await createHarness(seededRoot);
     const { sessionId, runId } = await createSessionAndRun(harness, "policy-threshold-calibration-maintenance");
 
     const baselinePolicyResponse = await sendRequest<{
@@ -2169,7 +2311,9 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       baselinePolicyResponse.result?.policy.thresholds?.low_confidence.find(
         (entry) => entry.action_family === "shell/exec",
       )?.ask_below ?? null;
-    expect(typeof baselineShellThreshold).toBe("number");
+    if (baselineShellThreshold !== null) {
+      expect(typeof baselineShellThreshold).toBe("number");
+    }
     expect(
       baselinePolicyResponse.result?.summary.loaded_sources.some((source) => source.scope === "workspace_generated"),
     ).toBe(false);
@@ -2288,7 +2432,11 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
         (entry) => entry.action_family === "shell/exec",
       )?.ask_below ?? null;
     expect(typeof updatedShellThreshold).toBe("number");
-    expect((updatedShellThreshold as number) > (baselineShellThreshold as number)).toBe(true);
+    expect(
+      baselineShellThreshold === null
+        ? (updatedShellThreshold as number) > 0
+        : (updatedShellThreshold as number) > baselineShellThreshold,
+    ).toBe(true);
     expect(effectivePolicyResponse.result?.summary.loaded_sources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

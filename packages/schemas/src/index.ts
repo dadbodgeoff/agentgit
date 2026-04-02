@@ -23,6 +23,7 @@ export const DaemonMethodSchema = z.enum([
   "get_policy_calibration_report",
   "explain_policy_action",
   "get_policy_threshold_recommendations",
+  "replay_policy_thresholds",
   "list_mcp_servers",
   "list_mcp_server_candidates",
   "submit_mcp_server_candidate",
@@ -1824,6 +1825,37 @@ export const PolicyCalibrationActionFamilyBucketSchema = z
     recovery_attempted_count: z.number().int().nonnegative(),
     approval_rate: z.number().min(0).max(1).nullable(),
     denial_rate: z.number().min(0).max(1).nullable(),
+    calibration: z
+      .object({
+        resolved_sample_count: z.number().int().nonnegative(),
+        pending_sample_count: z.number().int().nonnegative(),
+        approved_count: z.number().int().nonnegative(),
+        denied_count: z.number().int().nonnegative(),
+        mean_confidence: z.number().min(0).max(1).nullable(),
+        mean_observed_approval_rate: z.number().min(0).max(1).nullable(),
+        brier_score: z.number().min(0).max(1).nullable(),
+        expected_calibration_error: z.number().min(0).max(1).nullable(),
+        max_calibration_error: z.number().min(0).max(1).nullable(),
+        bins: z.array(
+          z
+            .object({
+              confidence_floor: z.number().min(0).max(1),
+              confidence_ceiling: z.number().min(0).max(1),
+              sample_count: z.number().int().nonnegative(),
+              resolved_sample_count: z.number().int().nonnegative(),
+              pending_sample_count: z.number().int().nonnegative(),
+              approved_count: z.number().int().nonnegative(),
+              denied_count: z.number().int().nonnegative(),
+              average_confidence: z.number().min(0).max(1).nullable(),
+              approval_rate: z.number().min(0).max(1).nullable(),
+              approval_rate_lower_bound: z.number().min(0).max(1).nullable(),
+              approval_rate_upper_bound: z.number().min(0).max(1).nullable(),
+              absolute_gap: z.number().min(0).max(1).nullable(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
   })
   .strict();
 export type PolicyCalibrationActionFamilyBucket = z.infer<typeof PolicyCalibrationActionFamilyBucketSchema>;
@@ -1846,6 +1878,37 @@ export const PolicyCalibrationReportSchema = z
         decisions: PolicyCalibrationDecisionCountsSchema,
         approvals: PolicyCalibrationApprovalCountsSchema,
         recovery_attempted_count: z.number().int().nonnegative(),
+        calibration: z
+          .object({
+            resolved_sample_count: z.number().int().nonnegative(),
+            pending_sample_count: z.number().int().nonnegative(),
+            approved_count: z.number().int().nonnegative(),
+            denied_count: z.number().int().nonnegative(),
+            mean_confidence: z.number().min(0).max(1).nullable(),
+            mean_observed_approval_rate: z.number().min(0).max(1).nullable(),
+            brier_score: z.number().min(0).max(1).nullable(),
+            expected_calibration_error: z.number().min(0).max(1).nullable(),
+            max_calibration_error: z.number().min(0).max(1).nullable(),
+            bins: z.array(
+              z
+                .object({
+                  confidence_floor: z.number().min(0).max(1),
+                  confidence_ceiling: z.number().min(0).max(1),
+                  sample_count: z.number().int().nonnegative(),
+                  resolved_sample_count: z.number().int().nonnegative(),
+                  pending_sample_count: z.number().int().nonnegative(),
+                  approved_count: z.number().int().nonnegative(),
+                  denied_count: z.number().int().nonnegative(),
+                  average_confidence: z.number().min(0).max(1).nullable(),
+                  approval_rate: z.number().min(0).max(1).nullable(),
+                  approval_rate_lower_bound: z.number().min(0).max(1).nullable(),
+                  approval_rate_upper_bound: z.number().min(0).max(1).nullable(),
+                  absolute_gap: z.number().min(0).max(1).nullable(),
+                })
+                .strict(),
+            ),
+          })
+          .strict(),
       })
       .strict(),
     action_families: z.array(PolicyCalibrationActionFamilyBucketSchema),
@@ -2403,6 +2466,102 @@ export const GetPolicyThresholdRecommendationsResponsePayloadSchema = z
 export type GetPolicyThresholdRecommendationsResponsePayload = z.infer<
   typeof GetPolicyThresholdRecommendationsResponsePayloadSchema
 >;
+
+export const PolicyThresholdReplayFamilySummarySchema = z
+  .object({
+    action_family: z.string().min(1),
+    current_ask_below: z.number().min(0).max(1).nullable(),
+    candidate_ask_below: z.number().min(0).max(1).nullable(),
+    replayable_samples: z.number().int().nonnegative(),
+    skipped_samples: z.number().int().nonnegative(),
+    changed_decisions: z.number().int().nonnegative(),
+    unchanged_decisions: z.number().int().nonnegative(),
+    current_approvals_requested: z.number().int().nonnegative(),
+    candidate_approvals_requested: z.number().int().nonnegative(),
+    approvals_reduced: z.number().int().nonnegative(),
+    approvals_increased: z.number().int().nonnegative(),
+    historically_denied_auto_allowed: z.number().int().nonnegative(),
+    historically_approved_auto_allowed: z.number().int().nonnegative(),
+    historically_allowed_newly_gated: z.number().int().nonnegative(),
+    current_matches_recorded: z.number().int().nonnegative(),
+    current_diverges_from_recorded: z.number().int().nonnegative(),
+  })
+  .strict();
+export type PolicyThresholdReplayFamilySummary = z.infer<typeof PolicyThresholdReplayFamilySummarySchema>;
+
+export const PolicyThresholdReplayChangeKindSchema = z.enum([
+  "approval_removed",
+  "approval_added",
+  "unsafe_auto_allow",
+  "historical_allow_now_gated",
+  "decision_changed",
+]);
+export type PolicyThresholdReplayChangeKind = z.infer<typeof PolicyThresholdReplayChangeKindSchema>;
+
+export const PolicyThresholdReplayChangedSampleSchema = z
+  .object({
+    run_id: z.string().min(1),
+    action_id: z.string().min(1),
+    evaluated_at: TimestampStringSchema,
+    action_family: z.string().min(1),
+    confidence_score: z.number().min(0).max(1),
+    recorded_decision: PolicyDecisionSchema,
+    current_decision: PolicyDecisionSchema,
+    candidate_decision: PolicyDecisionSchema,
+    approval_status: z.enum(["pending", "approved", "denied"]).nullable(),
+    current_confidence_triggered: z.boolean(),
+    candidate_confidence_triggered: z.boolean(),
+    change_kind: PolicyThresholdReplayChangeKindSchema,
+    summary: z.string().min(1),
+  })
+  .strict();
+export type PolicyThresholdReplayChangedSample = z.infer<typeof PolicyThresholdReplayChangedSampleSchema>;
+
+export const GetPolicyThresholdReplayRequestPayloadSchema = z
+  .object({
+    run_id: z.string().min(1).optional(),
+    candidate_thresholds: z.array(PolicyLowConfidenceThresholdSchema),
+    include_changed_samples: z.boolean().optional(),
+    sample_limit: z.number().int().positive().max(1_000).optional(),
+  })
+  .strict();
+export type GetPolicyThresholdReplayRequestPayload = z.infer<typeof GetPolicyThresholdReplayRequestPayloadSchema>;
+
+export const GetPolicyThresholdReplayResponsePayloadSchema = z
+  .object({
+    generated_at: TimestampStringSchema,
+    filters: z
+      .object({
+        run_id: z.string().min(1).nullable(),
+        include_changed_samples: z.boolean(),
+        sample_limit: z.number().int().positive().nullable(),
+      })
+      .strict(),
+    effective_policy_profile: z.string().min(1),
+    candidate_thresholds: z.array(PolicyLowConfidenceThresholdSchema),
+    summary: z
+      .object({
+        replayable_samples: z.number().int().nonnegative(),
+        skipped_samples: z.number().int().nonnegative(),
+        changed_decisions: z.number().int().nonnegative(),
+        unchanged_decisions: z.number().int().nonnegative(),
+        current_approvals_requested: z.number().int().nonnegative(),
+        candidate_approvals_requested: z.number().int().nonnegative(),
+        approvals_reduced: z.number().int().nonnegative(),
+        approvals_increased: z.number().int().nonnegative(),
+        historically_denied_auto_allowed: z.number().int().nonnegative(),
+        historically_approved_auto_allowed: z.number().int().nonnegative(),
+        historically_allowed_newly_gated: z.number().int().nonnegative(),
+        current_matches_recorded: z.number().int().nonnegative(),
+        current_diverges_from_recorded: z.number().int().nonnegative(),
+      })
+      .strict(),
+    action_families: z.array(PolicyThresholdReplayFamilySummarySchema),
+    changed_samples: z.array(PolicyThresholdReplayChangedSampleSchema).optional(),
+    samples_truncated: z.boolean(),
+  })
+  .strict();
+export type GetPolicyThresholdReplayResponsePayload = z.infer<typeof GetPolicyThresholdReplayResponsePayloadSchema>;
 
 export const ApprovalRequestSchema = z
   .object({

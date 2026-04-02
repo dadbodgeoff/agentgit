@@ -119,6 +119,199 @@ async function createFakeDaemon(
   return running;
 }
 
+interface InspectorWebSocketTestMessage extends Record<string, unknown> {
+  type?: string;
+  sequence?: number;
+  replayed?: boolean;
+}
+
+interface RawInspectorWebSocket {
+  socket: net.Socket;
+  messages: InspectorWebSocketTestMessage[];
+  waitFor(
+    predicate: (message: InspectorWebSocketTestMessage) => boolean,
+    timeoutMs?: number,
+  ): Promise<InspectorWebSocketTestMessage>;
+  close(): Promise<void>;
+}
+
+async function connectInspectorWebSocket(app: RunningHttpServer, requestPath: string): Promise<RawInspectorWebSocket> {
+  const address = app.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("HTTP server did not expose a TCP address.");
+  }
+
+  const socket = net.createConnection({
+    host: "127.0.0.1",
+    port: address.port,
+  });
+  const secWebSocketKey = Buffer.from(`agentgit-inspector-ws-test:${requestPath}`, "utf8").toString("base64");
+  const requestLines = [
+    `GET ${requestPath} HTTP/1.1`,
+    `Host: 127.0.0.1:${address.port}`,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Key: ${secWebSocketKey}`,
+    "Sec-WebSocket-Version: 13",
+    "\r\n",
+  ];
+
+  let buffer = Buffer.alloc(0);
+  let upgraded = false;
+  const messages: InspectorWebSocketTestMessage[] = [];
+  const waiters: Array<{
+    predicate: (message: InspectorWebSocketTestMessage) => boolean;
+    resolve: (message: InspectorWebSocketTestMessage) => void;
+    reject: (error: Error) => void;
+    timeout: NodeJS.Timeout;
+  }> = [];
+
+  const tryReadFrame = (): { opcode: number; payload: Buffer; bytes: number } | null => {
+    if (buffer.length < 2) {
+      return null;
+    }
+
+    const first = buffer[0];
+    const second = buffer[1];
+    const opcode = first & 0x0f;
+    let payloadLength = second & 0x7f;
+    let offset = 2;
+
+    if (payloadLength === 126) {
+      if (buffer.length < offset + 2) {
+        return null;
+      }
+      payloadLength = buffer.readUInt16BE(offset);
+      offset += 2;
+    } else if (payloadLength === 127) {
+      if (buffer.length < offset + 8) {
+        return null;
+      }
+      payloadLength = Number(buffer.readBigUInt64BE(offset));
+      offset += 8;
+    }
+
+    if (buffer.length < offset + payloadLength) {
+      return null;
+    }
+
+    return {
+      opcode,
+      payload: buffer.slice(offset, offset + payloadLength),
+      bytes: offset + payloadLength,
+    };
+  };
+
+  const resolveWaiters = (message: InspectorWebSocketTestMessage): void => {
+    for (let index = waiters.length - 1; index >= 0; index -= 1) {
+      const waiter = waiters[index]!;
+      if (!waiter.predicate(message)) {
+        continue;
+      }
+      clearTimeout(waiter.timeout);
+      waiters.splice(index, 1);
+      waiter.resolve(message);
+    }
+  };
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("Timed out waiting for websocket upgrade."));
+    }, 5_000);
+
+    socket.once("connect", () => {
+      socket.write(requestLines.join("\r\n"), "utf8");
+    });
+
+    socket.on("data", (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      if (!upgraded) {
+        const headerEnd = buffer.indexOf("\r\n\r\n");
+        if (headerEnd < 0) {
+          return;
+        }
+
+        const headerText = buffer.slice(0, headerEnd).toString("utf8");
+        if (!headerText.startsWith("HTTP/1.1 101")) {
+          clearTimeout(timeout);
+          socket.destroy();
+          reject(new Error(`Websocket upgrade failed: ${headerText.split("\r\n")[0] ?? headerText}`));
+          return;
+        }
+
+        upgraded = true;
+        buffer = buffer.slice(headerEnd + 4);
+        clearTimeout(timeout);
+        resolve();
+      }
+
+      while (upgraded) {
+        const frame = tryReadFrame();
+        if (!frame) {
+          return;
+        }
+
+        buffer = buffer.slice(frame.bytes);
+        if (frame.opcode !== 0x1) {
+          continue;
+        }
+
+        const message = JSON.parse(frame.payload.toString("utf8")) as InspectorWebSocketTestMessage;
+        messages.push(message);
+        resolveWaiters(message);
+      }
+    });
+
+    socket.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+
+  return {
+    socket,
+    messages,
+    waitFor(predicate, timeoutMs = 5_000) {
+      const existing = messages.find(predicate);
+      if (existing) {
+        return Promise.resolve(existing);
+      }
+
+      return new Promise<InspectorWebSocketTestMessage>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          const error = new Error("Timed out waiting for websocket message.");
+          for (let index = waiters.length - 1; index >= 0; index -= 1) {
+            if (waiters[index]?.timeout === timeout) {
+              waiters.splice(index, 1);
+              break;
+            }
+          }
+          reject(error);
+        }, timeoutMs);
+
+        waiters.push({ predicate, resolve, reject, timeout });
+      });
+    },
+    async close() {
+      for (const waiter of waiters.splice(0)) {
+        clearTimeout(waiter.timeout);
+        waiter.reject(new Error("Websocket closed before the expected message arrived."));
+      }
+
+      if (socket.destroyed) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        socket.once("close", () => resolve());
+        socket.end();
+      });
+    },
+  };
+}
+
 function successEnvelope(request: Record<string, unknown>, result: unknown): Record<string, unknown> {
   return {
     api_version: "authority.v1",
@@ -593,143 +786,34 @@ describe("inspector ui", () => {
     });
 
     const app = await listenHttp(createInspectorServer({ socketPath: daemon.socketPath }));
-    const address = app.server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("HTTP server did not expose a TCP address.");
-    }
+    const first = await connectInspectorWebSocket(app, "/ws?run_id=run_ws&visibility_scope=internal");
+    const hello = await first.waitFor((message) => message.type === "hello");
+    const overview = await first.waitFor((message) => message.type === "overview");
+    const runView = await first.waitFor((message) => message.type === "run_view");
+    const heartbeat = await first.waitFor((message) => message.type === "heartbeat");
 
-    const socket = net.createConnection({
-      host: "127.0.0.1",
-      port: address.port,
-    });
-    const secWebSocketKey = Buffer.from("agentgit-inspector-ws-test", "utf8").toString("base64");
-    const requestLines = [
-      "GET /ws?run_id=run_ws&visibility_scope=internal HTTP/1.1",
-      `Host: 127.0.0.1:${address.port}`,
-      "Upgrade: websocket",
-      "Connection: Upgrade",
-      `Sec-WebSocket-Key: ${secWebSocketKey}`,
-      "Sec-WebSocket-Version: 13",
-      "\r\n",
-    ];
+    expect(hello.heartbeat_interval_ms).toBe(2000);
+    expect(hello.replayed_messages).toBe(0);
+    expect(typeof overview.sequence).toBe("number");
+    expect(typeof runView.sequence).toBe("number");
+    expect(Number(runView.sequence)).toBeGreaterThan(Number(overview.sequence));
+    expect(typeof heartbeat.sequence).toBe("number");
 
-    const receivedTypes = new Set<string>();
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        socket.destroy();
-        reject(new Error("Timed out waiting for websocket inspector payloads."));
-      }, 5_000);
-      let buffer = Buffer.alloc(0);
-      let upgraded = false;
+    const resumed = await connectInspectorWebSocket(
+      app,
+      `/ws?run_id=run_ws&visibility_scope=internal&last_sequence=${String(overview.sequence)}`,
+    );
+    const replayedRunView = await resumed.waitFor(
+      (message) => message.type === "run_view" && message.replayed === true,
+    );
+    const resumedHello = await resumed.waitFor((message) => message.type === "hello");
 
-      const tryReadFrame = (): { opcode: number; payload: Buffer; bytes: number } | null => {
-        if (buffer.length < 2) {
-          return null;
-        }
-        const first = buffer[0];
-        const second = buffer[1];
-        const opcode = first & 0x0f;
-        let payloadLength = second & 0x7f;
-        let offset = 2;
+    expect(replayedRunView.sequence).toBe(runView.sequence);
+    expect(resumedHello.replayed_messages).toBeGreaterThanOrEqual(1);
 
-        if (payloadLength === 126) {
-          if (buffer.length < offset + 2) {
-            return null;
-          }
-          payloadLength = buffer.readUInt16BE(offset);
-          offset += 2;
-        } else if (payloadLength === 127) {
-          if (buffer.length < offset + 8) {
-            return null;
-          }
-          payloadLength = Number(buffer.readBigUInt64BE(offset));
-          offset += 8;
-        }
+    await first.close();
+    await resumed.close();
 
-        if (buffer.length < offset + payloadLength) {
-          return null;
-        }
-
-        const payload = buffer.slice(offset, offset + payloadLength);
-        return {
-          opcode,
-          payload,
-          bytes: offset + payloadLength,
-        };
-      };
-
-      socket.once("connect", () => {
-        socket.write(requestLines.join("\r\n"), "utf8");
-      });
-
-      socket.on("data", (chunk) => {
-        buffer = Buffer.concat([buffer, chunk]);
-
-        if (!upgraded) {
-          const headerEnd = buffer.indexOf("\r\n\r\n");
-          if (headerEnd < 0) {
-            return;
-          }
-
-          const headerText = buffer.slice(0, headerEnd).toString("utf8");
-          if (!headerText.startsWith("HTTP/1.1 101")) {
-            clearTimeout(timeout);
-            socket.destroy();
-            reject(new Error(`Websocket upgrade failed: ${headerText.split("\r\n")[0] ?? headerText}`));
-            return;
-          }
-
-          upgraded = true;
-          buffer = buffer.slice(headerEnd + 4);
-        }
-
-        while (upgraded) {
-          const frame = tryReadFrame();
-          if (!frame) {
-            return;
-          }
-
-          buffer = buffer.slice(frame.bytes);
-          if (frame.opcode !== 0x1) {
-            continue;
-          }
-
-          try {
-            const message = JSON.parse(frame.payload.toString("utf8")) as { type?: string; message?: string };
-            if (message.type === "error") {
-              clearTimeout(timeout);
-              socket.destroy();
-              reject(new Error(`Websocket stream error payload: ${message.message ?? "unknown error"}`));
-              return;
-            }
-            if (typeof message.type === "string") {
-              receivedTypes.add(message.type);
-            }
-            if (receivedTypes.has("overview") && receivedTypes.has("run_view")) {
-              clearTimeout(timeout);
-              socket.end();
-              resolve();
-              return;
-            }
-          } catch (error) {
-            clearTimeout(timeout);
-            socket.destroy();
-            reject(error);
-            return;
-          }
-        }
-      });
-
-      socket.once("error", (error) => {
-        clearTimeout(timeout);
-        socket.destroy();
-        reject(error);
-      });
-    });
-    socket.destroy();
-
-    expect(receivedTypes.has("overview")).toBe(true);
-    expect(receivedTypes.has("run_view")).toBe(true);
     expect(requests.some((entry) => entry.method === "diagnostics")).toBe(true);
     expect(requests.some((entry) => entry.method === "get_capabilities")).toBe(true);
     expect(requests.some((entry) => entry.method === "query_timeline")).toBe(true);

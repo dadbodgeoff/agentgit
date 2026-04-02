@@ -2,7 +2,7 @@
   "name": "agentgit",
   "private": true,
   "packageManager": "pnpm@10.33.0",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=24.14.0",
     "pnpm": ">=10.33.0"
@@ -10,7 +10,7 @@
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
-    "test:coverage": "turbo run test --filter=!@agentgit/schemas --filter=!@agentgit/test-fixtures -- --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=json-summary --coverage.reporter=lcov --coverage.thresholds.lines=30 --coverage.thresholds.functions=30 --coverage.thresholds.statements=30 --coverage.thresholds.branches=20 && pnpm --filter @agentgit/schemas test",
+    "test:coverage": "turbo run test --filter=!@agentgit/schemas --filter=!@agentgit/test-fixtures -- --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=json-summary --coverage.reporter=lcov --coverage.thresholds.lines=50 --coverage.thresholds.functions=50 --coverage.thresholds.statements=50 --coverage.thresholds.branches=40 && pnpm --filter @agentgit/schemas test",
     "typecheck": "turbo run typecheck",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
@@ -41,6 +41,7 @@
     "@changesets/cli": "^2.29.7",
     "@types/node": "^24.6.0",
     "@vitest/coverage-v8": "^4.0.8",
+    "esbuild": "^0.25.11",
     "eslint": "^9.39.1",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^16.5.0",

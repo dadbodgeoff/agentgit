@@ -9,6 +9,7 @@ import {
   compilePolicyPack,
   DEFAULT_POLICY_PACK,
   evaluatePolicy,
+  replayPolicyThresholds,
   recommendPolicyThresholds,
   type PolicyEvaluationContext,
 } from "./index.js";
@@ -32,7 +33,27 @@ const deterministicFixture: DeterministicPolicyFixture = JSON.parse(
   fs.readFileSync(path.resolve(fileURLToPath(deterministicFixturePath)), "utf8"),
 ) as DeterministicPolicyFixture;
 
+function makeConfidenceAssessment(score: number): ActionRecord["confidence_assessment"] {
+  return {
+    engine_version: "test-confidence/v1",
+    score,
+    band: score >= 0.85 ? "high" : score >= 0.65 ? "guarded" : "low",
+    requires_human_review: score < 0.65,
+    factors: [
+      {
+        factor_id: "test_baseline",
+        label: "Test baseline",
+        kind: "baseline",
+        delta: score,
+        rationale: "Test confidence baseline.",
+      },
+    ],
+  };
+}
+
 function makeAction(overrides: Partial<ActionRecord> = {}): ActionRecord {
+  const confidenceScore =
+    overrides.confidence_assessment?.score ?? overrides.normalization?.normalization_confidence ?? 0.99;
   return {
     schema_version: "action.v1",
     action_id: "act_test",
@@ -103,6 +124,7 @@ function makeAction(overrides: Partial<ActionRecord> = {}): ActionRecord {
       warnings: [],
       normalization_confidence: 0.99,
     },
+    confidence_assessment: makeConfidenceAssessment(confidenceScore),
     ...overrides,
   };
 }
@@ -1272,6 +1294,7 @@ describe("evaluatePolicy", () => {
           action_family: "shell/exec",
           decision: "ask",
           normalization_confidence: 0.42,
+          confidence_score: 0.42,
           matched_rules: [],
           reason_codes: [],
           snapshot_class: null,
@@ -1292,6 +1315,7 @@ describe("evaluatePolicy", () => {
           action_family: "shell/exec",
           decision: "ask",
           normalization_confidence: 0.34,
+          confidence_score: 0.34,
           matched_rules: [],
           reason_codes: [],
           snapshot_class: null,
@@ -1391,6 +1415,7 @@ describe("evaluatePolicy", () => {
           action_family: "function/invoke",
           decision: "ask",
           normalization_confidence: 0.45,
+          confidence_score: 0.45,
           matched_rules: [],
           reason_codes: [],
           snapshot_class: null,
@@ -1411,6 +1436,7 @@ describe("evaluatePolicy", () => {
           action_family: "function/invoke",
           decision: "ask",
           normalization_confidence: 0.46,
+          confidence_score: 0.46,
           matched_rules: [],
           reason_codes: [],
           snapshot_class: null,
@@ -1441,6 +1467,65 @@ describe("evaluatePolicy", () => {
         automatic_live_application_allowed: false,
       }),
     );
+  });
+
+  it("replays candidate thresholds against recorded actions", () => {
+    const action = makeAction({
+      action_id: "act_replay",
+      normalization: {
+        mapper: "test",
+        inferred_fields: [],
+        warnings: [],
+        normalization_confidence: 0.35,
+      },
+      confidence_assessment: makeConfidenceAssessment(0.35),
+      facets: {
+        filesystem: {
+          operation: "write",
+          byte_length: 64,
+        },
+      },
+    });
+
+    const replay = replayPolicyThresholds(
+      [
+        {
+          run_id: "run_policy",
+          action_id: "act_replay",
+          evaluated_at: "2026-04-01T12:00:00.000Z",
+          action_family: "filesystem/write",
+          recorded_decision: "allow",
+          approval_status: null,
+          confidence_score: 0.35,
+          low_confidence_threshold: 0.3,
+          confidence_triggered: false,
+          action,
+        },
+      ],
+      compilePolicyPack([DEFAULT_POLICY_PACK]),
+      [
+        {
+          action_family: "filesystem/write",
+          ask_below: 0.4,
+        },
+      ],
+      {
+        include_changed_samples: true,
+      },
+    );
+
+    expect(replay.summary.changed_decisions).toBe(1);
+    expect(replay.summary.approvals_increased).toBe(1);
+    expect(replay.summary.historically_allowed_newly_gated).toBe(1);
+    expect(replay.changed_samples).toEqual([
+      expect.objectContaining({
+        action_id: "act_replay",
+        current_decision: "allow",
+        candidate_decision: "ask",
+        change_kind: "historical_allow_now_gated",
+        candidate_confidence_triggered: true,
+      }),
+    ]);
   });
 
   it("should set snapshot_required true when decision is allow_with_snapshot", () => {

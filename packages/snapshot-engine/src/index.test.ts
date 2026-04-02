@@ -13,6 +13,24 @@ import { LocalSnapshotEngine, selectSnapshotClass } from "./index.js";
 let tempDir: string | null = null;
 const tempDirs = createTempDirTracker("agentgit-snapshot-");
 
+function makeConfidenceAssessment(score: number, label = "Test baseline"): ActionRecord["confidence_assessment"] {
+  return {
+    engine_version: "test-confidence/v1",
+    score,
+    band: score >= 0.85 ? "high" : score >= 0.65 ? "guarded" : "low",
+    requires_human_review: score < 0.65,
+    factors: [
+      {
+        factor_id: "test_baseline",
+        label,
+        kind: "baseline",
+        delta: score,
+        rationale: "Test confidence baseline.",
+      },
+    ],
+  };
+}
+
 function makeAction(targetPath: string): ActionRecord {
   return {
     schema_version: "action.v1",
@@ -80,6 +98,7 @@ function makeAction(targetPath: string): ActionRecord {
       warnings: [],
       normalization_confidence: 0.99,
     },
+    confidence_assessment: makeConfidenceAssessment(0.99),
   };
 }
 
@@ -155,6 +174,7 @@ function makeShellAction(workspaceRoot: string): ActionRecord {
       warnings: [],
       normalization_confidence: 0.92,
     },
+    confidence_assessment: makeConfidenceAssessment(0.76),
   };
 }
 
@@ -226,6 +246,7 @@ function makeFunctionAction(workspaceRoot: string): ActionRecord {
       warnings: [],
       normalization_confidence: 0.95,
     },
+    confidence_assessment: makeConfidenceAssessment(0.95),
   };
 }
 
@@ -250,7 +271,7 @@ describe("LocalSnapshotEngine", () => {
     expect(selection.reason_codes).toContain("snapshot.narrow_reversible_mutation");
   });
 
-  it("selects journal_plus_anchor for shell workspace mutations", () => {
+  it("selects exact_anchor for shell workspace mutations with remote side effects", () => {
     const selection = selectSnapshotClass({
       action: makeShellAction("/tmp/workspace"),
       policy_decision: "allow_with_snapshot",
@@ -258,8 +279,8 @@ describe("LocalSnapshotEngine", () => {
       journal_chain_depth: 6,
     });
 
-    expect(selection.snapshot_class).toBe("journal_plus_anchor");
-    expect(selection.reason_codes).toContain("snapshot.shell_mutation_boundary");
+    expect(selection.snapshot_class).toBe("exact_anchor");
+    expect(selection.reason_codes).toContain("snapshot.remote_side_effect_branch_point");
   });
 
   it("selects exact_anchor for package-manager style branch points", () => {
@@ -302,6 +323,22 @@ describe("LocalSnapshotEngine", () => {
 
     expect(selection.snapshot_class).toBe("journal_plus_anchor");
     expect(selection.reason_codes).toContain("snapshot.capability_state_strengthened");
+  });
+
+  it("strengthens low-confidence mutations to exact_anchor", () => {
+    const action = makeAction("/tmp/workspace/file.txt");
+    action.confidence_assessment = makeConfidenceAssessment(0.32, "Low confidence");
+
+    const selection = selectSnapshotClass({
+      action,
+      policy_decision: "allow_with_snapshot",
+      capability_state: "healthy",
+      journal_chain_depth: 2,
+    });
+
+    expect(selection.snapshot_class).toBe("exact_anchor");
+    expect(selection.reason_codes).toContain("snapshot.low_confidence_branch_point");
+    expect(selection.basis.confidence_score).toBe(0.32);
   });
 
   it("captures and restores a preexisting file", async () => {

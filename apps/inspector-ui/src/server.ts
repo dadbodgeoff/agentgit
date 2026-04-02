@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import net from "node:net";
+import { type Duplex } from "node:stream";
 import { URL } from "node:url";
 
 import { AuthorityClient, AuthorityClientTransportError, AuthorityDaemonResponseError } from "@agentgit/authority-sdk";
@@ -17,6 +17,9 @@ export interface InspectorServerOptions {
 const DEFAULT_PORT = Number(process.env.AGENTGIT_INSPECTOR_PORT ?? "4317");
 const DEFAULT_HOST = process.env.AGENTGIT_INSPECTOR_HOST ?? "127.0.0.1";
 const WS_POLL_INTERVAL_MS = 2_000;
+const WS_HEARTBEAT_INTERVAL_MS = 2_000;
+const WS_MAX_PENDING_BYTES = 512 * 1024;
+const WS_REPLAY_BUFFER_LIMIT = 128;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const VISIBILITY_SCOPES = new Set<VisibilityScope>(["user", "model", "internal", "sensitive_internal"]);
 const HELPER_QUESTION_TYPES = new Set<HelperQuestionType>([
@@ -612,7 +615,11 @@ function renderInspectorHtml(title: string): string {
         socket: null,
         reconnectTimer: null,
         reconnectAttempt: 0,
-        reconnectEnabled: true
+        reconnectEnabled: true,
+        heartbeatTimer: null,
+        lastSequence: 0,
+        lastOverviewDigest: null,
+        lastRunViewDigest: null
       };
 
       async function fetchJson(url, options) {
@@ -847,6 +854,9 @@ function renderInspectorHtml(title: string): string {
           base.searchParams.set('run_id', state.runId);
         }
         base.searchParams.set('visibility_scope', state.visibilityScope);
+        if (streamState.lastSequence > 0) {
+          base.searchParams.set('last_sequence', String(streamState.lastSequence));
+        }
         base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
         return base.toString();
       }
@@ -856,6 +866,25 @@ function renderInspectorHtml(title: string): string {
           clearTimeout(streamState.reconnectTimer);
           streamState.reconnectTimer = null;
         }
+      }
+
+      function clearHeartbeatTimer() {
+        if (streamState.heartbeatTimer) {
+          clearTimeout(streamState.heartbeatTimer);
+          streamState.heartbeatTimer = null;
+        }
+      }
+
+      function touchLiveStream(socket) {
+        if (streamState.socket !== socket) {
+          return;
+        }
+        clearHeartbeatTimer();
+        streamState.heartbeatTimer = setTimeout(function () {
+          if (streamState.socket === socket) {
+            socket.close();
+          }
+        }, 7_500);
       }
 
       function connectLiveStream() {
@@ -868,6 +897,7 @@ function renderInspectorHtml(title: string): string {
             return;
           }
           streamState.reconnectAttempt = 0;
+          touchLiveStream(socket);
         });
 
         socket.addEventListener('message', function (event) {
@@ -881,12 +911,38 @@ function renderInspectorHtml(title: string): string {
             return;
           }
 
+          touchLiveStream(socket);
+          if (typeof message.sequence === 'number') {
+            if (message.sequence <= streamState.lastSequence) {
+              return;
+            }
+            streamState.lastSequence = message.sequence;
+          }
+
+          if (message.type === 'hello' || message.type === 'heartbeat') {
+            return;
+          }
+
           if (message.type === 'overview' && message.payload) {
+            const overviewDigest = JSON.stringify(message.payload);
+            if (overviewDigest === streamState.lastOverviewDigest) {
+              return;
+            }
+            streamState.lastOverviewDigest = overviewDigest;
             applyOverview(message.payload);
             return;
           }
 
           if (message.type === 'run_view' && message.payload && typeof message.run_id === 'string') {
+            const runViewDigest = JSON.stringify({
+              run_id: message.run_id,
+              visibility_scope: message.visibility_scope || null,
+              payload: message.payload
+            });
+            if (runViewDigest === streamState.lastRunViewDigest) {
+              return;
+            }
+            streamState.lastRunViewDigest = runViewDigest;
             const selectionChanged = applyRunView(message.run_id, message.payload, true);
             if (selectionChanged) {
               loadSelectedStep().catch(function (error) {
@@ -906,6 +962,7 @@ function renderInspectorHtml(title: string): string {
             return;
           }
           streamState.socket = null;
+          clearHeartbeatTimer();
           if (!streamState.reconnectEnabled) {
             return;
           }
@@ -928,6 +985,7 @@ function renderInspectorHtml(title: string): string {
       function restartLiveStream() {
         streamState.reconnectEnabled = true;
         clearReconnectTimer();
+        clearHeartbeatTimer();
         const existingSocket = streamState.socket;
         streamState.socket = null;
         if (existingSocket && (existingSocket.readyState === WebSocket.OPEN || existingSocket.readyState === WebSocket.CONNECTING)) {
@@ -1024,6 +1082,7 @@ function renderInspectorHtml(title: string): string {
 
       window.addEventListener('beforeunload', function () {
         streamState.reconnectEnabled = false;
+        clearHeartbeatTimer();
         clearReconnectTimer();
         if (streamState.socket) {
           streamState.socket.close();
@@ -1222,21 +1281,41 @@ function payloadDigest(payload: unknown): string {
 }
 
 interface InspectorWebSocketClientState {
-  socket: net.Socket;
+  socket: Duplex;
   runId: string | null;
   visibilityScope: VisibilityScope | undefined;
   interval: NodeJS.Timeout;
   inFlight: boolean;
   closed: boolean;
+  lastSentAt: number;
   lastOverviewDigest: string | null;
   lastRunViewDigest: string | null;
   lastErrorDigest: string | null;
+}
+
+interface InspectorWebSocketEventEnvelope {
+  type: string;
+  sequence: number;
+  emitted_at: string;
+  replayed?: boolean;
+  run_id?: string | null;
+  visibility_scope?: VisibilityScope | null;
+  payload?: unknown;
+  message?: string;
+}
+
+interface InspectorWebSocketHistoryEntry {
+  envelope: InspectorWebSocketEventEnvelope;
+  runId: string | null;
+  visibilityScope: VisibilityScope | undefined;
 }
 
 export function createInspectorServer(options: InspectorServerOptions = {}): http.Server {
   const socketPath = options.socketPath ?? process.env.AGENTGIT_SOCKET_PATH;
   const title = options.title ?? "AgentGit Inspector";
   const wsClients = new Set<InspectorWebSocketClientState>();
+  const wsHistory: InspectorWebSocketHistoryEntry[] = [];
+  let wsSequence = 0;
 
   const server = http.createServer(async (request, response) => {
     try {
@@ -1365,10 +1444,77 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
     }
 
     try {
-      client.socket.write(encodeWebSocketTextFrame(JSON.stringify(payload)));
+      if (
+        client.socket.destroyed ||
+        client.socket.writableEnded ||
+        client.socket.writableLength > WS_MAX_PENDING_BYTES
+      ) {
+        closeWsClient(client);
+        return;
+      }
+
+      const frame = encodeWebSocketTextFrame(JSON.stringify(payload));
+      const accepted = client.socket.write(frame);
+      client.lastSentAt = Date.now();
+      if (!accepted && client.socket.writableLength > WS_MAX_PENDING_BYTES) {
+        closeWsClient(client);
+      }
     } catch {
       closeWsClient(client);
     }
+  };
+
+  const sendWsEvent = (
+    client: InspectorWebSocketClientState,
+    payload: Omit<InspectorWebSocketEventEnvelope, "sequence" | "emitted_at">,
+    recordHistory = true,
+  ): void => {
+    const envelope: InspectorWebSocketEventEnvelope = {
+      ...payload,
+      sequence: (wsSequence += 1),
+      emitted_at: new Date().toISOString(),
+    };
+
+    if (recordHistory) {
+      wsHistory.push({
+        envelope,
+        runId: client.runId,
+        visibilityScope: client.visibilityScope,
+      });
+      if (wsHistory.length > WS_REPLAY_BUFFER_LIMIT) {
+        wsHistory.splice(0, wsHistory.length - WS_REPLAY_BUFFER_LIMIT);
+      }
+    }
+
+    sendWsJson(client, envelope);
+  };
+
+  const replayWsHistory = (client: InspectorWebSocketClientState, lastSequence: number | null): number => {
+    if (lastSequence === null) {
+      return 0;
+    }
+
+    let replayedCount = 0;
+    for (const entry of wsHistory) {
+      if (entry.envelope.sequence <= lastSequence) {
+        continue;
+      }
+      if (entry.envelope.type === "run_view") {
+        if (entry.runId !== client.runId || entry.visibilityScope !== client.visibilityScope) {
+          continue;
+        }
+      } else if (entry.envelope.type !== "overview") {
+        continue;
+      }
+
+      sendWsJson(client, {
+        ...entry.envelope,
+        replayed: true,
+      });
+      replayedCount += 1;
+    }
+
+    return replayedCount;
   };
 
   const publishWsSnapshot = async (client: InspectorWebSocketClientState): Promise<void> => {
@@ -1382,10 +1528,9 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       const overviewDigest = payloadDigest(overview);
       if (overviewDigest !== client.lastOverviewDigest) {
         client.lastOverviewDigest = overviewDigest;
-        sendWsJson(client, {
+        sendWsEvent(client, {
           type: "overview",
           payload: overview,
-          emitted_at: new Date().toISOString(),
         });
       }
 
@@ -1394,12 +1539,11 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
         const runViewDigest = payloadDigest(runView);
         if (runViewDigest !== client.lastRunViewDigest) {
           client.lastRunViewDigest = runViewDigest;
-          sendWsJson(client, {
+          sendWsEvent(client, {
             type: "run_view",
             run_id: client.runId,
             visibility_scope: client.visibilityScope ?? null,
             payload: runView,
-            emitted_at: new Date().toISOString(),
           });
         }
       }
@@ -1409,19 +1553,29 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       const errorPayload = {
         type: "error",
         message: error instanceof Error ? error.message : String(error),
-        emitted_at: new Date().toISOString(),
       };
       const digest = payloadDigest(errorPayload);
       if (digest !== client.lastErrorDigest) {
         client.lastErrorDigest = digest;
-        sendWsJson(client, errorPayload);
+        sendWsEvent(client, errorPayload, false);
       }
     } finally {
+      if (!client.closed && Date.now() - client.lastSentAt >= WS_HEARTBEAT_INTERVAL_MS) {
+        sendWsEvent(
+          client,
+          {
+            type: "heartbeat",
+            run_id: client.runId,
+            visibility_scope: client.visibilityScope ?? null,
+          },
+          false,
+        );
+      }
       client.inFlight = false;
     }
   };
 
-  const rejectUpgrade = (socket: net.Socket, statusLine: string, message: string): void => {
+  const rejectUpgrade = (socket: Duplex, statusLine: string, message: string): void => {
     if (socket.destroyed) {
       return;
     }
@@ -1474,6 +1628,9 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       const runId = runIdParam && runIdParam.trim().length > 0 ? runIdParam.trim() : null;
       const visibilityScopeParam = url.searchParams.get("visibility_scope");
       const visibilityScope = isVisibilityScope(visibilityScopeParam) ? visibilityScopeParam : undefined;
+      const lastSequenceParam = url.searchParams.get("last_sequence");
+      const lastSequence =
+        typeof lastSequenceParam === "string" && /^\d+$/.test(lastSequenceParam) ? Number(lastSequenceParam) : null;
       const accept = websocketAcceptValue(key.trim());
 
       socket.write(
@@ -1489,6 +1646,12 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       if (head.length > 0) {
         socket.unshift(head);
       }
+      if ("setNoDelay" in socket && typeof socket.setNoDelay === "function") {
+        socket.setNoDelay(true);
+      }
+      if ("setKeepAlive" in socket && typeof socket.setKeepAlive === "function") {
+        socket.setKeepAlive(true, WS_HEARTBEAT_INTERVAL_MS);
+      }
       socket.on("data", () => undefined);
 
       const interval = setInterval(() => {
@@ -1501,11 +1664,24 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
         interval,
         inFlight: false,
         closed: false,
+        lastSentAt: Date.now(),
         lastOverviewDigest: null,
         lastRunViewDigest: null,
         lastErrorDigest: null,
       };
       wsClients.add(clientState);
+      const replayedCount = replayWsHistory(clientState, lastSequence);
+      sendWsJson(clientState, {
+        type: "hello",
+        heartbeat_interval_ms: WS_HEARTBEAT_INTERVAL_MS,
+        poll_interval_ms: WS_POLL_INTERVAL_MS,
+        latest_sequence: wsSequence,
+        resumed_from: lastSequence,
+        replayed_messages: replayedCount,
+        run_id: runId,
+        visibility_scope: visibilityScope ?? null,
+        emitted_at: new Date().toISOString(),
+      });
 
       socket.on("error", () => {
         closeWsClient(clientState);

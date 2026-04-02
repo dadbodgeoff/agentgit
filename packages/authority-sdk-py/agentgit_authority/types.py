@@ -19,6 +19,7 @@ MethodName: TypeAlias = Literal[
     "get_policy_calibration_report",
     "explain_policy_action",
     "get_policy_threshold_recommendations",
+    "replay_policy_thresholds",
     "list_mcp_servers",
     "list_mcp_server_candidates",
     "submit_mcp_server_candidate",

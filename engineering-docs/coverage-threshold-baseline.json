@@ -1,9 +1,9 @@
 {
   "status_date": "2026-04-02",
   "thresholds": {
-    "lines": 30,
-    "functions": 30,
-    "statements": 30,
-    "branches": 20
+    "lines": 50,
+    "functions": 50,
+    "statements": 50,
+    "branches": 40
   }
 }

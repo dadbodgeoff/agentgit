@@ -1,9 +1,14 @@
 import { execFileSync, spawn } from "node:child_process";
+import { createHash, createSign, generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { McpServer } from "../../../node_modules/.pnpm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js";
+import { StreamableHTTPServerTransport } from "../../../node_modules/.pnpm/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js";
+import { z } from "../../../node_modules/.pnpm/node_modules/zod/index.js";
 
 import { AuthorityClient, AuthorityDaemonResponseError } from "@agentgit/authority-sdk";
 
@@ -136,6 +141,114 @@ async function createHarness(): Promise<CliHarness> {
   return harness;
 }
 
+async function startMcpHttpService(
+  options: {
+    requireBearerTokenForToolCallsOnly?: string;
+  } = {},
+): Promise<{
+  url: string;
+  close: () => Promise<void>;
+}> {
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    if (req.method === "POST") {
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+    }
+
+    const bodyText = Buffer.concat(chunks).toString("utf8");
+    const parsedBody =
+      bodyText.length > 0
+        ? (JSON.parse(bodyText) as {
+            method?: string;
+          })
+        : null;
+    if (
+      options.requireBearerTokenForToolCallsOnly !== undefined &&
+      parsedBody?.method === "tools/call" &&
+      req.headers.authorization !== `Bearer ${options.requireBearerTokenForToolCallsOnly}`
+    ) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: {
+            code: -32001,
+            message: "Unauthorized",
+          },
+          id: null,
+        }),
+      );
+      return;
+    }
+
+    const mcpServer = new McpServer({
+      name: "agentgit-cli-test-http-mcp-server",
+      version: "1.0.0",
+    });
+    mcpServer.registerTool(
+      "echo_note",
+      {
+        description: "Echo a note back to the caller.",
+        inputSchema: {
+          note: z.string(),
+        },
+        annotations: {
+          readOnlyHint: true,
+        },
+      },
+      async ({ note }) => ({
+        content: [{ type: "text", text: `http-echo:${note}` }],
+        structuredContent: { echoed_note: note },
+      }),
+    );
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+
+    try {
+      await mcpServer.connect(transport);
+      if (req.method === "POST") {
+        await transport.handleRequest(req, res, bodyText.length > 0 ? JSON.parse(bodyText) : undefined);
+      } else {
+        await transport.handleRequest(req, res);
+      }
+    } finally {
+      res.on("close", () => {
+        void transport.close().catch(() => undefined);
+        void mcpServer.close().catch(() => undefined);
+      });
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+    server.once("error", reject);
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("MCP HTTP service did not start with a TCP address.");
+  }
+
+  return {
+    url: `http://127.0.0.1:${address.port}/mcp`,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    },
+  };
+}
+
 async function closeHarness(harness: CliHarness): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     harness.server.close((error) => {
@@ -266,13 +379,26 @@ async function runCliProcess(
   });
 }
 
+async function waitForSocketPath(socketPath: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(socketPath)) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Timed out waiting for socket ${socketPath}`);
+}
+
 beforeAll(() => {
   for (const filter of [
     "@agentgit/schemas",
     "@agentgit/authority-sdk",
+    "@agentgit/authority-daemon",
     "@agentgit/credential-broker",
     "@agentgit/execution-adapters",
-    "@agentgit/authority-daemon",
     "@agentgit/authority-cli",
   ]) {
     execFileSync(pnpmCommand(), ["--filter", filter, "build"], {
@@ -442,6 +568,505 @@ describe("authority cli MCP integration", () => {
     };
     expect(pingResult.accepted_api_version).toBe("authority.v1");
     expect(pingResult.runtime_version).toBeTruthy();
+  });
+
+  it("initializes a production profile through the built CLI binary", async () => {
+    const harness = await createHarness();
+    const configRoot = path.join(harness.root, "init-config-root");
+
+    const initResult = await runCliProcess(
+      [
+        "--json",
+        "--config-root",
+        configRoot,
+        "--workspace-root",
+        harness.workspaceRoot,
+        "--socket-path",
+        harness.socketPath,
+        "init",
+        "--production",
+        "--profile-name",
+        "prod",
+      ],
+      {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      },
+    );
+    expect(initResult.code).toBe(0);
+    expect(initResult.stderr).toBe("");
+    const parsedInit = JSON.parse(initResult.stdout) as {
+      mode: string;
+      profile_name: string;
+      readiness_passed: boolean;
+      doctor: {
+        daemon: {
+          reachable: boolean;
+        };
+      };
+    };
+    expect(parsedInit.mode).toBe("production");
+    expect(parsedInit.profile_name).toBe("prod");
+    expect(parsedInit.readiness_passed).toBe(true);
+    expect(parsedInit.doctor.daemon.reachable).toBe(true);
+
+    const configPath = path.join(configRoot, "authority-cli.toml");
+    expect(fs.existsSync(configPath)).toBe(true);
+    const configText = fs.readFileSync(configPath, "utf8");
+    expect(configText).toContain('active_profile = "prod"');
+    expect(configText).toContain("[profiles.prod]");
+
+    const configShow = await runCliProcess(["--json", "--config-root", configRoot, "config", "show"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(configShow.code).toBe(0);
+    const configShowResult = JSON.parse(configShow.stdout) as {
+      resolved: {
+        active_profile: string | null;
+        socket_path: { value: string };
+      };
+    };
+    expect(configShowResult.resolved.active_profile).toBe("prod");
+    expect(configShowResult.resolved.socket_path.value).toBe(harness.socketPath);
+  });
+
+  it("runs setup and starts the packaged daemon through the built CLI binary", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cli-setup-it-"));
+    const workspaceRoot = path.join(root, "workspace");
+    const configRoot = path.join(root, "config-root");
+    const stateRoot = path.join(root, "state");
+    const socketPath = path.join(stateRoot, "authority.sock");
+    const journalPath = path.join(stateRoot, "authority.db");
+    const snapshotRootPath = path.join(stateRoot, "snapshots");
+    const mcpRegistryPath = path.join(stateRoot, "mcp-registry.db");
+    const mcpSecretStorePath = path.join(stateRoot, "mcp-secrets.db");
+    const mcpHostPolicyPath = path.join(stateRoot, "mcp-hosts.db");
+    const mcpConcurrencyLeasePath = path.join(stateRoot, "mcp-leases.db");
+
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    try {
+      const setup = await runCliProcess(
+        [
+          "--json",
+          "--config-root",
+          configRoot,
+          "--workspace-root",
+          workspaceRoot,
+          "--socket-path",
+          socketPath,
+          "setup",
+          "--profile-name",
+          "local-it",
+        ],
+        {
+          workspaceRoot,
+          socketPath,
+          useDefaultRuntimeEnv: false,
+          env: {
+            AGENTGIT_ROOT: "",
+            INIT_CWD: "",
+            AGENTGIT_SOCKET_PATH: "",
+          },
+        },
+      );
+      expect(setup.code).toBe(0);
+      expect(JSON.parse(setup.stdout)).toEqual(
+        expect.objectContaining({
+          profile_name: "local-it",
+          workspace_root: workspaceRoot,
+          socket_path: socketPath,
+        }),
+      );
+
+      const daemon = spawn(
+        process.execPath,
+        [CLI_DIST_ENTRY, "--json", "--config-root", configRoot, "daemon", "start"],
+        {
+          cwd: workspaceRoot,
+          env: {
+            ...process.env,
+            AGENTGIT_ROOT: "",
+            INIT_CWD: "",
+            AGENTGIT_SOCKET_PATH: "",
+            AGENTGIT_JOURNAL_PATH: journalPath,
+            AGENTGIT_SNAPSHOT_ROOT: snapshotRootPath,
+            AGENTGIT_MCP_REGISTRY_PATH: mcpRegistryPath,
+            AGENTGIT_MCP_SECRET_STORE_PATH: mcpSecretStorePath,
+            AGENTGIT_MCP_HOST_POLICY_PATH: mcpHostPolicyPath,
+            AGENTGIT_MCP_CONCURRENCY_LEASE_PATH: mcpConcurrencyLeasePath,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+
+      let daemonStdout = "";
+      let daemonStderr = "";
+      daemon.stdout.on("data", (chunk) => {
+        daemonStdout += chunk.toString("utf8");
+      });
+      daemon.stderr.on("data", (chunk) => {
+        daemonStderr += chunk.toString("utf8");
+      });
+
+      try {
+        await waitForSocketPath(socketPath);
+
+        const doctor = await runCliProcess(["--json", "--config-root", configRoot, "doctor"], {
+          workspaceRoot,
+          socketPath,
+          useDefaultRuntimeEnv: false,
+          env: {
+            AGENTGIT_ROOT: "",
+            INIT_CWD: "",
+            AGENTGIT_SOCKET_PATH: "",
+          },
+        });
+
+        expect(doctor.code).toBe(0);
+        expect(JSON.parse(doctor.stdout)).toEqual(
+          expect.objectContaining({
+            daemon: expect.objectContaining({
+              reachable: true,
+              accepted_api_version: "authority.v1",
+            }),
+          }),
+        );
+      } finally {
+        if (daemon.exitCode === null && daemon.signalCode === null) {
+          daemon.kill("SIGTERM");
+          await new Promise((resolve) => daemon.once("close", resolve));
+        }
+      }
+
+      expect(daemonStderr).toBe("");
+      expect(daemonStdout).toContain('"status":"listening"');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("builds a trust report through the built CLI binary", async () => {
+    const harness = await createHarness();
+
+    const registerRun = await runCliProcess(["--json", "register-run", "cli-trust-report"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(registerRun.code).toBe(0);
+    const run = JSON.parse(registerRun.stdout) as { run_id: string };
+
+    const trustReport = await runCliProcess(["--json", "trust-report", "--run-id", run.run_id], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(trustReport.code).toBe(0);
+    expect(trustReport.stderr).toBe("");
+    const parsedReport = JSON.parse(trustReport.stdout) as {
+      workspace_root: string;
+      daemon: { reachable: boolean };
+      security_posture_status: "healthy" | "degraded" | "unknown";
+      mcp: {
+        profile_count: number;
+      };
+      timeline_trust: null | { run_id: string };
+    };
+    expect(parsedReport.workspace_root).toBe(harness.workspaceRoot);
+    expect(parsedReport.daemon.reachable).toBe(true);
+    expect(parsedReport.security_posture_status).toMatch(/^(healthy|degraded|unknown)$/);
+    expect(parsedReport.mcp.profile_count).toBeGreaterThanOrEqual(0);
+    expect(parsedReport.timeline_trust?.run_id).toBe(run.run_id);
+  });
+
+  it("runs MCP onboarding workflow through the built CLI binary against a live daemon", async () => {
+    const harness = await createHarness();
+    const onboardingPlanPath = path.join(harness.workspaceRoot, "onboard-plan.json");
+    fs.writeFileSync(
+      onboardingPlanPath,
+      JSON.stringify(
+        {
+          secrets: [
+            {
+              secret_id: "onboard_secret",
+              display_name: "Onboard Secret",
+              bearer_token: "onboard-secret-token",
+            },
+          ],
+          host_policies: [
+            {
+              host: "api.onboard.test",
+              display_name: "Onboard API",
+              allow_subdomains: false,
+              allowed_ports: [443],
+            },
+          ],
+          server: {
+            server_id: "onboard_public",
+            display_name: "Onboard Public MCP",
+            transport: "streamable_http",
+            url: "https://api.onboard.test/mcp",
+            network_scope: "public_https",
+            auth: {
+              type: "bearer_secret_ref",
+              secret_id: "onboard_secret",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const onboard = await runCliProcess(["--json", "onboard-mcp", onboardingPlanPath], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(onboard.code).toBe(0);
+    expect(onboard.stderr).toBe("");
+    const onboardResult = JSON.parse(onboard.stdout) as {
+      server: { server_id: string; created: boolean };
+      secrets: Array<{ secret_id: string }>;
+      host_policies: Array<{ host: string }>;
+    };
+    expect(onboardResult.server.server_id).toBe("onboard_public");
+    expect(onboardResult.server.created).toBe(true);
+    expect(onboardResult.secrets).toContainEqual(
+      expect.objectContaining({
+        secret_id: "onboard_secret",
+      }),
+    );
+    expect(onboardResult.host_policies).toContainEqual(
+      expect.objectContaining({
+        host: "api.onboard.test",
+      }),
+    );
+
+    const listServers = await runCliProcess(["--json", "list-mcp-servers"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(listServers.code).toBe(0);
+    const serversResult = JSON.parse(listServers.stdout) as {
+      servers: Array<{ server: { server_id: string } }>;
+    };
+    expect(serversResult.servers).toContainEqual(
+      expect.objectContaining({
+        server: expect.objectContaining({
+          server_id: "onboard_public",
+        }),
+      }),
+    );
+  });
+
+  it("runs MCP trust review workflow through the built CLI binary against a live daemon", async () => {
+    const harness = await createHarness();
+    const remoteService = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "phase3-secret-token",
+    });
+    const trustReviewPlanPath = path.join(harness.workspaceRoot, "trust-review-plan.json");
+
+    try {
+      fs.writeFileSync(
+        trustReviewPlanPath,
+        JSON.stringify(
+          {
+            secrets: [
+              {
+                secret_id: "phase3_remote_secret",
+                display_name: "Phase 3 remote secret",
+                bearer_token: "phase3-secret-token",
+              },
+            ],
+            candidate: {
+              source_kind: "user_input",
+              raw_endpoint: remoteService.url,
+              transport_hint: "streamable_http",
+              notes: "Phase 3 trust review workflow",
+            },
+            resolve: {
+              display_name: "Phase 3 Remote MCP",
+            },
+            approval: {
+              decision: "allow_policy_managed",
+              trust_tier: "operator_approved_public",
+              allowed_execution_modes: ["local_proxy"],
+              reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+            },
+            credential_binding: {
+              binding_mode: "bearer_secret_ref",
+              broker_profile_id: "phase3_remote_secret",
+              scope_labels: ["remote:mcp"],
+            },
+            smoke_test: {
+              tool_name: "echo_note",
+              arguments: {
+                note: "phase3 launch check",
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+
+      const trustReview = await runCliProcess(["--json", "trust-review-mcp", trustReviewPlanPath], {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      });
+      expect(trustReview.code).toBe(0);
+      expect(trustReview.stderr).toBe("");
+      const trustReviewResult = JSON.parse(trustReview.stdout) as {
+        candidate_submission: { candidate_id: string } | null;
+        resolution: { profile_id: string; canonical_endpoint: string; network_scope: string };
+        trust_decision: { trust_decision_id: string; decision: string; profile_status: string };
+        credential_binding: { credential_binding_id: string; status: string } | null;
+        activation: { attempted: true; profile_status: string } | null;
+        smoke_test: { success: boolean; mode: string | null; summary: string | null } | null;
+        review: {
+          profile: { status: string } | null;
+          active_trust_decision: { trust_decision_id: string } | null;
+          active_credential_binding: { credential_binding_id: string } | null;
+          review: { executable: boolean; requires_credentials: boolean; requires_approval: boolean };
+        };
+      };
+      expect(trustReviewResult.candidate_submission?.candidate_id).toMatch(/^mcpcand_/u);
+      expect(trustReviewResult.resolution.canonical_endpoint).toBe(remoteService.url);
+      expect(trustReviewResult.resolution.network_scope).toBe("loopback");
+      expect(trustReviewResult.trust_decision.decision).toBe("allow_policy_managed");
+      expect(trustReviewResult.trust_decision.profile_status).toBe("pending_approval");
+      expect(trustReviewResult.credential_binding?.status).toBe("active");
+      expect(trustReviewResult.activation?.attempted).toBe(true);
+      expect(trustReviewResult.activation?.profile_status).toBe("active");
+      expect(trustReviewResult.smoke_test?.success).toBe(true);
+      expect(trustReviewResult.smoke_test?.mode).toBe("executed");
+      expect(trustReviewResult.smoke_test?.summary).toContain("echoed_note");
+      expect(trustReviewResult.review.profile?.status).toBe("active");
+      expect(trustReviewResult.review.active_trust_decision?.trust_decision_id).toBe(
+        trustReviewResult.trust_decision.trust_decision_id,
+      );
+      expect(trustReviewResult.review.active_credential_binding?.credential_binding_id).toBe(
+        trustReviewResult.credential_binding?.credential_binding_id,
+      );
+      expect(trustReviewResult.review.review.executable).toBe(true);
+      expect(trustReviewResult.review.review.requires_credentials).toBe(false);
+      expect(trustReviewResult.review.review.requires_approval).toBe(false);
+
+      const profiles = await runCliProcess(["--json", "list-mcp-server-profiles"], {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      });
+      expect(profiles.code).toBe(0);
+      const profilesResult = JSON.parse(profiles.stdout) as {
+        profiles: Array<{ server_profile_id: string; status: string }>;
+      };
+      expect(profilesResult.profiles).toContainEqual(
+        expect.objectContaining({
+          server_profile_id: trustReviewResult.resolution.profile_id,
+          status: "active",
+        }),
+      );
+    } finally {
+      await remoteService.close();
+    }
+  }, 20_000);
+
+  it("verifies signed release artifacts through the built CLI binary", async () => {
+    const harness = await createHarness();
+    const artifactsDir = path.join(harness.workspaceRoot, "release-artifacts");
+    fs.mkdirSync(artifactsDir, { recursive: true });
+
+    const tarballPath = path.join(artifactsDir, "pkg.tgz");
+    fs.writeFileSync(tarballPath, "release package payload", "utf8");
+    const tarballSha = createHash("sha256").update(fs.readFileSync(tarballPath)).digest("hex");
+
+    const manifestPath = path.join(artifactsDir, "manifest.json");
+    const manifest = {
+      packages: [
+        {
+          name: "@agentgit/example",
+          tarball_path: tarballPath,
+          sha256: tarballSha,
+        },
+      ],
+    };
+    const manifestJson = JSON.stringify(manifest, null, 2);
+    fs.writeFileSync(manifestPath, manifestJson, "utf8");
+    const manifestSha = createHash("sha256").update(manifestJson, "utf8").digest("hex");
+    fs.writeFileSync(path.join(artifactsDir, "manifest.sha256"), `${manifestSha}  manifest.json\n`, "utf8");
+
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+    });
+    const signature = createSign("sha256").update(manifestJson).end().sign(privateKey).toString("base64");
+    fs.writeFileSync(path.join(artifactsDir, "manifest.sig"), `${signature}\n`, "utf8");
+    const publicKeyPath = path.join(artifactsDir, "release-public.pem");
+    fs.writeFileSync(publicKeyPath, publicKey.export({ format: "pem", type: "spki" }), "utf8");
+
+    const verified = await runCliProcess(
+      [
+        "--json",
+        "release-verify-artifacts",
+        artifactsDir,
+        "--signature-mode",
+        "required",
+        "--public-key-path",
+        publicKeyPath,
+      ],
+      {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      },
+    );
+    expect(verified.code).toBe(0);
+    expect(verified.stderr).toBe("");
+    const verifiedResult = JSON.parse(verified.stdout) as {
+      ok: boolean;
+      signature_verified: boolean;
+      packages: Array<{ name: string }>;
+    };
+    expect(verifiedResult.ok).toBe(true);
+    expect(verifiedResult.signature_verified).toBe(true);
+    expect(verifiedResult.packages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "@agentgit/example",
+        }),
+      ]),
+    );
+  });
+
+  it("prints deferred cloud roadmap through the built CLI binary", async () => {
+    const harness = await createHarness();
+
+    const roadmap = await runCliProcess(["--json", "cloud-roadmap"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(roadmap.code).toBe(0);
+    expect(roadmap.stderr).toBe("");
+    const roadmapResult = JSON.parse(roadmap.stdout) as {
+      launch_contract: string;
+      phases: Array<{ phase_id: string; status: string }>;
+    };
+    expect(roadmapResult.launch_contract).toBe("local-first-mvp");
+    expect(roadmapResult.phases.length).toBeGreaterThanOrEqual(3);
+    expect(roadmapResult.phases.every((phase) => phase.status === "deferred")).toBe(true);
   });
 
   it("validates config files and reports doctor checks through the built CLI binary", async () => {
@@ -1344,7 +1969,7 @@ describe("authority cli MCP integration", () => {
     expect(inboxResult.counts.pending).toBe(1);
     expect(inboxResult.items[0]?.approval_id).toBe(approvalId);
     expect(inboxResult.items[0]?.status).toBe("pending");
-    expect(inboxResult.items[0]?.reason_summary).toContain("requires approval");
+    expect(inboxResult.items[0]?.reason_summary ?? "").toMatch(/requires approval|automation threshold/i);
 
     const approvals = await runCliProcess(["--json", "list-approvals", run.run_id, "pending"], {
       workspaceRoot: harness.workspaceRoot,

@@ -502,6 +502,21 @@ describe("AuthorityClient transport", () => {
                         warnings: [],
                         normalization_confidence: 0.96,
                       },
+                      confidence_assessment: {
+                        engine_version: "test-confidence/v1",
+                        score: 0.96,
+                        band: "high",
+                        requires_human_review: false,
+                        factors: [
+                          {
+                            factor_id: "test_baseline",
+                            label: "Test baseline",
+                            kind: "baseline",
+                            delta: 0.96,
+                            rationale: "Test confidence baseline.",
+                          },
+                        ],
+                      },
                     },
                     policy_outcome: {
                       schema_version: "policy-outcome.v1",
@@ -541,6 +556,7 @@ describe("AuthorityClient transport", () => {
                     action_family: "filesystem/write",
                     effective_policy_profile: "workspace-hardening",
                     low_confidence_threshold: 0.3,
+                    confidence_score: 0.96,
                     confidence_triggered: false,
                     snapshot_selection: null,
                   }
@@ -572,13 +588,47 @@ describe("AuthorityClient transport", () => {
                         },
                       ],
                     }
-                  : {
-                      valid: false,
-                      issues: ["rules: Required"],
-                      normalized_config: null,
-                      compiled_profile_name: null,
-                      compiled_rule_count: null,
-                    };
+                  : method === "replay_policy_thresholds"
+                    ? {
+                        generated_at: "2026-04-01T12:00:01.000Z",
+                        filters: {
+                          run_id: "run_policy",
+                          include_changed_samples: true,
+                          sample_limit: 5,
+                        },
+                        effective_policy_profile: "workspace-hardening",
+                        candidate_thresholds: [
+                          {
+                            action_family: "filesystem/write",
+                            ask_below: 0.4,
+                          },
+                        ],
+                        summary: {
+                          replayable_samples: 1,
+                          skipped_samples: 0,
+                          changed_decisions: 1,
+                          unchanged_decisions: 0,
+                          current_approvals_requested: 0,
+                          candidate_approvals_requested: 1,
+                          approvals_reduced: 0,
+                          approvals_increased: 1,
+                          historically_denied_auto_allowed: 0,
+                          historically_approved_auto_allowed: 0,
+                          historically_allowed_newly_gated: 1,
+                          current_matches_recorded: 1,
+                          current_diverges_from_recorded: 0,
+                        },
+                        action_families: [],
+                        changed_samples: [],
+                        samples_truncated: false,
+                      }
+                    : {
+                        valid: false,
+                        issues: ["rules: Required"],
+                        normalized_config: null,
+                        compiled_profile_name: null,
+                        compiled_rule_count: null,
+                      };
 
       socket.write(
         `${JSON.stringify({
@@ -625,6 +675,17 @@ describe("AuthorityClient transport", () => {
       run_id: "run_policy",
       min_samples: 2,
     });
+    const thresholdReplay = await client.replayPolicyThresholds({
+      run_id: "run_policy",
+      candidate_thresholds: [
+        {
+          action_family: "filesystem/write",
+          ask_below: 0.4,
+        },
+      ],
+      include_changed_samples: true,
+      sample_limit: 5,
+    });
     const validation = await client.validatePolicyConfig({
       profile_name: "invalid-policy",
       policy_version: "2026.04.01",
@@ -636,6 +697,7 @@ describe("AuthorityClient transport", () => {
     expect(explainedAction.action_family).toBe("filesystem/write");
     expect(explainedAction.low_confidence_threshold).toBe(0.3);
     expect(thresholdRecommendations.recommendations[0]?.direction).toBe("relax");
+    expect(thresholdReplay.summary.approvals_increased).toBe(1);
     expect(validation.valid).toBe(false);
     expect(validation.issues).toContain("rules: Required");
     expect(seenRequests.find((request) => request.method === "get_effective_policy")).toBeTruthy();
@@ -664,6 +726,17 @@ describe("AuthorityClient transport", () => {
     expect(seenRequests.find((request) => request.method === "get_policy_threshold_recommendations")?.payload).toEqual({
       run_id: "run_policy",
       min_samples: 2,
+    });
+    expect(seenRequests.find((request) => request.method === "replay_policy_thresholds")?.payload).toEqual({
+      run_id: "run_policy",
+      candidate_thresholds: [
+        {
+          action_family: "filesystem/write",
+          ask_below: 0.4,
+        },
+      ],
+      include_changed_samples: true,
+      sample_limit: 5,
     });
     expect(seenRequests.find((request) => request.method === "validate_policy_config")?.payload).toEqual({
       config: {

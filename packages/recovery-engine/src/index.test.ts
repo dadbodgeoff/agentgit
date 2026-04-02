@@ -19,6 +19,24 @@ import {
 
 let tempDir: string | null = null;
 
+function makeConfidenceAssessment(score: number): ActionRecord["confidence_assessment"] {
+  return {
+    engine_version: "test-confidence/v1",
+    score,
+    band: score >= 0.85 ? "high" : score >= 0.65 ? "guarded" : "low",
+    requires_human_review: score < 0.65,
+    factors: [
+      {
+        factor_id: "test_baseline",
+        label: "Test baseline",
+        kind: "baseline",
+        delta: score,
+        rationale: "Test confidence baseline.",
+      },
+    ],
+  };
+}
+
 function makeCapabilityState(
   workspaceRoot: string,
   overrides: Partial<CachedCapabilityState> = {},
@@ -125,6 +143,7 @@ function makeAction(targetPath: string): ActionRecord {
       warnings: [],
       normalization_confidence: 0.99,
     },
+    confidence_assessment: makeConfidenceAssessment(0.94),
   };
 }
 
@@ -200,6 +219,7 @@ function makeShellAction(workspaceRoot: string): ActionRecord {
       warnings: [],
       normalization_confidence: 0.92,
     },
+    confidence_assessment: makeConfidenceAssessment(0.81),
   };
 }
 

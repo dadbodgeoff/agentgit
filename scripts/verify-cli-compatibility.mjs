@@ -5,12 +5,17 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const currentDaemonEntry = path.join(repoRoot, "packages", "authority-daemon", "dist", "main.js");
-const publishablePackageNames = new Set(["@agentgit/schemas", "@agentgit/authority-sdk", "@agentgit/authority-cli"]);
+const publishablePackageNames = new Set([
+  "@agentgit/authority-daemon",
+  "@agentgit/schemas",
+  "@agentgit/authority-sdk",
+  "@agentgit/authority-cli",
+]);
 const publishablePackages = [
+  { name: "@agentgit/authority-daemon", relativeDir: path.join("packages", "authority-daemon") },
   { name: "@agentgit/schemas", relativeDir: path.join("packages", "schemas") },
   { name: "@agentgit/authority-sdk", relativeDir: path.join("packages", "authority-sdk-ts") },
   { name: "@agentgit/authority-cli", relativeDir: path.join("packages", "authority-cli") },
@@ -76,7 +81,7 @@ function parseJsonOutput(result, label) {
   }
 }
 
-async function waitForSocket(socketPath, timeoutMs = 10_000) {
+async function waitForSocket(socketPath, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fs.existsSync(socketPath)) {
@@ -100,6 +105,10 @@ function installedCliPath(installRoot) {
 
 function installedCliModuleEntry(installRoot) {
   return path.join(installRoot, "node_modules", "@agentgit", "authority-cli", "dist", "main.js");
+}
+
+function installedDaemonModuleEntry(installRoot) {
+  return path.join(installRoot, "node_modules", "@agentgit", "authority-daemon", "dist", "main.js");
 }
 
 function canonicalPathForComparison(value) {
@@ -149,7 +158,12 @@ async function packRepoArtifacts(targetRepoRoot, outDir) {
   for (const pkg of publishablePackages) {
     const packageDir = path.join(targetRepoRoot, pkg.relativeDir);
     const before = new Set(await fsp.readdir(outDir));
-    await runCommand("pnpm", ["pack", "--pack-destination", outDir], { cwd: packageDir });
+    await runCommand("pnpm", ["pack", "--pack-destination", outDir], {
+      cwd: packageDir,
+      env: {
+        npm_config_ignore_scripts: "true",
+      },
+    });
     const after = await fsp.readdir(outDir);
     const created = after.filter((entry) => !before.has(entry) && entry.endsWith(".tgz"));
     if (created.length !== 1) {
@@ -169,6 +183,47 @@ async function packRepoArtifacts(targetRepoRoot, outDir) {
   const manifest = {
     generated_at: new Date().toISOString(),
     output_dir: outDir,
+    packages,
+  };
+  await fsp.writeFile(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
+  return manifest;
+}
+
+async function packPublishedArtifacts(outDir) {
+  await fsp.rm(outDir, { recursive: true, force: true });
+  await fsp.mkdir(outDir, { recursive: true });
+
+  const packages = [];
+  for (const pkg of publishablePackages) {
+    const before = new Set(await fsp.readdir(outDir));
+    try {
+      await runCommand("npm", ["pack", `${pkg.name}@latest`, "--pack-destination", outDir], {
+        cwd: outDir,
+      });
+    } catch {
+      return null;
+    }
+
+    const after = await fsp.readdir(outDir);
+    const created = after.filter((entry) => !before.has(entry) && entry.endsWith(".tgz"));
+    if (created.length !== 1) {
+      throw new Error(`Expected exactly one published tarball for ${pkg.name}, received ${created.length}.`);
+    }
+
+    const tarballPath = path.join(outDir, created[0]);
+    const stats = await fsp.stat(tarballPath);
+    packages.push({
+      name: pkg.name,
+      tarball_path: tarballPath,
+      filename: created[0],
+      bytes: stats.size,
+    });
+  }
+
+  const manifest = {
+    generated_at: new Date().toISOString(),
+    output_dir: outDir,
+    source: "published_latest",
     packages,
   };
   await fsp.writeFile(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8");
@@ -256,14 +311,6 @@ async function createSyntheticUpgradeTarballs(currentManifest, outDir) {
   return manifest;
 }
 
-async function cloneCommittedBaseline(targetDir) {
-  await runCommand("git", ["clone", "--depth", "1", pathToFileURL(repoRoot).href, targetDir], {
-    cwd: repoRoot,
-  });
-  await runCommand("git", ["checkout", "--detach", "HEAD"], { cwd: targetDir });
-  await runCommand("pnpm", ["install", "--no-frozen-lockfile"], { cwd: targetDir });
-}
-
 function startDaemon(daemonEntry, env, cwd) {
   const child = spawn(process.execPath, [daemonEntry], {
     cwd,
@@ -302,12 +349,6 @@ function daemonEnvironment(stateRoot, workspaceRoot) {
     AGENTGIT_ROOT: workspaceRoot,
     INIT_CWD: workspaceRoot,
     AGENTGIT_SOCKET_PATH: path.join(stateRoot, "authority.sock"),
-    AGENTGIT_JOURNAL_PATH: path.join(stateRoot, "authority.db"),
-    AGENTGIT_SNAPSHOT_ROOT: path.join(stateRoot, "snapshots"),
-    AGENTGIT_MCP_REGISTRY_PATH: path.join(stateRoot, "mcp-registry.db"),
-    AGENTGIT_MCP_SECRET_STORE_PATH: path.join(stateRoot, "mcp-secrets.db"),
-    AGENTGIT_MCP_HOST_POLICY_PATH: path.join(stateRoot, "mcp-hosts.db"),
-    AGENTGIT_MCP_CONCURRENCY_LEASE_PATH: path.join(stateRoot, "mcp-leases.db"),
   };
 }
 
@@ -334,7 +375,6 @@ async function runInstalledCli(cli, args, options = {}) {
 async function main() {
   const tempBase = process.platform === "win32" ? os.tmpdir() : "/tmp";
   const tempRoot = await fsp.mkdtemp(path.join(tempBase, "agcli-compat-"));
-  const baselineRepo = path.join(tempRoot, "baseline-repo");
   const baselineTarballDir = path.join(tempRoot, "baseline-tarballs");
   const currentTarballDir = path.join(tempRoot, "current-tarballs");
   const upgradeTarballDir = path.join(tempRoot, "upgrade-tarballs");
@@ -353,20 +393,24 @@ async function main() {
   await fsp.mkdir(currentWorkspaceRoot, { recursive: true });
 
   try {
-    await cloneCommittedBaseline(baselineRepo);
-    const baselineManifest = await packRepoArtifacts(baselineRepo, baselineTarballDir);
     const currentManifest = await packRepoArtifacts(repoRoot, currentTarballDir);
+    const baselineManifest = (await packPublishedArtifacts(baselineTarballDir)) ?? {
+      ...currentManifest,
+      source: "current_workspace_fallback",
+    };
     const syntheticUpgradeManifest = await createSyntheticUpgradeTarballs(currentManifest, upgradeTarballDir);
 
     await initInstallRoot(baselineInstallRoot);
     await installTarballs(baselineInstallRoot, resolveTarballsFromManifest(baselineManifest));
-    const baselineCli = {
-      legacyModuleEntry: installedCliModuleEntry(baselineInstallRoot),
-    };
+    const baselineCli = fs.existsSync(installedCliPath(baselineInstallRoot))
+      ? installedCliPath(baselineInstallRoot)
+      : {
+          legacyModuleEntry: installedCliModuleEntry(baselineInstallRoot),
+        };
     const baselineDaemonEnv = daemonEnvironment(baselineStateRoot, baselineWorkspaceRoot);
-    const baselineDaemonEntry = path.join(baselineRepo, "packages", "authority-daemon", "dist", "main.js");
+    const baselineDaemonEntry = installedDaemonModuleEntry(baselineInstallRoot);
 
-    const baselineDaemon = startDaemon(baselineDaemonEntry, baselineDaemonEnv, baselineRepo);
+    const baselineDaemon = startDaemon(baselineDaemonEntry, baselineDaemonEnv, baselineInstallRoot);
     try {
       await waitForSocket(baselineDaemonEnv.AGENTGIT_SOCKET_PATH);
 
@@ -409,7 +453,11 @@ async function main() {
     }
 
     const currentDaemonEnv = daemonEnvironment(currentStateRoot, currentWorkspaceRoot);
-    const currentDaemonForLegacyCli = startDaemon(currentDaemonEntry, currentDaemonEnv, repoRoot);
+    await initInstallRoot(upgradeInstallRoot);
+    await installTarballs(upgradeInstallRoot, resolveTarballsFromManifest(currentManifest));
+    const upgradedCli = installedCliPath(upgradeInstallRoot);
+    const currentDaemonEntry = installedDaemonModuleEntry(upgradeInstallRoot);
+    const currentDaemonForLegacyCli = startDaemon(currentDaemonEntry, currentDaemonEnv, upgradeInstallRoot);
     try {
       await waitForSocket(currentDaemonEnv.AGENTGIT_SOCKET_PATH);
 
@@ -449,9 +497,6 @@ async function main() {
       await currentDaemonForLegacyCli.stop();
     }
 
-    await initInstallRoot(upgradeInstallRoot);
-    await installTarballs(upgradeInstallRoot, resolveTarballsFromManifest(currentManifest));
-    const upgradedCli = installedCliPath(upgradeInstallRoot);
     const neutralCliEnv = {
       AGENTGIT_ROOT: "",
       INIT_CWD: "",
@@ -492,7 +537,7 @@ async function main() {
       env: neutralCliEnv,
     });
 
-    const currentDaemonForNewCliOldDaemon = startDaemon(baselineDaemonEntry, baselineDaemonEnv, baselineRepo);
+    const currentDaemonForNewCliOldDaemon = startDaemon(baselineDaemonEntry, baselineDaemonEnv, baselineInstallRoot);
     try {
       await waitForSocket(baselineDaemonEnv.AGENTGIT_SOCKET_PATH);
 
@@ -562,7 +607,7 @@ async function main() {
       );
     }
 
-    const currentDaemon = startDaemon(currentDaemonEntry, currentDaemonEnv, repoRoot);
+    const currentDaemon = startDaemon(currentDaemonEntry, currentDaemonEnv, upgradeInstallRoot);
     try {
       await waitForSocket(currentDaemonEnv.AGENTGIT_SOCKET_PATH);
 

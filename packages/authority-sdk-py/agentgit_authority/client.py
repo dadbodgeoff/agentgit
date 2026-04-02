@@ -122,6 +122,27 @@ class AuthorityClient:
             "get_policy_threshold_recommendations", payload, self._session_id
         )
 
+    def replay_policy_thresholds(
+        self,
+        *,
+        candidate_thresholds: list[JSONValue],
+        run_id: str | None = None,
+        include_changed_samples: bool = False,
+        sample_limit: int | None = None,
+    ) -> JSONObject:
+        if self._session_id is None:
+            self.hello()
+        payload: JSONObject = {
+            "candidate_thresholds": cast(JSONValue, candidate_thresholds),
+        }
+        if run_id is not None:
+            payload["run_id"] = run_id
+        if include_changed_samples:
+            payload["include_changed_samples"] = include_changed_samples
+        if sample_limit is not None:
+            payload["sample_limit"] = sample_limit
+        return self._send_request("replay_policy_thresholds", payload, self._session_id)
+
     def list_mcp_servers(self) -> JSONObject:
         self._ensure_session()
         return self._send_request("list_mcp_servers", {}, self._session_id)

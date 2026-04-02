@@ -1,34 +1,80 @@
 {
   "name": "@agentgit/authority-daemon",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Local authority daemon runtime for agentgit.",
+  "license": "Apache-2.0",
   "type": "module",
-  "main": "dist/main.js",
-  "types": "dist/main.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/authority-daemon"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/authority-daemon",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "authority",
+    "daemon",
+    "governance",
+    "mcp"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "bin": {
+    "agentgit-authorityd": "dist/main.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node ./scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo src/*.js src/*.js.map src/*.d.ts src/*.d.ts.map",
+    "clean": "rm -rf dist",
+    "prepack": "pnpm run build",
     "test": "pnpm clean && pnpm exec turbo run build --filter=@agentgit/authority-daemon^... && mkdir -p coverage/.tmp && vitest run --dir src",
     "start": "node dist/main.js"
   },
   "devDependencies": {
-    "zod": "^4.3.6"
-  },
-  "dependencies": {
-    "@iarna/toml": "^2.2.5",
     "@agentgit/action-normalizer": "workspace:*",
     "@agentgit/credential-broker": "workspace:*",
     "@agentgit/execution-adapters": "workspace:*",
+    "@agentgit/hosted-mcp-worker": "workspace:*",
     "@agentgit/integration-state": "workspace:*",
     "@agentgit/mcp-registry": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@agentgit/policy-engine": "workspace:*",
     "@agentgit/recovery-engine": "workspace:*",
     "@agentgit/run-journal": "workspace:*",
     "@agentgit/schemas": "workspace:*",
     "@agentgit/snapshot-engine": "workspace:*",
     "@agentgit/timeline-helper": "workspace:*",
+    "esbuild": "^0.25.12",
+    "zod": "^4.3.6"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.8.0",
     "uuid": "^13.0.0"
   }
 }

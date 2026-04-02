@@ -105,7 +105,7 @@ export function createCliConfigPaths(
   workspaceRootOverride?: string,
 ): CliConfigPaths {
   const configRoot = path.resolve(configRootOverride ?? defaultCliConfigRoot(env));
-  const workspaceRoot = path.resolve(workspaceRootOverride ?? env.AGENTGIT_ROOT ?? env.INIT_CWD ?? cwd);
+  const workspaceRoot = path.resolve(workspaceRootOverride ?? env.AGENTGIT_ROOT ?? cwd);
 
   return {
     configRoot,
@@ -197,7 +197,7 @@ export function parseGlobalFlags(argv: string[], env: NodeJS.ProcessEnv = proces
   flags.rest = rest;
 
   if (flags.workspaceRoot === undefined) {
-    const envWorkspaceRoot = env.AGENTGIT_ROOT?.trim() || env.INIT_CWD?.trim();
+    const envWorkspaceRoot = env.AGENTGIT_ROOT?.trim();
     if (envWorkspaceRoot) {
       flags.workspaceRoot = path.resolve(envWorkspaceRoot);
     }
@@ -225,7 +225,7 @@ export function resolveCliConfig(
   const activeProfile =
     requestedProfile ?? workspaceLayer.config.active_profile ?? userLayer.config.active_profile ?? null;
 
-  const defaultWorkspaceRoot = path.resolve(flags.workspaceRoot ?? env.AGENTGIT_ROOT ?? env.INIT_CWD ?? cwd);
+  const defaultWorkspaceRoot = path.resolve(flags.workspaceRoot ?? env.AGENTGIT_ROOT ?? cwd);
   const systemDefaults: CliProfileRecord = {
     workspace_root: defaultWorkspaceRoot,
     socket_path: path.resolve(defaultWorkspaceRoot, ".agentgit", "authority.sock"),
@@ -278,10 +278,10 @@ export function resolveCliConfig(
       value: path.resolve(flags.workspaceRoot),
       source: "runtime_flag:workspace_root",
     };
-  } else if (env.AGENTGIT_ROOT?.trim() || env.INIT_CWD?.trim()) {
+  } else if (env.AGENTGIT_ROOT?.trim()) {
     resolved.workspace_root = {
-      value: path.resolve(env.AGENTGIT_ROOT ?? env.INIT_CWD!),
-      source: env.AGENTGIT_ROOT?.trim() ? "env:AGENTGIT_ROOT" : "env:INIT_CWD",
+      value: path.resolve(env.AGENTGIT_ROOT),
+      source: "env:AGENTGIT_ROOT",
     };
   }
 
@@ -626,7 +626,7 @@ function shiftRequiredValue(args: string[], flag: string): string {
 }
 
 function normalizeProfileName(value: string): string {
-  const normalized = value.trim();
+  const normalized = value.trim().toLowerCase();
   if (!/^[a-zA-Z0-9._-]+$/.test(normalized)) {
     throw configError(`Profile name ${value} is invalid.`, {
       profile: value,

@@ -115,6 +115,40 @@ describe("normalizeActionAttempt", () => {
     expect(action.provenance.confidence).toBeLessThan(0.99);
   });
 
+  it("should attach a first-class confidence assessment with factor breakdown", () => {
+    const action = normalizeActionAttempt(makeAttempt(), "sess_test");
+
+    expect(action.confidence_assessment.engine_version).toBe("action-confidence/v1");
+    expect(action.confidence_assessment.score).toBeGreaterThan(0.8);
+    expect(action.confidence_assessment.band).toBe("high");
+    expect(action.confidence_assessment.factors.length).toBeGreaterThan(0);
+    expect(action.confidence_assessment.factors.some((factor) => factor.factor_id === "normalization_baseline")).toBe(
+      true,
+    );
+  });
+
+  it("should mark opaque shell execution as lower-confidence and requiring review", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["python", "-c", "print('hi')"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.confidence_assessment.score).toBeLessThan(0.65);
+    expect(action.confidence_assessment.band).toBe("low");
+    expect(action.confidence_assessment.requires_human_review).toBe(true);
+    expect(action.confidence_assessment.factors.some((factor) => factor.factor_id === "warning_opaque_execution")).toBe(
+      true,
+    );
+  });
+
   it("should set sensitivity_hint to moderate for files over 256KB", () => {
     const action = normalizeActionAttempt(
       makeAttempt({

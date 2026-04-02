@@ -96,9 +96,19 @@ function resolveManagedLaunchSpec(options: HostedMcpWorkerClientOptions): Hosted
 
   const currentFilePath = fileURLToPath(import.meta.url);
   const currentDir = path.dirname(currentFilePath);
+  const packagedRoot = path.resolve(currentDir, "..");
+  const packagedEntry = path.resolve(currentDir, "./hosted-mcp-worker/main.js");
   const repoRoot = path.resolve(currentDir, "../../..");
   const distEntry = path.resolve(currentDir, "../../hosted-mcp-worker/dist/main.js");
   const sourceEntry = path.resolve(currentDir, "../../hosted-mcp-worker/src/main.ts");
+
+  if (fs.existsSync(packagedEntry)) {
+    return {
+      command: process.execPath,
+      args: [packagedEntry],
+      cwd: packagedRoot,
+    };
+  }
 
   if (fs.existsSync(distEntry)) {
     return {

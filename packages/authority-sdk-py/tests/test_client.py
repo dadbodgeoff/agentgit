@@ -2246,6 +2246,7 @@ class AuthorityClientTest(unittest.TestCase):
                                 "get_policy_calibration_report",
                                 "explain_policy_action",
                                 "get_policy_threshold_recommendations",
+                                "replay_policy_thresholds",
                                 "validate_policy_config",
                                 "list_mcp_servers",
                                 "list_mcp_server_candidates",
@@ -2322,6 +2323,14 @@ class AuthorityClientTest(unittest.TestCase):
         )
         threshold_recommendations = client.get_policy_threshold_recommendations(
             run_id="run_abc", min_samples=2
+        )
+        threshold_replay = client.replay_policy_thresholds(
+            run_id="run_abc",
+            candidate_thresholds=[
+                {"action_family": "filesystem/write", "ask_below": 0.4}
+            ],
+            include_changed_samples=True,
+            sample_limit=5,
         )
         policy_validation = client.validate_policy_config(
             {
@@ -2413,6 +2422,18 @@ class AuthorityClientTest(unittest.TestCase):
         self.assertEqual(
             threshold_recommendations["echo_payload"],
             {"run_id": "run_abc", "min_samples": 2},
+        )
+        self.assertEqual(threshold_replay["echo_method"], "replay_policy_thresholds")
+        self.assertEqual(
+            threshold_replay["echo_payload"],
+            {
+                "run_id": "run_abc",
+                "candidate_thresholds": [
+                    {"action_family": "filesystem/write", "ask_below": 0.4}
+                ],
+                "include_changed_samples": True,
+                "sample_limit": 5,
+            },
         )
         self.assertEqual(policy_validation["echo_method"], "validate_policy_config")
         self.assertEqual(policy_validation["echo_payload"]["config"]["profile_name"], "workspace-hardening")

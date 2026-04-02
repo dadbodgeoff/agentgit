@@ -22,8 +22,27 @@ function makeJournal(options: Partial<RunJournalOptions> = {}): RunJournal {
   return currentJournal;
 }
 
+function makeConfidenceAssessment(score: number): ActionRecord["confidence_assessment"] {
+  return {
+    engine_version: "test-confidence/v1",
+    score,
+    band: score >= 0.85 ? "high" : score >= 0.65 ? "guarded" : "low",
+    requires_human_review: score < 0.65,
+    factors: [
+      {
+        factor_id: "test_baseline",
+        label: "Test baseline",
+        kind: "baseline",
+        delta: score,
+        rationale: "Test confidence baseline.",
+      },
+    ],
+  };
+}
+
 function makeAction(actionId: string, runId: string, family: "filesystem/write" | "shell/exec"): ActionRecord {
   const isShell = family === "shell/exec";
+  const confidenceScore = isShell ? 0.42 : 0.96;
   return {
     schema_version: "action.v1",
     action_id: actionId,
@@ -84,8 +103,9 @@ function makeAction(actionId: string, runId: string, family: "filesystem/write" 
       mapper: "test",
       inferred_fields: [],
       warnings: [],
-      normalization_confidence: isShell ? 0.42 : 0.96,
+      normalization_confidence: confidenceScore,
     },
+    confidence_assessment: makeConfidenceAssessment(confidenceScore),
   };
 }
 
@@ -1060,6 +1080,16 @@ describe("RunJournal", () => {
     const writeAction = makeAction("act_write", "run_policy_calibration", "filesystem/write");
     const writeOutcome = makePolicyOutcome("act_write", "allow_with_snapshot", ["builtin.fs.snapshot"]);
     journal.appendRunEvent("run_policy_calibration", {
+      event_type: "action.normalized",
+      occurred_at: writeAction.timestamps.normalized_at,
+      recorded_at: writeAction.timestamps.normalized_at,
+      payload: {
+        action_id: writeAction.action_id,
+        action_family: `${writeAction.operation.domain}/${writeAction.operation.kind}`,
+        action: writeAction,
+      },
+    });
+    journal.appendRunEvent("run_policy_calibration", {
       event_type: "policy.evaluated",
       occurred_at: writeOutcome.evaluated_at,
       recorded_at: writeOutcome.evaluated_at,
@@ -1071,6 +1101,7 @@ describe("RunJournal", () => {
         reasons: writeOutcome.reasons,
         matched_rules: writeOutcome.policy_context.matched_rules,
         normalization_confidence: writeAction.normalization.normalization_confidence,
+        confidence_score: writeAction.confidence_assessment.score,
         action_family: `${writeAction.operation.domain}/${writeAction.operation.kind}`,
         snapshot_required: true,
         snapshot_selection: {
@@ -1081,6 +1112,16 @@ describe("RunJournal", () => {
 
     const shellAction = makeAction("act_shell", "run_policy_calibration", "shell/exec");
     const shellOutcome = makePolicyOutcome("act_shell", "ask", ["builtin.shell.ask"]);
+    journal.appendRunEvent("run_policy_calibration", {
+      event_type: "action.normalized",
+      occurred_at: shellAction.timestamps.normalized_at,
+      recorded_at: shellAction.timestamps.normalized_at,
+      payload: {
+        action_id: shellAction.action_id,
+        action_family: `${shellAction.operation.domain}/${shellAction.operation.kind}`,
+        action: shellAction,
+      },
+    });
     journal.appendRunEvent("run_policy_calibration", {
       event_type: "policy.evaluated",
       occurred_at: shellOutcome.evaluated_at,
@@ -1093,6 +1134,7 @@ describe("RunJournal", () => {
         reasons: shellOutcome.reasons,
         matched_rules: shellOutcome.policy_context.matched_rules,
         normalization_confidence: shellAction.normalization.normalization_confidence,
+        confidence_score: shellAction.confidence_assessment.score,
         action_family: `${shellAction.operation.domain}/${shellAction.operation.kind}`,
         snapshot_required: false,
         snapshot_selection: null,
@@ -1133,6 +1175,9 @@ describe("RunJournal", () => {
     expect(report.report.totals.approvals.requested).toBe(1);
     expect(report.report.totals.approvals.approved).toBe(1);
     expect(report.report.totals.recovery_attempted_count).toBe(1);
+    expect(report.report.totals.calibration.resolved_sample_count).toBe(1);
+    expect(report.report.totals.calibration.approved_count).toBe(1);
+    expect(report.report.totals.calibration.expected_calibration_error).toBeGreaterThanOrEqual(0);
     expect(report.report.samples_truncated).toBe(false);
     expect(report.report.samples).toHaveLength(2);
 
@@ -1145,6 +1190,7 @@ describe("RunJournal", () => {
         recovery_attempted_count: 1,
       }),
     );
+    expect(filesystemFamily?.calibration.resolved_sample_count).toBe(0);
     expect(filesystemFamily?.snapshot_classes).toEqual([{ key: "journal_plus_anchor", count: 1 }]);
     expect(filesystemFamily?.top_matched_rules).toEqual([{ key: "builtin.fs.snapshot", count: 1 }]);
 
@@ -1169,5 +1215,74 @@ describe("RunJournal", () => {
         recovery_strategy: "restore_path",
       }),
     );
+  });
+
+  it("loads replay records with normalized actions and confidence trigger evidence", () => {
+    const journal = makeJournal();
+    journal.registerRunLifecycle({
+      run_id: "run_policy_replay",
+      session_id: "sess_test",
+      workflow_name: "policy-replay",
+      agent_framework: "cli",
+      agent_name: "agentgit-cli",
+      workspace_roots: ["/workspace"],
+      client_metadata: {},
+      budget_config: {
+        max_mutating_actions: null,
+        max_destructive_actions: null,
+      },
+      created_at: "2026-03-29T12:00:00.000Z",
+    });
+
+    const action = makeAction("act_replay", "run_policy_replay", "filesystem/write");
+    action.normalization.normalization_confidence = 0.35;
+    action.confidence_assessment = makeConfidenceAssessment(0.35);
+    journal.appendRunEvent("run_policy_replay", {
+      event_type: "action.normalized",
+      occurred_at: action.timestamps.normalized_at,
+      recorded_at: action.timestamps.normalized_at,
+      payload: {
+        action_id: action.action_id,
+        action_family: "filesystem/write",
+        action,
+      },
+    });
+    journal.appendRunEvent("run_policy_replay", {
+      event_type: "policy.evaluated",
+      occurred_at: "2026-03-29T12:00:02.000Z",
+      recorded_at: "2026-03-29T12:00:02.000Z",
+      payload: {
+        action_id: action.action_id,
+        evaluated_at: "2026-03-29T12:00:02.000Z",
+        decision: "allow",
+        reasons: [],
+        matched_rules: [],
+        normalization_confidence: 0.35,
+        confidence_score: 0.35,
+        action_family: "filesystem/write",
+        snapshot_required: false,
+        snapshot_selection: null,
+        low_confidence_threshold: 0.3,
+        confidence_triggered: false,
+      },
+    });
+
+    const replayRecords = journal.getPolicyThresholdReplayRecords({
+      run_id: "run_policy_replay",
+    });
+
+    expect(replayRecords).toEqual([
+      expect.objectContaining({
+        run_id: "run_policy_replay",
+        action_id: "act_replay",
+        action_family: "filesystem/write",
+        confidence_score: 0.35,
+        low_confidence_threshold: 0.3,
+        confidence_triggered: false,
+        action: expect.objectContaining({
+          action_id: "act_replay",
+        }),
+      }),
+    ]);
   });
 });

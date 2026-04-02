@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "description": "Operator CLI for the local-first agentgit authority daemon.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/main.js",
   "types": "dist/main.d.ts",
@@ -32,7 +32,8 @@
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -47,6 +48,7 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
+    "@agentgit/authority-daemon": "workspace:*",
     "@agentgit/authority-sdk": "workspace:*",
     "@agentgit/schemas": "workspace:*"
   }

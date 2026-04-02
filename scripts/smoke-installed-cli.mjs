@@ -8,7 +8,6 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const daemonEntry = path.join(repoRoot, "packages", "authority-daemon", "dist", "main.js");
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -68,7 +67,7 @@ function parseJsonOutput(result, label) {
   }
 }
 
-async function waitForSocket(socketPath, timeoutMs = 10_000) {
+async function waitForSocket(socketPath, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (fs.existsSync(socketPath)) {
@@ -86,19 +85,12 @@ async function main() {
   const tempRoot = await fsp.mkdtemp(path.join(tempBase, "agcli-"));
   const tarballDir = path.join(tempRoot, "tarballs");
   const installRoot = path.join(tempRoot, "install-root");
+  const configRoot = path.join(tempRoot, "config-root");
   const workspaceRoot = path.join(tempRoot, "workspace");
-  const daemonStateRoot = path.join(tempRoot, "d");
   const socketPath = path.join(tempRoot, "a.sock");
-  const journalPath = path.join(daemonStateRoot, "a.db");
-  const snapshotRootPath = path.join(daemonStateRoot, "snaps");
-  const mcpRegistryPath = path.join(daemonStateRoot, "mcp-reg.db");
-  const mcpSecretStorePath = path.join(daemonStateRoot, "mcp-secrets.db");
-  const mcpHostPolicyPath = path.join(daemonStateRoot, "mcp-hosts.db");
-  const mcpConcurrencyLeasePath = path.join(daemonStateRoot, "mcp-leases.db");
 
   await fsp.mkdir(workspaceRoot, { recursive: true });
   await fsp.mkdir(installRoot, { recursive: true });
-  await fsp.mkdir(daemonStateRoot, { recursive: true });
 
   try {
     const packed = await runCommand(
@@ -120,28 +112,34 @@ async function main() {
       ".bin",
       process.platform === "win32" ? "agentgit-authority.cmd" : "agentgit-authority",
     );
-    const daemonEnv = {
-      AGENTGIT_ROOT: workspaceRoot,
-      INIT_CWD: workspaceRoot,
-      AGENTGIT_SOCKET_PATH: socketPath,
-      AGENTGIT_JOURNAL_PATH: journalPath,
-      AGENTGIT_SNAPSHOT_ROOT: snapshotRootPath,
-      AGENTGIT_MCP_REGISTRY_PATH: mcpRegistryPath,
-      AGENTGIT_MCP_SECRET_STORE_PATH: mcpSecretStorePath,
-      AGENTGIT_MCP_HOST_POLICY_PATH: mcpHostPolicyPath,
-      AGENTGIT_MCP_CONCURRENCY_LEASE_PATH: mcpConcurrencyLeasePath,
-    };
+    const setup = await runCommand(
+      installedCli,
+      [
+        "--json",
+        "--config-root",
+        configRoot,
+        "--workspace-root",
+        workspaceRoot,
+        "--socket-path",
+        socketPath,
+        "setup",
+        "--profile-name",
+        "smoke",
+      ],
+      { cwd: installRoot },
+    );
+    const setupResult = parseJsonOutput(setup, "agentgit-authority setup");
+    if (setupResult.profile_name !== "smoke") {
+      throw new Error("Installed CLI setup did not activate the smoke profile.");
+    }
 
-    const daemon = spawn(process.execPath, [daemonEntry], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        ...daemonEnv,
-      },
+    const daemonArgs = ["--json", "--config-root", configRoot, "daemon", "start"];
+    const daemon = spawn(installedCli, daemonArgs, {
+      cwd: installRoot,
+      env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let daemonExitError = null;
-
     let daemonStdout = "";
     let daemonStderr = "";
     daemon.stdout.on("data", (chunk) => {
@@ -154,7 +152,7 @@ async function main() {
     try {
       await waitForSocket(socketPath);
 
-      const baseArgs = ["--json", "--socket-path", socketPath, "--workspace-root", workspaceRoot];
+      const baseArgs = ["--json", "--config-root", configRoot];
       const version = await runCommand(installedCli, ["--json", "version"], { cwd: installRoot });
       const versionResult = parseJsonOutput(version, "agentgit-authority version");
       if (versionResult.supported_api_version !== "authority.v1") {
@@ -211,6 +209,7 @@ async function main() {
           {
             ok: true,
             install_root: installRoot,
+            config_root: configRoot,
             workspace_root: workspaceRoot,
             daemon_socket_path: socketPath,
             packed_artifacts: packManifest.packages,

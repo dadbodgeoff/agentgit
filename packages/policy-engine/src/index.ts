@@ -2,12 +2,15 @@ import path from "node:path";
 
 import {
   type ActionRecord,
+  type ApprovalRequest,
   type CapabilityRecord,
+  type GetPolicyThresholdReplayResponsePayload,
   type PolicyCalibrationSample,
   InternalError,
   type McpServerDefinition,
   type PolicyCalibrationReport,
   type PolicyConfig,
+  type PolicyLowConfidenceThreshold,
   PolicyConfigSchema,
   type PolicyOutcomeRecord,
   type PolicyPredicate,
@@ -55,12 +58,37 @@ export interface PolicyThresholdRecommendationOptions {
   relax_buffer?: number;
 }
 
+export interface PolicyThresholdReplayRecord {
+  run_id: string;
+  action_id: string;
+  evaluated_at: string;
+  action_family: string;
+  recorded_decision: PolicyCalibrationSample["decision"];
+  approval_status: ApprovalRequest["status"] | null;
+  confidence_score: number;
+  low_confidence_threshold: number | null;
+  confidence_triggered: boolean;
+  action: ActionRecord | null;
+}
+
+export interface PolicyThresholdReplayOptions {
+  include_changed_samples?: boolean;
+  sample_limit?: number | null;
+}
+
 export interface PolicyConfigValidationResult {
   valid: boolean;
   issues: string[];
   normalized_config: PolicyConfig | null;
   compiled_policy: CompiledPolicyPack | null;
 }
+
+type ReplayChangeKind =
+  | "approval_removed"
+  | "approval_added"
+  | "unsafe_auto_allow"
+  | "historical_allow_now_gated"
+  | "decision_changed";
 
 export interface PolicyEvaluationContext {
   run_summary?: Pick<RunSummary, "budget_config" | "budget_usage">;
@@ -414,6 +442,253 @@ export function recommendPolicyThresholds(
       automatic_live_application_allowed: false,
     };
   });
+}
+
+function normalizeReplayCandidateThresholds(
+  thresholds: PolicyLowConfidenceThreshold[],
+): PolicyLowConfidenceThreshold[] {
+  const deduped = new Map<string, number>();
+
+  for (const threshold of thresholds) {
+    deduped.set(threshold.action_family, roundThreshold(threshold.ask_below));
+  }
+
+  return [...deduped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([action_family, ask_below]) => ({
+      action_family,
+      ask_below,
+    }));
+}
+
+function overlayLowConfidenceThresholds(
+  compiledPolicy: CompiledPolicyPack | null | undefined,
+  thresholds: PolicyLowConfidenceThreshold[],
+): CompiledPolicyPack {
+  const basePolicy = compiledPolicy ?? DEFAULT_COMPILED_POLICY_PACK;
+
+  return {
+    ...basePolicy,
+    thresholds: {
+      low_confidence: {
+        ...basePolicy.thresholds.low_confidence,
+        ...Object.fromEntries(thresholds.map((threshold) => [threshold.action_family, threshold.ask_below])),
+      },
+    },
+  };
+}
+
+function emptyReplaySummary(): GetPolicyThresholdReplayResponsePayload["summary"] {
+  return {
+    replayable_samples: 0,
+    skipped_samples: 0,
+    changed_decisions: 0,
+    unchanged_decisions: 0,
+    current_approvals_requested: 0,
+    candidate_approvals_requested: 0,
+    approvals_reduced: 0,
+    approvals_increased: 0,
+    historically_denied_auto_allowed: 0,
+    historically_approved_auto_allowed: 0,
+    historically_allowed_newly_gated: 0,
+    current_matches_recorded: 0,
+    current_diverges_from_recorded: 0,
+  };
+}
+
+function classifyReplayChange(
+  sample: PolicyThresholdReplayRecord,
+  currentOutcome: PolicyOutcomeRecord,
+  candidateOutcome: PolicyOutcomeRecord,
+): {
+  kind: ReplayChangeKind;
+  summary: string;
+} {
+  if (currentOutcome.preconditions.approval_required && !candidateOutcome.preconditions.approval_required) {
+    if (sample.approval_status === "denied") {
+      return {
+        kind: "unsafe_auto_allow",
+        summary: `Historical denial would become automatic (${currentOutcome.decision} -> ${candidateOutcome.decision}).`,
+      };
+    }
+
+    return {
+      kind: "approval_removed",
+      summary: `Approval gate removed (${currentOutcome.decision} -> ${candidateOutcome.decision}).`,
+    };
+  }
+
+  if (!currentOutcome.preconditions.approval_required && candidateOutcome.preconditions.approval_required) {
+    if (
+      sample.approval_status === null &&
+      (sample.recorded_decision === "allow" || sample.recorded_decision === "allow_with_snapshot")
+    ) {
+      return {
+        kind: "historical_allow_now_gated",
+        summary: `Historically automatic action would now require approval (${currentOutcome.decision} -> ${candidateOutcome.decision}).`,
+      };
+    }
+
+    return {
+      kind: "approval_added",
+      summary: `Approval gate added (${currentOutcome.decision} -> ${candidateOutcome.decision}).`,
+    };
+  }
+
+  return {
+    kind: "decision_changed",
+    summary: `Decision changes from ${currentOutcome.decision} to ${candidateOutcome.decision}.`,
+  };
+}
+
+export function replayPolicyThresholds(
+  records: PolicyThresholdReplayRecord[],
+  compiledPolicy: CompiledPolicyPack | null | undefined,
+  candidateThresholds: PolicyLowConfidenceThreshold[],
+  options: PolicyThresholdReplayOptions = {},
+): Omit<GetPolicyThresholdReplayResponsePayload, "generated_at" | "filters" | "effective_policy_profile"> {
+  const normalizedCandidateThresholds = normalizeReplayCandidateThresholds(candidateThresholds);
+  const currentCompiledPolicy = compiledPolicy ?? DEFAULT_COMPILED_POLICY_PACK;
+  const candidateCompiledPolicy = overlayLowConfidenceThresholds(currentCompiledPolicy, normalizedCandidateThresholds);
+  const includeChangedSamples = options.include_changed_samples ?? false;
+  const sampleLimit = includeChangedSamples ? (options.sample_limit ?? 200) : null;
+  const summary = emptyReplaySummary();
+  const familySummaries = new Map<string, GetPolicyThresholdReplayResponsePayload["action_families"][number]>();
+  const changedSamples: NonNullable<GetPolicyThresholdReplayResponsePayload["changed_samples"]> = [];
+
+  for (const record of records) {
+    const familySummary =
+      familySummaries.get(record.action_family) ??
+      (() => {
+        const created: GetPolicyThresholdReplayResponsePayload["action_families"][number] = {
+          action_family: record.action_family,
+          current_ask_below: null,
+          candidate_ask_below: null,
+          replayable_samples: 0,
+          skipped_samples: 0,
+          changed_decisions: 0,
+          unchanged_decisions: 0,
+          current_approvals_requested: 0,
+          candidate_approvals_requested: 0,
+          approvals_reduced: 0,
+          approvals_increased: 0,
+          historically_denied_auto_allowed: 0,
+          historically_approved_auto_allowed: 0,
+          historically_allowed_newly_gated: 0,
+          current_matches_recorded: 0,
+          current_diverges_from_recorded: 0,
+        };
+        familySummaries.set(record.action_family, created);
+        return created;
+      })();
+
+    if (!record.action) {
+      summary.skipped_samples += 1;
+      familySummary.skipped_samples += 1;
+      continue;
+    }
+
+    const currentOutcome = evaluatePolicy(record.action, {
+      compiled_policy: currentCompiledPolicy,
+    });
+    const candidateOutcome = evaluatePolicy(record.action, {
+      compiled_policy: candidateCompiledPolicy,
+    });
+    const currentConfidenceThreshold = resolvePolicyLowConfidenceThreshold(currentCompiledPolicy, record.action);
+    const candidateConfidenceThreshold = resolvePolicyLowConfidenceThreshold(candidateCompiledPolicy, record.action);
+    const currentConfidenceTriggered =
+      currentConfidenceThreshold !== null && record.confidence_score < currentConfidenceThreshold;
+    const candidateConfidenceTriggered =
+      candidateConfidenceThreshold !== null && record.confidence_score < candidateConfidenceThreshold;
+    familySummary.current_ask_below = currentConfidenceThreshold;
+    familySummary.candidate_ask_below = candidateConfidenceThreshold;
+
+    summary.replayable_samples += 1;
+    familySummary.replayable_samples += 1;
+
+    if (currentOutcome.preconditions.approval_required) {
+      summary.current_approvals_requested += 1;
+      familySummary.current_approvals_requested += 1;
+    }
+    if (candidateOutcome.preconditions.approval_required) {
+      summary.candidate_approvals_requested += 1;
+      familySummary.candidate_approvals_requested += 1;
+    }
+
+    if (currentOutcome.preconditions.approval_required && !candidateOutcome.preconditions.approval_required) {
+      summary.approvals_reduced += 1;
+      familySummary.approvals_reduced += 1;
+      if (record.approval_status === "denied") {
+        summary.historically_denied_auto_allowed += 1;
+        familySummary.historically_denied_auto_allowed += 1;
+      }
+      if (record.approval_status === "approved") {
+        summary.historically_approved_auto_allowed += 1;
+        familySummary.historically_approved_auto_allowed += 1;
+      }
+    }
+
+    if (!currentOutcome.preconditions.approval_required && candidateOutcome.preconditions.approval_required) {
+      summary.approvals_increased += 1;
+      familySummary.approvals_increased += 1;
+      if (
+        record.approval_status === null &&
+        (record.recorded_decision === "allow" || record.recorded_decision === "allow_with_snapshot")
+      ) {
+        summary.historically_allowed_newly_gated += 1;
+        familySummary.historically_allowed_newly_gated += 1;
+      }
+    }
+
+    if (currentOutcome.decision === record.recorded_decision) {
+      summary.current_matches_recorded += 1;
+      familySummary.current_matches_recorded += 1;
+    } else {
+      summary.current_diverges_from_recorded += 1;
+      familySummary.current_diverges_from_recorded += 1;
+    }
+
+    if (currentOutcome.decision === candidateOutcome.decision) {
+      summary.unchanged_decisions += 1;
+      familySummary.unchanged_decisions += 1;
+      continue;
+    }
+
+    summary.changed_decisions += 1;
+    familySummary.changed_decisions += 1;
+
+    if (includeChangedSamples) {
+      const change = classifyReplayChange(record, currentOutcome, candidateOutcome);
+      changedSamples.push({
+        run_id: record.run_id,
+        action_id: record.action_id,
+        evaluated_at: record.evaluated_at,
+        action_family: record.action_family,
+        confidence_score: roundThreshold(record.confidence_score),
+        recorded_decision: record.recorded_decision,
+        current_decision: currentOutcome.decision,
+        candidate_decision: candidateOutcome.decision,
+        approval_status: record.approval_status,
+        current_confidence_triggered: currentConfidenceTriggered,
+        candidate_confidence_triggered: candidateConfidenceTriggered,
+        change_kind: change.kind,
+        summary: change.summary,
+      });
+    }
+  }
+
+  return {
+    candidate_thresholds: normalizedCandidateThresholds,
+    summary,
+    action_families: [...familySummaries.values()].sort((left, right) => {
+      if (right.replayable_samples !== left.replayable_samples) {
+        return right.replayable_samples - left.replayable_samples;
+      }
+      return left.action_family.localeCompare(right.action_family);
+    }),
+    changed_samples: includeChangedSamples ? changedSamples.slice(0, sampleLimit ?? changedSamples.length) : undefined,
+    samples_truncated: includeChangedSamples && sampleLimit !== null ? changedSamples.length > sampleLimit : false,
+  };
 }
 
 function evaluateCompiledPolicy(

@@ -73,6 +73,24 @@ function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | n
 
 const TEST_OCI_SANDBOX = detectOciSandbox();
 
+function makeConfidenceAssessment(score: number): ActionRecord["confidence_assessment"] {
+  return {
+    engine_version: "test-confidence/v1",
+    score,
+    band: score >= 0.85 ? "high" : score >= 0.65 ? "guarded" : "low",
+    requires_human_review: score < 0.65,
+    factors: [
+      {
+        factor_id: "test_baseline",
+        label: "Test baseline",
+        kind: "baseline",
+        delta: score,
+        rationale: "Test confidence baseline.",
+      },
+    ],
+  };
+}
+
 function makeGovernedTestStdioServer(
   scenario: string,
   extraEnv: Record<string, string> = {},
@@ -185,6 +203,7 @@ function createLooseTicketState(dbPath: string): IntegrationState<{ tickets: Rec
 }
 
 function makeMcpAction(overrides: Partial<ActionRecord> = {}): ActionRecord {
+  const confidenceScore = 0.9;
   return {
     schema_version: "action.v1",
     action_id: "act_mcp_test",
@@ -265,8 +284,9 @@ function makeMcpAction(overrides: Partial<ActionRecord> = {}): ActionRecord {
       mapper: "mcp/v1",
       inferred_fields: [],
       warnings: [],
-      normalization_confidence: 0.9,
+      normalization_confidence: confidenceScore,
     },
+    confidence_assessment: makeConfidenceAssessment(confidenceScore),
     ...overrides,
   };
 }
@@ -667,6 +687,7 @@ async function startMcpHttpService(
 }
 
 function makeAction(targetPath: string, operation: "write" | "delete" = "write"): ActionRecord {
+  const confidenceScore = 0.99;
   return {
     schema_version: "action.v1",
     action_id: "act_test",
@@ -740,8 +761,9 @@ function makeAction(targetPath: string, operation: "write" | "delete" = "write")
       mapper: "test",
       inferred_fields: [],
       warnings: [],
-      normalization_confidence: 0.99,
+      normalization_confidence: confidenceScore,
     },
+    confidence_assessment: makeConfidenceAssessment(confidenceScore),
   };
 }
 
@@ -777,6 +799,7 @@ function makePolicyOutcome(snapshotRequired = false): PolicyOutcomeRecord {
 
 function makeFunctionAction(): ActionRecord {
   const locator = "drafts://message_draft/draft_act_test";
+  const confidenceScore = 0.95;
 
   return {
     schema_version: "action.v1",
@@ -857,8 +880,9 @@ function makeFunctionAction(): ActionRecord {
       mapper: "test",
       inferred_fields: [],
       warnings: [],
-      normalization_confidence: 0.95,
+      normalization_confidence: confidenceScore,
     },
+    confidence_assessment: makeConfidenceAssessment(confidenceScore),
   };
 }
 
