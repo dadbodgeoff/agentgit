@@ -1,0 +1,33 @@
+{
+  "recovery_plan": {
+    "schema_version": "recovery-plan.v1",
+    "recovery_plan_id": "rec_1775095532439_21393868409149bda8eac367bd07f571",
+    "target": {
+      "type": "action_boundary",
+      "action_id": "act_019d4bf04a4572fb837c178ca8b3104f"
+    },
+    "recovery_class": "reversible",
+    "strategy": "restore_snapshot",
+    "confidence": 0.99,
+    "steps": [
+      {
+        "step_id": "step_1775095532439_7cc5209c44c44ba5a77f6774388c23a6",
+        "type": "restore_snapshot",
+        "idempotent": true,
+        "depends_on": []
+      }
+    ],
+    "impact_preview": {
+      "paths_to_change": 1,
+      "later_actions_affected": 0,
+      "overlapping_paths": [],
+      "external_effects": [],
+      "data_loss_risk": "low"
+    },
+    "warnings": [],
+    "created_at": "2026-04-02T02:05:32.439Z"
+  },
+  "restored": true,
+  "outcome": "restored",
+  "executed_at": "2026-04-02T02:05:32.441Z"
+}

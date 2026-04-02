@@ -275,9 +275,7 @@ function normalizeSubsetSelectors(paths: string[], workspaceRoot: string): strin
       });
     }
 
-    const resolvedPath = path.isAbsolute(trimmed)
-      ? path.resolve(trimmed)
-      : path.resolve(resolvedRoot, trimmed);
+    const resolvedPath = path.isAbsolute(trimmed) ? path.resolve(trimmed) : path.resolve(resolvedRoot, trimmed);
     if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
       throw new AgentGitError("Path subset selectors must stay within the workspace root.", "PRECONDITION_FAILED", {
         path: inputPath,
@@ -360,11 +358,7 @@ export class WorkspaceIndex {
     this.workspaceRoot = path.resolve(options.workspaceRoot);
     this.snapshotDir = path.resolve(options.snapshotDir);
     const internalIgnorePatterns = this.buildInternalIgnorePatterns();
-    this.ignorePatterns = [
-      ...DEFAULT_IGNORE_PATTERNS,
-      ...internalIgnorePatterns,
-      ...(options.ignorePatterns ?? []),
-    ];
+    this.ignorePatterns = [...DEFAULT_IGNORE_PATTERNS, ...internalIgnorePatterns, ...(options.ignorePatterns ?? [])];
 
     this.db = new Database(options.dbPath);
     this.db.pragma("journal_mode = WAL");
@@ -374,11 +368,7 @@ export class WorkspaceIndex {
 
   private buildInternalIgnorePatterns(): string[] {
     const relativeSnapshotDir = path.relative(this.workspaceRoot, this.snapshotDir).replaceAll(path.sep, "/");
-    if (
-      relativeSnapshotDir.length === 0 ||
-      relativeSnapshotDir === "." ||
-      relativeSnapshotDir.startsWith("..")
-    ) {
+    if (relativeSnapshotDir.length === 0 || relativeSnapshotDir === "." || relativeSnapshotDir.startsWith("..")) {
       return [];
     }
 
@@ -455,15 +445,11 @@ export class WorkspaceIndex {
   }
 
   private ensureMeta(key: string, defaultValue: string): void {
-    this.db
-      .prepare("INSERT OR IGNORE INTO index_meta (key, value) VALUES (?, ?)")
-      .run(key, defaultValue);
+    this.db.prepare("INSERT OR IGNORE INTO index_meta (key, value) VALUES (?, ?)").run(key, defaultValue);
   }
 
   private ensureSnapshotColumn(columnName: string, columnDefinition: string): void {
-    const columns = this.db
-      .prepare("PRAGMA table_info(snapshots)")
-      .all() as Array<{ name: string }>;
+    const columns = this.db.prepare("PRAGMA table_info(snapshots)").all() as Array<{ name: string }>;
     if (columns.some((column) => column.name === columnName)) {
       return;
     }
@@ -472,9 +458,7 @@ export class WorkspaceIndex {
   }
 
   private getMetaNumber(key: string): number {
-    const row = this.db
-      .prepare("SELECT value FROM index_meta WHERE key = ?")
-      .get(key) as { value: string };
+    const row = this.db.prepare("SELECT value FROM index_meta WHERE key = ?").get(key) as { value: string };
     return parseInt(row.value, 10);
   }
 
@@ -482,9 +466,7 @@ export class WorkspaceIndex {
     return this.db.transaction(() => {
       const current = this.getMetaNumber("current_scan_seq");
       const next = current + 1;
-      this.db
-        .prepare("UPDATE index_meta SET value = ? WHERE key = 'current_scan_seq'")
-        .run(String(next));
+      this.db.prepare("UPDATE index_meta SET value = ? WHERE key = 'current_scan_seq'").run(String(next));
       return next;
     })();
   }
@@ -556,10 +538,7 @@ export class WorkspaceIndex {
       const isNew = !existing || existing.is_deleted;
       const contentChanged = !!existing && !existing.is_deleted && existing.content_hash !== hash;
       const permissionsChanged =
-        !!existing &&
-        !existing.is_deleted &&
-        existing.content_hash === hash &&
-        existing.file_mode !== entry.mode;
+        !!existing && !existing.is_deleted && existing.content_hash === hash && existing.file_mode !== entry.mode;
 
       baselineUpdates.push({
         path: entry.relativePath,
@@ -656,9 +635,7 @@ export class WorkspaceIndex {
     const createdAt = new Date().toISOString();
     const newBaselineRevision = preparedSet.baseline_revision + 1;
     const parentRow = this.db
-      .prepare(
-        "SELECT snap_id FROM snapshots ORDER BY baseline_revision DESC, created_at DESC LIMIT 1",
-      )
+      .prepare("SELECT snap_id FROM snapshots ORDER BY baseline_revision DESC, created_at DESC LIMIT 1")
       .get() as { snap_id: string } | undefined;
     const parentSnapId = parentRow?.snap_id ?? null;
     const relativeAnchorPath =
@@ -668,9 +645,7 @@ export class WorkspaceIndex {
           : options.anchor_path
         : null;
     const anchorState =
-      relativeAnchorPath === null
-        ? null
-        : await this.statLiveFile(path.join(this.workspaceRoot, relativeAnchorPath));
+      relativeAnchorPath === null ? null : await this.statLiveFile(path.join(this.workspaceRoot, relativeAnchorPath));
 
     const stagingBaseDir = path.join(this.snapshotDir, "staging", snapId);
     const stagingFilesDir = path.join(stagingBaseDir, "files");
@@ -732,22 +707,22 @@ export class WorkspaceIndex {
 
       try {
         this.db.transaction(() => {
-        const currentBaseline = this.getCurrentBaselineRevision();
-        if (currentBaseline !== preparedSet.baseline_revision) {
-          throw new AgentGitError(
-            "Workspace baseline changed before snapshot commit.",
-            "CONFLICT",
-            {
-              expected_baseline_revision: preparedSet.baseline_revision,
-              actual_baseline_revision: currentBaseline,
-            },
-            true,
-          );
-        }
+          const currentBaseline = this.getCurrentBaselineRevision();
+          if (currentBaseline !== preparedSet.baseline_revision) {
+            throw new AgentGitError(
+              "Workspace baseline changed before snapshot commit.",
+              "CONFLICT",
+              {
+                expected_baseline_revision: preparedSet.baseline_revision,
+                actual_baseline_revision: currentBaseline,
+              },
+              true,
+            );
+          }
 
-        this.db
-          .prepare(
-            `INSERT INTO snapshots (
+          this.db
+            .prepare(
+              `INSERT INTO snapshots (
               snap_id,
               parent_snap_id,
               baseline_revision,
@@ -764,40 +739,33 @@ export class WorkspaceIndex {
               anchor_file_mode,
               anchor_source_snap_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            snapId,
-            parentSnapId,
-            newBaselineRevision,
-            preparedSet.scan_seq,
-            options.trigger_reason,
-            options.action_id ?? null,
-            options.run_id ?? null,
-            preparedSet.files.length,
-            totalBytes,
-            createdAt,
-            relativeAnchorPath,
-            manifest.anchor_exists ? 1 : 0,
-            manifest.anchor_content_hash,
-            manifest.anchor_file_mode,
-            manifest.anchor_source_snap_id,
-          );
+            )
+            .run(
+              snapId,
+              parentSnapId,
+              newBaselineRevision,
+              preparedSet.scan_seq,
+              options.trigger_reason,
+              options.action_id ?? null,
+              options.run_id ?? null,
+              preparedSet.files.length,
+              totalBytes,
+              createdAt,
+              relativeAnchorPath,
+              manifest.anchor_exists ? 1 : 0,
+              manifest.anchor_content_hash,
+              manifest.anchor_file_mode,
+              manifest.anchor_source_snap_id,
+            );
 
-        const insertSnapFile = this.db.prepare(
-          "INSERT INTO snap_files (snap_id, path, change_type, content_hash, size_bytes, file_mode) VALUES (?, ?, ?, ?, ?, ?)",
-        );
-        for (const file of preparedSet.files) {
-          insertSnapFile.run(
-            snapId,
-            file.path,
-            file.change_type,
-            file.content_hash,
-            file.size_bytes,
-            file.file_mode,
+          const insertSnapFile = this.db.prepare(
+            "INSERT INTO snap_files (snap_id, path, change_type, content_hash, size_bytes, file_mode) VALUES (?, ?, ?, ?, ?, ?)",
           );
-        }
+          for (const file of preparedSet.files) {
+            insertSnapFile.run(snapId, file.path, file.change_type, file.content_hash, file.size_bytes, file.file_mode);
+          }
 
-        const upsertFile = this.db.prepare(`
+          const upsertFile = this.db.prepare(`
           INSERT INTO file_index (path, content_hash, mtime_ms, size_bytes, file_mode, entry_kind, scan_seq, is_deleted)
           VALUES (?, ?, ?, ?, ?, 'file', ?, ?)
           ON CONFLICT(path) DO UPDATE SET
@@ -810,24 +778,24 @@ export class WorkspaceIndex {
             is_deleted = excluded.is_deleted
         `);
 
-        for (const update of preparedSet.baseline_updates) {
-          upsertFile.run(
-            update.path,
-            update.content_hash,
-            update.mtime_ms,
-            update.size_bytes,
-            update.file_mode,
-            preparedSet.scan_seq,
-            update.is_deleted,
-          );
-        }
+          for (const update of preparedSet.baseline_updates) {
+            upsertFile.run(
+              update.path,
+              update.content_hash,
+              update.mtime_ms,
+              update.size_bytes,
+              update.file_mode,
+              preparedSet.scan_seq,
+              update.is_deleted,
+            );
+          }
 
-        this.db
-          .prepare("UPDATE index_meta SET value = ? WHERE key = 'current_baseline_revision'")
-          .run(String(newBaselineRevision));
-        this.db
-          .prepare("UPDATE prepared_scans SET committed_at = ? WHERE prepared_scan_id = ?")
-          .run(createdAt, preparedSet.prepared_scan_id);
+          this.db
+            .prepare("UPDATE index_meta SET value = ? WHERE key = 'current_baseline_revision'")
+            .run(String(newBaselineRevision));
+          this.db
+            .prepare("UPDATE prepared_scans SET committed_at = ? WHERE prepared_scan_id = ?")
+            .run(createdAt, preparedSet.prepared_scan_id);
         })();
       } catch (error) {
         try {
@@ -937,9 +905,9 @@ export class WorkspaceIndex {
       filesRestored.push({ path: filePath, action: "restored" });
     }
 
-    const activeBaselineRows = this.db
-      .prepare("SELECT path FROM file_index WHERE is_deleted = 0")
-      .all() as Array<{ path: string }>;
+    const activeBaselineRows = this.db.prepare("SELECT path FROM file_index WHERE is_deleted = 0").all() as Array<{
+      path: string;
+    }>;
 
     for (const row of activeBaselineRows) {
       if (restorationSet.has(row.path)) {
@@ -1096,9 +1064,9 @@ export class WorkspaceIndex {
         });
       }
 
-      const parentRow = this.db
-        .prepare("SELECT parent_snap_id FROM snapshots WHERE snap_id = ?")
-        .get(currentSnapId) as { parent_snap_id: string | null } | undefined;
+      const parentRow = this.db.prepare("SELECT parent_snap_id FROM snapshots WHERE snap_id = ?").get(currentSnapId) as
+        | { parent_snap_id: string | null }
+        | undefined;
       currentSnapId = parentRow?.parent_snap_id ?? null;
     }
 
@@ -1126,10 +1094,7 @@ export class WorkspaceIndex {
     const restorationSet = this.buildRestorationSet(targetSnapId);
     const ignorePatterns = await this.loadIgnorePatterns();
     const liveEntries = await walkWorkspace(this.workspaceRoot, ignorePatterns);
-    const currentMap = new Map<
-      string,
-      { content_hash: string; file_mode: number }
-    >();
+    const currentMap = new Map<string, { content_hash: string; file_mode: number }>();
 
     for (const entry of liveEntries) {
       const fullPath = path.join(this.workspaceRoot, entry.relativePath);
@@ -1205,8 +1170,7 @@ export class WorkspaceIndex {
       laterActionKeys.add(snapshot.action_id ? `action:${snapshot.action_id}` : `snapshot:${snapshot.snap_id}`);
     }
 
-    let dataLossRisk: RestorePreview["data_loss_risk"] =
-      removals > 10 ? "high" : removals > 0 ? "moderate" : "low";
+    let dataLossRisk: RestorePreview["data_loss_risk"] = removals > 10 ? "high" : removals > 0 ? "moderate" : "low";
     if (laterActionKeys.size > 0) {
       dataLossRisk = overlappingPaths.size > 3 || removals > 0 ? "high" : "moderate";
     }
@@ -1318,8 +1282,7 @@ export class WorkspaceIndex {
       laterActionKeys.add(snapshot.action_id ? `action:${snapshot.action_id}` : `snapshot:${snapshot.snap_id}`);
     }
 
-    let dataLossRisk: RestorePreview["data_loss_risk"] =
-      removals > 10 ? "high" : removals > 0 ? "moderate" : "low";
+    let dataLossRisk: RestorePreview["data_loss_risk"] = removals > 10 ? "high" : removals > 0 ? "moderate" : "low";
     if (laterActionKeys.size > 0) {
       dataLossRisk = overlappingPaths.size > 3 || removals > 0 ? "high" : "moderate";
     }
@@ -1347,18 +1310,16 @@ export class WorkspaceIndex {
   }
 
   getSnapshotManifest(snapId: string): SnapManifest | null {
-    const snap = this.db
-      .prepare("SELECT * FROM snapshots WHERE snap_id = ?")
-      .get(snapId) as Record<string, unknown> | undefined;
+    const snap = this.db.prepare("SELECT * FROM snapshots WHERE snap_id = ?").get(snapId) as
+      | Record<string, unknown>
+      | undefined;
 
     if (!snap) {
       return null;
     }
 
     const files = this.db
-      .prepare(
-        "SELECT path, change_type, content_hash, size_bytes, file_mode FROM snap_files WHERE snap_id = ?",
-      )
+      .prepare("SELECT path, change_type, content_hash, size_bytes, file_mode FROM snap_files WHERE snap_id = ?")
       .all(snapId) as DirtyFile[];
 
     return {
@@ -1395,12 +1356,8 @@ export class WorkspaceIndex {
   checkFile(filePath: string): { content_hash: string; size_bytes: number; file_mode: number } | null {
     const relativePath = path.isAbsolute(filePath) ? path.relative(this.workspaceRoot, filePath) : filePath;
     const row = this.db
-      .prepare(
-        "SELECT content_hash, size_bytes, file_mode FROM file_index WHERE path = ? AND is_deleted = 0",
-      )
-      .get(relativePath) as
-      | { content_hash: string; size_bytes: number; file_mode: number }
-      | undefined;
+      .prepare("SELECT content_hash, size_bytes, file_mode FROM file_index WHERE path = ? AND is_deleted = 0")
+      .get(relativePath) as { content_hash: string; size_bytes: number; file_mode: number } | undefined;
     return row ?? null;
   }
 
@@ -1468,11 +1425,7 @@ export class WorkspaceIndex {
       return null;
     }
 
-    return [
-      manifest.anchor_path,
-      manifest.anchor_content_hash,
-      String(manifest.anchor_file_mode ?? 0),
-    ].join("\u0000");
+    return [manifest.anchor_path, manifest.anchor_content_hash, String(manifest.anchor_file_mode ?? 0)].join("\u0000");
   }
 
   private async persistAnchorSource(manifest: SnapManifest, anchorSourceSnapId: string | null): Promise<void> {
@@ -1562,7 +1515,10 @@ export class WorkspaceIndex {
 
             const filesRootEntries = await fs.readdir(filesRoot).catch(() => []);
             if (filesRootEntries.length === 0) {
-              const removedFilesRoot = await fs.rmdir(filesRoot).then(() => true).catch(() => false);
+              const removedFilesRoot = await fs
+                .rmdir(filesRoot)
+                .then(() => true)
+                .catch(() => false);
               if (removedFilesRoot) {
                 summary.empty_directories_removed += 1;
               }
@@ -1618,9 +1574,9 @@ export class WorkspaceIndex {
     current_scan_seq: number;
     current_baseline_revision: number;
   } {
-    const indexedFilesRow = this.db
-      .prepare("SELECT COUNT(*) AS count FROM file_index WHERE is_deleted = 0")
-      .get() as { count: number };
+    const indexedFilesRow = this.db.prepare("SELECT COUNT(*) AS count FROM file_index WHERE is_deleted = 0").get() as {
+      count: number;
+    };
     const snapshotStatsRow = this.db
       .prepare("SELECT COUNT(*) AS count, COALESCE(SUM(total_bytes), 0) AS bytes FROM snapshots")
       .get() as { count: number; bytes: number };
@@ -1670,9 +1626,9 @@ export function inspectPersistedWorkspaceSnapshotIndex(dbPath: string): Persiste
   const db = new Database(dbPath, { readonly: true });
 
   try {
-    const workspaceRootRow = db
-      .prepare("SELECT value FROM index_meta WHERE key = 'workspace_root'")
-      .get() as { value?: string } | undefined;
+    const workspaceRootRow = db.prepare("SELECT value FROM index_meta WHERE key = 'workspace_root'").get() as
+      | { value?: string }
+      | undefined;
     const workspaceRoot = workspaceRootRow?.value ? path.resolve(workspaceRootRow.value) : null;
 
     if (!workspaceRoot) {

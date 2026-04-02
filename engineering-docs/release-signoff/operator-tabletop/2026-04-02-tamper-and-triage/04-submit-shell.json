@@ -1,0 +1,169 @@
+{
+  "action": {
+    "schema_version": "action.v1",
+    "action_id": "act_019d4bf04b62705e963bcb5e0215445d",
+    "run_id": "run_019d4bf04b057445bf6469d7f4844aa7",
+    "session_id": "sess_019d4bf04b047599a1beddd188097708",
+    "status": "normalized",
+    "timestamps": {
+      "requested_at": "2026-04-02T02:05:32.380Z",
+      "normalized_at": "2026-04-02T02:05:32.386Z"
+    },
+    "provenance": {
+      "mode": "governed",
+      "source": "authority-sdk-ts",
+      "confidence": 0.96
+    },
+    "actor": {
+      "type": "agent",
+      "agent_name": "agentgit-cli",
+      "agent_framework": "cli",
+      "tool_name": "exec_command",
+      "tool_kind": "shell"
+    },
+    "operation": {
+      "domain": "shell",
+      "kind": "exec",
+      "name": "shell.exec",
+      "display_name": "Inspect workspace with cat"
+    },
+    "execution_path": {
+      "surface": "governed_shell",
+      "mode": "pre_execution",
+      "credential_mode": "none"
+    },
+    "target": {
+      "primary": {
+        "type": "workspace",
+        "locator": "/tmp/agentgit-tabletop-pDTulo/workspace",
+        "label": "workspace"
+      },
+      "scope": {
+        "breadth": "workspace",
+        "unknowns": []
+      }
+    },
+    "input": {
+      "raw": {
+        "command": "cat /tmp/agentgit-tabletop-pDTulo/workspace/tabletop-source.txt",
+        "argv": [
+          "cat",
+          "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-source.txt"
+        ]
+      },
+      "redacted": {
+        "command": "cat /tmp/agentgit-tabletop-pDTulo/workspace/tabletop-source.txt",
+        "argv": [
+          "cat",
+          "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-source.txt"
+        ]
+      },
+      "schema_ref": null,
+      "contains_sensitive_data": false
+    },
+    "risk_hints": {
+      "side_effect_level": "read_only",
+      "external_effects": "none",
+      "reversibility_hint": "reversible",
+      "sensitivity_hint": "low",
+      "batch": false
+    },
+    "facets": {
+      "shell": {
+        "argv": [
+          "cat",
+          "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-source.txt"
+        ],
+        "cwd": "/tmp/agentgit-tabletop-pDTulo/workspace",
+        "interpreter": "cat",
+        "command_family": "read_only_shell",
+        "classifier_rule": "shell.read_only.core",
+        "declared_env_keys": [],
+        "stdin_kind": "none"
+      }
+    },
+    "normalization": {
+      "mapper": "shell/v1",
+      "inferred_fields": [
+        "risk_hints",
+        "target.scope"
+      ],
+      "warnings": [],
+      "normalization_confidence": 0.96
+    }
+  },
+  "policy_outcome": {
+    "schema_version": "policy-outcome.v1",
+    "policy_outcome_id": "pol_019d4bf04b6470dd99d56120a7c68704",
+    "action_id": "act_019d4bf04b62705e963bcb5e0215445d",
+    "decision": "allow",
+    "reasons": [
+      {
+        "code": "TRUSTED_READONLY_ALLOWED",
+        "severity": "low",
+        "message": "Known read-only shell commands are allowed in safe mode."
+      }
+    ],
+    "trust_requirements": {
+      "wrapped_path_required": true,
+      "brokered_credentials_required": false,
+      "direct_credentials_forbidden": false
+    },
+    "preconditions": {
+      "snapshot_required": false,
+      "approval_required": false,
+      "simulation_supported": false
+    },
+    "approval": null,
+    "budget_effects": {
+      "budget_check": "passed",
+      "estimated_cost": 0,
+      "remaining_mutating_actions": null,
+      "remaining_destructive_actions": null
+    },
+    "policy_context": {
+      "matched_rules": [
+        "shell.safe.read_only"
+      ],
+      "sticky_decision_applied": false
+    },
+    "evaluated_at": "2026-04-02T02:05:32.388Z"
+  },
+  "execution_result": {
+    "execution_id": "exec_sh_1775095532389",
+    "action_id": "act_019d4bf04b62705e963bcb5e0215445d",
+    "mode": "executed",
+    "success": true,
+    "output": {
+      "executed": true,
+      "domain": "shell",
+      "cwd": "/tmp/agentgit-tabletop-pDTulo/workspace",
+      "argv": [
+        "cat",
+        "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-source.txt"
+      ],
+      "exit_code": 0,
+      "stdout": "tabletop evidence content",
+      "stderr": ""
+    },
+    "artifacts": [
+      {
+        "artifact_id": "artifact_stdout_1775095532391",
+        "type": "stdout",
+        "content_ref": "inline://exec_sh_1775095532389/stdout",
+        "byte_size": 25,
+        "visibility": "user"
+      }
+    ],
+    "started_at": "2026-04-02T02:05:32.389Z",
+    "completed_at": "2026-04-02T02:05:32.391Z",
+    "artifact_capture": {
+      "requested_count": 1,
+      "stored_count": 1,
+      "degraded": false,
+      "failures": []
+    }
+  },
+  "snapshot_record": null,
+  "approval_request": null
+}

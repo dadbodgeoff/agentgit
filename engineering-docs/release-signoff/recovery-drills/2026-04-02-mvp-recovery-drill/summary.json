@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "drill_started_at": "2026-04-02T02:05:30.670Z",
+  "drill_finished_at": "2026-04-02T02:05:32.656Z",
+  "rto_ms": 192,
+  "rpo_target": "latest valid action boundary",
+  "run_id": "run_019d4bf0495b7398808c973ed557cdb0",
+  "recovery_target_action_id": "act_019d4bf04a4572fb837c178ca8b3104f",
+  "recovery_strategy": "restore_snapshot",
+  "restored": true,
+  "file_exists_after_recovery": true,
+  "file_contents_after_recovery": "drill-v1",
+  "output_dir": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/recovery-drills/2026-04-02-mvp-recovery-drill",
+  "temp_workspace": "/tmp/agentgit-recovery-drill-DEfxMi/workspace"
+}

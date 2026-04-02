@@ -3,15 +3,64 @@ import path from "node:path";
 import {
   type ActionRecord,
   type CapabilityRecord,
+  type PolicyCalibrationSample,
   InternalError,
   type McpServerDefinition,
+  type PolicyCalibrationReport,
+  type PolicyConfig,
+  PolicyConfigSchema,
   type PolicyOutcomeRecord,
+  type PolicyPredicate,
+  type PolicyRule,
   type PolicyReason,
+  type PolicyThresholdRecommendation,
   type RunSummary,
 } from "@agentgit/schemas";
 import { v7 as uuidv7 } from "uuid";
 
+import { DEFAULT_POLICY_PACK } from "./default-policy-pack.js";
+
+export { DEFAULT_POLICY_PACK } from "./default-policy-pack.js";
+
 const SAFE_FS_WRITE_BYTES = 256 * 1024;
+
+const POLICY_DECISION_STRENGTH: Record<PolicyOutcomeRecord["decision"], number> = {
+  deny: 4,
+  ask: 3,
+  allow_with_snapshot: 2,
+  simulate: 1,
+  allow: 0,
+};
+
+export interface CompiledPolicyRule {
+  profile_name: string;
+  policy_version: string;
+  source_index: number;
+  rule_index: number;
+  rule: PolicyRule;
+}
+
+export interface CompiledPolicyPack {
+  profile_name: string;
+  policy_versions: string[];
+  rules: CompiledPolicyRule[];
+  thresholds: {
+    low_confidence: Record<string, number>;
+  };
+}
+
+export interface PolicyThresholdRecommendationOptions {
+  min_samples?: number;
+  tighten_buffer?: number;
+  relax_buffer?: number;
+}
+
+export interface PolicyConfigValidationResult {
+  valid: boolean;
+  issues: string[];
+  normalized_config: PolicyConfig | null;
+  compiled_policy: CompiledPolicyPack | null;
+}
 
 export interface PolicyEvaluationContext {
   run_summary?: Pick<RunSummary, "budget_config" | "budget_usage">;
@@ -25,7 +74,10 @@ export interface PolicyEvaluationContext {
     stale_after_ms: number;
     is_stale: boolean;
   } | null;
+  compiled_policy?: CompiledPolicyPack | null;
 }
+
+export const DEFAULT_COMPILED_POLICY_PACK = compilePolicyPack([DEFAULT_POLICY_PACK]);
 
 function createPolicyOutcomeId(): string {
   return `pol_${uuidv7().replaceAll("-", "")}`;
@@ -73,15 +125,14 @@ function makeCapabilityApprovalOutcome(
   action: ActionRecord,
   reason: PolicyReason,
   matchedRule: string,
+  snapshotRequired = false,
   trustRequirements?: Partial<PolicyOutcomeRecord["trust_requirements"]>,
 ): PolicyOutcomeRecord {
-  return makeOutcome(
-    action,
-    "ask",
-    [reason],
-    [matchedRule],
-    trustRequirements,
-  );
+  const outcome = makeOutcome(action, "ask", [reason], [matchedRule], trustRequirements);
+  if (snapshotRequired) {
+    outcome.preconditions.snapshot_required = true;
+  }
+  return outcome;
 }
 
 function makeDirectCredentialDenyOutcome(
@@ -106,6 +157,369 @@ function makeDirectCredentialDenyOutcome(
   );
 }
 
+function getFieldValue(record: unknown, fieldPath: string): unknown {
+  return fieldPath.split(".").reduce<unknown>((current, segment) => {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+
+    return (current as Record<string, unknown>)[segment];
+  }, record);
+}
+
+function evaluateFieldPredicate(predicate: Extract<PolicyPredicate, { type: "field" }>, action: ActionRecord): boolean {
+  const actualValue = getFieldValue(action, predicate.field);
+
+  switch (predicate.operator) {
+    case "eq":
+      return actualValue === predicate.value;
+    case "neq":
+      return actualValue !== predicate.value;
+    case "matches":
+      return typeof actualValue === "string" && typeof predicate.value === "string"
+        ? new RegExp(predicate.value, "u").test(actualValue)
+        : false;
+    case "contains":
+      return typeof actualValue === "string" && typeof predicate.value === "string"
+        ? actualValue.includes(predicate.value)
+        : Array.isArray(actualValue)
+          ? actualValue.includes(predicate.value)
+          : false;
+    case "gt":
+      return typeof actualValue === "number" && typeof predicate.value === "number"
+        ? actualValue > predicate.value
+        : false;
+    case "gte":
+      return typeof actualValue === "number" && typeof predicate.value === "number"
+        ? actualValue >= predicate.value
+        : false;
+    case "lt":
+      return typeof actualValue === "number" && typeof predicate.value === "number"
+        ? actualValue < predicate.value
+        : false;
+    case "lte":
+      return typeof actualValue === "number" && typeof predicate.value === "number"
+        ? actualValue <= predicate.value
+        : false;
+    case "in":
+      return Array.isArray(predicate.value) ? predicate.value.includes(actualValue) : false;
+    case "not_in":
+      return Array.isArray(predicate.value) ? !predicate.value.includes(actualValue) : false;
+    case "exists":
+      return predicate.value === false ? actualValue === undefined : actualValue !== undefined;
+    default:
+      return false;
+  }
+}
+
+function matchesPolicyPredicate(predicate: PolicyPredicate, action: ActionRecord): boolean {
+  switch (predicate.type) {
+    case "field":
+      return evaluateFieldPredicate(predicate, action);
+    case "all":
+      return predicate.conditions.every((condition) => matchesPolicyPredicate(condition, action));
+    case "any":
+      return predicate.conditions.some((condition) => matchesPolicyPredicate(condition, action));
+    case "not":
+      return !matchesPolicyPredicate(predicate.condition, action);
+    default:
+      return false;
+  }
+}
+
+function compareCompiledRules(left: CompiledPolicyRule, right: CompiledPolicyRule): number {
+  const decisionDelta =
+    POLICY_DECISION_STRENGTH[right.rule.decision as PolicyOutcomeRecord["decision"]] -
+    POLICY_DECISION_STRENGTH[left.rule.decision as PolicyOutcomeRecord["decision"]];
+  if (decisionDelta !== 0) {
+    return decisionDelta;
+  }
+
+  const priorityDelta = right.rule.priority - left.rule.priority;
+  if (priorityDelta !== 0) {
+    return priorityDelta;
+  }
+
+  const sourceDelta = left.source_index - right.source_index;
+  if (sourceDelta !== 0) {
+    return sourceDelta;
+  }
+
+  return left.rule_index - right.rule_index;
+}
+
+function enforcementModeStrengthensDecision(rule: PolicyRule): PolicyOutcomeRecord["decision"] | null {
+  if (rule.enforcement_mode === "disabled" || rule.enforcement_mode === "audit" || rule.enforcement_mode === "warn") {
+    return null;
+  }
+
+  if (rule.enforcement_mode === "require_approval") {
+    return "ask";
+  }
+
+  return rule.decision;
+}
+
+function actionFamilyForAction(action: ActionRecord): string {
+  return `${action.operation.domain}/${action.operation.kind}`;
+}
+
+export function resolvePolicyLowConfidenceThreshold(
+  compiledPolicy: CompiledPolicyPack | null | undefined,
+  actionFamilyOrAction: string | ActionRecord,
+): number | null {
+  const lowConfidence =
+    compiledPolicy?.thresholds.low_confidence ?? DEFAULT_COMPILED_POLICY_PACK.thresholds.low_confidence;
+  const actionFamily =
+    typeof actionFamilyOrAction === "string" ? actionFamilyOrAction : actionFamilyForAction(actionFamilyOrAction);
+  const domain = actionFamily.includes("/") ? actionFamily.slice(0, actionFamily.indexOf("/")) : actionFamily;
+
+  if (Object.hasOwn(lowConfidence, actionFamily)) {
+    return lowConfidence[actionFamily] ?? null;
+  }
+
+  const domainWildcard = `${domain}/*`;
+  if (Object.hasOwn(lowConfidence, domainWildcard)) {
+    return lowConfidence[domainWildcard] ?? null;
+  }
+
+  if (Object.hasOwn(lowConfidence, "*")) {
+    return lowConfidence["*"] ?? null;
+  }
+
+  return null;
+}
+
+function roundThreshold(value: number): number {
+  return Number(Math.max(0, Math.min(1, value)).toFixed(3));
+}
+
+export function recommendPolicyThresholds(
+  report: PolicyCalibrationReport,
+  compiledPolicy: CompiledPolicyPack | null | undefined,
+  options: PolicyThresholdRecommendationOptions = {},
+): PolicyThresholdRecommendation[] {
+  const minSamples = options.min_samples ?? 5;
+  const tightenBuffer = options.tighten_buffer ?? 0.01;
+  const relaxBuffer = options.relax_buffer ?? 0.01;
+  const samplesByFamily = new Map<string, PolicyCalibrationSample[]>();
+
+  for (const sample of report.samples ?? []) {
+    const familySamples = samplesByFamily.get(sample.action_family) ?? [];
+    familySamples.push(sample);
+    samplesByFamily.set(sample.action_family, familySamples);
+  }
+
+  return report.action_families.map((family): PolicyThresholdRecommendation => {
+    const currentThreshold = resolvePolicyLowConfidenceThreshold(compiledPolicy, family.action_family);
+    const samples = samplesByFamily.get(family.action_family) ?? [];
+    const deniedSamples = samples.filter((sample) => sample.approval_status === "denied");
+    const approvedSamples = samples.filter((sample) => sample.approval_status === "approved");
+    const deniedConfidenceMax =
+      deniedSamples.length > 0 ? Math.max(...deniedSamples.map((sample) => sample.normalization_confidence)) : null;
+    const approvedConfidenceMin =
+      approvedSamples.length > 0 ? Math.min(...approvedSamples.map((sample) => sample.normalization_confidence)) : null;
+
+    if (family.sample_count < minSamples) {
+      return {
+        action_family: family.action_family,
+        current_ask_below: currentThreshold,
+        recommended_ask_below: currentThreshold,
+        direction: "hold",
+        sample_count: family.sample_count,
+        approvals_requested: family.approvals.requested,
+        approvals_approved: family.approvals.approved,
+        approvals_denied: family.approvals.denied,
+        observed_confidence_min: family.confidence.min,
+        observed_confidence_max: family.confidence.max,
+        denied_confidence_max: deniedConfidenceMax,
+        approved_confidence_min: approvedConfidenceMin,
+        rationale: `Hold: only ${family.sample_count} sample${family.sample_count === 1 ? "" : "s"} observed; need at least ${minSamples}.`,
+        requires_policy_update: false,
+        automatic_live_application_allowed: false,
+      };
+    }
+
+    if (deniedConfidenceMax !== null) {
+      const recommended = roundThreshold(Math.max(currentThreshold ?? 0, deniedConfidenceMax + tightenBuffer));
+      if (currentThreshold === null || recommended > currentThreshold) {
+        return {
+          action_family: family.action_family,
+          current_ask_below: currentThreshold,
+          recommended_ask_below: recommended,
+          direction: "tighten",
+          sample_count: family.sample_count,
+          approvals_requested: family.approvals.requested,
+          approvals_approved: family.approvals.approved,
+          approvals_denied: family.approvals.denied,
+          observed_confidence_min: family.confidence.min,
+          observed_confidence_max: family.confidence.max,
+          denied_confidence_max: deniedConfidenceMax,
+          approved_confidence_min: approvedConfidenceMin,
+          rationale: `Tighten: denied approvals were observed up to confidence ${deniedConfidenceMax.toFixed(3)}.`,
+          requires_policy_update: true,
+          automatic_live_application_allowed: false,
+        };
+      }
+    }
+
+    if (
+      currentThreshold !== null &&
+      approvedConfidenceMin !== null &&
+      family.approvals.requested > 0 &&
+      family.approvals.denied === 0 &&
+      family.approvals.approved === family.approvals.requested
+    ) {
+      const recommended = roundThreshold(Math.min(currentThreshold, approvedConfidenceMin - relaxBuffer));
+      if (recommended < currentThreshold) {
+        return {
+          action_family: family.action_family,
+          current_ask_below: currentThreshold,
+          recommended_ask_below: recommended,
+          direction: "relax",
+          sample_count: family.sample_count,
+          approvals_requested: family.approvals.requested,
+          approvals_approved: family.approvals.approved,
+          approvals_denied: family.approvals.denied,
+          observed_confidence_min: family.confidence.min,
+          observed_confidence_max: family.confidence.max,
+          denied_confidence_max: deniedConfidenceMax,
+          approved_confidence_min: approvedConfidenceMin,
+          rationale: `Relax with human review: all approval-gated samples were approved, with lowest approved confidence ${approvedConfidenceMin.toFixed(3)}.`,
+          requires_policy_update: true,
+          automatic_live_application_allowed: false,
+        };
+      }
+    }
+
+    return {
+      action_family: family.action_family,
+      current_ask_below: currentThreshold,
+      recommended_ask_below: currentThreshold,
+      direction: "hold",
+      sample_count: family.sample_count,
+      approvals_requested: family.approvals.requested,
+      approvals_approved: family.approvals.approved,
+      approvals_denied: family.approvals.denied,
+      observed_confidence_min: family.confidence.min,
+      observed_confidence_max: family.confidence.max,
+      denied_confidence_max: deniedConfidenceMax,
+      approved_confidence_min: approvedConfidenceMin,
+      rationale: "Hold: observed approvals do not justify a threshold change.",
+      requires_policy_update: false,
+      automatic_live_application_allowed: false,
+    };
+  });
+}
+
+function evaluateCompiledPolicy(
+  action: ActionRecord,
+  compiledPolicy: CompiledPolicyPack | null | undefined,
+): PolicyOutcomeRecord | null {
+  if (!compiledPolicy || compiledPolicy.rules.length === 0) {
+    return null;
+  }
+
+  const matchedRule = compiledPolicy.rules
+    .filter((candidate) => enforcementModeStrengthensDecision(candidate.rule) !== null)
+    .filter((candidate) => matchesPolicyPredicate(candidate.rule.match, action))
+    .sort(compareCompiledRules)[0];
+
+  if (!matchedRule) {
+    return null;
+  }
+
+  const effectiveDecision = enforcementModeStrengthensDecision(matchedRule.rule);
+  if (!effectiveDecision) {
+    return null;
+  }
+
+  return makeOutcome(
+    action,
+    effectiveDecision,
+    [matchedRule.rule.reason],
+    [`policy.config.${matchedRule.rule.rule_id}`],
+  );
+}
+
+function applyPolicyOverlay(
+  baseOutcome: PolicyOutcomeRecord,
+  overlayOutcome: PolicyOutcomeRecord | null,
+): PolicyOutcomeRecord {
+  if (!overlayOutcome) {
+    return baseOutcome;
+  }
+
+  if (POLICY_DECISION_STRENGTH[overlayOutcome.decision] > POLICY_DECISION_STRENGTH[baseOutcome.decision]) {
+    if (overlayOutcome.decision === "ask" && baseOutcome.preconditions.snapshot_required) {
+      return {
+        ...overlayOutcome,
+        preconditions: {
+          ...overlayOutcome.preconditions,
+          snapshot_required: true,
+        },
+      };
+    }
+    return overlayOutcome;
+  }
+
+  return baseOutcome;
+}
+
+export function compilePolicyPack(configs: PolicyConfig[]): CompiledPolicyPack {
+  const rules: CompiledPolicyRule[] = [];
+  const lowConfidenceThresholds: Record<string, number> = {};
+
+  configs.forEach((config, sourceIndex) => {
+    for (const threshold of config.thresholds?.low_confidence ?? []) {
+      if (!Object.hasOwn(lowConfidenceThresholds, threshold.action_family)) {
+        lowConfidenceThresholds[threshold.action_family] = threshold.ask_below;
+      }
+    }
+
+    config.rules.forEach((rule, ruleIndex) => {
+      rules.push({
+        profile_name: config.profile_name,
+        policy_version: config.policy_version,
+        source_index: sourceIndex,
+        rule_index: ruleIndex,
+        rule,
+      });
+    });
+  });
+
+  return {
+    profile_name: configs[0]?.profile_name ?? "empty",
+    policy_versions: [...new Set(configs.map((config) => config.policy_version))],
+    rules,
+    thresholds: {
+      low_confidence: lowConfidenceThresholds,
+    },
+  };
+}
+
+export function validatePolicyConfigDocument(document: unknown): PolicyConfigValidationResult {
+  const parsed = PolicyConfigSchema.safeParse(document);
+
+  if (!parsed.success) {
+    return {
+      valid: false,
+      issues: parsed.error.issues.map((issue) =>
+        issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message,
+      ),
+      normalized_config: null,
+      compiled_policy: null,
+    };
+  }
+
+  return {
+    valid: true,
+    issues: [],
+    normalized_config: parsed.data,
+    compiled_policy: compilePolicyPack([parsed.data]),
+  };
+}
+
 function actionTargetPath(action: ActionRecord): string | null {
   const locator = action.target.primary.locator;
   if (action.target.primary.type !== "path" || !locator) {
@@ -128,7 +542,10 @@ function findCapability(capabilities: CapabilityRecord[], capabilityName: string
   return capabilities.find((capability) => capability.capability_name === capabilityName) ?? null;
 }
 
-function findWorkspaceCapabilityForAction(action: ActionRecord, capabilities: CapabilityRecord[]): CapabilityRecord | null {
+function findWorkspaceCapabilityForAction(
+  action: ActionRecord,
+  capabilities: CapabilityRecord[],
+): CapabilityRecord | null {
   const targetPath = actionTargetPath(action);
   if (!targetPath) {
     return null;
@@ -166,6 +583,7 @@ function evaluateFilesystemCapabilityState(
           "Cached workspace capability state is stale; rerun capability_refresh or approve explicitly before automatic execution.",
       },
       "capability.workspace.stale.ask",
+      snapshotRequired,
     );
   }
 
@@ -180,6 +598,7 @@ function evaluateFilesystemCapabilityState(
           "Cached capability state did not include governed workspace access for this path; rerun capability_refresh or approve explicitly before automatic execution.",
       },
       "capability.workspace.missing.ask",
+      snapshotRequired,
     );
   }
 
@@ -192,6 +611,7 @@ function evaluateFilesystemCapabilityState(
         message: `Cached workspace access capability is ${workspaceCapability.status}; rerun capability_refresh or approve explicitly before automatic execution.`,
       },
       "capability.workspace.unavailable.ask",
+      snapshotRequired,
     );
   }
 
@@ -210,6 +630,7 @@ function evaluateFilesystemCapabilityState(
           "Cached capability state did not include runtime snapshot storage readiness; rerun capability_refresh or approve explicitly before automatic execution.",
       },
       "capability.runtime_storage.missing.ask",
+      snapshotRequired,
     );
   }
 
@@ -219,17 +640,20 @@ function evaluateFilesystemCapabilityState(
       {
         code: "RUNTIME_STORAGE_CAPABILITY_DEGRADED",
         severity: "high",
-        message:
-          `Cached runtime storage capability is ${runtimeStorageCapability.status}; rerun capability_refresh or approve explicitly before automatic execution that requires snapshot protection.`,
+        message: `Cached runtime storage capability is ${runtimeStorageCapability.status}; rerun capability_refresh or approve explicitly before automatic execution that requires snapshot protection.`,
       },
       "capability.runtime_storage.degraded.ask",
+      snapshotRequired,
     );
   }
 
   return null;
 }
 
-function evaluateShellCapabilityState(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord | null {
+function evaluateShellCapabilityState(
+  action: ActionRecord,
+  context: PolicyEvaluationContext,
+): PolicyOutcomeRecord | null {
   const capabilityState = context.cached_capability_state;
   if (!capabilityState) {
     return null;
@@ -245,6 +669,7 @@ function evaluateShellCapabilityState(action: ActionRecord, context: PolicyEvalu
           "Cached capability state for snapshot-backed shell execution is stale; rerun capability_refresh or approve explicitly before automatic execution.",
       },
       "capability.shell.stale.ask",
+      true,
     );
   }
 
@@ -259,6 +684,7 @@ function evaluateShellCapabilityState(action: ActionRecord, context: PolicyEvalu
           "Cached capability state did not include runtime snapshot storage readiness; rerun capability_refresh or approve explicitly before automatic shell execution.",
       },
       "capability.shell.runtime_storage.missing.ask",
+      true,
     );
   }
 
@@ -268,10 +694,10 @@ function evaluateShellCapabilityState(action: ActionRecord, context: PolicyEvalu
       {
         code: "RUNTIME_STORAGE_CAPABILITY_DEGRADED",
         severity: "high",
-        message:
-          `Cached runtime storage capability is ${runtimeStorageCapability.status}; rerun capability_refresh or approve explicitly before automatic shell execution that requires snapshot protection.`,
+        message: `Cached runtime storage capability is ${runtimeStorageCapability.status}; rerun capability_refresh or approve explicitly before automatic shell execution that requires snapshot protection.`,
       },
       "capability.shell.runtime_storage.degraded.ask",
+      true,
     );
   }
 
@@ -281,11 +707,15 @@ function evaluateShellCapabilityState(action: ActionRecord, context: PolicyEvalu
 function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
   const locator = action.target.primary.locator;
   const normalizationConfidence = action.normalization.normalization_confidence;
+  const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(
+    context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
+    action,
+  );
   const fsFacet = action.facets.filesystem as { operation?: string; byte_length?: number } | undefined;
   const operation = fsFacet?.operation ?? action.operation.kind;
   const byteLength = fsFacet?.byte_length ?? 0;
 
-  if (normalizationConfidence < 0.3) {
+  if (lowConfidenceThreshold !== null && normalizationConfidence < lowConfidenceThreshold) {
     return makeOutcome(
       action,
       "ask",
@@ -371,8 +801,12 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
 function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
   const shellFacet = action.facets.shell as { command_family?: string } | undefined;
   const commandFamily = shellFacet?.command_family ?? "unclassified";
+  const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(
+    context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
+    action,
+  );
 
-  if (action.normalization.normalization_confidence < 0.3) {
+  if (lowConfidenceThreshold !== null && action.normalization.normalization_confidence < lowConfidenceThreshold) {
     return makeOutcome(
       action,
       "ask",
@@ -493,8 +927,12 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
     | undefined;
   const integration = functionFacet?.integration ?? "unknown";
   const operation = functionFacet?.operation ?? action.operation.kind;
+  const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(
+    context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
+    action,
+  );
 
-  if (action.normalization.normalization_confidence < 0.5) {
+  if (lowConfidenceThreshold !== null && action.normalization.normalization_confidence < lowConfidenceThreshold) {
     return makeOutcome(
       action,
       "ask",
@@ -521,6 +959,14 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
       operation === "remove_label") &&
     functionFacet?.trusted_compensator
   ) {
+    if (action.execution_path.credential_mode === "direct") {
+      return makeDirectCredentialDenyOutcome(
+        action,
+        "Owned draft integrations may not execute with direct credentials.",
+        "credentials.direct.forbidden",
+      );
+    }
+
     return makeOutcome(
       action,
       "allow_with_snapshot",
@@ -545,6 +991,14 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
       operation === "delete_note") &&
     functionFacet?.trusted_compensator
   ) {
+    if (action.execution_path.credential_mode === "direct") {
+      return makeDirectCredentialDenyOutcome(
+        action,
+        "Owned note integrations may not execute with direct credentials.",
+        "credentials.direct.forbidden",
+      );
+    }
+
     return makeOutcome(
       action,
       "allow_with_snapshot",
@@ -614,6 +1068,7 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
               "Cached ticket capability state is stale; rerun capability_refresh or approve explicitly before automatic execution.",
           },
           "capability.tickets.stale.ask",
+          true,
           {
             brokered_credentials_required: true,
             direct_credentials_forbidden: true,
@@ -634,6 +1089,7 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
               "Cached capability state did not include ticket broker readiness; rerun capability_refresh or approve explicitly before automatic execution.",
           },
           "capability.tickets.missing.ask",
+          true,
           {
             brokered_credentials_required: true,
             direct_credentials_forbidden: true,
@@ -650,6 +1106,7 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
             message: `Cached ticket broker capability is ${ticketCapability.status}; rerun capability_refresh or approve explicitly before automatic execution.`,
           },
           "capability.tickets.unavailable.ask",
+          true,
           {
             brokered_credentials_required: true,
             direct_credentials_forbidden: true,
@@ -665,7 +1122,8 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
         {
           code: "OWNED_FUNCTION_COMPENSATABLE",
           severity: "moderate",
-          message: "Owned ticket mutation is allowed with a recovery boundary because a trusted compensator and brokered credentials exist.",
+          message:
+            "Owned ticket mutation is allowed with a recovery boundary because a trusted compensator and brokered credentials exist.",
         },
       ],
       ["function.tickets.compensatable.requires_snapshot"],
@@ -694,17 +1152,152 @@ function evaluateMcp(action: ActionRecord, context: PolicyEvaluationContext): Po
   const mcpFacet = action.facets.mcp as
     | {
         server_id?: string;
+        server_profile_id?: string;
+        candidate_id?: string;
         tool_name?: string;
+        execution_mode_requested?: "local_proxy" | "hosted_delegated";
+        drift_state_at_submit?: "clean" | "drifted" | "unknown";
+        credential_binding_mode?:
+          | "oauth_session"
+          | "derived_token"
+          | "bearer_secret_ref"
+          | "session_token"
+          | "hosted_token_exchange";
+        profile_status?: "draft" | "pending_approval" | "active" | "quarantined" | "revoked";
+        allowed_execution_modes?: Array<"local_proxy" | "hosted_delegated">;
       }
     | undefined;
   const serverId = typeof mcpFacet?.server_id === "string" ? mcpFacet.server_id : "";
+  const serverProfileId = typeof mcpFacet?.server_profile_id === "string" ? mcpFacet.server_profile_id : "";
+  const candidateId = typeof mcpFacet?.candidate_id === "string" ? mcpFacet.candidate_id : "";
   const toolName = typeof mcpFacet?.tool_name === "string" ? mcpFacet.tool_name : "";
+  const executionModeRequested =
+    mcpFacet?.execution_mode_requested === "local_proxy" || mcpFacet?.execution_mode_requested === "hosted_delegated"
+      ? mcpFacet.execution_mode_requested
+      : null;
+  const driftState =
+    mcpFacet?.drift_state_at_submit === "clean" ||
+    mcpFacet?.drift_state_at_submit === "drifted" ||
+    mcpFacet?.drift_state_at_submit === "unknown"
+      ? mcpFacet.drift_state_at_submit
+      : null;
+  const credentialBindingMode =
+    mcpFacet?.credential_binding_mode === "oauth_session" ||
+    mcpFacet?.credential_binding_mode === "derived_token" ||
+    mcpFacet?.credential_binding_mode === "bearer_secret_ref" ||
+    mcpFacet?.credential_binding_mode === "session_token" ||
+    mcpFacet?.credential_binding_mode === "hosted_token_exchange"
+      ? mcpFacet.credential_binding_mode
+      : null;
+  const profileStatus =
+    mcpFacet?.profile_status === "draft" ||
+    mcpFacet?.profile_status === "pending_approval" ||
+    mcpFacet?.profile_status === "active" ||
+    mcpFacet?.profile_status === "quarantined" ||
+    mcpFacet?.profile_status === "revoked"
+      ? mcpFacet.profile_status
+      : null;
+  const allowedExecutionModes = Array.isArray(mcpFacet?.allowed_execution_modes)
+    ? mcpFacet.allowed_execution_modes.filter(
+        (entry): entry is "local_proxy" | "hosted_delegated" => entry === "local_proxy" || entry === "hosted_delegated",
+      )
+    : [];
 
   if (action.execution_path.credential_mode === "direct") {
     return makeDirectCredentialDenyOutcome(
       action,
       "Governed MCP proxy execution does not accept direct client-provided credentials.",
       "mcp.direct_credentials.deny",
+    );
+  }
+
+  if (candidateId.length > 0 && serverProfileId.length === 0) {
+    return makeOutcome(
+      action,
+      "deny",
+      [
+        {
+          code: "MCP_CANDIDATE_NOT_EXECUTABLE",
+          severity: "high",
+          message: "Raw MCP candidates are not executable until they are resolved into an active profile.",
+        },
+      ],
+      ["mcp.candidate.execution.deny"],
+    );
+  }
+
+  if (profileStatus && profileStatus !== "active") {
+    return makeOutcome(
+      action,
+      "deny",
+      [
+        {
+          code:
+            profileStatus === "quarantined"
+              ? "MCP_PROFILE_QUARANTINED"
+              : profileStatus === "revoked"
+                ? "MCP_PROFILE_REAPPROVAL_REQUIRED"
+                : "MCP_PROFILE_NOT_ACTIVE",
+          severity: "high",
+          message:
+            profileStatus === "quarantined"
+              ? `MCP profile "${serverProfileId || serverId}" is quarantined and must be re-reviewed before execution.`
+              : profileStatus === "revoked"
+                ? `MCP profile "${serverProfileId || serverId}" has been revoked and must be explicitly re-approved before execution.`
+                : `MCP profile "${serverProfileId || serverId}" is not active for governed execution.`,
+        },
+      ],
+      [profileStatus === "quarantined" ? "mcp.profile.quarantined.deny" : "mcp.profile.inactive.deny"],
+    );
+  }
+
+  if (driftState === "drifted") {
+    return makeOutcome(
+      action,
+      "deny",
+      [
+        {
+          code: "MCP_REMOTE_IDENTITY_CHANGED",
+          severity: "high",
+          message: `MCP profile "${serverProfileId || serverId}" has unresolved material drift and cannot execute until it is re-resolved.`,
+        },
+      ],
+      ["mcp.profile.drifted.deny"],
+    );
+  }
+
+  if (
+    executionModeRequested &&
+    allowedExecutionModes.length > 0 &&
+    !allowedExecutionModes.includes(executionModeRequested)
+  ) {
+    return makeOutcome(
+      action,
+      "deny",
+      [
+        {
+          code: "MCP_PROFILE_NOT_ACTIVE",
+          severity: "high",
+          message: `MCP profile "${serverProfileId || serverId}" is not approved for ${executionModeRequested} execution.`,
+        },
+      ],
+      ["mcp.execution_mode.disallowed.deny"],
+    );
+  }
+
+  if (executionModeRequested === "hosted_delegated" && credentialBindingMode === "session_token") {
+    return makeOutcome(
+      action,
+      "deny",
+      [
+        {
+          code: "MCP_AUTH_BINDING_MISSING",
+          severity: "high",
+          message:
+            "Hosted delegated MCP execution requires a lease-safe credential binding; session_token bindings are degraded and local-only.",
+        },
+      ],
+      ["mcp.hosted.session_token.deny"],
     );
   }
 
@@ -783,11 +1376,7 @@ function evaluateMcp(action: ActionRecord, context: PolicyEvaluationContext): Po
             : "Mutating MCP tools require explicit approval in the governed runtime.",
       },
     ],
-    [
-      toolPolicy.side_effect_level === "read_only"
-        ? "mcp.tool.read_only.ask"
-        : "mcp.tool.mutating.ask",
-    ],
+    [toolPolicy.side_effect_level === "read_only" ? "mcp.tool.read_only.ask" : "mcp.tool.mutating.ask"],
   );
 }
 
@@ -847,7 +1436,8 @@ function withBudgetEffects(
   }
 
   if (destructiveRelevant && runSummary.budget_config.max_destructive_actions !== null) {
-    const remaining = runSummary.budget_config.max_destructive_actions - runSummary.budget_usage.destructive_actions - 1;
+    const remaining =
+      runSummary.budget_config.max_destructive_actions - runSummary.budget_usage.destructive_actions - 1;
     updatedOutcome.budget_effects.remaining_destructive_actions = Math.max(remaining, 0);
 
     if (remaining < 0) {
@@ -875,13 +1465,19 @@ function withBudgetEffects(
     }
   }
 
-  updatedOutcome.preconditions.snapshot_required = updatedOutcome.decision === "allow_with_snapshot";
+  updatedOutcome.preconditions.snapshot_required =
+    updatedOutcome.decision === "allow_with_snapshot" ||
+    (updatedOutcome.decision === "ask" && updatedOutcome.preconditions.snapshot_required);
   updatedOutcome.preconditions.approval_required = updatedOutcome.decision === "ask";
   return updatedOutcome;
 }
 
 export function evaluatePolicy(action: ActionRecord, context: PolicyEvaluationContext = {}): PolicyOutcomeRecord {
   try {
+    const compiledPolicyOutcome = evaluateCompiledPolicy(
+      action,
+      context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
+    );
     const baseOutcome =
       action.operation.domain === "filesystem"
         ? evaluateFilesystem(action, context)
@@ -889,22 +1485,22 @@ export function evaluatePolicy(action: ActionRecord, context: PolicyEvaluationCo
           ? evaluateShell(action, context)
           : action.operation.domain === "mcp"
             ? evaluateMcp(action, context)
-          : action.operation.domain === "function"
-            ? evaluateFunction(action, context)
-          : makeOutcome(
-              action,
-              "ask",
-              [
-                {
-                  code: "CAPABILITY_UNAVAILABLE",
-                  severity: "high",
-                  message: "No policy evaluator exists for this action domain yet.",
-                },
-              ],
-              ["policy.domain.unsupported"],
-            );
+            : action.operation.domain === "function"
+              ? evaluateFunction(action, context)
+              : makeOutcome(
+                  action,
+                  "ask",
+                  [
+                    {
+                      code: "CAPABILITY_UNAVAILABLE",
+                      severity: "high",
+                      message: "No policy evaluator exists for this action domain yet.",
+                    },
+                  ],
+                  ["policy.domain.unsupported"],
+                );
 
-    return withBudgetEffects(action, baseOutcome, context);
+    return withBudgetEffects(action, applyPolicyOverlay(baseOutcome, compiledPolicyOutcome), context);
   } catch (error) {
     const wrapped =
       error instanceof InternalError

@@ -8,9 +8,10 @@ Day-one launch/runtime truth is intentionally conservative:
 
 - supported governed execution: `filesystem`, `shell`, owned `function` integrations (`drafts`, `notes`, `tickets`), and operator-managed `mcp` tools over `stdio` and `streamable_http`
 - unsupported governed surfaces fail closed instead of simulating execution
-- current MCP launch claim: durable operator-owned local registry, durable local encrypted MCP secret storage and rotation metadata, explicit public HTTPS host allowlist policy, CLI/SDK/daemon management APIs for servers/secrets/host policies, first-class CLI MCP tool submission, `tools/list`, `tools/call`, direct-credential denial, approval-first mutation policy, per-server concurrency limits for `streamable_http`, and explicit `streamable_http` targets in `loopback`, `private`, or operator-managed `public_https` scope alongside `stdio`
+- current MCP launch claim: durable operator-owned local registry, durable local encrypted MCP secret storage backed by OS keychain or Secret Service protection with expiry enforcement and rotation metadata, sandboxed `stdio` MCP execution with digest-pinned OCI container isolation as the required production path, explicit `allowed_registries` policy, cosign-based signature verification with SLSA provenance enforcement for remote images, and `oci_container.build` support for local development on the same boundary, explicit public HTTPS host allowlist policy with connect-time DNS/IP scope validation and redirect-chain revalidation, CLI/SDK/daemon management APIs for servers/secrets/host policies, first-class CLI MCP tool submission, `tools/list`, `tools/call`, direct-credential denial, approval-first mutation policy, and per-server `streamable_http` concurrency limits enforced either in-process or through shared SQLite leases with heartbeat renewal
 - browser/computer governance, generic governed HTTP, hosted MCP, arbitrary remote MCP registration from agent or user input, and durable queued workers are not part of the launch/runtime claim today
 - maintenance is inline plus startup reconciliation, not a durable worker queue
+- the public npm release surface is intentionally limited to `@agentgit/schemas`, `@agentgit/authority-sdk`, and `@agentgit/authority-cli`, with Changesets-driven versioning, GitHub Actions release automation, and installed-binary smoke verification; that release path is built even if a given version has not been published yet
 
 For the audited answer to "what is actually built today," use:
 
@@ -37,6 +38,9 @@ pnpm cli artifact <artifact-id> internal
 pnpm cli artifact-export <artifact-id> ./exports/stdout.txt internal
 pnpm cli run-audit-export <run-id> ./audit-bundle internal
 pnpm cli run-audit-verify ./audit-bundle
+pnpm cli run-audit-report ./audit-bundle
+pnpm cli run-audit-share ./audit-bundle ./audit-share
+pnpm cli run-audit-compare ./audit-bundle ./audit-bundle-2
 pnpm cli run-summary <run-id>
 ```
 
@@ -46,7 +50,9 @@ The CLI now defaults to human-readable summaries for inspection-style commands l
 pnpm cli -- --json timeline <run-id>
 ```
 
-For operator evidence handling, `artifact` remains the inline inspection path, `artifact-export` writes one full stored artifact body to disk without truncation, `run-audit-export` emits a complete run bundle with summary, timeline, approvals, diagnostics, and exported visible artifact bodies, and `run-audit-verify` checks that exported bundle for missing or tampered evidence. These flows fail closed on visibility, truncation, or overwrite violations.
+The operator policy loop is also real now: `policy show`, `policy explain`, `policy calibration-report`, `policy recommend-thresholds`, `policy diff`, and `policy render-threshold-patch` are all available through the CLI. The recommendation and patch-render flows are explicitly report-only and do not mutate live policy automatically.
+
+For operator evidence handling, `artifact` remains the inline inspection path, `artifact-export` writes one full stored artifact body to disk without truncation, `run-audit-export` emits a complete run bundle with summary, timeline, approvals, diagnostics, and exported visible artifact bodies, `run-audit-verify` checks that exported bundle for missing or tampered evidence, `run-audit-report` summarizes a verified bundle for incident review, `run-audit-share` emits a redaction-aware share package that withholds artifact bodies by default, and `run-audit-compare` highlights evidence drift between two bundles. These flows fail closed on visibility, truncation, verification, or overwrite violations.
 
 ## Python SDK Loop
 
@@ -75,8 +81,46 @@ pnpm smoke:py
 
 The repo pins `better-sqlite3` as an approved native build dependency in `.npmrc` so the local journal can compile consistently.
 
+## Release And Install Story
+
+The repo now has a real npm release path for the public TypeScript surface:
+
+- `@agentgit/schemas`
+- `@agentgit/authority-sdk`
+- `@agentgit/authority-cli`
+
+What is true today:
+
+- package metadata is publish-ready
+- `.changeset/` is active for versioning
+- GitHub Actions CI runs `pnpm test`, `pnpm py:test`, and an installed-binary CLI smoke test
+- GitHub Actions release automation is wired for Changesets plus npm provenance/trusted-publishing setup
+- the installed-binary smoke path packs the publishable tarballs, installs them outside the monorepo, starts a real daemon, and proves the installed CLI can run `version`, `ping`, `doctor`, `register-run`, and a governed filesystem write end to end
+
+Useful commands:
+
+```bash
+pnpm release:pack
+pnpm smoke:cli-install
+pnpm smoke:cli-compat
+pnpm release:verify
+```
+
+Once the npm trusted publisher is configured for the GitHub repo, the release workflow can publish the public packages without local ad hoc npm credentials.
+
+For day-one operator procedures (bring-up, profile/config flows, secure secret handling, audit workflow, upgrade/rollback checks), use:
+
+- [engineering-docs/CLI-OPERATOR-RUNBOOK.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CLI-OPERATOR-RUNBOOK.md)
+
 Relevant docs:
 
 - [engineering-docs/system-architecture.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/system-architecture.md)
 - [engineering-docs/v1-repo-package-module-plan.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/v1-repo-package-module-plan.md)
 - [engineering-docs/CURRENT-IMPLEMENTATION-STATE.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CURRENT-IMPLEMENTATION-STATE.md)
+- [engineering-docs/MVP-PRODUCTION-READINESS-PLAN.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/MVP-PRODUCTION-READINESS-PLAN.md)
+- [engineering-docs/MVP-PRODUCTION-READINESS-AUDIT.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/MVP-PRODUCTION-READINESS-AUDIT.md)
+- [engineering-docs/CLI-RELEASE-AND-INSTALL.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CLI-RELEASE-AND-INSTALL.md)
+- [engineering-docs/CLI-OPERATOR-RUNBOOK.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CLI-OPERATOR-RUNBOOK.md)
+- [.github/workflows/security-hardening.yml](/Users/geoffreyfernald/Documents/agentgit/.github/workflows/security-hardening.yml)
+- [engineering-docs/support-architecture/09-hosted-mcp-and-remote-trust.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/support-architecture/09-hosted-mcp-and-remote-trust.md)
+- [engineering-docs/pre-code-specs/14-hosted-mcp-and-remote-trust-spec.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/pre-code-specs/14-hosted-mcp-and-remote-trust-spec.md)

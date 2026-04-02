@@ -1,0 +1,61 @@
+name: Release Packages
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release candidate
+        run: pnpm release:verify
+
+      - name: Pack signed release artifacts
+        run: pnpm release:pack -- --signing-mode required
+        env:
+          AGENTGIT_RELEASE_SIGNING_PRIVATE_KEY_PEM_B64: ${{ secrets.AGENTGIT_RELEASE_SIGNING_PRIVATE_KEY_PEM_B64 }}
+
+      - name: Verify signed release artifacts
+        run: node scripts/verify-release-artifacts.mjs --artifacts-dir .release-artifacts/packed --signature-mode required
+        env:
+          AGENTGIT_RELEASE_SIGNING_PUBLIC_KEY_PEM_B64: ${{ secrets.AGENTGIT_RELEASE_SIGNING_PUBLIC_KEY_PEM_B64 }}
+
+      - name: Create release pull request or publish
+        uses: changesets/action@v1
+        with:
+          version: pnpm version:packages
+          publish: pnpm release:publish
+          commit: "chore: release packages"
+          title: "chore: release packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

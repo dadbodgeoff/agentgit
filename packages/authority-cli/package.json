@@ -2,23 +2,52 @@
   "name": "@agentgit/authority-cli",
   "version": "0.1.0",
   "private": false,
+  "description": "Operator CLI for the local-first agentgit authority daemon.",
+  "license": "UNLICENSED",
   "type": "module",
   "main": "dist/main.js",
   "types": "dist/main.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/authority-cli"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/authority-cli",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "authority",
+    "cli",
+    "governance",
+    "mcp"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
   "bin": {
     "agentgit-authority": "dist/main.js"
   },
   "files": [
-    "dist"
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "pnpm --filter @agentgit/schemas build && pnpm --filter @agentgit/authority-sdk build && tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "pnpm --filter @agentgit/schemas build && pnpm --filter @agentgit/authority-sdk build && vitest run --dir src",
+    "prepack": "pnpm run build",
+    "test": "vitest run --dir src",
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@agentgit/authority-sdk": "workspace:*"
+    "@iarna/toml": "^2.2.5",
+    "@agentgit/authority-sdk": "workspace:*",
+    "@agentgit/schemas": "workspace:*"
   }
 }

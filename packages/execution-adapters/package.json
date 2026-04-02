@@ -9,9 +9,10 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "vitest run --dir src"
+    "test": "mkdir -p coverage/.tmp && vitest run --dir src"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@agentgit/test-fixtures": "workspace:*"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@agentgit/integration-state": "workspace:*",
     "@agentgit/mcp-registry": "workspace:*",
     "@agentgit/schemas": "workspace:*",
+    "better-sqlite3": "^12.8.0",
     "zod": "^4.3.6"
   }
 }

@@ -1,20 +1,10 @@
+import { createHash } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
+import net from "node:net";
 import { URL } from "node:url";
 
-import {
-  AuthorityClient,
-  AuthorityClientTransportError,
-  AuthorityDaemonResponseError,
-} from "@agentgit/authority-sdk";
+import { AuthorityClient, AuthorityClientTransportError, AuthorityDaemonResponseError } from "@agentgit/authority-sdk";
 
-type DiagnosticsResult = Awaited<ReturnType<AuthorityClient["diagnostics"]>>;
-type CapabilitiesResult = Awaited<ReturnType<AuthorityClient["getCapabilities"]>>;
-type RunSummaryResult = Awaited<ReturnType<AuthorityClient["getRunSummary"]>>;
-type TimelineResult = Awaited<ReturnType<AuthorityClient["queryTimeline"]>>;
-type HelperResult = Awaited<ReturnType<AuthorityClient["queryHelper"]>>;
-type ApprovalInboxResult = Awaited<ReturnType<AuthorityClient["queryApprovalInbox"]>>;
-type ListApprovalsResult = Awaited<ReturnType<AuthorityClient["listApprovals"]>>;
-type MaintenanceResult = Awaited<ReturnType<AuthorityClient["runMaintenance"]>>;
 type VisibilityScope = NonNullable<Parameters<AuthorityClient["queryTimeline"]>[1]>;
 type HelperQuestionType = Parameters<AuthorityClient["queryHelper"]>[1];
 type MaintenanceJobType = Parameters<AuthorityClient["runMaintenance"]>[0][number];
@@ -26,6 +16,8 @@ export interface InspectorServerOptions {
 
 const DEFAULT_PORT = Number(process.env.AGENTGIT_INSPECTOR_PORT ?? "4317");
 const DEFAULT_HOST = process.env.AGENTGIT_INSPECTOR_HOST ?? "127.0.0.1";
+const WS_POLL_INTERVAL_MS = 2_000;
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const VISIBILITY_SCOPES = new Set<VisibilityScope>(["user", "model", "internal", "sensitive_internal"]);
 const HELPER_QUESTION_TYPES = new Set<HelperQuestionType>([
   "run_summary",
@@ -58,6 +50,7 @@ const MAINTENANCE_JOB_TYPES = new Set<MaintenanceJobType>([
   "artifact_orphan_cleanup",
   "capability_refresh",
   "helper_fact_warm",
+  "policy_threshold_calibration",
 ]);
 
 function escapeHtml(value: string): string {
@@ -574,6 +567,7 @@ function renderInspectorHtml(title: string): string {
           <div class="maintenance-row">
             <button class="secondary-button" type="button" data-job="capability_refresh">Refresh Capabilities</button>
             <button class="secondary-button" type="button" data-job="helper_fact_warm">Warm Helper Facts</button>
+            <button class="secondary-button" type="button" data-job="policy_threshold_calibration">Calibrate Thresholds</button>
           </div>
           <hr class="section-divider" />
           <h2>Selected Step Facts</h2>
@@ -614,6 +608,12 @@ function renderInspectorHtml(title: string): string {
         warnings: document.getElementById("warnings"),
         refreshHealth: document.getElementById("refresh-health")
       };
+      const streamState = {
+        socket: null,
+        reconnectTimer: null,
+        reconnectAttempt: 0,
+        reconnectEnabled: true
+      };
 
       async function fetchJson(url, options) {
         const response = await fetch(url, options);
@@ -634,6 +634,20 @@ function renderInspectorHtml(title: string): string {
         copyTarget.textContent = copy || "";
       }
 
+      function escapeClientHtml(value) {
+        return String(value == null ? "" : value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function safeClassToken(value, fallback) {
+        const token = String(value == null ? "" : value).toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        return token || fallback || "unknown";
+      }
+
       function renderWarnings(items) {
         if (!items.length) {
           el.warnings.innerHTML = '<li class="empty-state">No active warnings.</li>';
@@ -641,12 +655,12 @@ function renderInspectorHtml(title: string): string {
         }
 
         el.warnings.innerHTML = items.map(function (item) {
-          return '<li class="warning-item">' + item + '</li>';
+          return '<li class="warning-item">' + escapeClientHtml(item) + '</li>';
         }).join("");
       }
 
       function pill(kind, label) {
-        return '<span class="pill ' + kind + '">' + label + '</span>';
+        return '<span class="pill ' + safeClassToken(kind) + '">' + escapeClientHtml(label) + '</span>';
       }
 
       function renderTimeline() {
@@ -658,11 +672,12 @@ function renderInspectorHtml(title: string): string {
         el.timelineList.innerHTML = state.timeline.map(function (step) {
           const active = state.selectedStepId === step.step_id ? " active" : "";
           const warnings = step.warnings && step.warnings.length ? step.warnings.length + " warning(s)" : "no warnings";
+          const stepId = escapeClientHtml(step.step_id);
           return '' +
-            '<li class="timeline-item' + active + '" data-step-id="' + step.step_id + '">' +
-              '<div class="timeline-seq">step ' + step.sequence + '</div>' +
-              '<h3 class="timeline-title">' + step.title + '</h3>' +
-              '<p class="timeline-summary">' + step.summary + '</p>' +
+            '<li class="timeline-item' + active + '" data-step-id="' + stepId + '">' +
+              '<div class="timeline-seq">step ' + escapeClientHtml(step.sequence) + '</div>' +
+              '<h3 class="timeline-title">' + escapeClientHtml(step.title) + '</h3>' +
+              '<p class="timeline-summary">' + escapeClientHtml(step.summary) + '</p>' +
               '<div class="pill-row">' +
                 pill(step.status, step.status) +
                 pill(step.provenance, step.provenance) +
@@ -689,12 +704,24 @@ function renderInspectorHtml(title: string): string {
         }
 
         el.helperCards.innerHTML = cards.map(function (card) {
-          const reason = card.primary_reason ? '<p class="code">reason: ' + card.primary_reason.code + ' :: ' + card.primary_reason.message + '</p>' : '';
-          const uncertainty = card.uncertainty.length ? '<p class="code">uncertainty: ' + card.uncertainty.join(' | ') + '</p>' : '';
+          const reason = card.primary_reason
+            ? '<p class="code">reason: ' +
+              escapeClientHtml(card.primary_reason.code) +
+              ' :: ' +
+              escapeClientHtml(card.primary_reason.message) +
+              '</p>'
+            : '';
+          const uncertainty = card.uncertainty.length
+            ? '<p class="code">uncertainty: ' +
+              card.uncertainty.map(function (entry) {
+                return escapeClientHtml(entry);
+              }).join(' | ') +
+              '</p>'
+            : '';
           return '' +
             '<li class="helper-item">' +
-              '<strong>' + card.label + ' · ' + Math.round(card.confidence * 100) + '% confidence</strong>' +
-              '<p>' + card.answer + '</p>' +
+              '<strong>' + escapeClientHtml(card.label) + ' · ' + Math.round(card.confidence * 100) + '% confidence</strong>' +
+              '<p>' + escapeClientHtml(card.answer) + '</p>' +
               reason +
               uncertainty +
             '</li>';
@@ -726,16 +753,15 @@ function renderInspectorHtml(title: string): string {
         el.detailMeta.innerHTML = rows.map(function (row) {
           return '' +
             '<li class="meta-row">' +
-              '<div class="kicker">' + row[0] + '</div>' +
-              '<div class="code">' + row[1] + '</div>' +
+              '<div class="kicker">' + escapeClientHtml(row[0]) + '</div>' +
+              '<div class="code">' + escapeClientHtml(row[1]) + '</div>' +
             '</li>';
         }).join("");
       }
 
-      async function loadOverview() {
-        const overview = await fetchJson('/api/overview');
-        const diagnostics = overview.diagnostics;
-        const capabilities = overview.capabilities;
+      function applyOverview(overview) {
+        const diagnostics = overview.diagnostics || {};
+        const capabilities = overview.capabilities || {};
         const warnings = [];
 
         setMetric(
@@ -785,18 +811,129 @@ function renderInspectorHtml(title: string): string {
         }
 
         renderWarnings(warnings.slice(0, 8));
+      }
+
+      async function loadOverview() {
+        const overview = await fetchJson('/api/overview');
+        applyOverview(overview);
         setBanner('Diagnostics refreshed from the live daemon.', false);
       }
 
-      async function loadRun(runId) {
+      function applyRunView(runId, view, keepSelection) {
+        const previousSelection = keepSelection ? state.selectedStepId : null;
         state.runId = runId;
-        const view = await fetchJson('/api/run-view?run_id=' + encodeURIComponent(runId) + '&visibility_scope=' + encodeURIComponent(state.visibilityScope));
         state.timeline = view.timeline.steps;
-        state.selectedStepId = state.timeline.length ? state.timeline[0].step_id : null;
+        if (previousSelection && state.timeline.some(function (step) { return step.step_id === previousSelection; })) {
+          state.selectedStepId = previousSelection;
+        } else {
+          state.selectedStepId = state.timeline.length ? state.timeline[0].step_id : null;
+        }
         renderTimeline();
         renderHelperCards(view.helper_cards);
+        return previousSelection !== state.selectedStepId;
+      }
+
+      async function loadRun(runId) {
+        const view = await fetchJson('/api/run-view?run_id=' + encodeURIComponent(runId) + '&visibility_scope=' + encodeURIComponent(state.visibilityScope));
+        applyRunView(runId, view, false);
         await loadSelectedStep();
+        restartLiveStream();
         setBanner('Loaded run ' + runId + ' with ' + view.timeline.steps.length + ' projected step(s).', false);
+      }
+
+      function streamUrl() {
+        const base = new URL('/ws', window.location.href);
+        if (state.runId) {
+          base.searchParams.set('run_id', state.runId);
+        }
+        base.searchParams.set('visibility_scope', state.visibilityScope);
+        base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+        return base.toString();
+      }
+
+      function clearReconnectTimer() {
+        if (streamState.reconnectTimer) {
+          clearTimeout(streamState.reconnectTimer);
+          streamState.reconnectTimer = null;
+        }
+      }
+
+      function connectLiveStream() {
+        clearReconnectTimer();
+        const socket = new WebSocket(streamUrl());
+        streamState.socket = socket;
+
+        socket.addEventListener('open', function () {
+          if (streamState.socket !== socket) {
+            return;
+          }
+          streamState.reconnectAttempt = 0;
+        });
+
+        socket.addEventListener('message', function (event) {
+          if (streamState.socket !== socket) {
+            return;
+          }
+          let message;
+          try {
+            message = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
+          } catch {
+            return;
+          }
+
+          if (message.type === 'overview' && message.payload) {
+            applyOverview(message.payload);
+            return;
+          }
+
+          if (message.type === 'run_view' && message.payload && typeof message.run_id === 'string') {
+            const selectionChanged = applyRunView(message.run_id, message.payload, true);
+            if (selectionChanged) {
+              loadSelectedStep().catch(function (error) {
+                setBanner(error.message || 'Failed to refresh selected step.', true);
+              });
+            }
+            return;
+          }
+
+          if (message.type === 'error') {
+            setBanner(message.message || 'Live inspector stream reported an error.', true);
+          }
+        });
+
+        socket.addEventListener('close', function () {
+          if (streamState.socket !== socket) {
+            return;
+          }
+          streamState.socket = null;
+          if (!streamState.reconnectEnabled) {
+            return;
+          }
+          clearReconnectTimer();
+          const delay = Math.min(8_000, 800 * Math.pow(2, streamState.reconnectAttempt));
+          streamState.reconnectAttempt += 1;
+          streamState.reconnectTimer = setTimeout(function () {
+            connectLiveStream();
+          }, delay);
+        });
+
+        socket.addEventListener('error', function () {
+          if (streamState.socket !== socket) {
+            return;
+          }
+          socket.close();
+        });
+      }
+
+      function restartLiveStream() {
+        streamState.reconnectEnabled = true;
+        clearReconnectTimer();
+        const existingSocket = streamState.socket;
+        streamState.socket = null;
+        if (existingSocket && (existingSocket.readyState === WebSocket.OPEN || existingSocket.readyState === WebSocket.CONNECTING)) {
+          existingSocket.close();
+        }
+        connectLiveStream();
       }
 
       async function loadSelectedStep() {
@@ -885,6 +1022,15 @@ function renderInspectorHtml(title: string): string {
         });
       });
 
+      window.addEventListener('beforeunload', function () {
+        streamState.reconnectEnabled = false;
+        clearReconnectTimer();
+        if (streamState.socket) {
+          streamState.socket.close();
+          streamState.socket = null;
+        }
+      });
+
       (async function boot() {
         const params = new URLSearchParams(window.location.search);
         const runId = params.get('run_id');
@@ -900,6 +1046,8 @@ function renderInspectorHtml(title: string): string {
           await loadOverview();
           if (runId) {
             await loadRun(runId);
+          } else {
+            restartLiveStream();
           }
         } catch (error) {
           setBanner(error.message || 'Failed to boot inspector.', true);
@@ -950,7 +1098,10 @@ function readBody(request: IncomingMessage): Promise<string> {
   });
 }
 
-async function withClient<T>(socketPath: string | undefined, operation: (client: AuthorityClient) => Promise<T>): Promise<T> {
+async function withClient<T>(
+  socketPath: string | undefined,
+  operation: (client: AuthorityClient) => Promise<T>,
+): Promise<T> {
   const client = new AuthorityClient(socketPath ? { socketPath, clientType: "sdk_ts", clientVersion: "0.1.0" } : {});
   return operation(client);
 }
@@ -982,11 +1133,112 @@ function handleInspectorError(response: ServerResponse, error: unknown): void {
   });
 }
 
+async function fetchInspectorOverview(socketPath: string | undefined) {
+  return withClient(socketPath, async (client) => {
+    const [diagnostics, capabilities] = await Promise.all([
+      client.diagnostics([
+        "daemon_health",
+        "journal_health",
+        "maintenance_backlog",
+        "projection_lag",
+        "storage_summary",
+        "capability_summary",
+      ]),
+      client.getCapabilities(),
+    ]);
+
+    return {
+      diagnostics,
+      capabilities,
+    };
+  });
+}
+
+async function fetchInspectorRunView(
+  socketPath: string | undefined,
+  runId: string,
+  visibilityScope: VisibilityScope | undefined,
+) {
+  return withClient(socketPath, async (client) => {
+    const [run_summary, timeline, runSummaryHelper, causeHelper, blockedHelper, externalHelper, inbox, approvals] =
+      await Promise.all([
+        client.getRunSummary(runId),
+        client.queryTimeline(runId, visibilityScope),
+        client.queryHelper(runId, "run_summary", undefined, undefined, visibilityScope),
+        client.queryHelper(runId, "suggest_likely_cause", undefined, undefined, visibilityScope),
+        client.queryHelper(runId, "why_blocked", undefined, undefined, visibilityScope),
+        client.queryHelper(runId, "identify_external_effects", undefined, undefined, visibilityScope),
+        client.queryApprovalInbox({ run_id: runId }),
+        client.listApprovals({ run_id: runId }),
+      ]);
+
+    return {
+      run_summary,
+      timeline,
+      approval_inbox: inbox,
+      approvals,
+      helper_cards: [
+        { label: "run_summary", ...runSummaryHelper },
+        { label: "suggest_likely_cause", ...causeHelper },
+        { label: "why_blocked", ...blockedHelper },
+        { label: "identify_external_effects", ...externalHelper },
+      ],
+    };
+  });
+}
+
+function websocketAcceptValue(key: string): string {
+  return createHash("sha1").update(`${key}${WS_GUID}`, "utf8").digest("base64");
+}
+
+function encodeWebSocketTextFrame(payload: string): Buffer {
+  const payloadBuffer = Buffer.from(payload, "utf8");
+  const payloadLength = payloadBuffer.length;
+
+  if (payloadLength < 126) {
+    const header = Buffer.alloc(2);
+    header[0] = 0x81;
+    header[1] = payloadLength;
+    return Buffer.concat([header, payloadBuffer]);
+  }
+
+  if (payloadLength <= 0xffff) {
+    const header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 126;
+    header.writeUInt16BE(payloadLength, 2);
+    return Buffer.concat([header, payloadBuffer]);
+  }
+
+  const header = Buffer.alloc(10);
+  header[0] = 0x81;
+  header[1] = 127;
+  header.writeBigUInt64BE(BigInt(payloadLength), 2);
+  return Buffer.concat([header, payloadBuffer]);
+}
+
+function payloadDigest(payload: unknown): string {
+  return createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
+}
+
+interface InspectorWebSocketClientState {
+  socket: net.Socket;
+  runId: string | null;
+  visibilityScope: VisibilityScope | undefined;
+  interval: NodeJS.Timeout;
+  inFlight: boolean;
+  closed: boolean;
+  lastOverviewDigest: string | null;
+  lastRunViewDigest: string | null;
+  lastErrorDigest: string | null;
+}
+
 export function createInspectorServer(options: InspectorServerOptions = {}): http.Server {
   const socketPath = options.socketPath ?? process.env.AGENTGIT_SOCKET_PATH;
   const title = options.title ?? "AgentGit Inspector";
+  const wsClients = new Set<InspectorWebSocketClientState>();
 
-  return http.createServer(async (request, response) => {
+  const server = http.createServer(async (request, response) => {
     try {
       if (!request.url) {
         json(response, 400, { message: "Missing request url." });
@@ -1007,25 +1259,7 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       }
 
       if (request.method === "GET" && url.pathname === "/api/overview") {
-        const result = await withClient(socketPath, async (client) => {
-          const [diagnostics, capabilities] = await Promise.all([
-            client.diagnostics([
-              "daemon_health",
-              "journal_health",
-              "maintenance_backlog",
-              "projection_lag",
-              "storage_summary",
-              "capability_summary",
-            ]),
-            client.getCapabilities(),
-          ]);
-
-          return {
-            diagnostics,
-            capabilities,
-          };
-        });
-
+        const result = await fetchInspectorOverview(socketPath);
         json(response, 200, result);
         return;
       }
@@ -1040,33 +1274,7 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
         const visibilityScopeParam = url.searchParams.get("visibility_scope");
         const visibilityScope = isVisibilityScope(visibilityScopeParam) ? visibilityScopeParam : undefined;
 
-        const result = await withClient(socketPath, async (client) => {
-          const [run_summary, timeline, runSummaryHelper, causeHelper, blockedHelper, externalHelper, inbox, approvals] =
-            await Promise.all([
-              client.getRunSummary(runId),
-              client.queryTimeline(runId, visibilityScope),
-              client.queryHelper(runId, "run_summary", undefined, undefined, visibilityScope),
-              client.queryHelper(runId, "suggest_likely_cause", undefined, undefined, visibilityScope),
-              client.queryHelper(runId, "why_blocked", undefined, undefined, visibilityScope),
-              client.queryHelper(runId, "identify_external_effects", undefined, undefined, visibilityScope),
-              client.queryApprovalInbox({ run_id: runId }),
-              client.listApprovals({ run_id: runId }),
-            ]);
-
-          return {
-            run_summary,
-            timeline,
-            approval_inbox: inbox,
-            approvals,
-            helper_cards: [
-              { label: "run_summary", ...runSummaryHelper },
-              { label: "suggest_likely_cause", ...causeHelper },
-              { label: "why_blocked", ...blockedHelper },
-              { label: "identify_external_effects", ...externalHelper },
-            ],
-          };
-        });
-
+        const result = await fetchInspectorRunView(socketPath, runId, visibilityScope);
         json(response, 200, result);
         return;
       }
@@ -1137,6 +1345,191 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       handleInspectorError(response, error);
     }
   });
+
+  const closeWsClient = (client: InspectorWebSocketClientState): void => {
+    if (client.closed) {
+      return;
+    }
+
+    client.closed = true;
+    clearInterval(client.interval);
+    wsClients.delete(client);
+    if (!client.socket.destroyed) {
+      client.socket.destroy();
+    }
+  };
+
+  const sendWsJson = (client: InspectorWebSocketClientState, payload: unknown): void => {
+    if (client.closed) {
+      return;
+    }
+
+    try {
+      client.socket.write(encodeWebSocketTextFrame(JSON.stringify(payload)));
+    } catch {
+      closeWsClient(client);
+    }
+  };
+
+  const publishWsSnapshot = async (client: InspectorWebSocketClientState): Promise<void> => {
+    if (client.closed || client.inFlight) {
+      return;
+    }
+
+    client.inFlight = true;
+    try {
+      const overview = await fetchInspectorOverview(socketPath);
+      const overviewDigest = payloadDigest(overview);
+      if (overviewDigest !== client.lastOverviewDigest) {
+        client.lastOverviewDigest = overviewDigest;
+        sendWsJson(client, {
+          type: "overview",
+          payload: overview,
+          emitted_at: new Date().toISOString(),
+        });
+      }
+
+      if (client.runId) {
+        const runView = await fetchInspectorRunView(socketPath, client.runId, client.visibilityScope);
+        const runViewDigest = payloadDigest(runView);
+        if (runViewDigest !== client.lastRunViewDigest) {
+          client.lastRunViewDigest = runViewDigest;
+          sendWsJson(client, {
+            type: "run_view",
+            run_id: client.runId,
+            visibility_scope: client.visibilityScope ?? null,
+            payload: runView,
+            emitted_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      client.lastErrorDigest = null;
+    } catch (error) {
+      const errorPayload = {
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+        emitted_at: new Date().toISOString(),
+      };
+      const digest = payloadDigest(errorPayload);
+      if (digest !== client.lastErrorDigest) {
+        client.lastErrorDigest = digest;
+        sendWsJson(client, errorPayload);
+      }
+    } finally {
+      client.inFlight = false;
+    }
+  };
+
+  const rejectUpgrade = (socket: net.Socket, statusLine: string, message: string): void => {
+    if (socket.destroyed) {
+      return;
+    }
+
+    const messageBytes = Buffer.byteLength(message, "utf8");
+    socket.write(
+      `HTTP/1.1 ${statusLine}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${messageBytes}\r\n\r\n${message}`,
+    );
+    socket.destroy();
+  };
+
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      if (!request.url) {
+        rejectUpgrade(socket, "400 Bad Request", "Missing request url.");
+        return;
+      }
+
+      const url = new URL(request.url, "http://inspector.local");
+      if (url.pathname !== "/ws") {
+        rejectUpgrade(socket, "404 Not Found", "Unknown websocket endpoint.");
+        return;
+      }
+
+      const upgradeHeader = request.headers.upgrade;
+      const connectionHeader = request.headers.connection;
+      const keyHeader = request.headers["sec-websocket-key"];
+      const versionHeader = request.headers["sec-websocket-version"];
+      const key = Array.isArray(keyHeader) ? keyHeader[0] : keyHeader;
+      const version = Array.isArray(versionHeader) ? versionHeader[0] : versionHeader;
+
+      if (
+        typeof upgradeHeader !== "string" ||
+        upgradeHeader.toLowerCase() !== "websocket" ||
+        typeof connectionHeader !== "string" ||
+        !connectionHeader
+          .toLowerCase()
+          .split(",")
+          .map((entry) => entry.trim())
+          .includes("upgrade") ||
+        typeof key !== "string" ||
+        key.trim().length === 0 ||
+        version !== "13"
+      ) {
+        rejectUpgrade(socket, "400 Bad Request", "Invalid websocket upgrade request.");
+        return;
+      }
+
+      const runIdParam = url.searchParams.get("run_id");
+      const runId = runIdParam && runIdParam.trim().length > 0 ? runIdParam.trim() : null;
+      const visibilityScopeParam = url.searchParams.get("visibility_scope");
+      const visibilityScope = isVisibilityScope(visibilityScopeParam) ? visibilityScopeParam : undefined;
+      const accept = websocketAcceptValue(key.trim());
+
+      socket.write(
+        [
+          "HTTP/1.1 101 Switching Protocols",
+          "Upgrade: websocket",
+          "Connection: Upgrade",
+          `Sec-WebSocket-Accept: ${accept}`,
+          "\r\n",
+        ].join("\r\n"),
+      );
+
+      if (head.length > 0) {
+        socket.unshift(head);
+      }
+      socket.on("data", () => undefined);
+
+      const interval = setInterval(() => {
+        void publishWsSnapshot(clientState);
+      }, WS_POLL_INTERVAL_MS);
+      const clientState: InspectorWebSocketClientState = {
+        socket,
+        runId,
+        visibilityScope,
+        interval,
+        inFlight: false,
+        closed: false,
+        lastOverviewDigest: null,
+        lastRunViewDigest: null,
+        lastErrorDigest: null,
+      };
+      wsClients.add(clientState);
+
+      socket.on("error", () => {
+        closeWsClient(clientState);
+      });
+      socket.on("close", () => {
+        closeWsClient(clientState);
+      });
+      socket.on("end", () => {
+        closeWsClient(clientState);
+      });
+
+      void publishWsSnapshot(clientState);
+    } catch {
+      rejectUpgrade(socket, "500 Internal Server Error", "Failed to establish websocket connection.");
+    }
+  });
+
+  server.on("close", () => {
+    for (const client of wsClients) {
+      closeWsClient(client);
+    }
+  });
+
+  return server;
 }
 
 export async function startInspectorServer(options: InspectorServerOptions = {}): Promise<http.Server> {
@@ -1157,7 +1550,7 @@ if (import.meta.url === new URL(process.argv[1] ?? "", "file:").href) {
       process.stdout.write(`agentgit inspector listening on http://${DEFAULT_HOST}:${DEFAULT_PORT}\n`);
     })
     .catch((error) => {
-      process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+      process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
       process.exitCode = 1;
     });
 }

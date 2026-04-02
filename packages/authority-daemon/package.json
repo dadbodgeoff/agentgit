@@ -8,20 +8,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "vitest run --dir src",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo src/*.js src/*.js.map src/*.d.ts src/*.d.ts.map",
+    "test": "pnpm clean && pnpm exec turbo run build --filter=@agentgit/authority-daemon^... && mkdir -p coverage/.tmp && vitest run --dir src",
     "start": "node dist/main.js"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.3.6"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@agentgit/action-normalizer": "workspace:*",
     "@agentgit/credential-broker": "workspace:*",
     "@agentgit/execution-adapters": "workspace:*",
     "@agentgit/integration-state": "workspace:*",
     "@agentgit/mcp-registry": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@agentgit/policy-engine": "workspace:*",
     "@agentgit/recovery-engine": "workspace:*",
     "@agentgit/run-journal": "workspace:*",

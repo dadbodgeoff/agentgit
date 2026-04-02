@@ -1,0 +1,3 @@
+{"total": {"lines":{"total":297,"covered":176,"skipped":0,"pct":59.25},"statements":{"total":307,"covered":180,"skipped":0,"pct":58.63},"functions":{"total":101,"covered":51,"skipped":0,"pct":50.49},"branches":{"total":327,"covered":187,"skipped":0,"pct":57.18},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
+,"/Users/geoffreyfernald/Documents/agentgit/packages/mcp-registry/src/index.ts": {"lines":{"total":297,"covered":176,"skipped":0,"pct":59.25},"functions":{"total":101,"covered":51,"skipped":0,"pct":50.49},"statements":{"total":307,"covered":180,"skipped":0,"pct":58.63},"branches":{"total":327,"covered":187,"skipped":0,"pct":57.18}}
+}

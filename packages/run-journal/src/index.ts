@@ -10,9 +10,16 @@ import {
   type ApprovalRequest,
   API_VERSION,
   type GetCapabilitiesResponsePayload,
+  type GetPolicyCalibrationReportResponsePayload,
   type HelperQuestionType,
   InternalError,
   NotFoundError,
+  type PolicyCalibrationActionFamilyBucket,
+  type PolicyCalibrationApprovalCounts,
+  type PolicyCalibrationConfidenceStats,
+  type PolicyCalibrationCountItem,
+  type PolicyCalibrationDecisionCounts,
+  type PolicyCalibrationSample,
   type ReasonDetail,
   QueryHelperResponsePayloadSchema,
   RunEventSummarySchema,
@@ -161,7 +168,9 @@ function stableJsonStringify(value: unknown): string {
   }
 
   if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
     return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJsonStringify(entryValue)}`).join(",")}}`;
   }
 
@@ -226,6 +235,93 @@ function resolveSqliteJournalMode(): SqliteJournalMode {
   });
 }
 
+function emptyCalibrationDecisionCounts(): PolicyCalibrationDecisionCounts {
+  return {
+    allow: 0,
+    allow_with_snapshot: 0,
+    ask: 0,
+    deny: 0,
+  };
+}
+
+function emptyCalibrationApprovalCounts(): PolicyCalibrationApprovalCounts {
+  return {
+    requested: 0,
+    pending: 0,
+    approved: 0,
+    denied: 0,
+  };
+}
+
+function updateCalibrationDecisionCounts(
+  counts: PolicyCalibrationDecisionCounts,
+  decision: PolicyCalibrationSample["decision"],
+): void {
+  if (decision === "allow" || decision === "allow_with_snapshot" || decision === "ask" || decision === "deny") {
+    counts[decision] += 1;
+  }
+}
+
+function updateCalibrationApprovalCounts(
+  counts: PolicyCalibrationApprovalCounts,
+  sample: PolicyCalibrationSample,
+): void {
+  if (!sample.approval_requested) {
+    return;
+  }
+
+  counts.requested += 1;
+  if (sample.approval_status === "approved") {
+    counts.approved += 1;
+    return;
+  }
+  if (sample.approval_status === "denied") {
+    counts.denied += 1;
+    return;
+  }
+  counts.pending += 1;
+}
+
+function incrementCalibrationCount(map: Map<string, number>, key: string | null | undefined): void {
+  if (!key) {
+    return;
+  }
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+function finalizeCalibrationCounts(map: Map<string, number>, limit = 10): PolicyCalibrationCountItem[] {
+  return [...map.entries()]
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, limit)
+    .map(([key, count]) => ({ key, count }));
+}
+
+function finalizeCalibrationConfidenceStats(
+  sum: number,
+  count: number,
+  min: number | null,
+  max: number | null,
+): PolicyCalibrationConfidenceStats {
+  if (count === 0) {
+    return {
+      average: null,
+      min: null,
+      max: null,
+    };
+  }
+
+  return {
+    average: Number((sum / count).toFixed(6)),
+    min,
+    max,
+  };
+}
+
 export class RunJournal {
   private readonly db: BetterSqliteDatabase;
   private readonly artifactRootPath: string;
@@ -233,7 +329,11 @@ export class RunJournal {
 
   constructor(options: RunJournalOptions) {
     try {
-      if (options.artifactRetentionMs !== undefined && options.artifactRetentionMs !== null && options.artifactRetentionMs < 0) {
+      if (
+        options.artifactRetentionMs !== undefined &&
+        options.artifactRetentionMs !== null &&
+        options.artifactRetentionMs < 0
+      ) {
         throw new InternalError("Artifact retention must be null or a non-negative number of milliseconds.", {
           artifact_retention_ms: options.artifactRetentionMs,
         });
@@ -468,19 +568,17 @@ export class RunJournal {
     return this.normalizeTimestampToMillis(expiresAt, "expires_at", artifactId) <= Date.now();
   }
 
-  private artifactStatusForRow(
-    row: {
-      storage_relpath: string;
-      expires_at: string | null;
-      expired_at: string | null;
-      byte_size: number;
-      integrity_schema_version: string | null;
-      content_digest_algorithm: string | null;
-      content_digest: string | null;
-      content_sha256: string | null;
-      artifact_id?: string;
-    },
-  ): ArtifactAvailability {
+  private artifactStatusForRow(row: {
+    storage_relpath: string;
+    expires_at: string | null;
+    expired_at: string | null;
+    byte_size: number;
+    integrity_schema_version: string | null;
+    content_digest_algorithm: string | null;
+    content_digest: string | null;
+    content_sha256: string | null;
+    artifact_id?: string;
+  }): ArtifactAvailability {
     if (this.isArtifactExpired(row.expires_at, row.expired_at, row.artifact_id)) {
       return "expired";
     }
@@ -551,13 +649,15 @@ export class RunJournal {
         WHERE artifact_id = ?
       `);
 
-      const transaction = this.db.transaction((expiredRows: Array<{ artifact_id: string; storage_relpath: string }>) => {
-        for (const row of expiredRows) {
-          const storagePath = path.join(this.artifactRootPath, row.storage_relpath);
-          fs.rmSync(storagePath, { force: true });
-          updateExpiredAt.run(now, row.artifact_id);
-        }
-      });
+      const transaction = this.db.transaction(
+        (expiredRows: Array<{ artifact_id: string; storage_relpath: string }>) => {
+          for (const row of expiredRows) {
+            const storagePath = path.join(this.artifactRootPath, row.storage_relpath);
+            fs.rmSync(storagePath, { force: true });
+            updateExpiredAt.run(now, row.artifact_id);
+          }
+        },
+      );
 
       transaction(rows);
       return rows.length;
@@ -1111,7 +1211,10 @@ export class RunJournal {
       const storageRelpath = this.artifactRelativePath(input.artifact_id);
       const storagePath = path.join(this.artifactRootPath, storageRelpath);
       const expiresAt = this.computeArtifactExpiresAt(input.created_at, input.artifact_id);
-      const contentDigest = crypto.createHash(ARTIFACT_INTEGRITY_DIGEST_ALGORITHM).update(input.content, "utf8").digest("hex");
+      const contentDigest = crypto
+        .createHash(ARTIFACT_INTEGRITY_DIGEST_ALGORITHM)
+        .update(input.content, "utf8")
+        .digest("hex");
       const integrity: StoredArtifactRecord["integrity"] = {
         schema_version: ARTIFACT_INTEGRITY_SCHEMA_VERSION,
         digest_algorithm: ARTIFACT_INTEGRITY_DIGEST_ALGORITHM,
@@ -1203,7 +1306,9 @@ export class RunJournal {
     }
   }
 
-  getArtifact(artifactId: string): StoredArtifactRecord & { content: string | null; artifact_status: ArtifactAvailability } {
+  getArtifact(
+    artifactId: string,
+  ): StoredArtifactRecord & { content: string | null; artifact_status: ArtifactAvailability } {
     try {
       const row = this.db
         .prepare(
@@ -1275,8 +1380,10 @@ export class RunJournal {
         content_ref: row.content_ref,
         byte_size: row.byte_size,
         integrity: {
-          schema_version: (row.integrity_schema_version ?? ARTIFACT_INTEGRITY_SCHEMA_VERSION) as typeof ARTIFACT_INTEGRITY_SCHEMA_VERSION,
-          digest_algorithm: (row.content_digest_algorithm ?? ARTIFACT_INTEGRITY_DIGEST_ALGORITHM) as typeof ARTIFACT_INTEGRITY_DIGEST_ALGORITHM,
+          schema_version: (row.integrity_schema_version ??
+            ARTIFACT_INTEGRITY_SCHEMA_VERSION) as typeof ARTIFACT_INTEGRITY_SCHEMA_VERSION,
+          digest_algorithm: (row.content_digest_algorithm ??
+            ARTIFACT_INTEGRITY_DIGEST_ALGORITHM) as typeof ARTIFACT_INTEGRITY_DIGEST_ALGORITHM,
           digest: row.content_digest ?? row.content_sha256,
         },
         visibility: row.visibility,
@@ -2153,6 +2260,345 @@ export class RunJournal {
       throw new InternalError("Failed to resolve approval request.", {
         cause: error instanceof Error ? error.message : String(error),
         approval_id: approvalId,
+      });
+    }
+  }
+
+  getPolicyCalibrationReport(
+    filters: {
+      run_id?: string;
+      include_samples?: boolean;
+      sample_limit?: number | null;
+    } = {},
+  ): GetPolicyCalibrationReportResponsePayload {
+    try {
+      if (filters.run_id && !this.getRunSummary(filters.run_id)) {
+        throw new NotFoundError(`No run found for ${filters.run_id}.`, { run_id: filters.run_id });
+      }
+
+      const includeSamples = filters.include_samples ?? false;
+      const sampleLimit = includeSamples ? (filters.sample_limit ?? 200) : null;
+      const params = filters.run_id ? [filters.run_id] : [];
+      const runClause = filters.run_id ? "AND run_id = ?" : "";
+
+      const policyRows = (
+        this.db.prepare(
+          `
+            SELECT run_id, occurred_at, payload_json
+            FROM run_events
+            WHERE event_type = 'policy.evaluated'
+            ${runClause}
+            ORDER BY occurred_at ASC, sequence ASC
+          `,
+        ) as unknown as {
+          all(...boundParams: string[]): Array<{
+            run_id: string;
+            occurred_at: string;
+            payload_json: string;
+          }>;
+        }
+      ).all(...params);
+
+      const approvalRows = (
+        this.db.prepare(
+          `
+            SELECT approval_id, action_id, status, resolved_at
+            FROM approval_requests
+            ${filters.run_id ? "WHERE run_id = ?" : ""}
+            ORDER BY requested_at ASC
+          `,
+        ) as unknown as {
+          all(...boundParams: string[]): Array<{
+            approval_id: string;
+            action_id: string;
+            status: ApprovalRequest["status"];
+            resolved_at: string | null;
+          }>;
+        }
+      ).all(...params);
+
+      const recoveryRows = (
+        this.db.prepare(
+          `
+            SELECT payload_json
+            FROM run_events
+            WHERE event_type = 'recovery.executed'
+            ${runClause}
+            ORDER BY occurred_at ASC, sequence ASC
+          `,
+        ) as unknown as {
+          all(...boundParams: string[]): Array<{ payload_json: string }>;
+        }
+      ).all(...params);
+
+      const approvalByActionId = new Map<
+        string,
+        {
+          approval_id: string;
+          status: ApprovalRequest["status"];
+          resolved_at: string | null;
+        }
+      >();
+      for (const row of approvalRows) {
+        approvalByActionId.set(row.action_id, {
+          approval_id: row.approval_id,
+          status: row.status,
+          resolved_at: row.resolved_at,
+        });
+      }
+
+      const recoveryByActionId = new Map<
+        string,
+        {
+          recovery_result: PolicyCalibrationSample["recovery_result"];
+          recovery_class: PolicyCalibrationSample["recovery_class"];
+          recovery_strategy: string | null;
+        }
+      >();
+      for (const row of recoveryRows) {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        const actionId = typeof payload.action_id === "string" ? payload.action_id : "";
+        if (actionId.length === 0) {
+          continue;
+        }
+
+        const outcome = payload.outcome === "restored" || payload.outcome === "compensated" ? payload.outcome : null;
+        const recoveryClass =
+          payload.recovery_class === "reversible" ||
+          payload.recovery_class === "compensatable" ||
+          payload.recovery_class === "review_only" ||
+          payload.recovery_class === "irreversible"
+            ? payload.recovery_class
+            : null;
+        const recoveryStrategy = typeof payload.strategy === "string" ? payload.strategy : null;
+
+        recoveryByActionId.set(actionId, {
+          recovery_result: outcome,
+          recovery_class: recoveryClass,
+          recovery_strategy: recoveryStrategy,
+        });
+      }
+
+      const samples: PolicyCalibrationSample[] = policyRows.map((row) => {
+        const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+        const actionId = typeof payload.action_id === "string" ? payload.action_id : "unknown_action";
+        const actionFamily =
+          typeof payload.action_family === "string" && payload.action_family.length > 0
+            ? payload.action_family
+            : "unknown/unknown";
+        const decision =
+          payload.decision === "allow" ||
+          payload.decision === "allow_with_snapshot" ||
+          payload.decision === "ask" ||
+          payload.decision === "deny"
+            ? payload.decision
+            : "deny";
+        const reasons = Array.isArray(payload.reasons) ? payload.reasons : [];
+        const reasonCodes = reasons.flatMap((reason) =>
+          reason && typeof reason === "object" && typeof (reason as { code?: unknown }).code === "string"
+            ? [(reason as { code: string }).code]
+            : [],
+        );
+        const snapshotSelection =
+          payload.snapshot_selection && typeof payload.snapshot_selection === "object"
+            ? (payload.snapshot_selection as Record<string, unknown>)
+            : null;
+        const snapshotClass =
+          snapshotSelection?.snapshot_class === "metadata_only" ||
+          snapshotSelection?.snapshot_class === "journal_only" ||
+          snapshotSelection?.snapshot_class === "journal_plus_anchor" ||
+          snapshotSelection?.snapshot_class === "exact_anchor"
+            ? snapshotSelection.snapshot_class
+            : null;
+        const matchedRules = Array.isArray(payload.matched_rules)
+          ? payload.matched_rules.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+          : [];
+        const approval = approvalByActionId.get(actionId) ?? null;
+        const recovery = recoveryByActionId.get(actionId) ?? null;
+        const normalizationConfidence =
+          typeof payload.normalization_confidence === "number" ? payload.normalization_confidence : 0;
+
+        return {
+          sample_id: `${row.run_id}:${actionId}`,
+          run_id: row.run_id,
+          action_id: actionId,
+          evaluated_at: typeof payload.evaluated_at === "string" ? payload.evaluated_at : row.occurred_at,
+          action_family: actionFamily,
+          decision,
+          normalization_confidence: normalizationConfidence,
+          matched_rules: matchedRules,
+          reason_codes: reasonCodes,
+          snapshot_class: snapshotClass,
+          approval_requested: decision === "ask" || approval !== null,
+          approval_id: approval?.approval_id ?? null,
+          approval_status: approval?.status ?? null,
+          resolved_at: approval?.resolved_at ?? null,
+          recovery_attempted: recovery !== null,
+          recovery_result: recovery?.recovery_result ?? null,
+          recovery_class: recovery?.recovery_class ?? null,
+          recovery_strategy: recovery?.recovery_strategy ?? null,
+        };
+      });
+
+      const sortedSamples = [...samples].sort((left, right) => {
+        const timeDelta = Date.parse(right.evaluated_at) - Date.parse(left.evaluated_at);
+        if (!Number.isNaN(timeDelta) && timeDelta !== 0) {
+          return timeDelta;
+        }
+        return left.sample_id.localeCompare(right.sample_id);
+      });
+
+      const totalsDecisionCounts = emptyCalibrationDecisionCounts();
+      const totalsApprovalCounts = emptyCalibrationApprovalCounts();
+      let confidenceSum = 0;
+      let confidenceCount = 0;
+      let confidenceMin: number | null = null;
+      let confidenceMax: number | null = null;
+      let recoveryAttemptedCount = 0;
+
+      const familyAccumulators = new Map<
+        string,
+        {
+          sample_count: number;
+          decisions: PolicyCalibrationDecisionCounts;
+          approvals: PolicyCalibrationApprovalCounts;
+          confidence_sum: number;
+          confidence_count: number;
+          confidence_min: number | null;
+          confidence_max: number | null;
+          snapshot_classes: Map<string, number>;
+          matched_rules: Map<string, number>;
+          reason_codes: Map<string, number>;
+          recovery_attempted_count: number;
+        }
+      >();
+
+      for (const sample of samples) {
+        updateCalibrationDecisionCounts(totalsDecisionCounts, sample.decision);
+        updateCalibrationApprovalCounts(totalsApprovalCounts, sample);
+
+        confidenceSum += sample.normalization_confidence;
+        confidenceCount += 1;
+        confidenceMin =
+          confidenceMin === null
+            ? sample.normalization_confidence
+            : Math.min(confidenceMin, sample.normalization_confidence);
+        confidenceMax =
+          confidenceMax === null
+            ? sample.normalization_confidence
+            : Math.max(confidenceMax, sample.normalization_confidence);
+        if (sample.recovery_attempted) {
+          recoveryAttemptedCount += 1;
+        }
+
+        const accumulator =
+          familyAccumulators.get(sample.action_family) ??
+          (() => {
+            const created = {
+              sample_count: 0,
+              decisions: emptyCalibrationDecisionCounts(),
+              approvals: emptyCalibrationApprovalCounts(),
+              confidence_sum: 0,
+              confidence_count: 0,
+              confidence_min: null as number | null,
+              confidence_max: null as number | null,
+              snapshot_classes: new Map<string, number>(),
+              matched_rules: new Map<string, number>(),
+              reason_codes: new Map<string, number>(),
+              recovery_attempted_count: 0,
+            };
+            familyAccumulators.set(sample.action_family, created);
+            return created;
+          })();
+
+        accumulator.sample_count += 1;
+        updateCalibrationDecisionCounts(accumulator.decisions, sample.decision);
+        updateCalibrationApprovalCounts(accumulator.approvals, sample);
+        accumulator.confidence_sum += sample.normalization_confidence;
+        accumulator.confidence_count += 1;
+        accumulator.confidence_min =
+          accumulator.confidence_min === null
+            ? sample.normalization_confidence
+            : Math.min(accumulator.confidence_min, sample.normalization_confidence);
+        accumulator.confidence_max =
+          accumulator.confidence_max === null
+            ? sample.normalization_confidence
+            : Math.max(accumulator.confidence_max, sample.normalization_confidence);
+        if (sample.recovery_attempted) {
+          accumulator.recovery_attempted_count += 1;
+        }
+        incrementCalibrationCount(accumulator.snapshot_classes, sample.snapshot_class);
+        for (const ruleId of sample.matched_rules) {
+          incrementCalibrationCount(accumulator.matched_rules, ruleId);
+        }
+        for (const reasonCode of sample.reason_codes) {
+          incrementCalibrationCount(accumulator.reason_codes, reasonCode);
+        }
+      }
+
+      const actionFamilies: PolicyCalibrationActionFamilyBucket[] = [...familyAccumulators.entries()]
+        .map(([action_family, accumulator]) => ({
+          action_family,
+          sample_count: accumulator.sample_count,
+          confidence: finalizeCalibrationConfidenceStats(
+            accumulator.confidence_sum,
+            accumulator.confidence_count,
+            accumulator.confidence_min,
+            accumulator.confidence_max,
+          ),
+          decisions: accumulator.decisions,
+          approvals: accumulator.approvals,
+          snapshot_classes: finalizeCalibrationCounts(accumulator.snapshot_classes),
+          top_matched_rules: finalizeCalibrationCounts(accumulator.matched_rules),
+          top_reason_codes: finalizeCalibrationCounts(accumulator.reason_codes),
+          recovery_attempted_count: accumulator.recovery_attempted_count,
+          approval_rate:
+            accumulator.sample_count > 0
+              ? Number((accumulator.approvals.requested / accumulator.sample_count).toFixed(6))
+              : null,
+          denial_rate:
+            accumulator.approvals.requested > 0
+              ? Number((accumulator.approvals.denied / accumulator.approvals.requested).toFixed(6))
+              : null,
+        }))
+        .sort((left, right) => {
+          if (right.sample_count !== left.sample_count) {
+            return right.sample_count - left.sample_count;
+          }
+          return left.action_family.localeCompare(right.action_family);
+        });
+
+      const report = {
+        generated_at: new Date().toISOString(),
+        filters: {
+          run_id: filters.run_id ?? null,
+          include_samples: includeSamples,
+          sample_limit: sampleLimit,
+        },
+        totals: {
+          sample_count: samples.length,
+          unique_action_families: actionFamilies.length,
+          confidence: finalizeCalibrationConfidenceStats(confidenceSum, confidenceCount, confidenceMin, confidenceMax),
+          decisions: totalsDecisionCounts,
+          approvals: totalsApprovalCounts,
+          recovery_attempted_count: recoveryAttemptedCount,
+        },
+        action_families: actionFamilies,
+        samples: includeSamples ? sortedSamples.slice(0, sampleLimit ?? sortedSamples.length) : undefined,
+        samples_truncated: includeSamples && sampleLimit !== null ? sortedSamples.length > sampleLimit : false,
+      } satisfies GetPolicyCalibrationReportResponsePayload["report"];
+
+      return {
+        report,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        throw error;
+      }
+
+      throw new InternalError("Failed to build policy calibration report.", {
+        cause: error instanceof Error ? error.message : String(error),
+        run_id: filters.run_id ?? null,
       });
     }
   }

@@ -3,6 +3,7 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -10,7 +11,9 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 
 import { OwnedDraftStore, OwnedNoteStore, OwnedTicketStore } from "@agentgit/execution-adapters";
+import { startHostedMcpWorkerServer } from "../../hosted-mcp-worker/src/index.ts";
 import { IntegrationState } from "@agentgit/integration-state";
+import { McpPublicHostPolicyRegistry, McpServerRegistry } from "@agentgit/mcp-registry";
 import {
   AgentGitError,
   API_VERSION,
@@ -31,6 +34,7 @@ interface TestHarness {
   snapshotRootPath: string;
   artifactRetentionMs: number | null;
   capabilityRefreshStaleMs: number | null;
+  startServerOptions: Partial<Parameters<typeof startServer>[0]>;
   server: net.Server;
 }
 
@@ -51,6 +55,76 @@ const ORIGINAL_MCP_SERVERS_JSON = process.env.AGENTGIT_MCP_SERVERS_JSON;
 const MCP_TEST_SERVER_SCRIPT = decodeURIComponent(
   new URL("../../execution-adapters/src/mcp-test-server.mjs", import.meta.url).pathname,
 );
+const FALLBACK_TEST_PINNED_OCI_IMAGE =
+  "docker.io/library/node@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | null {
+  for (const runtime of ["docker", "podman"] as const) {
+    const infoResult = spawnSync(runtime, ["info"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (infoResult.status !== 0 || infoResult.error) {
+      continue;
+    }
+
+    const inspectResult = spawnSync(runtime, ["image", "inspect", "node:22-bookworm-slim"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (inspectResult.status !== 0 || inspectResult.error) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(inspectResult.stdout) as Array<{ RepoDigests?: string[] }>;
+      const repoDigest = parsed[0]?.RepoDigests?.find(
+        (digest) => typeof digest === "string" && digest.includes("@sha256:"),
+      );
+      if (repoDigest) {
+        return {
+          runtime,
+          image: repoDigest,
+        };
+      }
+    } catch {
+      // Try the next runtime.
+    }
+  }
+
+  return null;
+}
+
+const TEST_OCI_SANDBOX = detectOciSandbox();
+
+function buildSandboxedStdioServer(serverId: string): Record<string, unknown> {
+  return {
+    server_id: serverId,
+    transport: "stdio",
+    command: "node",
+    args: ["/agentgit-test/mcp-test-server.mjs"],
+    sandbox: {
+      type: "oci_container",
+      ...(TEST_OCI_SANDBOX ? { runtime: TEST_OCI_SANDBOX.runtime } : {}),
+      image: TEST_OCI_SANDBOX?.image ?? FALLBACK_TEST_PINNED_OCI_IMAGE,
+      allowed_registries: ["docker.io"],
+      signature_verification: {
+        mode: "cosign_keyless",
+        certificate_identity: "https://github.com/agentgit/agentgit/.github/workflows/release.yml@refs/heads/main",
+        certificate_oidc_issuer: "https://token.actions.githubusercontent.com",
+      },
+      workspace_mount_path: "/workspace",
+      workdir: "/workspace",
+      additional_mounts: [
+        {
+          host_path: path.dirname(MCP_TEST_SERVER_SCRIPT),
+          container_path: "/agentgit-test",
+          read_only: true,
+        },
+      ],
+    },
+  };
+}
 
 process.env.AGENTGIT_SQLITE_JOURNAL_MODE = "DELETE";
 
@@ -95,6 +169,7 @@ async function createHarness(
   existingRoot?: string,
   artifactRetentionMs: number | null = null,
   capabilityRefreshStaleMs: number | null = null,
+  startServerOptions: Partial<Parameters<typeof startServer>[0]> = {},
 ): Promise<TestHarness> {
   fs.mkdirSync(TEST_TMP_ROOT, { recursive: true });
   const tempRoot =
@@ -114,6 +189,12 @@ async function createHarness(
   fs.mkdirSync(workspaceRoot, { recursive: true });
 
   let server: net.Server;
+  const effectiveStartServerOptions: Partial<Parameters<typeof startServer>[0]> = {
+    workspaceRootPath: workspaceRoot,
+    policyGlobalConfigPath: path.join(tempRoot, ".config", "agentgit", "authority-policy.toml"),
+    policyWorkspaceConfigPath: path.join(workspaceRoot, ".agentgit", "policy.toml"),
+    ...startServerOptions,
+  };
   try {
     server = await startServer({
       socketPath,
@@ -121,6 +202,7 @@ async function createHarness(
       snapshotRootPath,
       artifactRetentionMs,
       capabilityRefreshStaleMs,
+      ...effectiveStartServerOptions,
     });
   } catch (error) {
     if (error instanceof AgentGitError) {
@@ -148,6 +230,7 @@ async function createHarness(
     snapshotRootPath,
     artifactRetentionMs,
     capabilityRefreshStaleMs,
+    startServerOptions: effectiveStartServerOptions,
     server,
   };
   harnesses.push(harness);
@@ -184,15 +267,38 @@ async function closeTicketServer(server: http.Server): Promise<void> {
   });
 }
 
-async function startMcpHttpService(options: {
-  requireBearerToken?: string;
-  scenario?: "default" | "missing_tool" | "call_error";
-} = {}): Promise<{
+async function startMcpHttpService(
+  options: {
+    requireBearerToken?: string;
+    requireBearerTokenForToolCallsOnly?: string;
+    scenario?: "default" | "missing_tool" | "call_error" | "delayed_call";
+    getScenario?: () => "default" | "missing_tool" | "call_error" | "delayed_call";
+  } = {},
+): Promise<{
   url: string;
   close: () => Promise<void>;
 }> {
   const server = http.createServer(async (req, res) => {
-    if (options.requireBearerToken && req.headers.authorization !== `Bearer ${options.requireBearerToken}`) {
+    const chunks: Buffer[] = [];
+    if (req.method === "POST") {
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+    }
+    const bodyText = Buffer.concat(chunks).toString("utf8");
+    const parsedBody =
+      bodyText.length > 0
+        ? (JSON.parse(bodyText) as {
+            method?: string;
+          })
+        : null;
+    const requiresBearer =
+      (options.requireBearerToken !== undefined &&
+        req.headers.authorization !== `Bearer ${options.requireBearerToken}`) ||
+      (options.requireBearerTokenForToolCallsOnly !== undefined &&
+        parsedBody?.method === "tools/call" &&
+        req.headers.authorization !== `Bearer ${options.requireBearerTokenForToolCallsOnly}`);
+    if (requiresBearer) {
       res.writeHead(401, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
@@ -211,7 +317,7 @@ async function startMcpHttpService(options: {
       name: "agentgit-test-http-mcp-server",
       version: "1.0.0",
     });
-    const scenario = options.scenario ?? "default";
+    const scenario = options.getScenario?.() ?? options.scenario ?? "default";
 
     if (scenario === "missing_tool") {
       mcpServer.registerTool(
@@ -249,6 +355,10 @@ async function startMcpHttpService(options: {
             };
           }
 
+          if (scenario === "delayed_call") {
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+          }
+
           return {
             content: [{ type: "text", text: `http-echo:${note}` }],
             structuredContent: { echoed_note: note },
@@ -280,11 +390,6 @@ async function startMcpHttpService(options: {
     try {
       await mcpServer.connect(transport);
       if (req.method === "POST") {
-        const chunks: Buffer[] = [];
-        for await (const chunk of req) {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        }
-        const bodyText = Buffer.concat(chunks).toString("utf8");
         await transport.handleRequest(req, res, bodyText.length > 0 ? JSON.parse(bodyText) : undefined);
       } else {
         await transport.handleRequest(req, res);
@@ -325,6 +430,7 @@ async function restartHarness(harness: TestHarness): Promise<void> {
     snapshotRootPath: harness.snapshotRootPath,
     artifactRetentionMs: harness.artifactRetentionMs,
     capabilityRefreshStaleMs: harness.capabilityRefreshStaleMs,
+    ...harness.startServerOptions,
   });
 }
 
@@ -400,7 +506,30 @@ async function sendRequest<TResult>(
   return response as ResponseEnvelope<TResult>;
 }
 
-async function createSessionAndRun(harness: TestHarness, workflowName = "integration-test"): Promise<{
+async function waitFor<T>(
+  read: () => T,
+  predicate: (value: T) => boolean,
+  timeoutMs = 5_000,
+  intervalMs = 50,
+): Promise<T> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const value = read();
+    if (predicate(value)) {
+      return value;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  const finalValue = read();
+  throw new Error(`Timed out waiting for condition. Last value: ${JSON.stringify(finalValue)}`);
+}
+
+async function createSessionAndRun(
+  harness: TestHarness,
+  workflowName = "integration-test",
+): Promise<{
   sessionId: string;
   runId: string;
 }> {
@@ -982,13 +1111,7 @@ function makeNoteDeleteAttempt(runId: string, workspaceRoot: string, noteId: str
   };
 }
 
-function makeNoteUpdateAttempt(
-  runId: string,
-  workspaceRoot: string,
-  noteId: string,
-  title?: string,
-  body?: string,
-) {
+function makeNoteUpdateAttempt(runId: string, workspaceRoot: string, noteId: string, title?: string, body?: string) {
   return {
     run_id: runId,
     tool_registration: {
@@ -1543,7 +1666,639 @@ afterEach(async () => {
   }
 });
 
-describe("authority daemon integration", () => {
+describe("authority daemon integration", { timeout: 30_000 }, () => {
+  it("loads workspace policy config, surfaces effective policy, and strengthens matching actions", async () => {
+    const harness = await createHarness();
+    const policyDir = path.join(harness.workspaceRoot, ".agentgit");
+    const policyPath = path.join(policyDir, "policy.toml");
+    fs.mkdirSync(policyDir, { recursive: true });
+    fs.writeFileSync(
+      policyPath,
+      [
+        'profile_name = "workspace-hardening"',
+        'policy_version = "2026.04.01"',
+        "",
+        "[thresholds]",
+        'low_confidence = [{ action_family = "shell/*", ask_below = 0.45 }]',
+        "",
+        "[[rules]]",
+        'rule_id = "workspace.readme-write-review"',
+        'description = "Require approval before README mutations."',
+        'rationale = "README is user-facing and should stay review-gated during policy hardening."',
+        'binding_scope = "workspace"',
+        'decision = "allow"',
+        'enforcement_mode = "require_approval"',
+        "priority = 900",
+        'reason = { code = "README_REQUIRES_APPROVAL", severity = "moderate", message = "README writes require approval under the workspace policy pack." }',
+        'match = { type = "field", field = "target.primary.locator", operator = "matches", value = "README\\\\.md$" }',
+      ].join("\n"),
+      "utf8",
+    );
+    await restartHarness(harness);
+
+    const helloResponse = await sendRequest<{ session_id: string }>(harness, "hello", {
+      client_type: "cli",
+      client_version: "0.1.0",
+      requested_api_version: API_VERSION,
+      workspace_roots: [harness.workspaceRoot],
+    });
+    expect(helloResponse.ok).toBe(true);
+    const sessionId = helloResponse.result!.session_id;
+
+    const registerResponse = await sendRequest<{
+      run_id: string;
+      effective_policy_profile: string;
+    }>(
+      harness,
+      "register_run",
+      {
+        workflow_name: "policy-hardening",
+        agent_framework: "cli",
+        agent_name: "agentgit-cli",
+        workspace_roots: [harness.workspaceRoot],
+        client_metadata: {
+          source: "integration-test",
+        },
+      },
+      sessionId,
+    );
+    expect(registerResponse.ok).toBe(true);
+    expect(registerResponse.result?.effective_policy_profile).toBe("workspace-hardening");
+
+    const effectivePolicyResponse = await sendRequest<{
+      policy: {
+        profile_name: string;
+        thresholds?: {
+          low_confidence: Array<{ action_family: string; ask_below: number }>;
+        };
+        rules: Array<{ rule_id: string }>;
+      };
+      summary: {
+        profile_name: string;
+        compiled_rule_count: number;
+        loaded_sources: Array<{ scope: string; path: string | null }>;
+      };
+    }>(harness, "get_effective_policy", {}, sessionId);
+    expect(effectivePolicyResponse.ok).toBe(true);
+    expect(effectivePolicyResponse.result?.summary.profile_name).toBe("workspace-hardening");
+    expect(effectivePolicyResponse.result?.summary.compiled_rule_count).toBeGreaterThanOrEqual(3);
+    expect(effectivePolicyResponse.result?.summary.loaded_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "workspace",
+          path: policyPath,
+        }),
+        expect.objectContaining({
+          scope: "builtin_default",
+          path: null,
+        }),
+      ]),
+    );
+    expect(effectivePolicyResponse.result?.policy.rules.map((rule) => rule.rule_id)).toContain(
+      "workspace.readme-write-review",
+    );
+    expect(effectivePolicyResponse.result?.policy.thresholds?.low_confidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_family: "shell/*",
+          ask_below: 0.45,
+        }),
+        expect.objectContaining({
+          action_family: "filesystem/*",
+          ask_below: 0.3,
+        }),
+      ]),
+    );
+
+    const diagnosticsResponse = await sendRequest<{
+      policy_summary: {
+        profile_name: string;
+        loaded_sources: Array<{ scope: string }>;
+      } | null;
+    }>(harness, "diagnostics", { sections: ["policy_summary"] }, sessionId);
+    expect(diagnosticsResponse.ok).toBe(true);
+    expect(diagnosticsResponse.result?.policy_summary?.profile_name).toBe("workspace-hardening");
+    expect(
+      diagnosticsResponse.result?.policy_summary?.loaded_sources.some((source) => source.scope === "workspace"),
+    ).toBe(true);
+
+    const targetPath = path.join(harness.workspaceRoot, "README.md");
+    const submitResponse = await sendRequest<{
+      policy_outcome: { decision: string; reasons: Array<{ code: string }> };
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemWriteAttempt(registerResponse.result!.run_id, harness.workspaceRoot, targetPath, "# hi"),
+      },
+      sessionId,
+    );
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.policy_outcome.decision).toBe("ask");
+    expect(submitResponse.result?.policy_outcome.reasons[0]?.code).toBe("README_REQUIRES_APPROVAL");
+  });
+
+  it("validates policy configs through the daemon api", async () => {
+    const harness = await createHarness();
+    const helloResponse = await sendRequest<{ session_id: string }>(harness, "hello", {
+      client_type: "cli",
+      client_version: "0.1.0",
+      requested_api_version: API_VERSION,
+      workspace_roots: [harness.workspaceRoot],
+    });
+    expect(helloResponse.ok).toBe(true);
+    const sessionId = helloResponse.result!.session_id;
+
+    const invalidResponse = await sendRequest<{
+      valid: boolean;
+      issues: string[];
+      compiled_rule_count: number | null;
+    }>(
+      harness,
+      "validate_policy_config",
+      {
+        config: {
+          profile_name: "invalid-policy",
+          policy_version: "2026.04.01",
+        },
+      },
+      sessionId,
+    );
+    expect(invalidResponse.ok).toBe(true);
+    expect(invalidResponse.result?.valid).toBe(false);
+    expect(invalidResponse.result?.compiled_rule_count).toBeNull();
+    expect(invalidResponse.result?.issues.some((issue) => issue.includes("rules"))).toBe(true);
+  });
+
+  it("explains a candidate action through the daemon api without executing it", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "policy-explain");
+
+    const explainResponse = await sendRequest<{
+      action_family: string;
+      effective_policy_profile: string;
+      low_confidence_threshold: number | null;
+      confidence_triggered: boolean;
+      snapshot_selection: { snapshot_class: string } | null;
+      policy_outcome: { decision: string; reasons: Array<{ code: string }> };
+      action: { action_id: string };
+    }>(
+      harness,
+      "explain_policy_action",
+      {
+        attempt: makeFilesystemWriteAttempt(
+          runId,
+          harness.workspaceRoot,
+          path.join(harness.workspaceRoot, "explained.txt"),
+          "preview only",
+        ),
+      },
+      sessionId,
+    );
+
+    expect(explainResponse.ok).toBe(true);
+    expect(explainResponse.result?.action.action_id).toBeTruthy();
+    expect(explainResponse.result?.action_family).toBe("filesystem/write");
+    expect(explainResponse.result?.effective_policy_profile).toBeTruthy();
+    expect(explainResponse.result?.low_confidence_threshold).toBe(0.3);
+    expect(explainResponse.result?.confidence_triggered).toBe(false);
+    expect(explainResponse.result?.policy_outcome.decision).toBe("allow");
+    expect(explainResponse.result?.snapshot_selection).toBeNull();
+  });
+
+  it("keeps policy explanation decisions stable across daemon restart for identical attempts", async () => {
+    const harness = await createHarness();
+    const first = await createSessionAndRun(harness, "policy-determinism-before-restart");
+    const targetPath = path.join(harness.workspaceRoot, "deterministic-explain.txt");
+
+    const beforeRestart = await sendRequest<{
+      action_family: string;
+      effective_policy_profile: string;
+      low_confidence_threshold: number | null;
+      confidence_triggered: boolean;
+      snapshot_selection: { snapshot_class: string } | null;
+      policy_outcome: { decision: string; reasons: Array<{ code: string }> };
+    }>(
+      harness,
+      "explain_policy_action",
+      {
+        attempt: makeFilesystemWriteAttempt(first.runId, harness.workspaceRoot, targetPath, "preview only"),
+      },
+      first.sessionId,
+    );
+    expect(beforeRestart.ok).toBe(true);
+
+    await restartHarness(harness);
+
+    const second = await createSessionAndRun(harness, "policy-determinism-after-restart");
+    const afterRestart = await sendRequest<{
+      action_family: string;
+      effective_policy_profile: string;
+      low_confidence_threshold: number | null;
+      confidence_triggered: boolean;
+      snapshot_selection: { snapshot_class: string } | null;
+      policy_outcome: { decision: string; reasons: Array<{ code: string }> };
+    }>(
+      harness,
+      "explain_policy_action",
+      {
+        attempt: makeFilesystemWriteAttempt(second.runId, harness.workspaceRoot, targetPath, "preview only"),
+      },
+      second.sessionId,
+    );
+    expect(afterRestart.ok).toBe(true);
+
+    const normalize = (
+      result:
+        | {
+            action_family: string;
+            effective_policy_profile: string;
+            low_confidence_threshold: number | null;
+            confidence_triggered: boolean;
+            snapshot_selection: { snapshot_class: string } | null;
+            policy_outcome: { decision: string; reasons: Array<{ code: string }> };
+          }
+        | null
+        | undefined,
+    ) => ({
+      action_family: result?.action_family ?? null,
+      effective_policy_profile: result?.effective_policy_profile ?? null,
+      low_confidence_threshold: result?.low_confidence_threshold ?? null,
+      confidence_triggered: result?.confidence_triggered ?? null,
+      snapshot_class: result?.snapshot_selection?.snapshot_class ?? null,
+      decision: result?.policy_outcome.decision ?? null,
+      reason_codes: result?.policy_outcome.reasons.map((reason) => reason.code) ?? [],
+    });
+
+    expect(normalize(afterRestart.result)).toEqual(normalize(beforeRestart.result));
+    expect(fs.existsSync(targetPath)).toBe(false);
+  });
+
+  it("returns a policy calibration report for real run activity", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "policy-calibration");
+    const targetPath = path.join(harness.workspaceRoot, "calibration.txt");
+
+    const writeResponse = await sendRequest<{
+      execution_result: { mode: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemWriteAttempt(runId, harness.workspaceRoot, targetPath, "calibration write"),
+      },
+      sessionId,
+    );
+    expect(writeResponse.ok).toBe(true);
+    expect(writeResponse.result?.execution_result?.mode).toBe("executed");
+
+    const shellSubmitResponse = await sendRequest<{
+      approval_request: { approval_id: string; status: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeShellAttempt(runId, harness.workspaceRoot, [
+          process.execPath,
+          "-e",
+          "process.stdout.write('calibration shell run')",
+        ]),
+      },
+      sessionId,
+    );
+    expect(shellSubmitResponse.ok).toBe(true);
+    expect(shellSubmitResponse.result?.approval_request?.status).toBe("pending");
+
+    const resolveResponse = await sendRequest<{
+      execution_result: { mode: string; output?: { stdout?: string } } | null;
+    }>(
+      harness,
+      "resolve_approval",
+      {
+        approval_id: shellSubmitResponse.result!.approval_request!.approval_id,
+        resolution: "approved",
+        note: "approve calibration sample",
+      },
+      sessionId,
+    );
+    expect(resolveResponse.ok).toBe(true);
+    expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
+    expect(resolveResponse.result?.execution_result?.output?.stdout).toBe("calibration shell run");
+
+    const reportResponse = await sendRequest<{
+      report: {
+        filters: { run_id: string | null; include_samples: boolean; sample_limit: number | null };
+        totals: {
+          sample_count: number;
+          unique_action_families: number;
+          approvals: { requested: number; approved: number };
+        };
+        action_families: Array<{ action_family: string; sample_count: number }>;
+        samples?: Array<{
+          action_family: string;
+          decision: string;
+          approval_status: string | null;
+          normalization_confidence: number;
+        }>;
+        samples_truncated: boolean;
+      };
+    }>(
+      harness,
+      "get_policy_calibration_report",
+      {
+        run_id: runId,
+        include_samples: true,
+        sample_limit: 10,
+      },
+      sessionId,
+    );
+
+    expect(reportResponse.ok).toBe(true);
+    expect(reportResponse.result?.report.filters).toEqual({
+      run_id: runId,
+      include_samples: true,
+      sample_limit: 10,
+    });
+    expect(reportResponse.result?.report.totals.sample_count).toBe(2);
+    expect(reportResponse.result?.report.totals.unique_action_families).toBe(2);
+    expect(reportResponse.result?.report.totals.approvals.requested).toBe(1);
+    expect(reportResponse.result?.report.totals.approvals.approved).toBe(1);
+    expect(reportResponse.result?.report.samples_truncated).toBe(false);
+    expect(reportResponse.result?.report.action_families).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_family: "filesystem/write",
+          sample_count: 1,
+        }),
+        expect.objectContaining({
+          action_family: "shell/exec",
+          sample_count: 1,
+        }),
+      ]),
+    );
+    expect(reportResponse.result?.report.samples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_family: "filesystem/write",
+          normalization_confidence: expect.any(Number),
+        }),
+        expect.objectContaining({
+          action_family: "shell/exec",
+          decision: "ask",
+          approval_status: "approved",
+          normalization_confidence: expect.any(Number),
+        }),
+      ]),
+    );
+  });
+
+  it("returns threshold recommendations from calibration history without mutating policy", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "policy-threshold-recommendations");
+    const targetPath = path.join(harness.workspaceRoot, "thresholds.txt");
+
+    const writeResponse = await sendRequest<{
+      execution_result: { mode: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemWriteAttempt(runId, harness.workspaceRoot, targetPath, "threshold write"),
+      },
+      sessionId,
+    );
+    expect(writeResponse.ok).toBe(true);
+
+    const shellSubmitResponse = await sendRequest<{
+      approval_request: { approval_id: string; status: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeShellAttempt(runId, harness.workspaceRoot, [
+          process.execPath,
+          "-e",
+          "process.stdout.write('threshold shell run')",
+        ]),
+      },
+      sessionId,
+    );
+    expect(shellSubmitResponse.ok).toBe(true);
+    expect(shellSubmitResponse.result?.approval_request?.status).toBe("pending");
+
+    const resolveResponse = await sendRequest<{
+      execution_result: { mode: string } | null;
+    }>(
+      harness,
+      "resolve_approval",
+      {
+        approval_id: shellSubmitResponse.result!.approval_request!.approval_id,
+        resolution: "approved",
+        note: "threshold report approval",
+      },
+      sessionId,
+    );
+    expect(resolveResponse.ok).toBe(true);
+    expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
+
+    const recommendationResponse = await sendRequest<{
+      filters: { run_id: string | null; min_samples: number };
+      effective_policy_profile: string;
+      recommendations: Array<{
+        action_family: string;
+        current_ask_below: number | null;
+        direction: string;
+        automatic_live_application_allowed: boolean;
+      }>;
+    }>(
+      harness,
+      "get_policy_threshold_recommendations",
+      {
+        run_id: runId,
+        min_samples: 1,
+      },
+      sessionId,
+    );
+
+    expect(recommendationResponse.ok).toBe(true);
+    expect(recommendationResponse.result?.filters).toEqual({
+      run_id: runId,
+      min_samples: 1,
+    });
+    expect(recommendationResponse.result?.effective_policy_profile).toBeTruthy();
+    expect(recommendationResponse.result?.recommendations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_family: "filesystem/write",
+          current_ask_below: 0.3,
+          automatic_live_application_allowed: false,
+        }),
+        expect.objectContaining({
+          action_family: "shell/exec",
+          current_ask_below: 0.3,
+          direction: "relax",
+          automatic_live_application_allowed: false,
+        }),
+      ]),
+    );
+  });
+
+  it("applies policy threshold calibration maintenance and reloads workspace-generated policy", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "policy-threshold-calibration-maintenance");
+
+    const baselinePolicyResponse = await sendRequest<{
+      policy: {
+        thresholds?: {
+          low_confidence: Array<{
+            action_family: string;
+            ask_below: number;
+          }>;
+        };
+      };
+      summary: {
+        loaded_sources: Array<{
+          scope: string;
+          path: string | null;
+        }>;
+      };
+    }>(harness, "get_effective_policy", {}, sessionId);
+    expect(baselinePolicyResponse.ok).toBe(true);
+
+    const baselineShellThreshold =
+      baselinePolicyResponse.result?.policy.thresholds?.low_confidence.find(
+        (entry) => entry.action_family === "shell/exec",
+      )?.ask_below ?? null;
+    expect(typeof baselineShellThreshold).toBe("number");
+    expect(
+      baselinePolicyResponse.result?.summary.loaded_sources.some((source) => source.scope === "workspace_generated"),
+    ).toBe(false);
+
+    for (let index = 0; index < 5; index += 1) {
+      const submitResponse = await sendRequest<{
+        approval_request: { approval_id: string; status: string } | null;
+      }>(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: makeShellAttempt(runId, harness.workspaceRoot, [
+            process.execPath,
+            "-e",
+            `process.stdout.write('calibration denied ${index}')`,
+          ]),
+        },
+        sessionId,
+      );
+      expect(submitResponse.ok).toBe(true);
+      expect(submitResponse.result?.approval_request?.status).toBe("pending");
+
+      const denyResponse = await sendRequest<{
+        approval_request: { status: string } | null;
+      }>(
+        harness,
+        "resolve_approval",
+        {
+          approval_id: submitResponse.result!.approval_request!.approval_id,
+          resolution: "denied",
+          note: "deny to tighten calibration threshold",
+        },
+        sessionId,
+      );
+      expect(denyResponse.ok).toBe(true);
+      expect(denyResponse.result?.approval_request?.status).toBe("denied");
+    }
+
+    const maintenanceResponse = await sendRequest<{
+      jobs: Array<{
+        job_type: string;
+        status: string;
+        performed_inline: boolean;
+        summary: string;
+        stats?: {
+          sample_count?: number;
+          thresholds_applied?: number;
+          generated_config_path?: string;
+          updates?: Array<{
+            action_family: string;
+            current_ask_below: number | null;
+            recommended_ask_below: number;
+            direction: string;
+          }>;
+        };
+      }>;
+    }>(
+      harness,
+      "run_maintenance",
+      {
+        job_types: ["policy_threshold_calibration"],
+        scope: {
+          run_id: runId,
+        },
+      },
+      sessionId,
+    );
+    expect(maintenanceResponse.ok).toBe(true);
+    expect(maintenanceResponse.result?.jobs[0]).toEqual(
+      expect.objectContaining({
+        job_type: "policy_threshold_calibration",
+        status: "completed",
+        performed_inline: true,
+      }),
+    );
+    expect(maintenanceResponse.result?.jobs[0]?.stats?.sample_count).toBeGreaterThanOrEqual(5);
+    expect(maintenanceResponse.result?.jobs[0]?.stats?.thresholds_applied).toBeGreaterThanOrEqual(1);
+    expect(
+      maintenanceResponse.result?.jobs[0]?.stats?.updates?.some((update) => update.action_family === "shell/exec"),
+    ).toBe(true);
+
+    const generatedPolicyPath = path.join(harness.workspaceRoot, ".agentgit", "policy.calibration.generated.json");
+    expect(fs.existsSync(generatedPolicyPath)).toBe(true);
+    const generatedPolicyDocument = JSON.parse(fs.readFileSync(generatedPolicyPath, "utf8")) as {
+      thresholds?: {
+        low_confidence?: Array<{ action_family: string; ask_below: number }>;
+      };
+    };
+    expect(generatedPolicyDocument.thresholds?.low_confidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action_family: "shell/exec",
+        }),
+      ]),
+    );
+
+    const effectivePolicyResponse = await sendRequest<{
+      policy: {
+        thresholds?: {
+          low_confidence: Array<{
+            action_family: string;
+            ask_below: number;
+          }>;
+        };
+      };
+      summary: {
+        loaded_sources: Array<{
+          scope: string;
+          path: string | null;
+        }>;
+      };
+    }>(harness, "get_effective_policy", {}, sessionId);
+    expect(effectivePolicyResponse.ok).toBe(true);
+    const updatedShellThreshold =
+      effectivePolicyResponse.result?.policy.thresholds?.low_confidence.find(
+        (entry) => entry.action_family === "shell/exec",
+      )?.ask_below ?? null;
+    expect(typeof updatedShellThreshold).toBe("number");
+    expect((updatedShellThreshold as number) > (baselineShellThreshold as number)).toBe(true);
+    expect(effectivePolicyResponse.result?.summary.loaded_sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "workspace_generated",
+          path: generatedPolicyPath,
+        }),
+      ]),
+    );
+  });
+
   it("executes a filesystem write through the full request pipeline", async () => {
     const harness = await createHarness();
     const { sessionId, runId } = await createSessionAndRun(harness, "filesystem-write");
@@ -1577,34 +2332,41 @@ describe("authority daemon integration", () => {
     const harness = await createHarness();
     const { sessionId, runId } = await createSessionAndRun(harness, "browser-unsupported");
 
-    const submitResponse = await sendRequest(harness, "submit_action_attempt", {
-      attempt: {
-        run_id: runId,
-        tool_registration: {
-          tool_name: "browser_click",
-          tool_kind: "browser",
+    const submitResponse = await sendRequest(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: {
+          run_id: runId,
+          tool_registration: {
+            tool_name: "browser_click",
+            tool_kind: "browser",
+          },
+          raw_call: {
+            action: "click",
+            url: "https://example.com",
+            selector: "button[type=submit]",
+          },
+          environment_context: {
+            workspace_roots: [harness.workspaceRoot],
+            cwd: harness.workspaceRoot,
+            credential_mode: "none",
+          },
+          framework_context: {
+            agent_name: "integration-test-agent",
+            agent_framework: "vitest",
+          },
+          received_at: "2026-03-31T12:00:00.000Z",
         },
-        raw_call: {
-          action: "click",
-          url: "https://example.com",
-          selector: "button[type=submit]",
-        },
-        environment_context: {
-          workspace_roots: [harness.workspaceRoot],
-          cwd: harness.workspaceRoot,
-          credential_mode: "none",
-        },
-        framework_context: {
-          agent_name: "integration-test-agent",
-          agent_framework: "vitest",
-        },
-        received_at: "2026-03-31T12:00:00.000Z",
       },
-    }, sessionId);
+      sessionId,
+    );
 
     expect(submitResponse.ok).toBe(false);
     expect(submitResponse.error?.code).toBe("PRECONDITION_FAILED");
-    expect(submitResponse.error?.message).toContain("Governed browser/computer execution is not part of the supported runtime surface.");
+    expect(submitResponse.error?.message).toContain(
+      "Governed browser/computer execution is not part of the supported runtime surface.",
+    );
     expect(submitResponse.error?.details?.requested_tool_kind).toBe("browser");
     expect(submitResponse.error?.details?.unsupported_surface).toBe("browser_computer");
 
@@ -1621,16 +2383,13 @@ describe("authority daemon integration", () => {
   });
 
   it("executes an explicitly registered read-only MCP tool through the full request pipeline", async () => {
+    const service = await startMcpHttpService();
     process.env.AGENTGIT_MCP_SERVERS_JSON = JSON.stringify([
       {
         server_id: "notes_server",
         display_name: "Notes server",
-        transport: "stdio",
-        command: process.execPath,
-        args: [MCP_TEST_SERVER_SCRIPT],
-        env: {
-          AGENTGIT_TEST_MCP_SCENARIO: "stderr_noise",
-        },
+        transport: "streamable_http",
+        url: service.url,
         tools: [
           {
             tool_name: "echo_note",
@@ -1665,16 +2424,14 @@ describe("authority daemon integration", () => {
     expect(submitResponse.result?.execution_result?.success).toBe(true);
     expect(submitResponse.result?.execution_result?.output.server_id).toBe("notes_server");
     expect(submitResponse.result?.execution_result?.output.tool_name).toBe("echo_note");
-    expect(submitResponse.result?.execution_result?.output.summary).toBe("echo:launch blocker");
+    expect(submitResponse.result?.execution_result?.output.summary).toBe("http-echo:launch blocker");
+    await service.close();
   });
 
   it("requires approval for a registered mutating MCP tool instead of auto-executing it", async () => {
     process.env.AGENTGIT_MCP_SERVERS_JSON = JSON.stringify([
       {
-        server_id: "notes_server",
-        transport: "stdio",
-        command: process.execPath,
-        args: [MCP_TEST_SERVER_SCRIPT],
+        ...buildSandboxedStdioServer("notes_server"),
         tools: [
           {
             tool_name: "delete_remote",
@@ -1717,10 +2474,7 @@ describe("authority daemon integration", () => {
   it("fails closed when governed MCP execution receives direct credentials", async () => {
     process.env.AGENTGIT_MCP_SERVERS_JSON = JSON.stringify([
       {
-        server_id: "notes_server",
-        transport: "stdio",
-        command: process.execPath,
-        args: [MCP_TEST_SERVER_SCRIPT],
+        ...buildSandboxedStdioServer("notes_server"),
         tools: [
           {
             tool_name: "echo_note",
@@ -1787,10 +2541,7 @@ describe("authority daemon integration", () => {
       "upsert_mcp_server",
       {
         server: {
-          server_id: "notes_server",
-          transport: "stdio",
-          command: process.execPath,
-          args: [MCP_TEST_SERVER_SCRIPT],
+          ...buildSandboxedStdioServer("notes_server"),
           tools: [
             {
               tool_name: "echo_note",
@@ -1840,6 +2591,2169 @@ describe("authority daemon integration", () => {
     expect(removeResponse.result?.removed).toBe(true);
     expect(removeResponse.result?.removed_server?.server.server_id).toBe("notes_server");
   });
+
+  it("submits and lists MCP server candidates and exposes profile listings", async () => {
+    const harness = await createHarness();
+    const helloResponse = await sendRequest<{ session_id: string }>(harness, "hello", {
+      client_type: "cli",
+      client_version: "0.1.0",
+      requested_api_version: API_VERSION,
+      workspace_roots: [harness.workspaceRoot],
+    });
+
+    if (!helloResponse.ok) {
+      throw new Error(JSON.stringify(helloResponse.error));
+    }
+    const sessionId = helloResponse.result!.session_id;
+
+    const submitResponse = await sendRequest<{
+      candidate: {
+        candidate_id: string;
+        source_kind: string;
+        raw_endpoint: string;
+        submitted_by_session_id: string | null;
+        resolution_state: string;
+      };
+    }>(
+      harness,
+      "submit_mcp_server_candidate",
+      {
+        candidate: {
+          source_kind: "user_input",
+          raw_endpoint: "https://api.example.com/mcp",
+          transport_hint: "streamable_http",
+          notes: "Candidate from integration test",
+        },
+      },
+      sessionId,
+      "idem_mcp_candidate_submit",
+    );
+
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.candidate.source_kind).toBe("user_input");
+    expect(submitResponse.result?.candidate.raw_endpoint).toBe("https://api.example.com/mcp");
+    expect(submitResponse.result?.candidate.submitted_by_session_id).toBe(sessionId);
+    expect(submitResponse.result?.candidate.resolution_state).toBe("pending");
+
+    const listCandidatesResponse = await sendRequest<{
+      candidates: Array<{
+        candidate_id: string;
+        source_kind: string;
+        raw_endpoint: string;
+      }>;
+    }>(harness, "list_mcp_server_candidates", {}, sessionId);
+
+    expect(listCandidatesResponse.ok).toBe(true);
+    expect(listCandidatesResponse.result?.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          candidate_id: submitResponse.result?.candidate.candidate_id,
+          source_kind: "user_input",
+          raw_endpoint: "https://api.example.com/mcp",
+        }),
+      ]),
+    );
+
+    const listProfilesResponse = await sendRequest<{
+      profiles: Array<unknown>;
+    }>(harness, "list_mcp_server_profiles", {}, sessionId);
+
+    expect(listProfilesResponse.ok).toBe(true);
+    expect(listProfilesResponse.result?.profiles).toEqual([]);
+  });
+
+  it("resolves MCP server candidates into trust-reviewed profiles and supports lifecycle actions end to end", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-candidate-lifecycle");
+    const service = await startMcpHttpService();
+
+    const submitResponse = await sendRequest<{
+      candidate: {
+        candidate_id: string;
+        resolution_state: string;
+      };
+    }>(
+      harness,
+      "submit_mcp_server_candidate",
+      {
+        candidate: {
+          source_kind: "user_input",
+          raw_endpoint: service.url,
+          transport_hint: "streamable_http",
+          notes: "Lifecycle integration test",
+        },
+      },
+      sessionId,
+      "idem_mcp_candidate_lifecycle_submit",
+    );
+    expect(submitResponse.ok).toBe(true);
+
+    const candidateId = submitResponse.result?.candidate.candidate_id;
+    expect(candidateId).toBeTruthy();
+
+    const resolveResponse = await sendRequest<{
+      candidate: {
+        candidate_id: string;
+        resolution_state: string;
+        resolution_error: string | null;
+      };
+      profile: {
+        server_profile_id: string;
+        status: string;
+        drift_state: string;
+        canonical_endpoint: string;
+        network_scope: string;
+        tool_inventory_version: string | null;
+      };
+      created_profile: boolean;
+      drift_detected: boolean;
+    }>(
+      harness,
+      "resolve_mcp_server_candidate",
+      {
+        candidate_id: candidateId,
+        display_name: "Example Remote MCP",
+      },
+      sessionId,
+      "idem_mcp_candidate_lifecycle_resolve",
+    );
+    expect(resolveResponse.ok).toBe(true);
+    expect(resolveResponse.result?.candidate.resolution_state).toBe("resolved");
+    expect(resolveResponse.result?.candidate.resolution_error).toBeNull();
+    expect(resolveResponse.result?.profile.status).toBe("draft");
+    expect(resolveResponse.result?.profile.drift_state).toBe("clean");
+    expect(resolveResponse.result?.profile.canonical_endpoint).toBe(service.url);
+    expect(resolveResponse.result?.profile.network_scope).toBe("loopback");
+    expect(resolveResponse.result?.profile.tool_inventory_version).toBeTruthy();
+    expect(resolveResponse.result?.created_profile).toBe(true);
+    expect(resolveResponse.result?.drift_detected).toBe(false);
+
+    const profileId = resolveResponse.result?.profile.server_profile_id;
+    expect(profileId).toBeTruthy();
+
+    const approveResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+        active_trust_decision_id: string | null;
+      };
+      trust_decision: {
+        trust_decision_id: string;
+        decision: string;
+        trust_tier: string;
+      };
+      created: boolean;
+    }>(
+      harness,
+      "approve_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+        decision: "allow_policy_managed",
+        trust_tier: "operator_approved_public",
+        allowed_execution_modes: ["local_proxy"],
+        reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+      },
+      sessionId,
+      "idem_mcp_candidate_lifecycle_approve",
+    );
+    expect(approveResponse.ok).toBe(true);
+    expect(approveResponse.result?.profile.status).toBe("pending_approval");
+    expect(approveResponse.result?.trust_decision.decision).toBe("allow_policy_managed");
+    expect(approveResponse.result?.created).toBe(true);
+
+    const listTrustDecisionsResponse = await sendRequest<{
+      trust_decisions: Array<{
+        trust_decision_id: string;
+        server_profile_id: string;
+        decision: string;
+      }>;
+    }>(harness, "list_mcp_server_trust_decisions", { server_profile_id: profileId }, sessionId);
+    expect(listTrustDecisionsResponse.ok).toBe(true);
+    expect(listTrustDecisionsResponse.result?.trust_decisions).toEqual([
+      expect.objectContaining({
+        trust_decision_id: approveResponse.result?.trust_decision.trust_decision_id,
+        server_profile_id: profileId,
+        decision: "allow_policy_managed",
+      }),
+    ]);
+
+    const activateResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+        drift_state: string;
+      };
+    }>(
+      harness,
+      "activate_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+      },
+      sessionId,
+      "idem_mcp_candidate_lifecycle_activate",
+    );
+    expect(activateResponse.ok).toBe(true);
+    expect(activateResponse.result?.profile.status).toBe("active");
+    expect(activateResponse.result?.profile.drift_state).toBe("clean");
+
+    const quarantineResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+        drift_state: string;
+        quarantine_reason_codes: string[];
+      };
+    }>(
+      harness,
+      "quarantine_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+        reason_codes: ["MANUAL_REVIEW_HOLD"],
+      },
+      sessionId,
+      "idem_mcp_candidate_lifecycle_quarantine",
+    );
+    expect(quarantineResponse.ok).toBe(true);
+    expect(quarantineResponse.result?.profile.status).toBe("quarantined");
+    expect(quarantineResponse.result?.profile.drift_state).toBe("drifted");
+    expect(quarantineResponse.result?.profile.quarantine_reason_codes).toEqual(["MANUAL_REVIEW_HOLD"]);
+
+    const revokeResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+        quarantine_reason_codes: string[];
+      };
+    }>(
+      harness,
+      "revoke_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+        reason_codes: ["MANUAL_REVOKE"],
+      },
+      sessionId,
+      "idem_mcp_candidate_lifecycle_revoke",
+    );
+    expect(revokeResponse.ok).toBe(true);
+    expect(revokeResponse.result?.profile.status).toBe("revoked");
+    expect(revokeResponse.result?.profile.quarantine_reason_codes).toEqual(["MANUAL_REVOKE"]);
+  });
+
+  it("detects remote MCP tool inventory drift and automatically quarantines active profiles", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-candidate-drift");
+    let scenario: "default" | "missing_tool" | "call_error" = "default";
+    const service = await startMcpHttpService({
+      getScenario: () => scenario,
+    });
+
+    const submitResponse = await sendRequest<{
+      candidate: {
+        candidate_id: string;
+      };
+    }>(
+      harness,
+      "submit_mcp_server_candidate",
+      {
+        candidate: {
+          source_kind: "user_input",
+          raw_endpoint: service.url,
+          transport_hint: "streamable_http",
+        },
+      },
+      sessionId,
+      "idem_mcp_candidate_drift_submit",
+    );
+    expect(submitResponse.ok).toBe(true);
+
+    const candidateId = submitResponse.result?.candidate.candidate_id;
+    expect(candidateId).toBeTruthy();
+
+    const initialResolve = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+        drift_state: string;
+        tool_inventory_version: string | null;
+      };
+      drift_detected: boolean;
+    }>(
+      harness,
+      "resolve_mcp_server_candidate",
+      {
+        candidate_id: candidateId,
+      },
+      sessionId,
+      "idem_mcp_candidate_drift_resolve_initial",
+    );
+    expect(initialResolve.ok).toBe(true);
+    expect(initialResolve.result?.drift_detected).toBe(false);
+
+    const profileId = initialResolve.result?.profile.server_profile_id;
+    const initialToolInventoryVersion = initialResolve.result?.profile.tool_inventory_version;
+    expect(profileId).toBeTruthy();
+    expect(initialToolInventoryVersion).toBeTruthy();
+
+    const approveResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+      };
+    }>(
+      harness,
+      "approve_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+        decision: "allow_policy_managed",
+        trust_tier: "operator_approved_public",
+        allowed_execution_modes: ["local_proxy"],
+        reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+      },
+      sessionId,
+      "idem_mcp_candidate_drift_approve",
+    );
+    expect(approveResponse.ok).toBe(true);
+
+    const activateResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+      };
+    }>(
+      harness,
+      "activate_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+      },
+      sessionId,
+      "idem_mcp_candidate_drift_activate",
+    );
+    expect(activateResponse.ok).toBe(true);
+    expect(activateResponse.result?.profile.status).toBe("active");
+
+    scenario = "missing_tool";
+
+    const driftResolve = await sendRequest<{
+      candidate: {
+        candidate_id: string;
+        resolution_state: string;
+      };
+      profile: {
+        server_profile_id: string;
+        status: string;
+        drift_state: string;
+        quarantine_reason_codes: string[];
+        tool_inventory_version: string | null;
+      };
+      drift_detected: boolean;
+    }>(
+      harness,
+      "resolve_mcp_server_candidate",
+      {
+        candidate_id: candidateId,
+      },
+      sessionId,
+      "idem_mcp_candidate_drift_resolve_again",
+    );
+    expect(driftResolve.ok).toBe(true);
+    expect(driftResolve.result?.candidate.resolution_state).toBe("resolved");
+    expect(driftResolve.result?.drift_detected).toBe(true);
+    expect(driftResolve.result?.profile.status).toBe("quarantined");
+    expect(driftResolve.result?.profile.drift_state).toBe("drifted");
+    expect(driftResolve.result?.profile.quarantine_reason_codes).toContain("MCP_TOOL_INVENTORY_CHANGED");
+    expect(driftResolve.result?.profile.tool_inventory_version).toBeTruthy();
+    expect(driftResolve.result?.profile.tool_inventory_version).not.toBe(initialToolInventoryVersion);
+  });
+
+  it("binds brokered credentials to an active remote profile and executes it locally through the governed MCP path", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "mcp-phase2-local-governed-public");
+    const service = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "phase2-secret-token",
+    });
+
+    const submitCandidateResponse = await sendRequest<{
+      candidate: {
+        candidate_id: string;
+      };
+    }>(
+      harness,
+      "submit_mcp_server_candidate",
+      {
+        candidate: {
+          source_kind: "user_input",
+          raw_endpoint: service.url,
+          transport_hint: "streamable_http",
+          notes: "Phase 2 auth-bound remote MCP",
+        },
+      },
+      sessionId,
+      "idem_mcp_phase2_candidate_submit",
+    );
+    expect(submitCandidateResponse.ok).toBe(true);
+    const candidateId = submitCandidateResponse.result?.candidate.candidate_id;
+    expect(candidateId).toBeTruthy();
+
+    const resolveResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        imported_tools: Array<{
+          tool_name: string;
+          side_effect_level: string;
+        }>;
+      };
+    }>(
+      harness,
+      "resolve_mcp_server_candidate",
+      {
+        candidate_id: candidateId,
+        display_name: "Phase 2 Remote MCP",
+      },
+      sessionId,
+      "idem_mcp_phase2_candidate_resolve",
+    );
+    expect(resolveResponse.ok).toBe(true);
+    const profileId = resolveResponse.result?.profile.server_profile_id;
+    expect(profileId).toBeTruthy();
+    expect(resolveResponse.result?.profile.imported_tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tool_name: "echo_note",
+          side_effect_level: "read_only",
+        }),
+      ]),
+    );
+
+    const approveResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+      };
+    }>(
+      harness,
+      "approve_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+        decision: "allow_policy_managed",
+        trust_tier: "operator_approved_public",
+        allowed_execution_modes: ["local_proxy"],
+        reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+      },
+      sessionId,
+      "idem_mcp_phase2_profile_approve",
+    );
+    expect(approveResponse.ok).toBe(true);
+    expect(approveResponse.result?.profile.status).toBe("pending_approval");
+
+    const upsertSecretResponse = await sendRequest<{
+      secret: {
+        secret_id: string;
+      };
+    }>(
+      harness,
+      "upsert_mcp_secret",
+      {
+        secret: {
+          secret_id: "mcp_secret_phase2",
+          display_name: "Phase 2 MCP secret",
+          bearer_token: "phase2-secret-token",
+        },
+      },
+      sessionId,
+      "idem_mcp_phase2_secret_upsert",
+    );
+    expect(upsertSecretResponse.ok).toBe(true);
+
+    const bindResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        active_credential_binding_id: string | null;
+        auth_descriptor: {
+          mode: string;
+        };
+      };
+      credential_binding: {
+        credential_binding_id: string;
+        binding_mode: string;
+        broker_profile_id: string;
+        status: string;
+      };
+    }>(
+      harness,
+      "bind_mcp_server_credentials",
+      {
+        server_profile_id: profileId,
+        binding_mode: "bearer_secret_ref",
+        broker_profile_id: "mcp_secret_phase2",
+        scope_labels: ["remote:mcp"],
+      },
+      sessionId,
+      "idem_mcp_phase2_bind",
+    );
+    expect(bindResponse.ok).toBe(true);
+    expect(bindResponse.result?.credential_binding.binding_mode).toBe("bearer_secret_ref");
+    expect(bindResponse.result?.credential_binding.broker_profile_id).toBe("mcp_secret_phase2");
+    expect(bindResponse.result?.profile.active_credential_binding_id).toBeTruthy();
+    expect(bindResponse.result?.profile.auth_descriptor.mode).toBe("bearer_secret_ref");
+
+    const activateResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+      };
+    }>(
+      harness,
+      "activate_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+      },
+      sessionId,
+      "idem_mcp_phase2_activate",
+    );
+    expect(activateResponse.ok).toBe(true);
+    expect(activateResponse.result?.profile.status).toBe("active");
+
+    const listBindingsResponse = await sendRequest<{
+      credential_bindings: Array<{
+        credential_binding_id: string;
+        server_profile_id: string;
+        status: string;
+      }>;
+    }>(harness, "list_mcp_server_credential_bindings", { server_profile_id: profileId }, sessionId);
+    expect(listBindingsResponse.ok).toBe(true);
+    expect(listBindingsResponse.result?.credential_bindings).toEqual([
+      expect.objectContaining({
+        credential_binding_id: bindResponse.result?.credential_binding.credential_binding_id,
+        server_profile_id: profileId,
+        status: "active",
+      }),
+    ]);
+
+    const listServersResponse = await sendRequest<{
+      servers: Array<{
+        source: string;
+        server: {
+          server_id: string;
+          transport: string;
+          auth?: {
+            type: string;
+            secret_id?: string;
+          };
+        };
+      }>;
+    }>(harness, "list_mcp_servers", {}, sessionId);
+    expect(listServersResponse.ok).toBe(true);
+    expect(listServersResponse.result?.servers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "remote_profile",
+          server: expect.objectContaining({
+            server_id: profileId,
+            transport: "streamable_http",
+            auth: {
+              type: "bearer_secret_ref",
+              secret_id: "mcp_secret_phase2",
+            },
+          }),
+        }),
+      ]),
+    );
+
+    const submitActionResponse = await sendRequest<{
+      execution_result: {
+        success: boolean;
+        output: {
+          server_id: string;
+          tool_name: string;
+          summary: string;
+          auth_type: string;
+        };
+      } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: {
+          run_id: runId,
+          tool_registration: {
+            tool_name: "mcp_call_tool",
+            tool_kind: "mcp",
+          },
+          raw_call: {
+            server_id: profileId,
+            server_profile_id: profileId,
+            tool_name: "echo_note",
+            arguments: {
+              note: "phase2 auth-bound call",
+            },
+          },
+          environment_context: {
+            workspace_roots: [harness.workspaceRoot],
+            cwd: harness.workspaceRoot,
+            credential_mode: "none",
+          },
+          framework_context: {
+            agent_name: "agentgit-cli",
+            agent_framework: "cli",
+          },
+          received_at: new Date().toISOString(),
+        },
+      },
+      sessionId,
+      "idem_mcp_phase2_submit_action",
+    );
+    expect(submitActionResponse.ok).toBe(true);
+    expect(submitActionResponse.result?.execution_result).toMatchObject({
+      success: true,
+      output: {
+        server_id: profileId,
+        tool_name: "echo_note",
+        summary: "http-echo:phase2 auth-bound call",
+        auth_type: "bearer_secret_ref",
+      },
+    });
+
+    const revokeBindingResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+        status: string;
+        active_credential_binding_id: string | null;
+      } | null;
+      credential_binding: {
+        credential_binding_id: string;
+        status: string;
+      };
+    }>(
+      harness,
+      "revoke_mcp_server_credentials",
+      {
+        credential_binding_id: bindResponse.result?.credential_binding.credential_binding_id,
+      },
+      sessionId,
+      "idem_mcp_phase2_revoke_binding",
+    );
+    expect(revokeBindingResponse.ok).toBe(true);
+    expect(revokeBindingResponse.result?.credential_binding.status).toBe("revoked");
+    expect(revokeBindingResponse.result?.profile?.status).toBe("draft");
+    expect(revokeBindingResponse.result?.profile?.active_credential_binding_id).toBeNull();
+
+    const listServersAfterRevoke = await sendRequest<{
+      servers: Array<{
+        server: {
+          server_id: string;
+        };
+      }>;
+    }>(harness, "list_mcp_servers", {}, sessionId);
+    expect(listServersAfterRevoke.ok).toBe(true);
+    expect(listServersAfterRevoke.result?.servers.some((record) => record.server.server_id === profileId)).toBe(false);
+  });
+
+  it("supports governed local execution for oauth_session, derived_token, and degraded session_token bindings", async () => {
+    const modes: Array<"oauth_session" | "derived_token" | "session_token"> = [
+      "oauth_session",
+      "derived_token",
+      "session_token",
+    ];
+
+    for (const mode of modes) {
+      const harness = await createHarness();
+      const { sessionId, runId } = await createSessionAndRun(harness, `mcp-binding-${mode}`);
+      const service = await startMcpHttpService({
+        requireBearerTokenForToolCallsOnly: `${mode}-secret-token`,
+      });
+
+      const candidateResponse = await sendRequest<{
+        candidate: {
+          candidate_id: string;
+        };
+      }>(
+        harness,
+        "submit_mcp_server_candidate",
+        {
+          candidate: {
+            source_kind: "user_input",
+            raw_endpoint: service.url,
+          },
+        },
+        sessionId,
+      );
+      expect(candidateResponse.ok).toBe(true);
+      const candidateId = candidateResponse.result?.candidate.candidate_id;
+      expect(candidateId).toBeTruthy();
+
+      const resolveResponse = await sendRequest<{
+        profile: {
+          server_profile_id: string;
+        };
+      }>(
+        harness,
+        "resolve_mcp_server_candidate",
+        {
+          candidate_id: candidateId,
+          display_name: `Binding ${mode}`,
+        },
+        sessionId,
+      );
+      expect(resolveResponse.ok).toBe(true);
+      const profileId = resolveResponse.result?.profile.server_profile_id;
+      expect(profileId).toBeTruthy();
+
+      const approveResponse = await sendRequest(
+        harness,
+        "approve_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+          decision: "allow_policy_managed",
+          trust_tier: "operator_approved_public",
+          allowed_execution_modes: ["local_proxy"],
+          reason_codes: ["BINDING_MODE_APPROVED"],
+        },
+        sessionId,
+      );
+      expect(approveResponse.ok).toBe(true);
+
+      const secretId = `mcp_secret_${mode}`;
+      const upsertSecretResponse = await sendRequest(
+        harness,
+        "upsert_mcp_secret",
+        {
+          secret: {
+            secret_id: secretId,
+            display_name: `Secret ${mode}`,
+            bearer_token: `${mode}-secret-token`,
+          },
+        },
+        sessionId,
+      );
+      expect(upsertSecretResponse.ok).toBe(true);
+
+      const bindResponse = await sendRequest<{
+        profile: {
+          auth_descriptor: {
+            mode: string;
+          };
+        };
+        credential_binding: {
+          credential_binding_id: string;
+          binding_mode: string;
+          status: string;
+        };
+      }>(
+        harness,
+        "bind_mcp_server_credentials",
+        {
+          server_profile_id: profileId,
+          binding_mode: mode,
+          broker_profile_id: secretId,
+          scope_labels: ["remote:mcp"],
+        },
+        sessionId,
+      );
+      expect(bindResponse.ok).toBe(true);
+      expect(bindResponse.result?.credential_binding.binding_mode).toBe(mode);
+      expect(bindResponse.result?.credential_binding.status).toBe(mode === "session_token" ? "degraded" : "active");
+      expect(bindResponse.result?.profile.auth_descriptor.mode).toBe(mode);
+
+      const activateResponse = await sendRequest(
+        harness,
+        "activate_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+        },
+        sessionId,
+      );
+      expect(activateResponse.ok).toBe(true);
+
+      const submitActionResponse = await sendRequest<{
+        action: {
+          execution_path: {
+            credential_mode: string;
+          };
+          facets: {
+            mcp: {
+              credential_binding_mode: string;
+            };
+          };
+        };
+        execution_result: {
+          success: boolean;
+          output: {
+            server_id: string;
+            summary: string;
+            auth_type: string;
+          };
+        } | null;
+      }>(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: {
+            run_id: runId,
+            tool_registration: {
+              tool_name: "mcp_call_tool",
+              tool_kind: "mcp",
+            },
+            raw_call: {
+              server_id: profileId,
+              server_profile_id: profileId,
+              tool_name: "echo_note",
+              arguments: {
+                note: `binding-${mode}`,
+              },
+            },
+            environment_context: {
+              workspace_roots: [harness.workspaceRoot],
+              cwd: harness.workspaceRoot,
+              credential_mode: "none",
+            },
+            framework_context: {
+              agent_name: "agentgit-cli",
+              agent_framework: "cli",
+            },
+            received_at: new Date().toISOString(),
+          },
+        },
+        sessionId,
+      );
+      expect(submitActionResponse.ok).toBe(true);
+      expect(submitActionResponse.result?.action.execution_path.credential_mode).toBe("brokered");
+      expect(submitActionResponse.result?.action.facets.mcp.credential_binding_mode).toBe(mode);
+      expect(submitActionResponse.result?.execution_result).toMatchObject({
+        success: true,
+        output: {
+          server_id: profileId,
+          summary: `http-echo:binding-${mode}`,
+          auth_type: "bearer_secret_ref",
+        },
+      });
+
+      await service.close();
+    }
+  });
+
+  it("executes hosted delegated MCP calls with a lease, attestation, and durable evidence", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "mcp-hosted-phase3");
+    const service = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "phase3-hosted-token",
+    });
+
+    const candidateResponse = await sendRequest<{
+      candidate: {
+        candidate_id: string;
+      };
+    }>(
+      harness,
+      "submit_mcp_server_candidate",
+      {
+        candidate: {
+          source_kind: "agent_discovered",
+          raw_endpoint: service.url,
+        },
+      },
+      sessionId,
+    );
+    expect(candidateResponse.ok).toBe(true);
+    const candidateId = candidateResponse.result?.candidate.candidate_id;
+    expect(candidateId).toBeTruthy();
+
+    const resolveResponse = await sendRequest<{
+      profile: {
+        server_profile_id: string;
+      };
+    }>(
+      harness,
+      "resolve_mcp_server_candidate",
+      {
+        candidate_id: candidateId,
+        display_name: "Hosted MCP",
+      },
+      sessionId,
+    );
+    expect(resolveResponse.ok).toBe(true);
+    const profileId = resolveResponse.result?.profile.server_profile_id;
+    expect(profileId).toBeTruthy();
+
+    const approveResponse = await sendRequest(
+      harness,
+      "approve_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+        decision: "allow_policy_managed",
+        trust_tier: "operator_approved_public",
+        allowed_execution_modes: ["hosted_delegated"],
+        reason_codes: ["HOSTED_APPROVED"],
+      },
+      sessionId,
+    );
+    expect(approveResponse.ok).toBe(true);
+
+    const upsertSecretResponse = await sendRequest(
+      harness,
+      "upsert_mcp_secret",
+      {
+        secret: {
+          secret_id: "mcp_secret_hosted",
+          display_name: "Hosted MCP secret",
+          bearer_token: "phase3-hosted-token",
+        },
+      },
+      sessionId,
+    );
+    expect(upsertSecretResponse.ok).toBe(true);
+
+    const bindResponse = await sendRequest<{
+      credential_binding: {
+        credential_binding_id: string;
+        status: string;
+      };
+    }>(
+      harness,
+      "bind_mcp_server_credentials",
+      {
+        server_profile_id: profileId,
+        binding_mode: "hosted_token_exchange",
+        broker_profile_id: "mcp_secret_hosted",
+        scope_labels: ["remote:mcp", "hosted"],
+      },
+      sessionId,
+    );
+    expect(bindResponse.ok).toBe(true);
+    expect(bindResponse.result?.credential_binding.status).toBe("active");
+
+    const activateResponse = await sendRequest(
+      harness,
+      "activate_mcp_server_profile",
+      {
+        server_profile_id: profileId,
+      },
+      sessionId,
+    );
+    expect(activateResponse.ok).toBe(true);
+
+    const submitActionResponse = await sendRequest<{
+      action: {
+        execution_path: {
+          surface: string;
+          credential_mode: string;
+        };
+        facets: {
+          mcp: {
+            execution_mode_requested: string;
+            credential_binding_mode: string;
+          };
+        };
+      };
+      execution_result: {
+        success: boolean;
+        output: {
+          execution_mode: string;
+          credential_binding_mode: string;
+          summary: string;
+          lease_id: string;
+          attestation_id: string;
+          attestation_verified: boolean;
+          worker_runtime_id: string;
+          worker_image_digest: string;
+        };
+      } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: {
+          run_id: runId,
+          tool_registration: {
+            tool_name: "mcp_call_tool",
+            tool_kind: "mcp",
+          },
+          raw_call: {
+            server_id: profileId,
+            server_profile_id: profileId,
+            execution_mode_requested: "hosted_delegated",
+            tool_name: "echo_note",
+            arguments: {
+              note: "phase3-hosted-call",
+            },
+          },
+          environment_context: {
+            workspace_roots: [harness.workspaceRoot],
+            cwd: harness.workspaceRoot,
+            credential_mode: "none",
+          },
+          framework_context: {
+            agent_name: "agentgit-cli",
+            agent_framework: "cli",
+          },
+          received_at: new Date().toISOString(),
+        },
+      },
+      sessionId,
+    );
+    expect(submitActionResponse.ok).toBe(true);
+    expect(submitActionResponse.result?.action.execution_path).toMatchObject({
+      surface: "provider_hosted",
+      credential_mode: "delegated",
+    });
+    expect(submitActionResponse.result?.action.facets.mcp).toMatchObject({
+      execution_mode_requested: "hosted_delegated",
+      credential_binding_mode: "hosted_token_exchange",
+    });
+    expect(submitActionResponse.result?.execution_result).toMatchObject({
+      success: true,
+      output: {
+        execution_mode: "hosted_delegated",
+        credential_binding_mode: "hosted_token_exchange",
+        summary: "http-echo:phase3-hosted-call",
+        attestation_verified: true,
+      },
+    });
+
+    const leaseId = submitActionResponse.result?.execution_result?.output.lease_id;
+    const attestationId = submitActionResponse.result?.execution_result?.output.attestation_id;
+    const actionId = submitActionResponse.result?.action.action_id;
+    expect(leaseId).toBeTruthy();
+    expect(attestationId).toBeTruthy();
+    expect(actionId).toBeTruthy();
+
+    const journal = createRunJournal({
+      dbPath: harness.journalPath,
+    });
+    try {
+      const events = journal.listRunEvents(runId);
+      expect(events.some((event) => event.event_type === "mcp_hosted_lease_issued")).toBe(true);
+      expect(events.some((event) => event.event_type === "mcp_hosted_result_ingested")).toBe(true);
+    } finally {
+      journal.close();
+    }
+
+    const hostPolicyRegistry = new McpPublicHostPolicyRegistry({
+      dbPath: path.join(harness.tempRoot, "mcp", "host-policies.db"),
+    });
+    const registry = new McpServerRegistry({
+      dbPath: path.join(harness.tempRoot, "mcp", "registry.db"),
+      publicHostPolicyRegistry: hostPolicyRegistry,
+    });
+    try {
+      const hostedLeases = registry.listHostedExecutionLeases(profileId);
+      expect(hostedLeases).toEqual([
+        expect.objectContaining({
+          lease_id: leaseId,
+          server_profile_id: profileId,
+          status: "consumed",
+        }),
+      ]);
+      expect(registry.listHostedExecutionAttestations(leaseId)).toEqual([
+        expect.objectContaining({
+          attestation_id: attestationId,
+          lease_id: leaseId,
+        }),
+      ]);
+      expect(registry.listHostedExecutionJobs(profileId)).toEqual([
+        expect.objectContaining({
+          run_id: runId,
+          action_id: actionId,
+          server_profile_id: profileId,
+          tool_name: "echo_note",
+          status: "succeeded",
+          attempt_count: 1,
+          current_lease_id: leaseId,
+          execution_result: expect.objectContaining({
+            success: true,
+          }),
+        }),
+      ]);
+    } finally {
+      registry.close();
+      hostPolicyRegistry.close();
+    }
+
+    await service.close();
+  });
+
+  it("executes hosted delegated MCP calls through an externally started worker when daemon autostart is disabled", async () => {
+    harnessSequence += 1;
+    const tempRoot = path.join(TEST_TMP_ROOT, `external-worker-${harnessSequence}`);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.mkdirSync(tempRoot, { recursive: true });
+    const workerSocketPath = path.join(tempRoot, "worker.sock");
+    const workerToken = "external-worker-token";
+    const worker = await startHostedMcpWorkerServer({
+      endpoint: `unix:${workerSocketPath}`,
+      attestationKeyPath: path.join(tempRoot, "worker-key.json"),
+      controlToken: workerToken,
+    });
+    const harness = await createHarness(tempRoot, null, null, {
+      mcpHostedWorkerEndpoint: `unix:${workerSocketPath}`,
+      mcpHostedWorkerAutostart: false,
+      mcpHostedWorkerControlToken: workerToken,
+    });
+    const { sessionId, runId } = await createSessionAndRun(harness, "mcp-hosted-external-worker");
+    const service = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "external-worker-mcp-token",
+    });
+
+    try {
+      const capabilitiesResponse = await sendRequest<{
+        capabilities: Array<{
+          capability_name: string;
+          status: string;
+          details: Record<string, unknown>;
+        }>;
+      }>(harness, "get_capabilities", {
+        workspace_root: harness.workspaceRoot,
+      });
+      expect(capabilitiesResponse.ok).toBe(true);
+      const hostedCapability = capabilitiesResponse.result?.capabilities.find(
+        (capability) => capability.capability_name === "adapter.mcp_hosted_delegated",
+      );
+      expect(hostedCapability).toMatchObject({
+        status: "available",
+        details: expect.objectContaining({
+          hosted_delegated_execution_available: true,
+          worker_managed_by_daemon: false,
+          worker_endpoint: `unix:${workerSocketPath}`,
+        }),
+      });
+
+      const candidateResponse = await sendRequest<{
+        candidate: {
+          candidate_id: string;
+        };
+      }>(
+        harness,
+        "submit_mcp_server_candidate",
+        {
+          candidate: {
+            source_kind: "agent_discovered",
+            raw_endpoint: service.url,
+          },
+        },
+        sessionId,
+      );
+      expect(candidateResponse.ok).toBe(true);
+      const candidateId = candidateResponse.result?.candidate.candidate_id;
+      expect(candidateId).toBeTruthy();
+
+      const resolveResponse = await sendRequest<{
+        profile: {
+          server_profile_id: string;
+        };
+      }>(
+        harness,
+        "resolve_mcp_server_candidate",
+        {
+          candidate_id: candidateId,
+          display_name: "External Hosted MCP",
+        },
+        sessionId,
+      );
+      expect(resolveResponse.ok).toBe(true);
+      const profileId = resolveResponse.result?.profile.server_profile_id;
+      expect(profileId).toBeTruthy();
+
+      const approveResponse = await sendRequest(
+        harness,
+        "approve_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+          decision: "allow_policy_managed",
+          trust_tier: "operator_approved_public",
+          allowed_execution_modes: ["hosted_delegated"],
+          reason_codes: ["EXTERNAL_WORKER_APPROVED"],
+        },
+        sessionId,
+      );
+      expect(approveResponse.ok).toBe(true);
+
+      const upsertSecretResponse = await sendRequest(
+        harness,
+        "upsert_mcp_secret",
+        {
+          secret: {
+            secret_id: "mcp_secret_external_worker",
+            display_name: "External worker secret",
+            bearer_token: "external-worker-mcp-token",
+          },
+        },
+        sessionId,
+      );
+      expect(upsertSecretResponse.ok).toBe(true);
+
+      const bindResponse = await sendRequest(
+        harness,
+        "bind_mcp_server_credentials",
+        {
+          server_profile_id: profileId,
+          binding_mode: "hosted_token_exchange",
+          broker_profile_id: "mcp_secret_external_worker",
+          scope_labels: ["remote:mcp", "hosted"],
+        },
+        sessionId,
+      );
+      expect(bindResponse.ok).toBe(true);
+
+      const activateResponse = await sendRequest(
+        harness,
+        "activate_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+        },
+        sessionId,
+      );
+      expect(activateResponse.ok).toBe(true);
+
+      const submitActionResponse = await sendRequest<{
+        execution_result: {
+          success: boolean;
+          output: {
+            execution_mode: string;
+            summary: string;
+            attestation_verified: boolean;
+          };
+        } | null;
+      }>(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: {
+            run_id: runId,
+            tool_registration: {
+              tool_name: "mcp_call_tool",
+              tool_kind: "mcp",
+            },
+            raw_call: {
+              server_id: profileId,
+              server_profile_id: profileId,
+              execution_mode_requested: "hosted_delegated",
+              tool_name: "echo_note",
+              arguments: {
+                note: "external-worker-call",
+              },
+            },
+            environment_context: {
+              workspace_roots: [harness.workspaceRoot],
+              cwd: harness.workspaceRoot,
+              credential_mode: "none",
+            },
+            framework_context: {
+              agent_name: "agentgit-cli",
+              agent_framework: "cli",
+            },
+            received_at: new Date().toISOString(),
+          },
+        },
+        sessionId,
+      );
+      expect(submitActionResponse.ok).toBe(true);
+      expect(submitActionResponse.result?.execution_result).toMatchObject({
+        success: true,
+        output: {
+          execution_mode: "hosted_delegated",
+          summary: "http-echo:external-worker-call",
+          attestation_verified: true,
+        },
+      });
+    } finally {
+      await service.close();
+      await new Promise<void>((resolve, reject) => {
+        worker.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  });
+
+  it("retries durable hosted delegated MCP jobs until an external worker becomes available", async () => {
+    harnessSequence += 1;
+    const tempRoot = path.join(TEST_TMP_ROOT, `external-worker-retry-${harnessSequence}`);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.mkdirSync(tempRoot, { recursive: true });
+    const workerSocketPath = path.join(tempRoot, "worker.sock");
+    const workerToken = "external-worker-retry-token";
+    const harness = await createHarness(tempRoot, null, null, {
+      mcpHostedWorkerEndpoint: `unix:${workerSocketPath}`,
+      mcpHostedWorkerAutostart: false,
+      mcpHostedWorkerControlToken: workerToken,
+      mcpHostedWorkerAttestationKeyPath: path.join(tempRoot, "worker-key.json"),
+    });
+    const { sessionId, runId } = await createSessionAndRun(harness, "mcp-hosted-external-worker-retry");
+    const service = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "external-worker-retry-mcp-token",
+    });
+
+    let worker: net.Server | null = null;
+
+    try {
+      const candidateResponse = await sendRequest<{
+        candidate: {
+          candidate_id: string;
+        };
+      }>(
+        harness,
+        "submit_mcp_server_candidate",
+        {
+          candidate: {
+            source_kind: "agent_discovered",
+            raw_endpoint: service.url,
+          },
+        },
+        sessionId,
+      );
+      expect(candidateResponse.ok).toBe(true);
+      const candidateId = candidateResponse.result?.candidate.candidate_id;
+      expect(candidateId).toBeTruthy();
+
+      const resolveResponse = await sendRequest<{
+        profile: {
+          server_profile_id: string;
+        };
+      }>(
+        harness,
+        "resolve_mcp_server_candidate",
+        {
+          candidate_id: candidateId,
+          display_name: "Retry Hosted MCP",
+        },
+        sessionId,
+      );
+      expect(resolveResponse.ok).toBe(true);
+      const profileId = resolveResponse.result?.profile.server_profile_id;
+      expect(profileId).toBeTruthy();
+
+      const approveResponse = await sendRequest(
+        harness,
+        "approve_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+          decision: "allow_policy_managed",
+          trust_tier: "operator_approved_public",
+          allowed_execution_modes: ["hosted_delegated"],
+          reason_codes: ["EXTERNAL_WORKER_RETRY_APPROVED"],
+        },
+        sessionId,
+      );
+      expect(approveResponse.ok).toBe(true);
+
+      const upsertSecretResponse = await sendRequest(
+        harness,
+        "upsert_mcp_secret",
+        {
+          secret: {
+            secret_id: "mcp_secret_external_worker_retry",
+            display_name: "External worker retry secret",
+            bearer_token: "external-worker-retry-mcp-token",
+          },
+        },
+        sessionId,
+      );
+      expect(upsertSecretResponse.ok).toBe(true);
+
+      const bindResponse = await sendRequest(
+        harness,
+        "bind_mcp_server_credentials",
+        {
+          server_profile_id: profileId,
+          binding_mode: "hosted_token_exchange",
+          broker_profile_id: "mcp_secret_external_worker_retry",
+          scope_labels: ["remote:mcp", "hosted"],
+        },
+        sessionId,
+      );
+      expect(bindResponse.ok).toBe(true);
+
+      const activateResponse = await sendRequest(
+        harness,
+        "activate_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+        },
+        sessionId,
+      );
+      expect(activateResponse.ok).toBe(true);
+
+      const submitActionPromise = sendRequest<{
+        action: {
+          action_id: string;
+        };
+        execution_result: {
+          success: boolean;
+          output: {
+            execution_mode: string;
+            summary: string;
+            attestation_verified: boolean;
+          };
+        } | null;
+      }>(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: {
+            run_id: runId,
+            tool_registration: {
+              tool_name: "mcp_call_tool",
+              tool_kind: "mcp",
+            },
+            raw_call: {
+              server_id: profileId,
+              server_profile_id: profileId,
+              execution_mode_requested: "hosted_delegated",
+              tool_name: "echo_note",
+              arguments: {
+                note: "external-worker-retry-call",
+              },
+            },
+            environment_context: {
+              workspace_roots: [harness.workspaceRoot],
+              cwd: harness.workspaceRoot,
+              credential_mode: "none",
+            },
+            framework_context: {
+              agent_name: "agentgit-cli",
+              agent_framework: "cli",
+            },
+            received_at: new Date().toISOString(),
+          },
+        },
+        sessionId,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      worker = await startHostedMcpWorkerServer({
+        endpoint: `unix:${workerSocketPath}`,
+        attestationKeyPath: path.join(tempRoot, "worker-key.json"),
+        controlToken: workerToken,
+      });
+
+      const submitActionResponse = await submitActionPromise;
+      expect(submitActionResponse.ok).toBe(true);
+      expect(submitActionResponse.result?.execution_result).toMatchObject({
+        success: true,
+        output: {
+          execution_mode: "hosted_delegated",
+          summary: "http-echo:external-worker-retry-call",
+          attestation_verified: true,
+        },
+      });
+
+      const hostPolicyRegistry = new McpPublicHostPolicyRegistry({
+        dbPath: path.join(harness.tempRoot, "mcp", "host-policies.db"),
+      });
+      const registry = new McpServerRegistry({
+        dbPath: path.join(harness.tempRoot, "mcp", "registry.db"),
+        publicHostPolicyRegistry: hostPolicyRegistry,
+      });
+      try {
+        const jobs = registry.listHostedExecutionJobs(profileId);
+        expect(jobs).toHaveLength(1);
+        expect(jobs[0]).toMatchObject({
+          run_id: runId,
+          action_id: submitActionResponse.result?.action.action_id,
+          server_profile_id: profileId,
+          status: "succeeded",
+        });
+        expect(jobs[0]?.attempt_count).toBeGreaterThan(1);
+        expect(jobs[0]?.last_error).toBeNull();
+        expect(jobs[0]?.execution_result).toMatchObject({
+          success: true,
+        });
+      } finally {
+        registry.close();
+        hostPolicyRegistry.close();
+      }
+    } finally {
+      await service.close();
+      if (worker) {
+        await new Promise<void>((resolve, reject) => {
+          worker.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        });
+      }
+    }
+  }, 20_000);
+
+  it("surfaces hosted queue diagnostics and safely requeues failed hosted delegated MCP jobs", async () => {
+    harnessSequence += 1;
+    const tempRoot = path.join(TEST_TMP_ROOT, `external-worker-operator-${harnessSequence}`);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.mkdirSync(tempRoot, { recursive: true });
+    const workerSocketPath = path.join(tempRoot, "worker.sock");
+    const workerToken = "external-worker-operator-token";
+    const harness = await createHarness(tempRoot, null, null, {
+      mcpHostedWorkerEndpoint: `unix:${workerSocketPath}`,
+      mcpHostedWorkerAutostart: false,
+      mcpHostedWorkerControlToken: workerToken,
+      mcpHostedWorkerAttestationKeyPath: path.join(tempRoot, "worker-key.json"),
+    });
+    const { sessionId, runId } = await createSessionAndRun(harness, "mcp-hosted-operator-controls");
+    const service = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "external-worker-operator-mcp-token",
+    });
+
+    let worker: net.Server | null = null;
+
+    try {
+      const candidateResponse = await sendRequest<{ candidate: { candidate_id: string } }>(
+        harness,
+        "submit_mcp_server_candidate",
+        {
+          candidate: {
+            source_kind: "agent_discovered",
+            raw_endpoint: service.url,
+          },
+        },
+        sessionId,
+      );
+      expect(candidateResponse.ok).toBe(true);
+      const candidateId = candidateResponse.result?.candidate.candidate_id;
+      expect(candidateId).toBeTruthy();
+
+      const resolveResponse = await sendRequest<{ profile: { server_profile_id: string } }>(
+        harness,
+        "resolve_mcp_server_candidate",
+        {
+          candidate_id: candidateId,
+          display_name: "Operator Hosted MCP",
+        },
+        sessionId,
+      );
+      expect(resolveResponse.ok).toBe(true);
+      const profileId = resolveResponse.result?.profile.server_profile_id;
+      expect(profileId).toBeTruthy();
+
+      const approveResponse = await sendRequest(
+        harness,
+        "approve_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+          decision: "allow_policy_managed",
+          trust_tier: "operator_approved_public",
+          allowed_execution_modes: ["hosted_delegated"],
+          reason_codes: ["HOSTED_OPERATOR_APPROVED"],
+        },
+        sessionId,
+      );
+      expect(approveResponse.ok).toBe(true);
+
+      const upsertSecretResponse = await sendRequest(
+        harness,
+        "upsert_mcp_secret",
+        {
+          secret: {
+            secret_id: "mcp_secret_external_worker_operator",
+            display_name: "External worker operator secret",
+            bearer_token: "external-worker-operator-mcp-token",
+          },
+        },
+        sessionId,
+      );
+      expect(upsertSecretResponse.ok).toBe(true);
+
+      const bindResponse = await sendRequest(
+        harness,
+        "bind_mcp_server_credentials",
+        {
+          server_profile_id: profileId,
+          binding_mode: "hosted_token_exchange",
+          broker_profile_id: "mcp_secret_external_worker_operator",
+          scope_labels: ["remote:mcp", "hosted"],
+        },
+        sessionId,
+      );
+      expect(bindResponse.ok).toBe(true);
+
+      const activateResponse = await sendRequest(
+        harness,
+        "activate_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+        },
+        sessionId,
+      );
+      expect(activateResponse.ok).toBe(true);
+
+      const submitActionResponse = await sendRequest(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: {
+            run_id: runId,
+            tool_registration: {
+              tool_name: "mcp_call_tool",
+              tool_kind: "mcp",
+            },
+            raw_call: {
+              server_id: profileId,
+              server_profile_id: profileId,
+              execution_mode_requested: "hosted_delegated",
+              tool_name: "echo_note",
+              arguments: {
+                note: "external-worker-operator-call",
+              },
+            },
+            environment_context: {
+              workspace_roots: [harness.workspaceRoot],
+              cwd: harness.workspaceRoot,
+              credential_mode: "none",
+            },
+            framework_context: {
+              agent_name: "agentgit-cli",
+              agent_framework: "cli",
+            },
+            received_at: new Date().toISOString(),
+          },
+        },
+        sessionId,
+      );
+      expect(submitActionResponse.ok).toBe(false);
+      expect(submitActionResponse.error?.code).toBe("CAPABILITY_UNAVAILABLE");
+
+      const diagnosticsResponse = await sendRequest<{
+        hosted_worker: {
+          status: string;
+          reachable: boolean;
+          primary_reason: { code: string; message: string } | null;
+        } | null;
+        hosted_queue: {
+          status: string;
+          failed_jobs: number;
+          queued_jobs: number;
+          warnings: string[];
+        } | null;
+      }>(harness, "diagnostics", {
+        sections: ["hosted_worker", "hosted_queue"],
+      });
+      expect(diagnosticsResponse.ok).toBe(true);
+      expect(diagnosticsResponse.result?.hosted_worker).toMatchObject({
+        status: "degraded",
+        reachable: false,
+        primary_reason: {
+          code: "HOSTED_WORKER_UNREACHABLE",
+        },
+      });
+      expect(diagnosticsResponse.result?.hosted_queue).toMatchObject({
+        status: "degraded",
+        failed_jobs: 1,
+      });
+
+      const listFailedJobsResponse = await sendRequest<{
+        jobs: Array<{
+          job_id: string;
+          status: string;
+          server_profile_id: string;
+          attempt_count: number;
+        }>;
+      }>(harness, "list_hosted_mcp_jobs", {
+        server_profile_id: profileId,
+        status: "failed",
+      });
+      expect(listFailedJobsResponse.ok).toBe(true);
+      expect(listFailedJobsResponse.result?.jobs).toHaveLength(1);
+      expect(listFailedJobsResponse.result?.jobs[0]).toMatchObject({
+        status: "failed",
+        server_profile_id: profileId,
+      });
+      const jobId = listFailedJobsResponse.result?.jobs[0]?.job_id;
+      expect(jobId).toBeTruthy();
+
+      const inspectFailedJobResponse = await sendRequest<{
+        job: {
+          job_id: string;
+          current_lease_id: string | null;
+        };
+        lifecycle: {
+          state: string;
+          dead_lettered: boolean;
+          eligible_for_requeue: boolean;
+          retry_budget_remaining: number;
+        };
+        leases: Array<{ lease_id: string }>;
+        attestations: Array<{ attestation_id: string }>;
+        recent_events: Array<{ event_type: string }>;
+      }>(harness, "get_hosted_mcp_job", {
+        job_id: jobId,
+      });
+      expect(inspectFailedJobResponse.ok).toBe(true);
+      expect(inspectFailedJobResponse.result?.lifecycle).toMatchObject({
+        state: "dead_letter_retryable",
+        dead_lettered: true,
+        eligible_for_requeue: true,
+        retry_budget_remaining: 0,
+      });
+      expect(inspectFailedJobResponse.result?.leases.length).toBeGreaterThan(0);
+      expect(
+        inspectFailedJobResponse.result?.recent_events.some(
+          (event) => event.event_type === "mcp_hosted_job_dead_lettered",
+        ),
+      ).toBe(true);
+
+      worker = await startHostedMcpWorkerServer({
+        endpoint: `unix:${workerSocketPath}`,
+        attestationKeyPath: path.join(tempRoot, "worker-key.json"),
+        controlToken: workerToken,
+      });
+
+      const requeueResponse = await sendRequest<{
+        job: {
+          job_id: string;
+          status: string;
+          next_attempt_at: string;
+        };
+        requeued: boolean;
+        previous_status: string;
+      }>(
+        harness,
+        "requeue_hosted_mcp_job",
+        {
+          job_id: jobId,
+          reset_attempt_count: true,
+          max_attempts: 6,
+          reason: "worker restored",
+        },
+        sessionId,
+      );
+      expect(requeueResponse.ok).toBe(true);
+      expect(requeueResponse.result).toMatchObject({
+        requeued: true,
+        previous_status: "failed",
+        attempt_count_reset: true,
+        max_attempts_updated: true,
+        job: {
+          job_id: jobId,
+          status: "queued",
+          max_attempts: 6,
+          attempt_count: 0,
+        },
+      });
+
+      const hostPolicyRegistry = new McpPublicHostPolicyRegistry({
+        dbPath: path.join(harness.tempRoot, "mcp", "host-policies.db"),
+      });
+      const registry = new McpServerRegistry({
+        dbPath: path.join(harness.tempRoot, "mcp", "registry.db"),
+        publicHostPolicyRegistry: hostPolicyRegistry,
+      });
+      try {
+        const completedJob = await waitFor(
+          () => registry.listHostedExecutionJobs(profileId)[0] ?? null,
+          (job) => job !== null && job.status === "succeeded",
+        );
+        expect(completedJob).toMatchObject({
+          job_id: jobId,
+          status: "succeeded",
+        });
+        expect(completedJob?.attempt_count).toBe(1);
+        expect(completedJob?.max_attempts).toBe(6);
+
+        const listSucceededJobsResponse = await sendRequest<{
+          jobs: Array<{
+            job_id: string;
+            status: string;
+          }>;
+        }>(harness, "list_hosted_mcp_jobs", {
+          server_profile_id: profileId,
+          status: "succeeded",
+        });
+        expect(listSucceededJobsResponse.ok).toBe(true);
+        expect(listSucceededJobsResponse.result?.jobs).toEqual([
+          expect.objectContaining({
+            job_id: jobId,
+            status: "succeeded",
+          }),
+        ]);
+
+        const inspectSucceededJobResponse = await sendRequest<{
+          lifecycle: {
+            state: string;
+            dead_lettered: boolean;
+            eligible_for_requeue: boolean;
+          };
+          recent_events: Array<{ event_type: string; payload: Record<string, unknown> | null }>;
+        }>(harness, "get_hosted_mcp_job", {
+          job_id: jobId,
+        });
+        expect(inspectSucceededJobResponse.ok).toBe(true);
+        expect(inspectSucceededJobResponse.result?.lifecycle).toMatchObject({
+          state: "succeeded",
+          dead_lettered: false,
+          eligible_for_requeue: false,
+        });
+        expect(
+          inspectSucceededJobResponse.result?.recent_events.some(
+            (event) =>
+              event.event_type === "mcp_hosted_job_requeued" &&
+              event.payload?.attempt_count_reset === true &&
+              event.payload?.new_max_attempts === 6,
+          ),
+        ).toBe(true);
+
+        const recoveredDiagnosticsResponse = await sendRequest<{
+          hosted_queue: {
+            failed_jobs: number;
+            queued_jobs: number;
+            running_jobs: number;
+          } | null;
+        }>(harness, "diagnostics", {
+          sections: ["hosted_queue"],
+        });
+        expect(recoveredDiagnosticsResponse.ok).toBe(true);
+        expect(recoveredDiagnosticsResponse.result?.hosted_queue).toMatchObject({
+          failed_jobs: 0,
+          queued_jobs: 0,
+        });
+      } finally {
+        registry.close();
+        hostPolicyRegistry.close();
+      }
+    } finally {
+      await service.close();
+      if (worker) {
+        await new Promise<void>((resolve, reject) => {
+          worker.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        });
+      }
+    }
+  }, 25_000);
+
+  it("reviews remote MCP onboarding explicitly through candidate and profile inspection", async () => {
+    const harness = await createHarness();
+    const { sessionId } = await createSessionAndRun(harness, "mcp-review-surface");
+    const service = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "review-mcp-token",
+    });
+
+    try {
+      const submitResponse = await sendRequest<{ candidate: { candidate_id: string } }>(
+        harness,
+        "submit_mcp_server_candidate",
+        {
+          candidate: {
+            source_kind: "agent_discovered",
+            raw_endpoint: service.url,
+          },
+        },
+        sessionId,
+      );
+      expect(submitResponse.ok).toBe(true);
+      const candidateId = submitResponse.result?.candidate.candidate_id as string;
+
+      const preResolveReview = await sendRequest<{
+        review: {
+          requires_resolution: boolean;
+          requires_approval: boolean;
+        };
+        candidate: { candidate_id: string } | null;
+        profile: null;
+      }>(harness, "get_mcp_server_review", {
+        candidate_id: candidateId,
+      });
+      expect(preResolveReview.ok).toBe(true);
+      expect(preResolveReview.result?.review).toMatchObject({
+        requires_resolution: true,
+        requires_approval: false,
+      });
+      expect(preResolveReview.result?.candidate?.candidate_id).toBe(candidateId);
+      expect(preResolveReview.result?.profile).toBeNull();
+
+      const resolveResponse = await sendRequest<{ profile: { server_profile_id: string } }>(
+        harness,
+        "resolve_mcp_server_candidate",
+        {
+          candidate_id: candidateId,
+          display_name: "Review Surface MCP",
+        },
+        sessionId,
+      );
+      expect(resolveResponse.ok).toBe(true);
+      const profileId = resolveResponse.result?.profile.server_profile_id as string;
+
+      const profileReview = await sendRequest<{
+        review: {
+          requires_resolution: boolean;
+          requires_approval: boolean;
+          requires_credentials: boolean;
+          hosted_execution_supported: boolean;
+        };
+        candidate: { candidate_id: string } | null;
+        profile: { server_profile_id: string; status: string } | null;
+      }>(harness, "get_mcp_server_review", {
+        server_profile_id: profileId,
+      });
+      expect(profileReview.ok).toBe(true);
+      expect(profileReview.result?.candidate?.candidate_id).toBe(candidateId);
+      expect(profileReview.result?.profile).toMatchObject({
+        server_profile_id: profileId,
+        status: "draft",
+      });
+      expect(profileReview.result?.review).toMatchObject({
+        requires_resolution: false,
+        requires_approval: true,
+        requires_credentials: false,
+        hosted_execution_supported: false,
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("cancels running hosted delegated MCP jobs cooperatively and records terminal cancellation state", async () => {
+    harnessSequence += 1;
+    const tempRoot = path.join(TEST_TMP_ROOT, `external-worker-cancel-${harnessSequence}`);
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.mkdirSync(tempRoot, { recursive: true });
+    const workerSocketPath = path.join(tempRoot, "worker.sock");
+    const workerToken = "external-worker-cancel-token";
+    const harness = await createHarness(tempRoot, null, null, {
+      mcpHostedWorkerEndpoint: `unix:${workerSocketPath}`,
+      mcpHostedWorkerAutostart: false,
+      mcpHostedWorkerControlToken: workerToken,
+      mcpHostedWorkerAttestationKeyPath: path.join(tempRoot, "worker-key.json"),
+    });
+    const { sessionId, runId } = await createSessionAndRun(harness, "mcp-hosted-cancel");
+    const service = await startMcpHttpService({
+      requireBearerTokenForToolCallsOnly: "external-worker-cancel-mcp-token",
+      scenario: "delayed_call",
+    });
+    const worker = await startHostedMcpWorkerServer({
+      endpoint: `unix:${workerSocketPath}`,
+      attestationKeyPath: path.join(tempRoot, "worker-key.json"),
+      controlToken: workerToken,
+    });
+
+    try {
+      const candidateResponse = await sendRequest<{ candidate: { candidate_id: string } }>(
+        harness,
+        "submit_mcp_server_candidate",
+        {
+          candidate: {
+            source_kind: "agent_discovered",
+            raw_endpoint: service.url,
+          },
+        },
+        sessionId,
+      );
+      const candidateId = candidateResponse.result?.candidate.candidate_id as string;
+
+      const resolveResponse = await sendRequest<{ profile: { server_profile_id: string } }>(
+        harness,
+        "resolve_mcp_server_candidate",
+        {
+          candidate_id: candidateId,
+          display_name: "Cancelable Hosted MCP",
+        },
+        sessionId,
+      );
+      const profileId = resolveResponse.result?.profile.server_profile_id as string;
+
+      await sendRequest(
+        harness,
+        "approve_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+          decision: "allow_policy_managed",
+          trust_tier: "operator_approved_public",
+          allowed_execution_modes: ["hosted_delegated"],
+          reason_codes: ["HOSTED_OPERATOR_APPROVED"],
+        },
+        sessionId,
+      );
+      await sendRequest(
+        harness,
+        "upsert_mcp_secret",
+        {
+          secret: {
+            secret_id: "mcp_secret_external_worker_cancel",
+            display_name: "External worker cancel secret",
+            bearer_token: "external-worker-cancel-mcp-token",
+          },
+        },
+        sessionId,
+      );
+      await sendRequest(
+        harness,
+        "bind_mcp_server_credentials",
+        {
+          server_profile_id: profileId,
+          binding_mode: "hosted_token_exchange",
+          broker_profile_id: "mcp_secret_external_worker_cancel",
+          scope_labels: ["remote:mcp", "hosted"],
+        },
+        sessionId,
+      );
+      await sendRequest(
+        harness,
+        "activate_mcp_server_profile",
+        {
+          server_profile_id: profileId,
+        },
+        sessionId,
+      );
+
+      const submitActionPromise = sendRequest(
+        harness,
+        "submit_action_attempt",
+        {
+          attempt: {
+            run_id: runId,
+            tool_registration: {
+              tool_name: "mcp_call_tool",
+              tool_kind: "mcp",
+            },
+            raw_call: {
+              server_id: profileId,
+              server_profile_id: profileId,
+              execution_mode_requested: "hosted_delegated",
+              tool_name: "echo_note",
+              arguments: {
+                note: "external-worker-cancel-call",
+              },
+            },
+            environment_context: {
+              workspace_roots: [harness.workspaceRoot],
+              cwd: harness.workspaceRoot,
+              credential_mode: "none",
+            },
+            framework_context: {
+              agent_name: "agentgit-cli",
+              agent_framework: "cli",
+            },
+            received_at: new Date().toISOString(),
+          },
+        },
+        sessionId,
+      );
+
+      const hostPolicyRegistry = new McpPublicHostPolicyRegistry({
+        dbPath: path.join(harness.tempRoot, "mcp", "host-policies.db"),
+      });
+      const registry = new McpServerRegistry({
+        dbPath: path.join(harness.tempRoot, "mcp", "registry.db"),
+        publicHostPolicyRegistry: hostPolicyRegistry,
+      });
+      try {
+        const runningJob = await waitFor(
+          () => registry.listHostedExecutionJobs(profileId)[0] ?? null,
+          (job) => job !== null && job.status === "running",
+        );
+        expect(runningJob?.job_id).toBeTruthy();
+        const jobId = runningJob?.job_id as string;
+
+        const cancelResponse = await sendRequest<{
+          job: {
+            job_id: string;
+            status: string;
+            cancel_reason: string | null;
+          };
+          previous_status: string;
+          cancellation_requested: boolean;
+          terminal: boolean;
+        }>(
+          harness,
+          "cancel_hosted_mcp_job",
+          {
+            job_id: jobId,
+            reason: "operator stop",
+          },
+          sessionId,
+        );
+        expect(cancelResponse.ok).toBe(true);
+        expect(cancelResponse.result).toMatchObject({
+          previous_status: "running",
+          cancellation_requested: true,
+          terminal: false,
+          job: {
+            job_id: jobId,
+            status: "cancel_requested",
+            cancel_reason: "operator stop",
+          },
+        });
+
+        const submitActionResponse = await submitActionPromise;
+        expect(submitActionResponse.ok).toBe(false);
+        expect(submitActionResponse.error?.code).toBe("CONFLICT");
+
+        const canceledJob = await waitFor(
+          () => registry.getHostedExecutionJob(jobId),
+          (job) => job !== null && job.status === "canceled",
+        );
+        expect(canceledJob).toMatchObject({
+          job_id: jobId,
+          status: "canceled",
+          cancel_reason: "operator stop",
+        });
+
+        const inspectCanceledJobResponse = await sendRequest<{
+          lifecycle: {
+            state: string;
+            dead_lettered: boolean;
+          };
+          recent_events: Array<{ event_type: string }>;
+        }>(harness, "get_hosted_mcp_job", {
+          job_id: jobId,
+        });
+        expect(inspectCanceledJobResponse.ok).toBe(true);
+        expect(inspectCanceledJobResponse.result?.lifecycle).toMatchObject({
+          state: "canceled",
+          dead_lettered: false,
+        });
+        expect(
+          inspectCanceledJobResponse.result?.recent_events.some(
+            (event) => event.event_type === "mcp_hosted_job_cancel_requested",
+          ),
+        ).toBe(true);
+
+        const listCanceledJobsResponse = await sendRequest<{
+          jobs: Array<{ job_id: string; status: string }>;
+          summary: {
+            canceled: number;
+            dead_letter_retryable: number;
+          };
+        }>(harness, "list_hosted_mcp_jobs", {
+          server_profile_id: profileId,
+          lifecycle_state: "canceled",
+        });
+        expect(listCanceledJobsResponse.ok).toBe(true);
+        expect(listCanceledJobsResponse.result?.summary).toMatchObject({
+          canceled: 1,
+          dead_letter_retryable: 0,
+        });
+        expect(listCanceledJobsResponse.result?.jobs).toEqual([
+          expect.objectContaining({
+            job_id: jobId,
+            status: "canceled",
+          }),
+        ]);
+      } finally {
+        registry.close();
+        hostPolicyRegistry.close();
+      }
+    } finally {
+      await service.close();
+      await new Promise<void>((resolve, reject) => {
+        worker.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    }
+  }, 25_000);
 
   it("manages MCP secrets and public host policies through the daemon API without leaking bearer values", async () => {
     const harness = await createHarness();
@@ -1951,7 +4865,7 @@ describe("authority daemon integration", () => {
     expect(removeSecretResponse.ok).toBe(true);
     expect(removeSecretResponse.result?.removed).toBe(true);
     expect(removeSecretResponse.result?.removed_secret?.secret_id).toBe("mcp_secret_notion");
-  });
+  }, 20_000);
 
   it("executes an operator-registered streamable_http MCP tool through the full request pipeline", async () => {
     const service = await startMcpHttpService({
@@ -2311,6 +5225,7 @@ describe("authority daemon integration", () => {
   it("persists operator-registered MCP servers across daemon restart", async () => {
     const harness = await createHarness();
     const { sessionId } = await createSessionAndRun(harness, "mcp-registry-persist");
+    const service = await startMcpHttpService();
 
     const upsertResponse = await sendRequest<{
       created: boolean;
@@ -2320,9 +5235,8 @@ describe("authority daemon integration", () => {
       {
         server: {
           server_id: "notes_server",
-          transport: "stdio",
-          command: process.execPath,
-          args: [MCP_TEST_SERVER_SCRIPT],
+          transport: "streamable_http",
+          url: service.url,
           tools: [
             {
               tool_name: "echo_note",
@@ -2337,7 +5251,10 @@ describe("authority daemon integration", () => {
     expect(upsertResponse.ok).toBe(true);
 
     await restartHarness(harness);
-    const { sessionId: restartedSessionId, runId } = await createSessionAndRun(harness, "mcp-registry-persist-restarted");
+    const { sessionId: restartedSessionId, runId } = await createSessionAndRun(
+      harness,
+      "mcp-registry-persist-restarted",
+    );
 
     const listResponse = await sendRequest<{
       servers: Array<{ server: { server_id: string } }>;
@@ -2363,16 +5280,14 @@ describe("authority daemon integration", () => {
 
     expect(submitResponse.ok).toBe(true);
     expect(submitResponse.result?.execution_result?.success).toBe(true);
-    expect(submitResponse.result?.execution_result?.output.summary).toBe("echo:after restart");
+    expect(submitResponse.result?.execution_result?.output.summary).toBe("http-echo:after restart");
+    await service.close();
   });
 
   it("imports bootstrap MCP env config into the durable registry and keeps it after restart", async () => {
     process.env.AGENTGIT_MCP_SERVERS_JSON = JSON.stringify([
       {
-        server_id: "notes_server",
-        transport: "stdio",
-        command: process.execPath,
-        args: [MCP_TEST_SERVER_SCRIPT],
+        ...buildSandboxedStdioServer("notes_server"),
         tools: [
           {
             tool_name: "echo_note",
@@ -2458,9 +5373,14 @@ describe("authority daemon integration", () => {
     const targetPath = path.join(harness.workspaceRoot, "notes.txt");
     fs.writeFileSync(targetPath, "before", "utf8");
 
-    const submitResponse = await sendRequest(harness, "submit_action_attempt", {
-      attempt: makeFilesystemDeleteAttempt(runId, harness.workspaceRoot, targetPath),
-    }, sessionId);
+    const submitResponse = await sendRequest(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemDeleteAttempt(runId, harness.workspaceRoot, targetPath),
+      },
+      sessionId,
+    );
 
     expect(submitResponse.ok).toBe(false);
     expect(submitResponse.error?.code).toBe("STORAGE_UNAVAILABLE");
@@ -2475,7 +5395,11 @@ describe("authority daemon integration", () => {
     const { sessionId, runId } = await createSessionAndRun(harness, "approval-flow");
 
     const submitResponse = await sendRequest<{
-      approval_request: { approval_id: string; status: string; primary_reason?: { code: string; message: string } | null } | null;
+      approval_request: {
+        approval_id: string;
+        status: string;
+        primary_reason?: { code: string; message: string } | null;
+      } | null;
     }>(
       harness,
       "submit_action_attempt",
@@ -2506,7 +5430,9 @@ describe("authority daemon integration", () => {
     }>(harness, "query_approval_inbox", { run_id: runId }, sessionId);
     expect(inboxBeforeResolution.ok).toBe(true);
     expect(inboxBeforeResolution.result?.counts.pending).toBe(1);
-    expect(inboxBeforeResolution.result?.items[0]?.approval_id).toBe(submitResponse.result?.approval_request?.approval_id);
+    expect(inboxBeforeResolution.result?.items[0]?.approval_id).toBe(
+      submitResponse.result?.approval_request?.approval_id,
+    );
     expect(inboxBeforeResolution.result?.items[0]?.workflow_name).toBe("approval-flow");
     expect(inboxBeforeResolution.result?.items[0]?.status).toBe("pending");
     expect(inboxBeforeResolution.result?.items[0]?.reason_summary).toContain("requires approval");
@@ -2533,12 +5459,7 @@ describe("authority daemon integration", () => {
     const helperBeforeResolution = await sendRequest<{
       answer: string;
       primary_reason?: { code: string; message: string } | null;
-    }>(
-      harness,
-      "query_helper",
-      { run_id: runId, question_type: "why_blocked" },
-      sessionId,
-    );
+    }>(harness, "query_helper", { run_id: runId, question_type: "why_blocked" }, sessionId);
     expect(helperBeforeResolution.ok).toBe(true);
     expect(helperBeforeResolution.result?.answer).toContain("waiting for approval");
     expect(helperBeforeResolution.result?.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
@@ -2570,7 +5491,10 @@ describe("authority daemon integration", () => {
     expect(timelineResponse.ok).toBe(true);
     expect(
       timelineResponse.result?.steps.some(
-        (step) => step.step_type === "action_step" && step.summary.includes("Executed") && step.summary.includes("after approval."),
+        (step) =>
+          step.step_type === "action_step" &&
+          step.summary.includes("Executed") &&
+          step.summary.includes("after approval."),
       ),
     ).toBe(true);
     expect(timelineResponse.result?.steps.some((step) => step.step_type === "approval_step")).toBe(true);
@@ -2639,6 +5563,64 @@ describe("authority daemon integration", () => {
     expect(executeResponse.ok).toBe(true);
     expect(executeResponse.result?.restored).toBe(true);
     expect(fs.readFileSync(targetPath, "utf8")).toBe("restore this content");
+  });
+
+  it("selects the correct workspace root when multiple roots share a prefix", async () => {
+    const harness = await createHarness();
+    const alternateWorkspaceRoot = `${harness.workspaceRoot}-alt`;
+    fs.mkdirSync(alternateWorkspaceRoot, { recursive: true });
+
+    const helloResponse = await sendRequest<{ session_id: string }>(harness, "hello", {
+      client_type: "cli",
+      client_version: "0.1.0",
+      requested_api_version: API_VERSION,
+      workspace_roots: [harness.workspaceRoot, alternateWorkspaceRoot],
+    });
+    expect(helloResponse.ok).toBe(true);
+    const sessionId = helloResponse.result?.session_id as string;
+
+    const registerResponse = await sendRequest<{ run_id: string }>(
+      harness,
+      "register_run",
+      {
+        workflow_name: "workspace-root-prefix-selection",
+        agent_framework: "cli",
+        agent_name: "agentgit-cli",
+        workspace_roots: [harness.workspaceRoot, alternateWorkspaceRoot],
+        client_metadata: {
+          source: "integration-test",
+        },
+      },
+      sessionId,
+    );
+    expect(registerResponse.ok).toBe(true);
+    const runId = registerResponse.result?.run_id as string;
+
+    const targetPath = path.join(alternateWorkspaceRoot, "prefix-root-target.txt");
+    fs.writeFileSync(targetPath, "content before delete", "utf8");
+
+    const submitResponse = await sendRequest<{
+      snapshot_record: { snapshot_id: string } | null;
+      execution_result: { mode: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemDeleteAttempt(runId, alternateWorkspaceRoot, targetPath),
+      },
+      sessionId,
+    );
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.execution_result?.mode).toBe("executed");
+    expect(submitResponse.result?.snapshot_record?.snapshot_id).toBeTruthy();
+
+    const snapshotId = submitResponse.result?.snapshot_record?.snapshot_id as string;
+    const snapshotEngine = new LocalSnapshotEngine({
+      rootDir: harness.snapshotRootPath,
+    });
+    const snapshotManifest = await snapshotEngine.getSnapshotManifest(snapshotId);
+    expect(snapshotManifest?.workspace_root).toBe(alternateWorkspaceRoot);
+    expect(snapshotManifest?.target_path).toBe(targetPath);
   });
 
   it("degrades snapshot recovery to manual review when cached capability state is stale", async () => {
@@ -2812,12 +5794,7 @@ describe("authority daemon integration", () => {
         strategy: string;
         target: { type: string; external_object_id?: string };
       };
-    }>(
-      harness,
-      "plan_recovery",
-      { target: { type: "external_object", external_object_id: draftId } },
-      sessionId,
-    );
+    }>(harness, "plan_recovery", { target: { type: "external_object", external_object_id: draftId } }, sessionId);
 
     expect(planResponse.ok).toBe(true);
     expect(planResponse.result?.recovery_plan.recovery_class).toBe("compensatable");
@@ -2831,12 +5808,7 @@ describe("authority daemon integration", () => {
       recovery_plan: {
         target: { type: string; external_object_id?: string };
       };
-    }>(
-      harness,
-      "execute_recovery",
-      { target: { type: "external_object", external_object_id: draftId } },
-      sessionId,
-    );
+    }>(harness, "execute_recovery", { target: { type: "external_object", external_object_id: draftId } }, sessionId);
 
     expect(executeResponse.ok).toBe(true);
     expect(executeResponse.result?.restored).toBe(false);
@@ -2882,12 +5854,7 @@ describe("authority daemon integration", () => {
         strategy: string;
         target: { type: string; run_checkpoint?: string };
       };
-    }>(
-      harness,
-      "plan_recovery",
-      { target: { type: "run_checkpoint", run_checkpoint: runCheckpoint } },
-      sessionId,
-    );
+    }>(harness, "plan_recovery", { target: { type: "run_checkpoint", run_checkpoint: runCheckpoint } }, sessionId);
 
     expect(planResponse.ok).toBe(true);
     expect(planResponse.result?.recovery_plan.recovery_class).toBe("reversible");
@@ -2898,12 +5865,7 @@ describe("authority daemon integration", () => {
     const executeResponse = await sendRequest<{
       restored: boolean;
       recovery_plan: { target: { type: string; run_checkpoint?: string } };
-    }>(
-      harness,
-      "execute_recovery",
-      { target: { type: "run_checkpoint", run_checkpoint: runCheckpoint } },
-      sessionId,
-    );
+    }>(harness, "execute_recovery", { target: { type: "run_checkpoint", run_checkpoint: runCheckpoint } }, sessionId);
     expect(executeResponse.ok).toBe(true);
     expect(executeResponse.result?.restored).toBe(true);
     expect(executeResponse.result?.recovery_plan.target.type).toBe("run_checkpoint");
@@ -3213,11 +6175,9 @@ describe("authority daemon integration", () => {
 
     const harness = await createHarness(tempRoot);
 
-    const response = await sendRequest<unknown>(
-      harness,
-      "plan_recovery",
-      { target: { type: "external_object", external_object_id: "shared_1" } },
-    );
+    const response = await sendRequest<unknown>(harness, "plan_recovery", {
+      target: { type: "external_object", external_object_id: "shared_1" },
+    });
     expect(response.ok).toBe(false);
     expect(response.error?.code).toBe("PRECONDITION_FAILED");
   });
@@ -3706,7 +6666,9 @@ describe("authority daemon integration", () => {
     }>(harness, "query_helper", { run_id: "run_imported", question_type: "run_summary" });
     expect(summaryResponse.ok).toBe(true);
     expect(summaryResponse.result?.answer).toContain("analysis step(s)");
-    expect(summaryResponse.result?.answer).toContain("Trust summary: 1 non-governed step(s) were recorded (1 imported).");
+    expect(summaryResponse.result?.answer).toContain(
+      "Trust summary: 1 non-governed step(s) were recorded (1 imported).",
+    );
     expect(summaryResponse.result?.uncertainty[0]).toContain("not governed pre-execution");
   });
 
@@ -3780,8 +6742,16 @@ describe("authority daemon integration", () => {
     }>(harness, "query_timeline", { run_id: "run_visibility", visibility_scope: "internal" });
     expect(internalTimeline.ok).toBe(true);
     expect(internalTimeline.result?.redactions_applied).toBe(1);
-    expect(internalTimeline.result?.steps[2]?.artifact_previews.some((preview) => preview.preview.includes("Bearer secret-token"))).toBe(true);
-    expect(internalTimeline.result?.steps[2]?.artifact_previews.some((preview) => preview.preview.includes("token=super-secret"))).toBe(false);
+    expect(
+      internalTimeline.result?.steps[2]?.artifact_previews.some((preview) =>
+        preview.preview.includes("Bearer secret-token"),
+      ),
+    ).toBe(true);
+    expect(
+      internalTimeline.result?.steps[2]?.artifact_previews.some((preview) =>
+        preview.preview.includes("token=super-secret"),
+      ),
+    ).toBe(false);
 
     const sensitiveTimeline = await sendRequest<{
       visibility_scope: string;
@@ -3790,7 +6760,11 @@ describe("authority daemon integration", () => {
     }>(harness, "query_timeline", { run_id: "run_visibility", visibility_scope: "sensitive_internal" });
     expect(sensitiveTimeline.ok).toBe(true);
     expect(sensitiveTimeline.result?.redactions_applied).toBe(0);
-    expect(sensitiveTimeline.result?.steps[2]?.artifact_previews.some((preview) => preview.preview.includes("token=super-secret"))).toBe(true);
+    expect(
+      sensitiveTimeline.result?.steps[2]?.artifact_previews.some((preview) =>
+        preview.preview.includes("token=super-secret"),
+      ),
+    ).toBe(true);
 
     const helperResponse = await sendRequest<{
       answer: string;
@@ -3806,7 +6780,9 @@ describe("authority daemon integration", () => {
     expect(helperResponse.result?.visibility_scope).toBe("user");
     expect(helperResponse.result?.redactions_applied).toBe(2);
     expect(helperResponse.result?.answer).not.toContain("secret-token");
-    expect(helperResponse.result?.uncertainty.some((entry) => entry.includes("redacted for user visibility"))).toBe(true);
+    expect(helperResponse.result?.uncertainty.some((entry) => entry.includes("redacted for user visibility"))).toBe(
+      true,
+    );
   });
 
   it("reports preview-budget truncation and omission when inline artifact previews would flood timeline responses", async () => {
@@ -3850,7 +6826,9 @@ describe("authority daemon integration", () => {
     expect(timelineResponse.result?.preview_budget.truncated_previews).toBeGreaterThan(0);
     expect(timelineResponse.result?.preview_budget.omitted_previews).toBeGreaterThan(0);
     expect(timelineResponse.result?.steps[timelineResponse.result.steps.length - 1]?.artifact_previews).toHaveLength(0);
-    const retrievableArtifactId = timelineResponse.result?.steps[timelineResponse.result.steps.length - 1]?.primary_artifacts.find(
+    const retrievableArtifactId = timelineResponse.result?.steps[
+      timelineResponse.result.steps.length - 1
+    ]?.primary_artifacts.find(
       (artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string",
     )?.artifact_id;
     expect(typeof retrievableArtifactId).toBe("string");
@@ -3873,11 +6851,18 @@ describe("authority daemon integration", () => {
         truncated_previews: number;
         omitted_previews: number;
       };
-    }>(harness, "query_helper", {
-      run_id: runId,
-      question_type: "step_details",
-      focus_step_id: timelineResponse.result?.steps.find((step) => step.primary_artifacts.some((artifact) => artifact.type === "file_content"))?.step_id,
-    }, sessionId);
+    }>(
+      harness,
+      "query_helper",
+      {
+        run_id: runId,
+        question_type: "step_details",
+        focus_step_id: timelineResponse.result?.steps.find((step) =>
+          step.primary_artifacts.some((artifact) => artifact.type === "file_content"),
+        )?.step_id,
+      },
+      sessionId,
+    );
     expect(helperResponse.ok).toBe(true);
     expect(helperResponse.result?.preview_budget.preview_chars_used).toBe(1200);
     expect(helperResponse.result?.uncertainty.some((entry) => entry.includes("response preview budget"))).toBe(true);
@@ -3927,9 +6912,14 @@ describe("authority daemon integration", () => {
       .find((artifact) => artifact.type === "stdout" && typeof artifact.artifact_id === "string")?.artifact_id;
     expect(typeof stdoutArtifactId).toBe("string");
 
-    const deniedResponse = await sendRequest(harness, "query_artifact", {
-      artifact_id: stdoutArtifactId,
-    }, sessionId);
+    const deniedResponse = await sendRequest(
+      harness,
+      "query_artifact",
+      {
+        artifact_id: stdoutArtifactId,
+      },
+      sessionId,
+    );
     expect(deniedResponse.ok).toBe(false);
     expect(deniedResponse.error?.code).toBe("NOT_FOUND");
 
@@ -3946,10 +6936,15 @@ describe("authority daemon integration", () => {
       content_truncated: boolean;
       returned_chars: number;
       max_inline_chars: number;
-    }>(harness, "query_artifact", {
-      artifact_id: stdoutArtifactId,
-      visibility_scope: "internal",
-    }, sessionId);
+    }>(
+      harness,
+      "query_artifact",
+      {
+        artifact_id: stdoutArtifactId,
+        visibility_scope: "internal",
+      },
+      sessionId,
+    );
     expect(allowedResponse.ok).toBe(true);
     expect(allowedResponse.result?.visibility_scope).toBe("internal");
     expect(allowedResponse.result?.artifact.integrity.schema_version).toBe("artifact-integrity.v1");
@@ -4018,7 +7013,9 @@ describe("authority daemon integration", () => {
     const executionStep = timelineResponse.result?.steps.find((step) => step.step_type === "action_step");
     expect(executionStep?.summary).toContain("Supporting evidence capture was degraded");
     expect(
-      executionStep?.warnings?.some((warning) => warning.includes("could not be stored because local storage was unavailable")),
+      executionStep?.warnings?.some((warning) =>
+        warning.includes("could not be stored because local storage was unavailable"),
+      ),
     ).toBe(true);
 
     const summaryResponse = await sendRequest<{
@@ -4066,20 +7063,31 @@ describe("authority daemon integration", () => {
         projection_status: string;
         lag_events: number;
       } | null;
-    }>(harness, "diagnostics", { sections: ["daemon_health", "journal_health", "maintenance_backlog", "storage_summary", "projection_lag"] }, sessionId);
+    }>(
+      harness,
+      "diagnostics",
+      { sections: ["daemon_health", "journal_health", "maintenance_backlog", "storage_summary", "projection_lag"] },
+      sessionId,
+    );
     expect(diagnosticsResponse.ok).toBe(true);
     expect(diagnosticsResponse.result?.daemon_health?.status).toBe("degraded");
     expect(diagnosticsResponse.result?.journal_health?.status).toBe("degraded");
     expect(diagnosticsResponse.result?.maintenance_backlog?.pending_critical_jobs).toBe(0);
     expect(diagnosticsResponse.result?.maintenance_backlog?.pending_maintenance_jobs).toBe(0);
-    expect(diagnosticsResponse.result?.maintenance_backlog?.warnings[0]).toContain("Storage pressure has been observed");
+    expect(diagnosticsResponse.result?.maintenance_backlog?.warnings[0]).toContain(
+      "Storage pressure has been observed",
+    );
     expect(diagnosticsResponse.result?.daemon_health?.primary_reason?.code).toBe("DEGRADED_ARTIFACT_CAPTURE");
     expect(diagnosticsResponse.result?.journal_health?.primary_reason?.code).toBe("DEGRADED_ARTIFACT_CAPTURE");
     expect(diagnosticsResponse.result?.maintenance_backlog?.primary_reason?.code).toBe("LOW_DISK_PRESSURE_OBSERVED");
     expect(diagnosticsResponse.result?.storage_summary?.degraded_artifact_capture_actions).toBe(1);
     expect(diagnosticsResponse.result?.storage_summary?.low_disk_pressure_signals).toBe(1);
     expect(diagnosticsResponse.result?.storage_summary?.primary_reason?.code).toBe("DEGRADED_ARTIFACT_CAPTURE");
-    expect(diagnosticsResponse.result?.storage_summary?.warnings.some((warning) => warning.includes("degraded durable evidence capture"))).toBe(true);
+    expect(
+      diagnosticsResponse.result?.storage_summary?.warnings.some((warning) =>
+        warning.includes("degraded durable evidence capture"),
+      ),
+    ).toBe(true);
     expect(diagnosticsResponse.result?.projection_lag?.projection_status).toBe("fresh");
     expect(diagnosticsResponse.result?.projection_lag?.lag_events).toBe(0);
   });
@@ -4239,7 +7247,9 @@ describe("authority daemon integration", () => {
     expect(firstMaintenance.ok).toBe(true);
     expect(firstMaintenance.result?.jobs[0]?.job_type).toBe("startup_reconcile_recoveries");
     expect(firstMaintenance.result?.jobs[0]?.status).toBe("completed");
-    expect((firstMaintenance.result?.jobs[0]?.stats as { reconciled_actions?: number } | undefined)?.reconciled_actions).toBe(0);
+    expect(
+      (firstMaintenance.result?.jobs[0]?.stats as { reconciled_actions?: number } | undefined)?.reconciled_actions,
+    ).toBe(0);
 
     await restartHarness(harness);
 
@@ -4267,13 +7277,18 @@ describe("authority daemon integration", () => {
       restartSessionId,
     );
     expect(replayMaintenance.ok).toBe(true);
-    expect((replayMaintenance.result?.jobs[0]?.stats as { reconciled_actions?: number } | undefined)?.reconciled_actions).toBe(0);
+    expect(
+      (replayMaintenance.result?.jobs[0]?.stats as { reconciled_actions?: number } | undefined)?.reconciled_actions,
+    ).toBe(0);
 
     const reopenedJournal = createRunJournal({ dbPath: journalPath });
     try {
       const unknownEvents = reopenedJournal
         .listRunEvents("run_seeded_reconcile")
-        .filter((event) => event.event_type === "execution.outcome_unknown" && event.payload?.action_id === "act_seeded_reconcile");
+        .filter(
+          (event) =>
+            event.event_type === "execution.outcome_unknown" && event.payload?.action_id === "act_seeded_reconcile",
+        );
       expect(unknownEvents).toHaveLength(1);
     } finally {
       reopenedJournal.close();
@@ -4313,7 +7328,10 @@ describe("authority daemon integration", () => {
       .find((artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string")?.artifact_id;
     expect(typeof artifactId).toBe("string");
 
-    const referencedDigest = crypto.createHash("sha256").update(artifactId as string).digest("hex");
+    const referencedDigest = crypto
+      .createHash("sha256")
+      .update(artifactId as string)
+      .digest("hex");
     const referencedPath = path.join(
       harness.tempRoot,
       "artifacts",
@@ -4580,10 +7598,10 @@ describe("authority daemon integration", () => {
         performed_inline: true,
       }),
     ]);
-    expect(maintenanceResponse.result?.jobs[0]?.summary).toContain("Refreshed 6 capability record");
+    expect(maintenanceResponse.result?.jobs[0]?.summary).toContain("Refreshed 8 capability record");
     expect(maintenanceResponse.result?.jobs[0]?.stats).toEqual(
       expect.objectContaining({
-        capability_count: 6,
+        capability_count: 8,
         degraded_capabilities: 0,
         unavailable_capabilities: 1,
         workspace_root: harness.workspaceRoot,
@@ -4612,7 +7630,28 @@ describe("authority daemon integration", () => {
         workspace_root: string | null;
         primary_reason?: { code: string; message: string } | null;
       } | null;
-    }>(harness, "diagnostics", { sections: ["daemon_health", "maintenance_backlog", "capability_summary"] }, sessionId);
+      security_posture: {
+        status: string;
+        secret_storage: {
+          mode: string;
+          durable: boolean;
+          secret_expiry_enforced: boolean;
+        };
+        stdio_sandbox: {
+          protected_server_count: number;
+          registered_server_count: number;
+        };
+        streamable_http: {
+          shared_sqlite_leases: boolean;
+          lease_heartbeat_renewal: boolean;
+        };
+      } | null;
+    }>(
+      harness,
+      "diagnostics",
+      { sections: ["daemon_health", "maintenance_backlog", "capability_summary", "security_posture"] },
+      sessionId,
+    );
     expect(diagnosticsResponse.ok).toBe(true);
     expect(diagnosticsResponse.result?.daemon_health?.status).toBe("degraded");
     expect(diagnosticsResponse.result?.daemon_health?.primary_reason?.code).toBe("BROKERED_CAPABILITY_UNAVAILABLE");
@@ -4631,11 +7670,13 @@ describe("authority daemon integration", () => {
         warning.includes("has not been refreshed durably yet"),
       ),
     ).toBe(false);
-    expect(diagnosticsResponse.result?.maintenance_backlog?.primary_reason?.code).toBe("BROKERED_CAPABILITY_UNAVAILABLE");
+    expect(diagnosticsResponse.result?.maintenance_backlog?.primary_reason?.code).toBe(
+      "BROKERED_CAPABILITY_UNAVAILABLE",
+    );
     expect(diagnosticsResponse.result?.capability_summary).toEqual(
       expect.objectContaining({
         cached: true,
-        capability_count: 6,
+        capability_count: 8,
         degraded_capabilities: 0,
         unavailable_capabilities: 1,
         stale_after_ms: 300000,
@@ -4643,6 +7684,24 @@ describe("authority daemon integration", () => {
         workspace_root: harness.workspaceRoot,
         primary_reason: expect.objectContaining({
           code: "BROKERED_CAPABILITY_UNAVAILABLE",
+        }),
+      }),
+    );
+    expect(diagnosticsResponse.result?.security_posture).toEqual(
+      expect.objectContaining({
+        status: "healthy",
+        secret_storage: expect.objectContaining({
+          mode: "local_encrypted_store",
+          durable: true,
+          secret_expiry_enforced: true,
+        }),
+        stdio_sandbox: expect.objectContaining({
+          protected_server_count: 0,
+          registered_server_count: 0,
+        }),
+        streamable_http: expect.objectContaining({
+          shared_sqlite_leases: true,
+          lease_heartbeat_renewal: true,
         }),
       }),
     );
@@ -4710,6 +7769,25 @@ describe("authority daemon integration", () => {
             is_directory: true,
             readable: true,
             writable: true,
+          }),
+        }),
+        expect.objectContaining({
+          capability_name: "adapter.mcp_stdio_sandbox",
+          status: "available",
+          scope: "adapter",
+          details: expect.objectContaining({
+            protected_execution_required: true,
+          }),
+        }),
+        expect.objectContaining({
+          capability_name: "adapter.mcp_streamable_http",
+          status: "available",
+          scope: "adapter",
+          details: expect.objectContaining({
+            connect_time_dns_scope_validation: true,
+            redirect_chain_revalidation: true,
+            shared_sqlite_leases: true,
+            lease_heartbeat_renewal: true,
           }),
         }),
       ]),
@@ -4809,7 +7887,7 @@ describe("authority daemon integration", () => {
     expect(maintenanceResponse.result?.jobs[0]?.status).toBe("completed");
     expect(maintenanceResponse.result?.jobs[0]?.stats).toEqual(
       expect.objectContaining({
-        capability_count: 6,
+        capability_count: 8,
         degraded_capabilities: 0,
         unavailable_capabilities: 1,
         workspace_root: missingWorkspaceRoot,
@@ -5029,6 +8107,79 @@ describe("authority daemon integration", () => {
     expect(fs.existsSync(targetPath)).toBe(false);
   });
 
+  it("captures a snapshot before executing an approval-gated delete after capability drift", async () => {
+    const harness = await createHarness(undefined, null, 0);
+    const { sessionId, runId } = await createSessionAndRun(harness, "filesystem-delete-capability-stale");
+    const targetPath = path.join(harness.workspaceRoot, "delete-after-approval.txt");
+    fs.writeFileSync(targetPath, "delete me", "utf8");
+
+    const maintenanceResponse = await sendRequest<{
+      jobs: Array<{
+        job_type: string;
+        status: string;
+      }>;
+    }>(
+      harness,
+      "run_maintenance",
+      {
+        job_types: ["capability_refresh"],
+        scope: {
+          workspace_root: harness.workspaceRoot,
+        },
+      },
+      sessionId,
+    );
+    expect(maintenanceResponse.ok).toBe(true);
+    expect(maintenanceResponse.result?.jobs[0]?.job_type).toBe("capability_refresh");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const submitResponse = await sendRequest<{
+      policy_outcome?: {
+        decision: string;
+        reasons: Array<{ code: string }>;
+        preconditions: { snapshot_required: boolean; approval_required: boolean };
+      };
+      approval_request?: { approval_id: string; status: string } | null;
+      snapshot_record?: unknown;
+      execution_result?: unknown;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemDeleteAttempt(runId, harness.workspaceRoot, targetPath),
+      },
+      sessionId,
+    );
+
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.policy_outcome?.decision).toBe("ask");
+    expect(submitResponse.result?.policy_outcome?.reasons[0]?.code).toBe("CAPABILITY_STATE_STALE");
+    expect(submitResponse.result?.policy_outcome?.preconditions.approval_required).toBe(true);
+    expect(submitResponse.result?.policy_outcome?.preconditions.snapshot_required).toBe(true);
+    expect(submitResponse.result?.approval_request?.status).toBe("pending");
+    expect(submitResponse.result?.execution_result).toBeNull();
+    expect(submitResponse.result?.snapshot_record).toBeNull();
+    expect(fs.existsSync(targetPath)).toBe(true);
+
+    const resolveResponse = await sendRequest<{
+      execution_result: { mode: string } | null;
+      snapshot_record: { snapshot_id: string } | null;
+    }>(
+      harness,
+      "resolve_approval",
+      {
+        approval_id: submitResponse.result?.approval_request?.approval_id as string,
+        resolution: "approved",
+        note: "stale capability override",
+      },
+      sessionId,
+    );
+    expect(resolveResponse.ok).toBe(true);
+    expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
+    expect(resolveResponse.result?.snapshot_record?.snapshot_id).toBeTruthy();
+    expect(fs.existsSync(targetPath)).toBe(false);
+  });
+
   it("requires approval for governed filesystem writes when cached workspace access is unavailable", async () => {
     const harness = await createHarness();
     const missingWorkspaceRoot = path.join(harness.tempRoot, "missing-governed-workspace");
@@ -5196,7 +8347,7 @@ describe("authority daemon integration", () => {
       }),
     ]);
     expect(maintenanceResponse.result?.jobs[0]?.stats?.runs_considered).toBe(1);
-    expect((maintenanceResponse.result?.jobs[0]?.stats?.helper_answers_cached ?? 0)).toBeGreaterThan(0);
+    expect(maintenanceResponse.result?.jobs[0]?.stats?.helper_answers_cached ?? 0).toBeGreaterThan(0);
 
     const journal = trackStore(createRunJournal({ dbPath: harness.journalPath }));
     const runSummary = journal.getRunSummary(runId);
@@ -5236,7 +8387,10 @@ describe("authority daemon integration", () => {
     expect(cachedHelper.ok).toBe(true);
     expect(cachedHelper.result?.answer).toBe("cache-hit proof");
 
-    const digest = crypto.createHash("sha256").update(artifactId as string).digest("hex");
+    const digest = crypto
+      .createHash("sha256")
+      .update(artifactId as string)
+      .digest("hex");
     const artifactPath = path.join(
       harness.tempRoot,
       "artifacts",
@@ -5301,7 +8455,9 @@ describe("authority daemon integration", () => {
     expect(initialTimeline.ok).toBe(true);
 
     const artifactStep = initialTimeline.result?.steps.find((step) =>
-      step.primary_artifacts.some((artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string"),
+      step.primary_artifacts.some(
+        (artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string",
+      ),
     );
     expect(artifactStep).toBeDefined();
 
@@ -5310,7 +8466,10 @@ describe("authority daemon integration", () => {
     )?.artifact_id;
     expect(typeof artifactId).toBe("string");
 
-    const digest = crypto.createHash("sha256").update(artifactId as string).digest("hex");
+    const digest = crypto
+      .createHash("sha256")
+      .update(artifactId as string)
+      .digest("hex");
     const artifactPath = path.join(
       harness.tempRoot,
       "artifacts",
@@ -5395,11 +8554,15 @@ describe("authority daemon integration", () => {
     expect(timelineResponse.ok).toBe(true);
 
     const artifactStep = timelineResponse.result?.steps.find((step) =>
-      step.primary_artifacts.some((artifact) => artifact.type === "file_content" && artifact.artifact_status === "expired"),
+      step.primary_artifacts.some(
+        (artifact) => artifact.type === "file_content" && artifact.artifact_status === "expired",
+      ),
     );
     expect(artifactStep).toBeDefined();
     expect(
-      artifactStep?.warnings?.some((warning) => warning.includes("retention policy") && warning.includes("no longer available")),
+      artifactStep?.warnings?.some(
+        (warning) => warning.includes("retention policy") && warning.includes("no longer available"),
+      ),
     ).toBe(true);
 
     const artifactId = artifactStep?.primary_artifacts.find(
@@ -5467,7 +8630,9 @@ describe("authority daemon integration", () => {
     expect(initialTimeline.ok).toBe(true);
 
     const artifactStep = initialTimeline.result?.steps.find((step) =>
-      step.primary_artifacts.some((artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string"),
+      step.primary_artifacts.some(
+        (artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string",
+      ),
     );
     expect(artifactStep).toBeDefined();
 
@@ -5476,7 +8641,10 @@ describe("authority daemon integration", () => {
     )?.artifact_id;
     expect(typeof artifactId).toBe("string");
 
-    const digest = crypto.createHash("sha256").update(artifactId as string).digest("hex");
+    const digest = crypto
+      .createHash("sha256")
+      .update(artifactId as string)
+      .digest("hex");
     const artifactPath = path.join(
       harness.tempRoot,
       "artifacts",
@@ -5527,9 +8695,7 @@ describe("authority daemon integration", () => {
       sessionId,
     );
     expect(helperResponse.ok).toBe(true);
-    expect(
-      helperResponse.result?.uncertainty.some((entry) => entry.includes("became corrupted")),
-    ).toBe(true);
+    expect(helperResponse.result?.uncertainty.some((entry) => entry.includes("became corrupted"))).toBe(true);
   });
 
   it("surfaces readable digest-mismatched artifacts as tampered instead of available", async () => {
@@ -5559,7 +8725,9 @@ describe("authority daemon integration", () => {
     expect(initialTimeline.ok).toBe(true);
 
     const artifactStep = initialTimeline.result?.steps.find((step) =>
-      step.primary_artifacts.some((artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string"),
+      step.primary_artifacts.some(
+        (artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string",
+      ),
     );
     expect(artifactStep).toBeDefined();
 
@@ -5568,7 +8736,10 @@ describe("authority daemon integration", () => {
     )?.artifact_id;
     expect(typeof artifactId).toBe("string");
 
-    const digest = crypto.createHash("sha256").update(artifactId as string).digest("hex");
+    const digest = crypto
+      .createHash("sha256")
+      .update(artifactId as string)
+      .digest("hex");
     const artifactPath = path.join(
       harness.tempRoot,
       "artifacts",
@@ -5629,9 +8800,9 @@ describe("authority daemon integration", () => {
       digest_algorithm: "sha256",
       digest: crypto.createHash("sha256").update("original!", "utf8").digest("hex"),
     });
-    expect(
-      degradedStep?.warnings?.some((warning) => warning.includes("failed content integrity verification")),
-    ).toBe(true);
+    expect(degradedStep?.warnings?.some((warning) => warning.includes("failed content integrity verification"))).toBe(
+      true,
+    );
 
     const helperResponse = await sendRequest<{
       uncertainty: string[];
@@ -5646,9 +8817,9 @@ describe("authority daemon integration", () => {
       sessionId,
     );
     expect(helperResponse.ok).toBe(true);
-    expect(
-      helperResponse.result?.uncertainty.some((entry) => entry.includes("failed integrity verification")),
-    ).toBe(true);
+    expect(helperResponse.result?.uncertainty.some((entry) => entry.includes("failed integrity verification"))).toBe(
+      true,
+    );
   });
 
   it("plans approved shell snapshots as manual review boundaries", async () => {
@@ -5659,7 +8830,7 @@ describe("authority daemon integration", () => {
     fs.writeFileSync(sourcePath, "hello", "utf8");
 
     const submitResponse = await sendRequest<{
-      snapshot_record: { snapshot_id: string } | null;
+      snapshot_record: { snapshot_id: string; snapshot_class: string } | null;
       execution_result: { mode: string } | null;
     }>(
       harness,
@@ -5672,9 +8843,41 @@ describe("authority daemon integration", () => {
 
     expect(submitResponse.ok).toBe(true);
     expect(submitResponse.result?.execution_result?.mode).toBe("executed");
+    expect(submitResponse.result?.snapshot_record?.snapshot_class).toBe("journal_plus_anchor");
     expect(fs.existsSync(sourcePath)).toBe(false);
     expect(fs.existsSync(destinationPath)).toBe(true);
     const snapshotId = submitResponse.result?.snapshot_record?.snapshot_id as string;
+
+    const journal = createRunJournal({ dbPath: harness.journalPath });
+    try {
+      const events = journal.listRunEvents(runId);
+      const policyEvent = events.find(
+        (event) =>
+          event.event_type === "policy.evaluated" && (event.payload as Record<string, unknown> | undefined)?.action_id,
+      );
+      const snapshotEvent = events.find(
+        (event) =>
+          event.event_type === "snapshot.created" &&
+          (event.payload as Record<string, unknown> | undefined)?.snapshot_id === snapshotId,
+      );
+      expect((policyEvent?.payload as Record<string, unknown> | undefined)?.snapshot_selection).toEqual(
+        expect.objectContaining({
+          snapshot_class: "journal_plus_anchor",
+          reason_codes: expect.arrayContaining(["snapshot.shell_mutation_boundary"]),
+        }),
+      );
+      expect(snapshotEvent?.payload).toEqual(
+        expect.objectContaining({
+          snapshot_class: "journal_plus_anchor",
+          selection_reason_codes: expect.arrayContaining(["snapshot.shell_mutation_boundary"]),
+          selection_basis: expect.objectContaining({
+            operation_family: "shell/filesystem_primitive",
+          }),
+        }),
+      );
+    } finally {
+      journal.close();
+    }
 
     const planResponse = await sendRequest<{
       recovery_plan: { recovery_class: string; strategy: string };
@@ -5698,25 +8901,53 @@ describe("authority daemon integration", () => {
     const { sessionId, runId } = await createSessionAndRun(harness, "draft-compensation");
 
     const submitResponse = await sendRequest<{
-      snapshot_record: { snapshot_id: string } | null;
+      snapshot_record: { snapshot_id: string; snapshot_class: string } | null;
       execution_result: { mode: string; output?: Record<string, unknown> } | null;
     }>(
       harness,
       "submit_action_attempt",
       {
-        attempt: makeDraftCreateAttempt(runId, harness.workspaceRoot, "Launch plan", "Build the first owned compensator."),
+        attempt: makeDraftCreateAttempt(
+          runId,
+          harness.workspaceRoot,
+          "Launch plan",
+          "Build the first owned compensator.",
+        ),
       },
       sessionId,
     );
 
     expect(submitResponse.ok).toBe(true);
     expect(submitResponse.result?.snapshot_record?.snapshot_id).toBeTruthy();
+    expect(submitResponse.result?.snapshot_record?.snapshot_class).toBe("metadata_only");
     expect(submitResponse.result?.execution_result?.mode).toBe("executed");
 
     const snapshotId = submitResponse.result?.snapshot_record?.snapshot_id as string;
     const draftId = submitResponse.result?.execution_result?.output?.external_object_id as string;
     const draftStore = openDraftStore(draftsStatePath(harness.tempRoot));
     expect((await draftStore.getDraft(draftId))?.status).toBe("active");
+
+    const journal = createRunJournal({ dbPath: harness.journalPath });
+    try {
+      const snapshotEvent = journal
+        .listRunEvents(runId)
+        .find(
+          (event) =>
+            event.event_type === "snapshot.created" &&
+            (event.payload as Record<string, unknown> | undefined)?.snapshot_id === snapshotId,
+        );
+      expect(snapshotEvent?.payload).toEqual(
+        expect.objectContaining({
+          snapshot_class: "metadata_only",
+          selection_reason_codes: expect.arrayContaining(["snapshot.non_filesystem_metadata_only"]),
+          selection_basis: expect.objectContaining({
+            operation_family: "function/create_draft",
+          }),
+        }),
+      );
+    } finally {
+      journal.close();
+    }
 
     const planResponse = await sendRequest<{
       recovery_plan: { recovery_class: string; strategy: string };
@@ -7323,13 +10554,7 @@ describe("authority daemon integration", () => {
       harness,
       "submit_action_attempt",
       {
-        attempt: makeDraftUpdateAttempt(
-          runId,
-          harness.workspaceRoot,
-          draftId,
-          "Updated plan",
-          "Updated draft body.",
-        ),
+        attempt: makeDraftUpdateAttempt(runId, harness.workspaceRoot, draftId, "Updated plan", "Updated draft body."),
       },
       sessionId,
     );
@@ -7491,7 +10716,12 @@ describe("authority daemon integration", () => {
       harness,
       "submit_action_attempt",
       {
-        attempt: makeDraftCreateAttempt(runId, harness.workspaceRoot, "Original restore plan", "Original restore body."),
+        attempt: makeDraftCreateAttempt(
+          runId,
+          harness.workspaceRoot,
+          "Original restore plan",
+          "Original restore body.",
+        ),
       },
       sessionId,
     );
@@ -7867,7 +11097,12 @@ describe("authority daemon integration", () => {
       harness,
       "submit_action_attempt",
       {
-        attempt: makeDraftCreateAttempt(runId, harness.workspaceRoot, "Corrupt plan", "Break the store before recovery."),
+        attempt: makeDraftCreateAttempt(
+          runId,
+          harness.workspaceRoot,
+          "Corrupt plan",
+          "Break the store before recovery.",
+        ),
       },
       sessionId,
     );

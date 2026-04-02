@@ -51,11 +51,11 @@ const events: JournalEventRecord[] = [
     event_type: "execution.completed",
     occurred_at: "2026-03-29T12:00:01.300Z",
     recorded_at: "2026-03-29T12:00:01.300Z",
-      payload: {
-        action_id: "act_1",
-        execution_id: "exec_1",
-        mode: "executed",
-      },
+    payload: {
+      action_id: "act_1",
+      execution_id: "exec_1",
+      mode: "executed",
+    },
   },
   {
     sequence: 6,
@@ -301,7 +301,9 @@ describe("timeline-helper", () => {
           artifact_count: 2,
           stored_artifact_count: 1,
           artifact_capture_failed_count: 1,
-          warnings: ["Supporting evidence capture degraded: 1 artifact(s) could not be stored because local storage was unavailable."],
+          warnings: [
+            "Supporting evidence capture degraded: 1 artifact(s) could not be stored because local storage was unavailable.",
+          ],
         },
       },
     ];
@@ -454,7 +456,9 @@ describe("timeline-helper", () => {
 
     expect(steps[0]?.summary).toContain("path subset snap_subset_1 @ src/config.json, README.md");
     expect(steps[0]?.related.recovery_scope_paths).toEqual(["src/config.json", "README.md"]);
-    expect(answer.answer).toContain("Recovery target: path_subset (path subset snap_subset_1 @ src/config.json, README.md).");
+    expect(answer.answer).toContain(
+      "Recovery target: path_subset (path subset snap_subset_1 @ src/config.json, README.md).",
+    );
     expect(answer.answer).toContain("Recovery scope: src/config.json, README.md.");
   });
 
@@ -938,9 +942,7 @@ describe("timeline-helper", () => {
     expect(steps[0]?.status).toBe("failed");
     expect(steps[0]?.summary).toContain("exited with code 3");
     expect(steps[0]?.summary).toContain("stderr: boom");
-    expect(
-      steps[0]?.primary_artifacts.some((artifact: { type: string }) => artifact.type === "stderr"),
-    ).toBe(true);
+    expect(steps[0]?.primary_artifacts.some((artifact: { type: string }) => artifact.type === "stderr")).toBe(true);
   });
 
   it("surfaces unknown execution outcomes as partial action steps", () => {
@@ -1188,9 +1190,13 @@ describe("timeline-helper", () => {
     );
 
     expect(runSummary.answer).toContain("analysis step(s)");
-    expect(runSummary.answer).toContain("Trust summary: 2 non-governed step(s) were recorded (1 imported, 1 observed).");
+    expect(runSummary.answer).toContain(
+      "Trust summary: 2 non-governed step(s) were recorded (1 imported, 1 observed).",
+    );
     expect(runSummary.uncertainty[0]).toContain("not governed pre-execution");
-    expect(summarizeAfter.answer).toContain("Trust summary: 2 non-governed step(s) were recorded (1 imported, 1 observed).");
+    expect(summarizeAfter.answer).toContain(
+      "Trust summary: 2 non-governed step(s) were recorded (1 imported, 1 observed).",
+    );
     expect(summarizeAfter.uncertainty[0]).toContain("later steps were not governed pre-execution");
   });
 
@@ -1310,11 +1316,15 @@ describe("timeline-helper", () => {
     expect(userView.steps[0]?.artifact_previews).toHaveLength(0);
     expect(internalView.redactions_applied).toBe(1);
     expect(
-      internalView.steps[0]?.artifact_previews.some((preview: { preview: string }) => preview.preview.includes("Bearer secret-token")),
+      internalView.steps[0]?.artifact_previews.some((preview: { preview: string }) =>
+        preview.preview.includes("Bearer secret-token"),
+      ),
     ).toBe(true);
     expect(sensitiveView.redactions_applied).toBe(0);
     expect(
-      sensitiveView.steps[0]?.artifact_previews.some((preview: { preview: string }) => preview.preview.includes("token=super-secret")),
+      sensitiveView.steps[0]?.artifact_previews.some((preview: { preview: string }) =>
+        preview.preview.includes("token=super-secret"),
+      ),
     ).toBe(true);
   });
 

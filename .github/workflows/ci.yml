@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run dependency vulnerability scans
+        run: pnpm security:audit
+
+      - name: Run lint checks
+        run: pnpm lint
+
+      - name: Run formatting checks
+        run: pnpm format:check
+
+      - name: Run TypeScript coverage gate
+        run: pnpm test:coverage
+
+      - name: Run Python SDK tests
+        run: pnpm py:test
+
+      - name: Verify installed CLI release smoke path
+        run: pnpm smoke:cli-install
+
+      - name: Verify installed CLI compatibility, upgrade, and rollback paths
+        run: pnpm smoke:cli-compat

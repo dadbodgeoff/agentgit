@@ -18,4 +18,3 @@ declare module "better-sqlite3" {
     close(): void;
   }
 }
-

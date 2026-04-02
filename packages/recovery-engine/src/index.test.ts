@@ -19,7 +19,10 @@ import {
 
 let tempDir: string | null = null;
 
-function makeCapabilityState(workspaceRoot: string, overrides: Partial<CachedCapabilityState> = {}): CachedCapabilityState {
+function makeCapabilityState(
+  workspaceRoot: string,
+  overrides: Partial<CachedCapabilityState> = {},
+): CachedCapabilityState {
   return {
     capabilities: [
       {
@@ -381,6 +384,41 @@ describe("recovery-engine", () => {
     expect(plan.review_guidance?.systems_touched).toContain("shell");
     expect(plan.review_guidance?.manual_steps[0]).toContain("Inspect workspace changes");
     expect(plan.warnings.map((warning) => warning.code)).toContain("NO_TRUSTED_COMPENSATOR");
+    await expect(executeSnapshotRecovery(snapshotEngine, snapshot.snapshot_id)).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+    });
+  });
+
+  it("keeps shell mutation boundaries manual-review only even with a richer snapshot", async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-recovery-"));
+    const snapshotEngine = new LocalSnapshotEngine({
+      rootDir: path.join(tempDir, "snapshots"),
+    });
+    const sourcePath = path.join(tempDir, "source.txt");
+    const destinationPath = path.join(tempDir, "destination.txt");
+
+    fs.writeFileSync(sourcePath, "move me", "utf8");
+    const snapshot = await snapshotEngine.createSnapshot({
+      action: makeShellAction(tempDir),
+      requested_class: "journal_plus_anchor",
+      workspace_root: tempDir,
+    });
+
+    fs.renameSync(sourcePath, destinationPath);
+
+    const plan = await planSnapshotRecovery(snapshotEngine, snapshot.snapshot_id);
+
+    expect(plan.recovery_class).toBe("review_only");
+    expect(plan.strategy).toBe("manual_review_only");
+    expect(plan.downgrade_reason).toEqual(
+      expect.objectContaining({
+        code: "OPAQUE_SHELL_BOUNDARY",
+      }),
+    );
+    expect(plan.review_guidance?.uncertainty).toContain(
+      "The original shell command may have produced broad or partially opaque side effects, so automated restore is not trusted.",
+    );
+
     await expect(executeSnapshotRecovery(snapshotEngine, snapshot.snapshot_id)).rejects.toMatchObject({
       code: "PRECONDITION_FAILED",
     });

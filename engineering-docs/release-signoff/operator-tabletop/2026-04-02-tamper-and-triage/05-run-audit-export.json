@@ -1,0 +1,33 @@
+{
+  "run_id": "run_019d4bf04b057445bf6469d7f4844aa7",
+  "output_dir": "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle",
+  "manifest_version": "agentgit.run-audit-bundle.v2",
+  "visibility_scope": "internal",
+  "files_written": [
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/run-summary.json",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/run-summary.txt",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/timeline.json",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/timeline.txt",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/approvals.json",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/approvals.txt",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/approval-inbox.json",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/approval-inbox.txt",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/diagnostics.json",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/diagnostics.txt",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/artifacts/artifact_stdout_1775095532391.stdout.txt",
+    "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/manifest.json"
+  ],
+  "exported_artifacts": [
+    {
+      "artifact_id": "artifact_stdout_1775095532391",
+      "type": "stdout",
+      "output_path": "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle/artifacts/artifact_stdout_1775095532391.stdout.txt",
+      "relative_path": "artifacts/artifact_stdout_1775095532391.stdout.txt",
+      "bytes_written": 25,
+      "visibility_scope": "internal",
+      "sha256": "b3c24a5188fde0f103d35765571fcfaeadf46ef06584e32c03168a6624d80309",
+      "integrity_digest": "b3c24a5188fde0f103d35765571fcfaeadf46ef06584e32c03168a6624d80309"
+    }
+  ],
+  "skipped_artifacts": []
+}

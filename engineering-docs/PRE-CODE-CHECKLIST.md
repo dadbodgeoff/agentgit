@@ -218,6 +218,187 @@ Important note:
   - `metadata_only`
   - `journal_only`
   - `journal_plus_anchor`
+
+---
+
+## 14. HOSTED MCP AND REMOTE TRUST
+
+### Remote MCP Intake Model
+
+- [x] Remote/public MCP registration ingress: **candidate-first only**
+  Rule:
+  - raw agent-supplied or user-supplied server definitions are stored as non-executable candidates first
+  - no direct promotion from pasted URL to executable governed server
+
+- [x] Candidate provenance model:
+  Required fields:
+  - `source_kind` = `operator_seeded` | `user_input` | `agent_discovered` | `catalog_import`
+  - `submitted_by_session_id` optional
+  - `submitted_by_run_id` optional
+  - `submitted_at`
+  - `raw_endpoint`
+
+- [x] Executable MCP registration source:
+  Rule:
+  - only resolved and approved server profiles may enter the executable registry
+  - candidates remain non-executable even if resolution succeeds
+
+### Remote Trust Tiers
+
+- [x] Trust tier set:
+  - `operator_owned`
+  - `publisher_verified`
+  - `operator_approved_public`
+  - `user_supplied_candidate`
+  - `agent_discovered_candidate`
+
+- [x] Default trust posture:
+  - unresolved candidates: **deny execution**
+  - approved public read-only tools: **allow or ask by policy**
+  - public mutations: **ask unless stronger trust and explicit policy permit**
+  - operator-owned surfaces: **eligible for existing MCP policy behavior**
+
+### Identity, Drift, And Approval
+
+- [x] Remote identity binding requirements:
+  - canonical transport and endpoint normalization
+  - TLS-validated HTTPS for public remote transport
+  - auth issuer/discovery metadata capture when applicable
+  - tool inventory snapshot with schema hashes
+  - durable profile ID separate from raw URL
+
+- [x] Drift handling:
+  Rule:
+  - changes to identity, auth discovery, or tool inventory move the server to `quarantined` until re-approved or policy explicitly allows refresh
+
+- [x] Approval boundary:
+  Rule:
+  - agent-discovered candidates can propose registration
+  - operators or approved users must activate executable profiles
+  - mutation capability may not be auto-enabled from agent discovery alone
+
+### Auth And Credential Rules
+
+---
+
+## 15. POLICY HARDENING AND CALIBRATION
+
+### Default Policy Pack
+
+- [ ] Durable default policy pack source:
+  Rule:
+  - codify the product-default coding-agent policy as versioned config, not only inline code branches
+
+- [ ] Default decision stance:
+  - `allow` for governed read-only operations
+  - `allow_with_snapshot` for recoverable local mutations
+  - `ask` for low-confidence, consent-boundary, or ambiguous operations
+  - `deny` for trust-boundary and secret/config violations
+
+### Layered Policy Configuration
+
+- [ ] Durable policy config format: **TOML v1.0.0**
+
+- [ ] Policy layer precedence:
+  - platform defaults
+  - operator/system policy
+  - workspace policy
+  - workspace local override
+  - runtime/session overrides
+
+- [ ] Monotonic restriction rule:
+  Rule:
+  - lower-precedence layers may not weaken a higher-precedence deny
+
+### Enforcement Modes
+
+- [ ] Durable rule enforcement modes:
+  - `audit`
+  - `warn`
+  - `require_approval`
+  - `enforce`
+  - `disabled`
+
+- [ ] Enforcement-mode behavior:
+  Rule:
+  - enforcement mode is separate from policy decision and may only strengthen runtime behavior, not weaken hard denies
+
+### Snapshot Selection Refinement
+
+- [ ] Snapshot class selection inputs:
+  - policy decision
+  - action family
+  - action scope certainty and breadth
+  - reversibility hint
+  - capability state
+  - storage pressure
+  - journal chain depth
+  - explicit branch/checkpoint request
+
+- [ ] Snapshot class selection outputs:
+  - `metadata_only`
+  - `journal_only`
+  - `journal_plus_anchor`
+  - `exact_anchor`
+
+- [ ] External irreversibility rule:
+  Rule:
+  - local snapshotting must not be presented as sufficient rollback for irreversible external side effects
+
+### Confidence Calibration
+
+- [ ] Confidence telemetry fields:
+  - action family
+  - normalization confidence
+  - matched rule IDs
+  - final decision
+  - approval outcome
+  - selected snapshot class
+  - later recovery invocation
+
+- [ ] Threshold safety rule:
+  Rule:
+  - automated systems may tighten thresholds only toward safer outcomes
+  - threshold relaxation requires explicit human-reviewed config change
+
+### Operator Surfaces
+
+- [ ] Required operator-facing policy tools:
+  - effective policy inspection
+  - policy validation
+  - policy explanation for a decision
+  - policy diff across versions/layers
+  - calibration report export
+
+- [x] Public remote MCP auth baseline:
+  - browser-mediated OAuth 2.1 style flow with PKCE when the server supports it
+  - brokered bearer-token or token-exchange flows where OAuth is not available
+  - direct model-supplied credentials forbidden on governed paths
+
+- [x] Hosted execution credential rule:
+  Rule:
+  - hosted workers receive scoped leases or derived tokens, not durable refresh tokens or general secret-browsing access
+
+### Hosted Execution Model
+
+- [x] Hosted execution posture: **optional delegated execution mode**
+  Rule:
+  - local-first product correctness must not depend on the hosted path
+  - hosted execution is additive for remote/public MCP and team/shared scenarios
+
+- [x] Hosted execution evidence rule:
+  Required outputs:
+  - signed execution attestation
+  - artifact manifest hash
+  - worker image/runtime identity
+  - durable linkage to `run_id`, `action_id`, and target server profile
+
+- [x] Hosted worker isolation baseline:
+  - ephemeral worker filesystem
+  - egress restricted to approved target hosts and required auth endpoints
+  - per-tenant or stricter isolation
+  - short lease TTL
+  - no secret persistence after completion
   - `exact_anchor`
 
 - [x] Unavailable snapshot class behavior:

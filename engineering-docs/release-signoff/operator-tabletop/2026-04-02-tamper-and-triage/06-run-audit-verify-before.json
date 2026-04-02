@@ -1,0 +1,9 @@
+{
+  "run_id": "run_019d4bf04b057445bf6469d7f4844aa7",
+  "output_dir": "/tmp/agentgit-tabletop-pDTulo/workspace/tabletop-audit-bundle",
+  "manifest_version": "agentgit.run-audit-bundle.v2",
+  "verified": true,
+  "files_checked": 12,
+  "exported_artifacts_checked": 1,
+  "issues": []
+}

@@ -5,6 +5,7 @@ Status note:
 - this document is the historical implementation plan
 - for audited current runtime truth, use `/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CURRENT-IMPLEMENTATION-STATE.md`
 - the currently built MCP slice is local operator-owned only; it now includes durable MCP server registry state, durable local encrypted MCP secret storage, and explicit public host policy management, while hosted and arbitrary remote MCP remain future work
+- the public npm release path for `@agentgit/schemas`, `@agentgit/authority-sdk`, and `@agentgit/authority-cli` is now active; `.changeset/` is no longer just a future placeholder
 
 ## Purpose
 

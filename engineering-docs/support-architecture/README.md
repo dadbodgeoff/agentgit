@@ -15,6 +15,8 @@ These documents cover the runtime and operational structure required to make the
 - `06-config-and-policy-surface.md`
 - `07-sync-and-hosted-boundary.md`
 - `08-authority-daemon-api.md`
+- `09-hosted-mcp-and-remote-trust.md`
+- `10-policy-hardening-and-defaults.md`
 
 ## Why These Exist
 

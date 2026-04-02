@@ -1,0 +1,169 @@
+{
+  "action": {
+    "schema_version": "action.v1",
+    "action_id": "act_019d4bf049ba75a2b46093e7e8e9ccee",
+    "run_id": "run_019d4bf0495b7398808c973ed557cdb0",
+    "session_id": "sess_019d4bf049597530854b872cc42f3355",
+    "status": "normalized",
+    "timestamps": {
+      "requested_at": "2026-04-02T02:05:31.958Z",
+      "normalized_at": "2026-04-02T02:05:31.962Z"
+    },
+    "provenance": {
+      "mode": "governed",
+      "source": "authority-sdk-ts",
+      "confidence": 0.99
+    },
+    "actor": {
+      "type": "agent",
+      "agent_name": "agentgit-cli",
+      "agent_framework": "cli",
+      "tool_name": "write_file",
+      "tool_kind": "filesystem"
+    },
+    "operation": {
+      "domain": "filesystem",
+      "kind": "write",
+      "name": "filesystem.write",
+      "display_name": "Write file"
+    },
+    "execution_path": {
+      "surface": "governed_fs",
+      "mode": "pre_execution",
+      "credential_mode": "none"
+    },
+    "target": {
+      "primary": {
+        "type": "path",
+        "locator": "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt",
+        "label": "recovery-drill.txt"
+      },
+      "scope": {
+        "breadth": "single",
+        "estimated_count": 1,
+        "unknowns": []
+      }
+    },
+    "input": {
+      "raw": {
+        "operation": "write",
+        "path": "recovery-drill.txt",
+        "content": "drill-v1"
+      },
+      "redacted": {
+        "operation": "write",
+        "path": "recovery-drill.txt",
+        "content": "drill-v1"
+      },
+      "schema_ref": null,
+      "contains_sensitive_data": false
+    },
+    "risk_hints": {
+      "side_effect_level": "mutating",
+      "external_effects": "none",
+      "reversibility_hint": "reversible",
+      "sensitivity_hint": "low",
+      "batch": false
+    },
+    "facets": {
+      "filesystem": {
+        "operation": "write",
+        "paths": [
+          "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt"
+        ],
+        "path_count": 1,
+        "recursive": false,
+        "overwrite": true,
+        "byte_length": 8
+      }
+    },
+    "normalization": {
+      "mapper": "filesystem/v1",
+      "inferred_fields": [
+        "target.scope",
+        "risk_hints"
+      ],
+      "warnings": [],
+      "normalization_confidence": 0.99
+    }
+  },
+  "policy_outcome": {
+    "schema_version": "policy-outcome.v1",
+    "policy_outcome_id": "pol_019d4bf049bb7236b09f0eece07ef002",
+    "action_id": "act_019d4bf049ba75a2b46093e7e8e9ccee",
+    "decision": "allow",
+    "reasons": [
+      {
+        "code": "TRUSTED_GOVERNED_FS_WRITE",
+        "severity": "low",
+        "message": "Small governed filesystem writes are allowed in safe mode."
+      }
+    ],
+    "trust_requirements": {
+      "wrapped_path_required": true,
+      "brokered_credentials_required": false,
+      "direct_credentials_forbidden": false
+    },
+    "preconditions": {
+      "snapshot_required": false,
+      "approval_required": false,
+      "simulation_supported": false
+    },
+    "approval": null,
+    "budget_effects": {
+      "budget_check": "passed",
+      "estimated_cost": 0,
+      "remaining_mutating_actions": null,
+      "remaining_destructive_actions": null
+    },
+    "policy_context": {
+      "matched_rules": [
+        "filesystem.safe.small_write"
+      ],
+      "sticky_decision_applied": false
+    },
+    "evaluated_at": "2026-04-02T02:05:31.963Z"
+  },
+  "execution_result": {
+    "execution_id": "exec_fs_1775095531965",
+    "action_id": "act_019d4bf049ba75a2b46093e7e8e9ccee",
+    "mode": "executed",
+    "success": true,
+    "output": {
+      "executed": true,
+      "domain": "filesystem",
+      "operation": "write",
+      "target": "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt",
+      "bytes_written": 8,
+      "before_preview": null,
+      "after_preview": "drill-v1",
+      "diff_preview": "+ drill-v1"
+    },
+    "artifacts": [
+      {
+        "artifact_id": "artifact_file_1775095531966",
+        "type": "file_content",
+        "content_ref": "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt",
+        "byte_size": 8,
+        "visibility": "user"
+      },
+      {
+        "artifact_id": "artifact_diff_1775095531966",
+        "type": "diff",
+        "content_ref": "inline://exec_fs_1775095531965/diff",
+        "byte_size": 10,
+        "visibility": "user"
+      }
+    ],
+    "started_at": "2026-04-02T02:05:31.965Z",
+    "completed_at": "2026-04-02T02:05:31.966Z",
+    "artifact_capture": {
+      "requested_count": 2,
+      "stored_count": 2,
+      "degraded": false,
+      "failures": []
+    }
+  },
+  "snapshot_record": null,
+  "approval_request": null
+}

@@ -7,7 +7,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AuthorityClient, AuthorityDaemonResponseError } from "@agentgit/authority-sdk";
 
-import { startServer } from "../../authority-daemon/src/server.js";
+import { startServer } from "../../authority-daemon/src/server.ts";
+import { CLI_EXIT_CODES, CLI_JSON_CONTRACT_VERSION } from "./cli-contract.js";
 import { runCli } from "./main.js";
 
 interface CliHarness {
@@ -25,11 +26,87 @@ const CLI_DIST_ENTRY = path.resolve(CLI_PACKAGE_ROOT, "dist", "main.js");
 const MCP_TEST_SERVER_SCRIPT = decodeURIComponent(
   new URL("../../execution-adapters/src/mcp-test-server.mjs", import.meta.url).pathname,
 );
+const OCI_TEST_IMAGE_ROOT = decodeURIComponent(
+  new URL("../../execution-adapters/src/oci-test-image", import.meta.url).pathname,
+);
 const ORIGINAL_AGENTGIT_ROOT = process.env.AGENTGIT_ROOT;
 const ORIGINAL_INIT_CWD = process.env.INIT_CWD;
+const FALLBACK_TEST_PINNED_OCI_IMAGE =
+  "docker.io/library/node@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const TEST_OCI_BUILD_IMAGE = `agentgit/authority-cli-stdio:${process.pid}`;
 
 function pnpmCommand(): string {
   return process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+}
+
+function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | null {
+  for (const runtime of ["docker", "podman"] as const) {
+    try {
+      execFileSync(runtime, ["info"], {
+        stdio: "ignore",
+      });
+      const inspectOutput = execFileSync(runtime, ["image", "inspect", "node:22-bookworm-slim"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const parsed = JSON.parse(inspectOutput) as Array<{ RepoDigests?: string[] }>;
+      const repoDigest = parsed[0]?.RepoDigests?.find(
+        (digest) => typeof digest === "string" && digest.includes("@sha256:"),
+      );
+      if (repoDigest) {
+        return {
+          runtime,
+          image: repoDigest,
+        };
+      }
+    } catch {
+      // Try the next runtime.
+    }
+  }
+
+  return null;
+}
+
+const TEST_OCI_SANDBOX = detectOciSandbox();
+
+function buildSandboxedStdioServerDefinition(serverId: string): Record<string, unknown> {
+  return {
+    server_id: serverId,
+    transport: "stdio",
+    command: "node",
+    args: ["/agentgit-test/mcp-test-server.mjs"],
+    sandbox: {
+      type: "oci_container",
+      ...(TEST_OCI_SANDBOX ? { runtime: TEST_OCI_SANDBOX.runtime } : { runtime: "docker" }),
+      image: TEST_OCI_SANDBOX ? TEST_OCI_BUILD_IMAGE : FALLBACK_TEST_PINNED_OCI_IMAGE,
+      ...(TEST_OCI_SANDBOX
+        ? {
+            build: {
+              context_path: OCI_TEST_IMAGE_ROOT,
+              dockerfile_path: path.join(OCI_TEST_IMAGE_ROOT, "Dockerfile"),
+              rebuild_policy: "if_missing",
+            },
+          }
+        : {
+            allowed_registries: ["docker.io"],
+            signature_verification: {
+              mode: "cosign_keyless",
+              certificate_identity:
+                "https://github.com/agentgit/agentgit/.github/workflows/release.yml@refs/heads/main",
+              certificate_oidc_issuer: "https://token.actions.githubusercontent.com",
+            },
+          }),
+      workspace_mount_path: "/workspace",
+      workdir: "/workspace",
+      additional_mounts: [
+        {
+          host_path: path.dirname(MCP_TEST_SERVER_SCRIPT),
+          container_path: "/agentgit-test",
+          read_only: true,
+        },
+      ],
+    },
+  };
 }
 
 async function createHarness(): Promise<CliHarness> {
@@ -139,18 +216,28 @@ async function runCliProcess(
   options: {
     workspaceRoot: string;
     socketPath: string;
+    env?: NodeJS.ProcessEnv;
+    useDefaultRuntimeEnv?: boolean;
+    stdinText?: string;
   },
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
+    const runtimeEnv =
+      options.useDefaultRuntimeEnv === false
+        ? {}
+        : {
+            AGENTGIT_ROOT: options.workspaceRoot,
+            INIT_CWD: options.workspaceRoot,
+            AGENTGIT_SOCKET_PATH: options.socketPath,
+          };
     const child = spawn(process.execPath, [CLI_DIST_ENTRY, ...argv], {
       cwd: options.workspaceRoot,
       env: {
         ...process.env,
-        AGENTGIT_ROOT: options.workspaceRoot,
-        INIT_CWD: options.workspaceRoot,
-        AGENTGIT_SOCKET_PATH: options.socketPath,
+        ...runtimeEnv,
+        ...(options.env ?? {}),
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
 
     let stdout = "";
@@ -162,6 +249,12 @@ async function runCliProcess(
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString("utf8");
     });
+    if (typeof options.stdinText === "string") {
+      child.stdin.write(options.stdinText);
+      child.stdin.end();
+    } else {
+      child.stdin.end();
+    }
     child.on("error", reject);
     child.on("close", (code) => {
       resolve({
@@ -174,12 +267,21 @@ async function runCliProcess(
 }
 
 beforeAll(() => {
-  execFileSync(pnpmCommand(), ["build"], {
-    cwd: CLI_PACKAGE_ROOT,
-    stdio: "pipe",
-    env: process.env,
-  });
-});
+  for (const filter of [
+    "@agentgit/schemas",
+    "@agentgit/authority-sdk",
+    "@agentgit/credential-broker",
+    "@agentgit/execution-adapters",
+    "@agentgit/authority-daemon",
+    "@agentgit/authority-cli",
+  ]) {
+    execFileSync(pnpmCommand(), ["--filter", filter, "build"], {
+      cwd: CLI_PACKAGE_ROOT,
+      stdio: "pipe",
+      env: process.env,
+    });
+  }
+}, 120_000);
 
 afterEach(async () => {
   while (harnesses.length > 0) {
@@ -190,6 +292,260 @@ afterEach(async () => {
 });
 
 describe("authority cli MCP integration", () => {
+  it("reports CLI version and contract info through the built CLI binary", async () => {
+    const harness = await createHarness();
+
+    const version = await runCliProcess(["--json", "version"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+
+    expect(version.code).toBe(0);
+    expect(version.stderr).toBe("");
+    const result = JSON.parse(version.stdout) as {
+      cli_version: string;
+      supported_api_version: string;
+      json_contract_version: string;
+      exit_code_registry_version: string;
+      config_schema_version: string;
+    };
+    expect(result.cli_version).toBeTruthy();
+    expect(result.supported_api_version).toBe("authority.v1");
+    expect(result.json_contract_version).toBe(CLI_JSON_CONTRACT_VERSION);
+    expect(result.exit_code_registry_version).toBe("agentgit.cli.exit-codes.v1");
+    expect(result.config_schema_version).toBe("agentgit.cli.config.v1");
+  });
+
+  it("manages CLI profiles and resolves effective config through the built CLI binary", async () => {
+    const harness = await createHarness();
+    const configRoot = path.join(harness.root, "cli-config-root");
+
+    const profileUpsert = await runCliProcess(
+      [
+        "--config-root",
+        configRoot,
+        "profile",
+        "upsert",
+        "ops",
+        "--socket-path",
+        harness.socketPath,
+        "--workspace-root",
+        harness.workspaceRoot,
+        "--connect-timeout-ms",
+        "2500",
+        "--response-timeout-ms",
+        "12000",
+        "--max-connect-retries",
+        "0",
+        "--connect-retry-delay-ms",
+        "5",
+      ],
+      {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+        useDefaultRuntimeEnv: false,
+        env: {
+          AGENTGIT_ROOT: "",
+          INIT_CWD: "",
+          AGENTGIT_SOCKET_PATH: "",
+        },
+      },
+    );
+    expect(profileUpsert.code).toBe(0);
+
+    const profileUse = await runCliProcess(["--config-root", configRoot, "profile", "use", "ops"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(profileUse.code).toBe(0);
+
+    const profileList = await runCliProcess(["--json", "--config-root", configRoot, "profile", "list"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(profileList.code).toBe(0);
+    const profileListResult = JSON.parse(profileList.stdout) as {
+      active_profile: string | null;
+      profiles: Array<{ name: string; active: boolean; source: string }>;
+    };
+    expect(profileListResult.active_profile).toBe("ops");
+    expect(profileListResult.profiles).toContainEqual(
+      expect.objectContaining({
+        name: "ops",
+        active: true,
+        source: "user",
+      }),
+    );
+
+    const configShow = await runCliProcess(["--json", "--config-root", configRoot, "config", "show"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(configShow.code).toBe(0);
+    const configShowResult = JSON.parse(configShow.stdout) as {
+      resolved: {
+        active_profile: string | null;
+        socket_path: { value: string; source: string };
+        workspace_root: { value: string; source: string };
+        connect_timeout_ms: { value: number; source: string };
+        response_timeout_ms: { value: number; source: string };
+        max_connect_retries: { value: number; source: string };
+        connect_retry_delay_ms: { value: number; source: string };
+      };
+    };
+    expect(configShowResult.resolved.active_profile).toBe("ops");
+    expect(configShowResult.resolved.socket_path).toEqual({
+      value: harness.socketPath,
+      source: "user_profile:ops",
+    });
+    expect(configShowResult.resolved.workspace_root).toEqual({
+      value: harness.workspaceRoot,
+      source: "user_profile:ops",
+    });
+    expect(configShowResult.resolved.connect_timeout_ms.value).toBe(2500);
+    expect(configShowResult.resolved.response_timeout_ms.value).toBe(12000);
+    expect(configShowResult.resolved.max_connect_retries.value).toBe(0);
+    expect(configShowResult.resolved.connect_retry_delay_ms.value).toBe(5);
+
+    const ping = await runCliProcess(["--json", "--config-root", configRoot, "ping"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(ping.code).toBe(0);
+    const pingResult = JSON.parse(ping.stdout) as {
+      accepted_api_version: string;
+      runtime_version: string;
+    };
+    expect(pingResult.accepted_api_version).toBe("authority.v1");
+    expect(pingResult.runtime_version).toBeTruthy();
+  });
+
+  it("validates config files and reports doctor checks through the built CLI binary", async () => {
+    const harness = await createHarness();
+    const configRoot = path.join(harness.root, "doctor-config-root");
+
+    const invalidConfigPath = path.join(configRoot, "authority-cli.toml");
+    fs.mkdirSync(configRoot, { recursive: true });
+    fs.writeFileSync(invalidConfigPath, 'schema_version = "agentgit.cli.config.v1"\nactive_profile = [', "utf8");
+
+    const invalidValidation = await runCliProcess(["--json", "--config-root", configRoot, "config", "validate"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(invalidValidation.code).toBe(CLI_EXIT_CODES.CONFIG_ERROR);
+    const invalidValidationResult = JSON.parse(invalidValidation.stdout) as {
+      valid: boolean;
+      issues: string[];
+    };
+    expect(invalidValidationResult.valid).toBe(false);
+    expect(invalidValidationResult.issues.length).toBeGreaterThan(0);
+
+    fs.writeFileSync(
+      invalidConfigPath,
+      [
+        'schema_version = "agentgit.cli.config.v1"',
+        'active_profile = "ops"',
+        "",
+        "[profiles.ops]",
+        `socket_path = "${harness.socketPath}"`,
+        `workspace_root = "${harness.workspaceRoot}"`,
+        "connect_timeout_ms = 1000",
+        "response_timeout_ms = 5000",
+        "max_connect_retries = 0",
+        "connect_retry_delay_ms = 25",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const validValidation = await runCliProcess(["--json", "--config-root", configRoot, "config", "validate"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(validValidation.code).toBe(0);
+    const validValidationResult = JSON.parse(validValidation.stdout) as { valid: boolean; issues: string[] };
+    expect(validValidationResult.valid).toBe(true);
+    expect(validValidationResult.issues).toHaveLength(0);
+
+    const doctor = await runCliProcess(["--json", "--config-root", configRoot, "doctor"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+      useDefaultRuntimeEnv: false,
+      env: {
+        AGENTGIT_ROOT: "",
+        INIT_CWD: "",
+        AGENTGIT_SOCKET_PATH: "",
+      },
+    });
+    expect(doctor.code).toBe(0);
+    const doctorResult = JSON.parse(doctor.stdout) as {
+      daemon: {
+        reachable: boolean;
+        accepted_api_version: string | null;
+      };
+      security_posture_status: "healthy" | "degraded" | "unknown";
+      checks: Array<{ code: string; status: string; summary: string; details?: Record<string, unknown> }>;
+      recommendations: string[];
+    };
+    expect(doctorResult.daemon.reachable).toBe(true);
+    expect(doctorResult.daemon.accepted_api_version).toBe("authority.v1");
+    expect(doctorResult.security_posture_status).toMatch(/^(healthy|degraded)$/);
+    expect(doctorResult.checks.some((check) => check.code === "DAEMON_REACHABLE" && check.status === "pass")).toBe(
+      true,
+    );
+    expect(
+      doctorResult.checks.some(
+        (check) =>
+          check.code === "SECRET_STORAGE_MODE" &&
+          check.status === "pass" &&
+          check.summary.includes("local_encrypted_store"),
+      ),
+    ).toBe(true);
+    if (process.platform === "darwin") {
+      expect(
+        doctorResult.checks.some(
+          (check) => check.code === "SECRET_STORAGE_MODE" && check.details?.key_provider === "macos_keychain",
+        ),
+      ).toBe(true);
+    }
+    expect(doctorResult.recommendations.length).toBeGreaterThan(0);
+  });
+
   it("manages MCP secrets, host policies, and guarded public server registration against a live daemon", async () => {
     const harness = await createHarness();
     const client = new AuthorityClient({
@@ -334,6 +690,10 @@ describe("authority cli MCP integration", () => {
   });
 
   it("submits a governed MCP tool call from the CLI against a live stdio server", async () => {
+    if (!TEST_OCI_SANDBOX) {
+      return;
+    }
+
     const harness = await createHarness();
     const client = new AuthorityClient({
       socketPath: harness.socketPath,
@@ -342,17 +702,18 @@ describe("authority cli MCP integration", () => {
       maxConnectRetries: 0,
     });
 
-    const run = await captureCliJson<{ run_id: string }>(["register-run", "cli-mcp-e2e"], client, harness.workspaceRoot);
+    const run = await captureCliJson<{ run_id: string }>(
+      ["register-run", "cli-mcp-e2e"],
+      client,
+      harness.workspaceRoot,
+    );
 
     await captureCliRun(
       [
         "upsert-mcp-server",
         JSON.stringify({
-          server_id: "notes_stdio",
+          ...buildSandboxedStdioServerDefinition("notes_stdio"),
           display_name: "Notes stdio MCP",
-          transport: "stdio",
-          command: process.execPath,
-          args: [MCP_TEST_SERVER_SCRIPT],
           tools: [
             {
               tool_name: "echo_note",
@@ -414,6 +775,10 @@ describe("authority cli MCP integration", () => {
   });
 
   it("executes the built CLI binary end to end for stdio MCP registration and invocation using JSON files", async () => {
+    if (!TEST_OCI_SANDBOX) {
+      return;
+    }
+
     const harness = await createHarness();
     const serverDefinitionPath = path.join(harness.root, "notes_stdio.json");
     const toolArgumentsPath = path.join(harness.root, "echo_note_args.json");
@@ -421,11 +786,8 @@ describe("authority cli MCP integration", () => {
     fs.writeFileSync(
       serverDefinitionPath,
       JSON.stringify({
-        server_id: "notes_stdio_process",
+        ...buildSandboxedStdioServerDefinition("notes_stdio_process"),
         display_name: "Notes stdio MCP process test",
-        transport: "stdio",
-        command: process.execPath,
-        args: [MCP_TEST_SERVER_SCRIPT],
         tools: [
           {
             tool_name: "echo_note",
@@ -500,8 +862,7 @@ describe("authority cli MCP integration", () => {
     };
     expect(
       listed.servers.some(
-        (record) =>
-          record.server.server_id === "notes_stdio_process" && record.server.transport === "stdio",
+        (record) => record.server.server_id === "notes_stdio_process" && record.server.transport === "stdio",
       ),
     ).toBe(true);
   });
@@ -565,7 +926,7 @@ describe("authority cli MCP integration", () => {
       workspaceRoot: harness.workspaceRoot,
       socketPath: harness.socketPath,
     });
-    expect(rejected.code).toBe(1);
+    expect(rejected.code).toBe(CLI_EXIT_CODES.UNAVAILABLE);
     expect(rejected.stdout).toBe("");
     expect(rejected.stderr).toContain(
       "Governed public HTTPS MCP execution requires an explicit operator-managed host allowlist policy",
@@ -600,6 +961,102 @@ describe("authority cli MCP integration", () => {
     });
     expect(listSecrets.code).toBe(0);
     expect(listSecrets.stdout).not.toContain("top-secret-process-token");
+  });
+
+  it("stores MCP secrets safely from file and stdin through the built CLI binary", async () => {
+    const harness = await createHarness();
+    const tokenPath = path.join(harness.root, "safe-token.txt");
+    fs.writeFileSync(tokenPath, "safe-token-file", "utf8");
+
+    const storedFromFile = await runCliProcess(
+      [
+        "--json",
+        "upsert-mcp-secret",
+        "--secret-id",
+        "safe_secret",
+        "--display-name",
+        "Safe secret",
+        "--expires-at",
+        "2030-01-01T00:00:00.000Z",
+        "--bearer-token-file",
+        tokenPath,
+      ],
+      {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      },
+    );
+    expect(storedFromFile.code).toBe(0);
+    expect(storedFromFile.stderr).toBe("");
+    expect(storedFromFile.stdout).not.toContain("safe-token-file");
+    const storedFileResult = JSON.parse(storedFromFile.stdout) as {
+      secret: {
+        secret_id: string;
+        version: number;
+        expires_at: string | null;
+      };
+      created: boolean;
+    };
+    expect(storedFileResult.secret.secret_id).toBe("safe_secret");
+    expect(storedFileResult.secret.version).toBe(1);
+    expect(storedFileResult.secret.expires_at).toBe("2030-01-01T00:00:00.000Z");
+    expect(storedFileResult.created).toBe(true);
+
+    const rotatedFromStdin = await runCliProcess(
+      [
+        "--json",
+        "upsert-mcp-secret",
+        "--secret-id",
+        "safe_secret",
+        "--display-name",
+        "Safe secret",
+        "--bearer-token-stdin",
+      ],
+      {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+        stdinText: "safe-token-stdin\n",
+      },
+    );
+    expect(rotatedFromStdin.code).toBe(0);
+    expect(rotatedFromStdin.stderr).toBe("");
+    expect(rotatedFromStdin.stdout).not.toContain("safe-token-stdin");
+    const rotatedResult = JSON.parse(rotatedFromStdin.stdout) as {
+      secret: {
+        secret_id: string;
+        version: number;
+        expires_at: string | null;
+      };
+      created: boolean;
+      rotated: boolean;
+    };
+    expect(rotatedResult.secret.secret_id).toBe("safe_secret");
+    expect(rotatedResult.secret.version).toBe(2);
+    expect(rotatedResult.secret.expires_at).toBeNull();
+    expect(rotatedResult.created).toBe(false);
+    expect(rotatedResult.rotated).toBe(true);
+
+    const listedSecrets = await runCliProcess(["--json", "list-mcp-secrets"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(listedSecrets.code).toBe(0);
+    expect(listedSecrets.stdout).not.toContain("safe-token-file");
+    expect(listedSecrets.stdout).not.toContain("safe-token-stdin");
+    const listed = JSON.parse(listedSecrets.stdout) as {
+      secrets: Array<{
+        secret_id: string;
+        version: number;
+        expires_at: string | null;
+      }>;
+    };
+    expect(listed.secrets).toContainEqual(
+      expect.objectContaining({
+        secret_id: "safe_secret",
+        version: 2,
+        expires_at: null,
+      }),
+    );
   });
 
   it("rotates and removes MCP secrets, host policies, and servers through the built CLI binary", async () => {
@@ -754,11 +1211,8 @@ describe("authority cli MCP integration", () => {
     fs.writeFileSync(
       serverDefinitionPath,
       JSON.stringify({
-        server_id: "notes_stdio_invalid_args",
+        ...buildSandboxedStdioServerDefinition("notes_stdio_invalid_args"),
         display_name: "Notes stdio invalid args test",
-        transport: "stdio",
-        command: process.execPath,
-        args: [MCP_TEST_SERVER_SCRIPT],
         tools: [
           {
             tool_name: "echo_note",
@@ -802,7 +1256,7 @@ describe("authority cli MCP integration", () => {
         socketPath: harness.socketPath,
       },
     );
-    expect(rejected.code).toBe(1);
+    expect(rejected.code).toBe(CLI_EXIT_CODES.INPUT_INVALID);
     expect(rejected.stdout).toBe("");
     expect(rejected.stderr).toContain("submit-mcp-tool expects JSON like");
 
@@ -817,6 +1271,34 @@ describe("authority cli MCP integration", () => {
       };
     };
     expect(runSummary.run.event_count).toBe(baselineSummary.run.event_count);
+  });
+
+  it("emits structured JSON error envelopes for built CLI failures", async () => {
+    const harness = await createHarness();
+
+    const rejected = await runCliProcess(["--json", "submit-mcp-tool"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+
+    expect(rejected.code).toBe(CLI_EXIT_CODES.USAGE);
+    expect(rejected.stdout).toBe("");
+    const envelope = JSON.parse(rejected.stderr) as {
+      ok: boolean;
+      error: {
+        code: string;
+        error_class: string;
+        exit_code: number;
+        retryable: boolean;
+        message: string;
+      };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("CLI_USAGE");
+    expect(envelope.error.error_class).toBe("cli_usage");
+    expect(envelope.error.exit_code).toBe(CLI_EXIT_CODES.USAGE);
+    expect(envelope.error.retryable).toBe(false);
+    expect(envelope.error.message).toContain("submit-mcp-tool");
   });
 
   it("drives approval, timeline, and helper workflows through the built CLI binary", async () => {
@@ -1055,13 +1537,10 @@ describe("authority cli MCP integration", () => {
       ),
     ).toBe(true);
 
-    const maintenance = await runCliProcess(
-      ["--json", "maintenance", "sqlite_wal_checkpoint", "capability_refresh"],
-      {
-        workspaceRoot: harness.workspaceRoot,
-        socketPath: harness.socketPath,
-      },
-    );
+    const maintenance = await runCliProcess(["--json", "maintenance", "sqlite_wal_checkpoint", "capability_refresh"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
     expect(maintenance.code).toBe(0);
     const maintenanceResult = JSON.parse(maintenance.stdout) as {
       accepted_priority: string;
@@ -1080,7 +1559,15 @@ describe("authority cli MCP integration", () => {
     ).toBe(true);
 
     const diagnostics = await runCliProcess(
-      ["--json", "diagnostics", "daemon_health", "capability_summary", "storage_summary"],
+      [
+        "--json",
+        "diagnostics",
+        "daemon_health",
+        "capability_summary",
+        "storage_summary",
+        "hosted_worker",
+        "hosted_queue",
+      ],
       {
         workspaceRoot: harness.workspaceRoot,
         socketPath: harness.socketPath,
@@ -1091,12 +1578,18 @@ describe("authority cli MCP integration", () => {
       daemon_health?: { status: string; active_runs: number };
       capability_summary?: { cached: boolean; capability_count: number };
       storage_summary?: { artifact_health: { total: number } };
+      hosted_worker?: { reachable: boolean; endpoint: string };
+      hosted_queue?: { queued_jobs: number; failed_jobs: number };
     };
     expect(diagnosticsResult.daemon_health?.status).toBeTruthy();
     expect(typeof diagnosticsResult.daemon_health?.active_runs).toBe("number");
     expect(diagnosticsResult.capability_summary?.cached).toBe(true);
     expect((diagnosticsResult.capability_summary?.capability_count ?? 0) > 0).toBe(true);
     expect(typeof diagnosticsResult.storage_summary?.artifact_health.total).toBe("number");
+    expect(typeof diagnosticsResult.hosted_worker?.reachable).toBe("boolean");
+    expect(typeof diagnosticsResult.hosted_worker?.endpoint).toBe("string");
+    expect(typeof diagnosticsResult.hosted_queue?.queued_jobs).toBe("number");
+    expect(typeof diagnosticsResult.hosted_queue?.failed_jobs).toBe("number");
   });
 
   it("enforces artifact visibility and redacts internal previews through the built CLI binary", async () => {
@@ -1161,7 +1654,7 @@ describe("authority cli MCP integration", () => {
       workspaceRoot: harness.workspaceRoot,
       socketPath: harness.socketPath,
     });
-    expect(deniedArtifact.code).toBe(1);
+    expect(deniedArtifact.code).toBe(CLI_EXIT_CODES.NOT_FOUND);
     expect(deniedArtifact.stdout).toBe("");
     expect(deniedArtifact.stderr).toContain("No artifact found");
 
@@ -1329,7 +1822,7 @@ describe("authority cli MCP integration", () => {
       workspaceRoot: harness.workspaceRoot,
       socketPath: harness.socketPath,
     });
-    expect(overwriteRejected.code).toBe(1);
+    expect(overwriteRejected.code).toBe(CLI_EXIT_CODES.IO_ERROR);
     expect(overwriteRejected.stdout).toBe("");
     expect(overwriteRejected.stderr).toContain("refuses to overwrite existing file");
   });
@@ -1400,7 +1893,7 @@ describe("authority cli MCP integration", () => {
       workspaceRoot: harness.workspaceRoot,
       socketPath: harness.socketPath,
     });
-    expect(overwriteRejected.code).toBe(1);
+    expect(overwriteRejected.code).toBe(CLI_EXIT_CODES.INTERNAL);
     expect(overwriteRejected.stderr).toContain("refuses to overwrite existing path");
   });
 
@@ -1454,7 +1947,7 @@ describe("authority cli MCP integration", () => {
       workspaceRoot: harness.workspaceRoot,
       socketPath: harness.socketPath,
     });
-    expect(tampered.code).toBe(1);
+    expect(tampered.code).toBe(CLI_EXIT_CODES.INPUT_INVALID);
     const tamperedResult = JSON.parse(tampered.stdout) as {
       verified: boolean;
       issues: Array<{ code: string; artifact_id?: string }>;
@@ -1462,5 +1955,142 @@ describe("authority cli MCP integration", () => {
     expect(tamperedResult.verified).toBe(false);
     expect(tamperedResult.issues.some((issue) => issue.code === "ARTIFACT_SHA256_MISMATCH")).toBe(true);
     expect(tamperedResult.issues.some((issue) => issue.code === "ARTIFACT_INTEGRITY_MISMATCH")).toBe(true);
+  });
+
+  it("reports and shares a verified run audit bundle through the built CLI binary", async () => {
+    const harness = await createHarness();
+    const sourcePath = path.join(harness.workspaceRoot, "audit-report-source.txt");
+    const outputDir = path.join(harness.workspaceRoot, "audit-report-bundle");
+    const shareDir = path.join(harness.workspaceRoot, "audit-report-share");
+    fs.writeFileSync(sourcePath, "audit report content", "utf8");
+
+    const registerRun = await runCliProcess(["--json", "register-run", "cli-audit-report"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(registerRun.code).toBe(0);
+    const run = JSON.parse(registerRun.stdout) as { run_id: string };
+
+    const submitShell = await runCliProcess(["--json", "submit-shell", run.run_id, "cat", sourcePath], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(submitShell.code).toBe(0);
+
+    const exportBundle = await runCliProcess(["--json", "run-audit-export", run.run_id, outputDir, "internal"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(exportBundle.code).toBe(0);
+
+    const report = await runCliProcess(["--json", "run-audit-report", outputDir], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(report.code).toBe(0);
+    const reportResult = JSON.parse(report.stdout) as {
+      run_id: string;
+      verified: boolean;
+      artifacts: { exported_count: number; skipped_count: number };
+      timeline: { step_count: number };
+    };
+    expect(reportResult.run_id).toBe(run.run_id);
+    expect(reportResult.verified).toBe(true);
+    expect(reportResult.artifacts.exported_count).toBeGreaterThan(0);
+    expect(reportResult.timeline.step_count).toBeGreaterThan(0);
+
+    const share = await runCliProcess(["--json", "run-audit-share", outputDir, shareDir], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(share.code).toBe(0);
+    const shareResult = JSON.parse(share.stdout) as {
+      run_id: string;
+      include_artifact_content: boolean;
+      copied_artifacts: Array<unknown>;
+      withheld_artifacts: Array<{ artifact_id: string; reason: string }>;
+    };
+    expect(shareResult.run_id).toBe(run.run_id);
+    expect(shareResult.include_artifact_content).toBe(false);
+    expect(shareResult.copied_artifacts).toHaveLength(0);
+    expect(shareResult.withheld_artifacts.length).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(shareDir, "share-manifest.json"))).toBe(true);
+    const shareManifest = JSON.parse(fs.readFileSync(path.join(shareDir, "share-manifest.json"), "utf8")) as {
+      include_artifact_content: boolean;
+      copied_artifacts: Array<unknown>;
+      withheld_artifacts: Array<unknown>;
+    };
+    expect(shareManifest.include_artifact_content).toBe(false);
+    expect(shareManifest.copied_artifacts).toHaveLength(0);
+    expect(shareManifest.withheld_artifacts.length).toBeGreaterThan(0);
+  });
+
+  it("compares two run audit bundles and returns structured differences through the built CLI binary", async () => {
+    const harness = await createHarness();
+    const leftSourcePath = path.join(harness.workspaceRoot, "audit-compare-left.txt");
+    const rightSourcePath = path.join(harness.workspaceRoot, "audit-compare-right.txt");
+    const leftOutputDir = path.join(harness.workspaceRoot, "audit-compare-left-bundle");
+    const rightOutputDir = path.join(harness.workspaceRoot, "audit-compare-right-bundle");
+    fs.writeFileSync(leftSourcePath, "left compare content", "utf8");
+    fs.writeFileSync(rightSourcePath, "right compare content", "utf8");
+
+    const leftRunResponse = await runCliProcess(["--json", "register-run", "cli-audit-compare-left"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(leftRunResponse.code).toBe(0);
+    const leftRun = JSON.parse(leftRunResponse.stdout) as { run_id: string };
+    expect(
+      await runCliProcess(["--json", "submit-shell", leftRun.run_id, "cat", leftSourcePath], {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      }),
+    ).toEqual(expect.objectContaining({ code: 0 }));
+    expect(
+      await runCliProcess(["--json", "run-audit-export", leftRun.run_id, leftOutputDir, "internal"], {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      }),
+    ).toEqual(expect.objectContaining({ code: 0 }));
+
+    const rightRunResponse = await runCliProcess(["--json", "register-run", "cli-audit-compare-right"], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(rightRunResponse.code).toBe(0);
+    const rightRun = JSON.parse(rightRunResponse.stdout) as { run_id: string };
+    expect(
+      await runCliProcess(["--json", "submit-shell", rightRun.run_id, "cat", rightSourcePath], {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      }),
+    ).toEqual(expect.objectContaining({ code: 0 }));
+    expect(
+      await runCliProcess(["--json", "submit-shell", rightRun.run_id, "printf", "extra-audit-step"], {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      }),
+    ).toEqual(expect.objectContaining({ code: 0 }));
+    expect(
+      await runCliProcess(["--json", "run-audit-export", rightRun.run_id, rightOutputDir, "internal"], {
+        workspaceRoot: harness.workspaceRoot,
+        socketPath: harness.socketPath,
+      }),
+    ).toEqual(expect.objectContaining({ code: 0 }));
+
+    const compared = await runCliProcess(["--json", "run-audit-compare", leftOutputDir, rightOutputDir], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
+    expect(compared.code).toBe(CLI_EXIT_CODES.INPUT_INVALID);
+    const comparedResult = JSON.parse(compared.stdout) as {
+      left_run_id: string;
+      right_run_id: string;
+      differences: Array<{ code: string }>;
+    };
+    expect(comparedResult.left_run_id).toBe(leftRun.run_id);
+    expect(comparedResult.right_run_id).toBe(rightRun.run_id);
+    expect(comparedResult.differences.some((difference) => difference.code === "RUN_ID_CHANGED")).toBe(true);
+    expect(comparedResult.differences.some((difference) => difference.code === "ACTION_COUNT_CHANGED")).toBe(true);
   });
 });

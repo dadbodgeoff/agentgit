@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { API_VERSION } from "@agentgit/schemas";
 
-import { AuthorityClient, AuthorityClientTransportError, AuthorityDaemonResponseError } from "./index.js";
+import { AuthorityClient } from "./index.js";
 
 interface SocketHarness {
   root: string;
@@ -299,6 +299,380 @@ describe("AuthorityClient transport", () => {
     expect(seenRequests.find((request) => request.method === "execute_recovery")?.idempotency_key).toBe("idem_recover");
   });
 
+  it("requests policy inspection, explanation, recommendation, and validation surfaces", async () => {
+    const harness = createHarness();
+    const seenRequests: Array<Record<string, unknown>> = [];
+
+    await startJsonServer(harness, (request, socket) => {
+      seenRequests.push(request);
+      const method = request.method;
+      const result =
+        method === "hello"
+          ? {
+              session_id: "sess_test",
+              accepted_api_version: API_VERSION,
+              runtime_version: "0.1.0",
+              schema_pack_version: "schema-pack.v1",
+              capabilities: {
+                local_only: true,
+                methods: [
+                  "hello",
+                  "get_effective_policy",
+                  "get_policy_calibration_report",
+                  "explain_policy_action",
+                  "get_policy_threshold_recommendations",
+                  "validate_policy_config",
+                ],
+              },
+            }
+          : method === "get_effective_policy"
+            ? {
+                policy: {
+                  profile_name: "workspace-hardening",
+                  policy_version: "2026.04.01",
+                  rules: [],
+                },
+                summary: {
+                  profile_name: "workspace-hardening",
+                  policy_versions: ["2026.04.01", "builtin.2026-04-01"],
+                  compiled_rule_count: 3,
+                  loaded_sources: [
+                    {
+                      scope: "workspace",
+                      path: "/tmp/workspace/.agentgit/policy.toml",
+                      profile_name: "workspace-hardening",
+                      policy_version: "2026.04.01",
+                      rule_count: 1,
+                    },
+                  ],
+                  warnings: [],
+                },
+              }
+            : method === "get_policy_calibration_report"
+              ? {
+                  report: {
+                    generated_at: "2026-04-01T12:00:00.000Z",
+                    filters: {
+                      run_id: "run_policy",
+                      include_samples: true,
+                      sample_limit: 5,
+                    },
+                    totals: {
+                      sample_count: 1,
+                      unique_action_families: 1,
+                      confidence: {
+                        average: 0.91,
+                        min: 0.91,
+                        max: 0.91,
+                      },
+                      decisions: {
+                        allow: 0,
+                        allow_with_snapshot: 1,
+                        ask: 0,
+                        deny: 0,
+                      },
+                      approvals: {
+                        requested: 0,
+                        pending: 0,
+                        approved: 0,
+                        denied: 0,
+                      },
+                      recovery_attempted_count: 0,
+                    },
+                    action_families: [
+                      {
+                        action_family: "filesystem/write",
+                        sample_count: 1,
+                        confidence: {
+                          average: 0.91,
+                          min: 0.91,
+                          max: 0.91,
+                        },
+                        decisions: {
+                          allow: 0,
+                          allow_with_snapshot: 1,
+                          ask: 0,
+                          deny: 0,
+                        },
+                        approvals: {
+                          requested: 0,
+                          pending: 0,
+                          approved: 0,
+                          denied: 0,
+                        },
+                        snapshot_classes: [{ key: "journal_plus_anchor", count: 1 }],
+                        top_matched_rules: [{ key: "builtin.fs.snapshot", count: 1 }],
+                        top_reason_codes: [{ key: "SAFE_TO_RUN", count: 1 }],
+                        recovery_attempted_count: 0,
+                        approval_rate: 0,
+                        denial_rate: null,
+                      },
+                    ],
+                    samples: [
+                      {
+                        sample_id: "run_policy:act_1",
+                        run_id: "run_policy",
+                        action_id: "act_1",
+                        evaluated_at: "2026-04-01T12:00:00.000Z",
+                        action_family: "filesystem/write",
+                        decision: "allow_with_snapshot",
+                        normalization_confidence: 0.91,
+                        matched_rules: ["builtin.fs.snapshot"],
+                        reason_codes: ["SAFE_TO_RUN"],
+                        snapshot_class: "journal_plus_anchor",
+                        approval_requested: false,
+                        approval_id: null,
+                        approval_status: null,
+                        resolved_at: null,
+                        recovery_attempted: false,
+                        recovery_result: null,
+                        recovery_class: null,
+                        recovery_strategy: null,
+                      },
+                    ],
+                    samples_truncated: false,
+                  },
+                }
+              : method === "explain_policy_action"
+                ? {
+                    action: {
+                      schema_version: "action.v1",
+                      action_id: "act_explain",
+                      run_id: "run_policy",
+                      session_id: "sess_test",
+                      status: "normalized",
+                      timestamps: {
+                        requested_at: "2026-04-01T12:00:00.000Z",
+                        normalized_at: "2026-04-01T12:00:01.000Z",
+                      },
+                      provenance: {
+                        mode: "governed",
+                        source: "test",
+                        confidence: 0.99,
+                      },
+                      actor: {
+                        type: "agent",
+                        tool_name: "write_file",
+                        tool_kind: "filesystem",
+                      },
+                      operation: {
+                        domain: "filesystem",
+                        kind: "write",
+                        name: "filesystem.write",
+                        display_name: "Write file",
+                      },
+                      execution_path: {
+                        surface: "governed_fs",
+                        mode: "pre_execution",
+                        credential_mode: "none",
+                      },
+                      target: {
+                        primary: {
+                          type: "path",
+                          locator: "/workspace/README.md",
+                        },
+                        scope: {
+                          breadth: "single",
+                          estimated_count: 1,
+                          unknowns: [],
+                        },
+                      },
+                      input: {
+                        raw: {},
+                        redacted: {},
+                        schema_ref: null,
+                        contains_sensitive_data: false,
+                      },
+                      risk_hints: {
+                        side_effect_level: "mutating",
+                        external_effects: "none",
+                        reversibility_hint: "reversible",
+                        sensitivity_hint: "low",
+                        batch: false,
+                      },
+                      facets: {
+                        filesystem: {
+                          operation: "write",
+                          byte_length: 10,
+                        },
+                      },
+                      normalization: {
+                        mapper: "test",
+                        inferred_fields: [],
+                        warnings: [],
+                        normalization_confidence: 0.96,
+                      },
+                    },
+                    policy_outcome: {
+                      schema_version: "policy-outcome.v1",
+                      policy_outcome_id: "pol_explain",
+                      action_id: "act_explain",
+                      decision: "allow",
+                      reasons: [
+                        {
+                          code: "FS_SMALL_WORKSPACE_WRITE",
+                          severity: "low",
+                          message: "Small workspace writes are allowed.",
+                        },
+                      ],
+                      trust_requirements: {
+                        wrapped_path_required: true,
+                        brokered_credentials_required: false,
+                        direct_credentials_forbidden: false,
+                      },
+                      preconditions: {
+                        snapshot_required: false,
+                        approval_required: false,
+                        simulation_supported: false,
+                      },
+                      approval: null,
+                      budget_effects: {
+                        budget_check: "passed",
+                        estimated_cost: 0,
+                        remaining_mutating_actions: null,
+                        remaining_destructive_actions: null,
+                      },
+                      policy_context: {
+                        matched_rules: ["filesystem.write.small.allow"],
+                        sticky_decision_applied: false,
+                      },
+                      evaluated_at: "2026-04-01T12:00:02.000Z",
+                    },
+                    action_family: "filesystem/write",
+                    effective_policy_profile: "workspace-hardening",
+                    low_confidence_threshold: 0.3,
+                    confidence_triggered: false,
+                    snapshot_selection: null,
+                  }
+                : method === "get_policy_threshold_recommendations"
+                  ? {
+                      generated_at: "2026-04-01T12:00:00.000Z",
+                      filters: {
+                        run_id: "run_policy",
+                        min_samples: 2,
+                      },
+                      effective_policy_profile: "workspace-hardening",
+                      recommendations: [
+                        {
+                          action_family: "shell/exec",
+                          current_ask_below: 0.3,
+                          recommended_ask_below: 0.41,
+                          direction: "relax",
+                          sample_count: 4,
+                          approvals_requested: 4,
+                          approvals_approved: 4,
+                          approvals_denied: 0,
+                          observed_confidence_min: 0.32,
+                          observed_confidence_max: 0.61,
+                          denied_confidence_max: null,
+                          approved_confidence_min: 0.42,
+                          rationale: "Relax with human review.",
+                          requires_policy_update: true,
+                          automatic_live_application_allowed: false,
+                        },
+                      ],
+                    }
+                  : {
+                      valid: false,
+                      issues: ["rules: Required"],
+                      normalized_config: null,
+                      compiled_profile_name: null,
+                      compiled_rule_count: null,
+                    };
+
+      socket.write(
+        `${JSON.stringify({
+          api_version: API_VERSION,
+          request_id: request.request_id,
+          session_id: request.session_id ?? "sess_test",
+          ok: true,
+          result,
+          error: null,
+        })}\n`,
+      );
+      socket.end();
+    });
+
+    const client = new AuthorityClient({
+      socketPath: harness.socketPath,
+      connectTimeoutMs: 50,
+      responseTimeoutMs: 100,
+      maxConnectRetries: 0,
+    });
+
+    const effectivePolicy = await client.getEffectivePolicy();
+    const calibrationReport = await client.getPolicyCalibrationReport({
+      run_id: "run_policy",
+      include_samples: true,
+      sample_limit: 5,
+    });
+    const explainedAction = await client.explainPolicyAction({
+      run_id: "run_policy",
+      tool_registration: {
+        tool_name: "write_file",
+        tool_kind: "filesystem",
+      },
+      raw_call: {
+        path: "/workspace/README.md",
+        content: "hello",
+      },
+      environment_context: {
+        workspace_roots: ["/workspace"],
+      },
+      received_at: "2026-04-01T12:00:00.000Z",
+    });
+    const thresholdRecommendations = await client.getPolicyThresholdRecommendations({
+      run_id: "run_policy",
+      min_samples: 2,
+    });
+    const validation = await client.validatePolicyConfig({
+      profile_name: "invalid-policy",
+      policy_version: "2026.04.01",
+    });
+
+    expect(effectivePolicy.summary.profile_name).toBe("workspace-hardening");
+    expect(calibrationReport.report.totals.sample_count).toBe(1);
+    expect(calibrationReport.report.samples?.[0]?.action_id).toBe("act_1");
+    expect(explainedAction.action_family).toBe("filesystem/write");
+    expect(explainedAction.low_confidence_threshold).toBe(0.3);
+    expect(thresholdRecommendations.recommendations[0]?.direction).toBe("relax");
+    expect(validation.valid).toBe(false);
+    expect(validation.issues).toContain("rules: Required");
+    expect(seenRequests.find((request) => request.method === "get_effective_policy")).toBeTruthy();
+    expect(seenRequests.find((request) => request.method === "get_policy_calibration_report")?.payload).toEqual({
+      run_id: "run_policy",
+      include_samples: true,
+      sample_limit: 5,
+    });
+    expect(seenRequests.find((request) => request.method === "explain_policy_action")?.payload).toEqual({
+      attempt: {
+        run_id: "run_policy",
+        tool_registration: {
+          tool_name: "write_file",
+          tool_kind: "filesystem",
+        },
+        raw_call: {
+          path: "/workspace/README.md",
+          content: "hello",
+        },
+        environment_context: {
+          workspace_roots: ["/workspace"],
+        },
+        received_at: "2026-04-01T12:00:00.000Z",
+      },
+    });
+    expect(seenRequests.find((request) => request.method === "get_policy_threshold_recommendations")?.payload).toEqual({
+      run_id: "run_policy",
+      min_samples: 2,
+    });
+    expect(seenRequests.find((request) => request.method === "validate_policy_config")?.payload).toEqual({
+      config: {
+        profile_name: "invalid-policy",
+        policy_version: "2026.04.01",
+      },
+    });
+  });
+
   it("sends MCP registry management requests with the expected methods and payloads", async () => {
     const harness = createHarness();
     const seenRequests: Array<Record<string, unknown>> = [];
@@ -386,10 +760,801 @@ describe("AuthorityClient transport", () => {
     await client.removeMcpServer("notes_http", { idempotencyKey: "idem_mcp_remove" });
 
     expect(seenRequests.find((request) => request.method === "list_mcp_servers")?.payload).toEqual({});
-    expect(seenRequests.find((request) => request.method === "upsert_mcp_server")?.idempotency_key).toBe("idem_mcp_upsert");
+    expect(seenRequests.find((request) => request.method === "upsert_mcp_server")?.idempotency_key).toBe(
+      "idem_mcp_upsert",
+    );
     expect(seenRequests.find((request) => request.method === "remove_mcp_server")?.payload).toEqual({
       server_id: "notes_http",
     });
+  });
+
+  it("sends hosted MCP operator requests with the expected methods and payloads", async () => {
+    const harness = createHarness();
+    const seenRequests: Array<Record<string, unknown>> = [];
+
+    await startJsonServer(harness, (request, socket) => {
+      seenRequests.push(request);
+      const method = request.method;
+      const result =
+        method === "hello"
+          ? {
+              session_id: "sess_test",
+              accepted_api_version: API_VERSION,
+              runtime_version: "0.1.0",
+              schema_pack_version: "schema-pack.v1",
+              capabilities: {
+                local_only: true,
+                methods: ["hello", "get_hosted_mcp_job", "list_hosted_mcp_jobs", "requeue_hosted_mcp_job"],
+              },
+            }
+          : method === "get_hosted_mcp_job"
+            ? {
+                job: {
+                  job_id: "mcpjob_123",
+                  run_id: "run_123",
+                  action_id: "act_123",
+                  server_profile_id: "mcpprof_123",
+                  tool_name: "echo_note",
+                  server_display_name: "Hosted Notes",
+                  canonical_endpoint: "https://api.example.com/mcp",
+                  network_scope: "public_https",
+                  allowed_hosts: ["api.example.com"],
+                  auth_context_ref: "none",
+                  arguments: {},
+                  status: "failed",
+                  attempt_count: 4,
+                  max_attempts: 4,
+                  current_lease_id: "mcplease_123",
+                  claimed_by: null,
+                  claimed_at: null,
+                  last_heartbeat_at: null,
+                  cancel_requested_at: null,
+                  cancel_requested_by_session_id: null,
+                  cancel_reason: null,
+                  canceled_at: null,
+                  next_attempt_at: "2026-04-01T12:05:00.000Z",
+                  created_at: "2026-04-01T12:00:00.000Z",
+                  updated_at: "2026-04-01T12:05:00.000Z",
+                  completed_at: "2026-04-01T12:05:00.000Z",
+                  last_error: {
+                    code: "CAPABILITY_UNAVAILABLE",
+                    message: "Hosted worker unavailable",
+                    retryable: true,
+                  },
+                  execution_result: null,
+                },
+                lifecycle: {
+                  state: "dead_letter_retryable",
+                  dead_lettered: true,
+                  eligible_for_requeue: true,
+                  retry_budget_remaining: 0,
+                },
+                leases: [],
+                attestations: [],
+                recent_events: [],
+              }
+            : method === "list_hosted_mcp_jobs"
+              ? {
+                  jobs: [],
+                  summary: {
+                    queued: 0,
+                    running: 0,
+                    cancel_requested: 0,
+                    succeeded: 0,
+                    failed: 0,
+                    canceled: 0,
+                    dead_letter_retryable: 0,
+                    dead_letter_non_retryable: 0,
+                  },
+                }
+              : method === "cancel_hosted_mcp_job"
+                ? {
+                    job: {
+                      job_id: "mcpjob_456",
+                      run_id: "run_123",
+                      action_id: "act_123",
+                      server_profile_id: "mcpprof_123",
+                      tool_name: "echo_note",
+                      server_display_name: "Hosted Notes",
+                      canonical_endpoint: "https://api.example.com/mcp",
+                      network_scope: "public_https",
+                      allowed_hosts: ["api.example.com"],
+                      auth_context_ref: "none",
+                      arguments: {},
+                      status: "canceled",
+                      attempt_count: 1,
+                      max_attempts: 6,
+                      current_lease_id: null,
+                      claimed_by: null,
+                      claimed_at: null,
+                      last_heartbeat_at: "2026-04-01T12:06:30.000Z",
+                      cancel_requested_at: "2026-04-01T12:06:30.000Z",
+                      cancel_requested_by_session_id: "sess_test",
+                      cancel_reason: "operator stop",
+                      canceled_at: "2026-04-01T12:06:31.000Z",
+                      next_attempt_at: "2026-04-01T12:06:00.000Z",
+                      created_at: "2026-04-01T12:00:00.000Z",
+                      updated_at: "2026-04-01T12:06:31.000Z",
+                      completed_at: "2026-04-01T12:06:31.000Z",
+                      last_error: {
+                        code: "CONFLICT",
+                        message: "Hosted MCP execution job was canceled during execution.",
+                        retryable: false,
+                      },
+                      execution_result: null,
+                    },
+                    cancellation_requested: true,
+                    previous_status: "running",
+                    terminal: true,
+                  }
+                : {
+                    job: {
+                      job_id: "mcpjob_123",
+                      run_id: "run_123",
+                      action_id: "act_123",
+                      server_profile_id: "mcpprof_123",
+                      tool_name: "echo_note",
+                      server_display_name: "Hosted Notes",
+                      canonical_endpoint: "https://api.example.com/mcp",
+                      network_scope: "public_https",
+                      allowed_hosts: ["api.example.com"],
+                      auth_context_ref: "none",
+                      arguments: {},
+                      status: "queued",
+                      attempt_count: 0,
+                      max_attempts: 6,
+                      current_lease_id: null,
+                      claimed_by: null,
+                      claimed_at: null,
+                      last_heartbeat_at: null,
+                      cancel_requested_at: null,
+                      cancel_requested_by_session_id: null,
+                      cancel_reason: null,
+                      canceled_at: null,
+                      next_attempt_at: "2026-04-01T12:06:00.000Z",
+                      created_at: "2026-04-01T12:00:00.000Z",
+                      updated_at: "2026-04-01T12:06:00.000Z",
+                      completed_at: null,
+                      last_error: null,
+                      execution_result: null,
+                    },
+                    requeued: true,
+                    previous_status: "failed",
+                    attempt_count_reset: true,
+                    max_attempts_updated: true,
+                  };
+
+      socket.write(
+        `${JSON.stringify({
+          api_version: API_VERSION,
+          request_id: request.request_id,
+          session_id: request.session_id ?? "sess_test",
+          ok: true,
+          result,
+          error: null,
+        })}\n`,
+      );
+      socket.end();
+    });
+
+    const client = new AuthorityClient({
+      socketPath: harness.socketPath,
+      connectTimeoutMs: 50,
+      responseTimeoutMs: 100,
+      maxConnectRetries: 0,
+    });
+
+    await client.getHostedMcpJob("mcpjob_123");
+    await client.listHostedMcpJobs({
+      server_profile_id: "mcpprof_123",
+      status: "failed",
+      lifecycle_state: "dead_letter_retryable",
+    });
+    await client.requeueHostedMcpJob(
+      "mcpjob_123",
+      {
+        reset_attempt_count: true,
+        max_attempts: 6,
+        reason: "worker restored",
+      },
+      { idempotencyKey: "idem_hosted_requeue" },
+    );
+    await client.cancelHostedMcpJob(
+      "mcpjob_456",
+      {
+        reason: "operator stop",
+      },
+      { idempotencyKey: "idem_hosted_cancel" },
+    );
+
+    expect(seenRequests.find((request) => request.method === "get_hosted_mcp_job")?.payload).toEqual({
+      job_id: "mcpjob_123",
+    });
+    expect(seenRequests.find((request) => request.method === "list_hosted_mcp_jobs")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+      status: "failed",
+      lifecycle_state: "dead_letter_retryable",
+    });
+    expect(seenRequests.find((request) => request.method === "requeue_hosted_mcp_job")?.payload).toEqual({
+      job_id: "mcpjob_123",
+      reset_attempt_count: true,
+      max_attempts: 6,
+      reason: "worker restored",
+    });
+    expect(seenRequests.find((request) => request.method === "requeue_hosted_mcp_job")?.idempotency_key).toBe(
+      "idem_hosted_requeue",
+    );
+    expect(seenRequests.find((request) => request.method === "cancel_hosted_mcp_job")?.payload).toEqual({
+      job_id: "mcpjob_456",
+      reason: "operator stop",
+    });
+    expect(seenRequests.find((request) => request.method === "cancel_hosted_mcp_job")?.idempotency_key).toBe(
+      "idem_hosted_cancel",
+    );
+  });
+
+  it("sends MCP candidate and profile requests with the expected methods and payloads", async () => {
+    const harness = createHarness();
+    const seenRequests: Array<Record<string, unknown>> = [];
+
+    await startJsonServer(harness, (request, socket) => {
+      seenRequests.push(request);
+      const method = request.method;
+      const result =
+        method === "hello"
+          ? {
+              session_id: "sess_test",
+              accepted_api_version: API_VERSION,
+              runtime_version: "0.1.0",
+              schema_pack_version: "schema-pack.v1",
+              capabilities: {
+                local_only: true,
+                methods: [
+                  "hello",
+                  "list_mcp_server_candidates",
+                  "submit_mcp_server_candidate",
+                  "list_mcp_server_profiles",
+                ],
+              },
+            }
+          : method === "list_mcp_server_candidates"
+            ? {
+                candidates: [],
+              }
+            : method === "get_mcp_server_review"
+              ? {
+                  candidate: {
+                    candidate_id: "mcpcand_123",
+                    source_kind: "user_input",
+                    raw_endpoint: "https://api.example.com/mcp",
+                    transport_hint: "streamable_http",
+                    workspace_id: null,
+                    submitted_by_session_id: "sess_test",
+                    submitted_by_run_id: null,
+                    notes: null,
+                    resolution_state: "pending",
+                    resolution_error: null,
+                    submitted_at: "2026-04-01T12:00:00.000Z",
+                    updated_at: "2026-04-01T12:00:00.000Z",
+                  },
+                  profile: null,
+                  active_trust_decision: null,
+                  active_credential_binding: null,
+                  review: {
+                    review_target: "candidate",
+                    executable: false,
+                    activation_ready: false,
+                    requires_approval: false,
+                    requires_resolution: true,
+                    requires_credentials: false,
+                    requires_reapproval: false,
+                    hosted_execution_supported: false,
+                    local_proxy_supported: false,
+                    drift_detected: false,
+                    quarantined: false,
+                    revoked: false,
+                    warnings: ["Candidate has not been resolved into a durable profile yet."],
+                    recommended_actions: ["Resolve the candidate before attempting review or activation."],
+                  },
+                }
+              : method === "submit_mcp_server_candidate"
+                ? {
+                    candidate: {
+                      candidate_id: "mcpcand_123",
+                      source_kind: "user_input",
+                      raw_endpoint: "https://api.example.com/mcp",
+                      transport_hint: "streamable_http",
+                      workspace_id: null,
+                      submitted_by_session_id: "sess_test",
+                      submitted_by_run_id: null,
+                      notes: null,
+                      resolution_state: "pending",
+                      resolution_error: null,
+                      submitted_at: "2026-04-01T12:00:00.000Z",
+                      updated_at: "2026-04-01T12:00:00.000Z",
+                    },
+                  }
+                : method === "resolve_mcp_server_candidate"
+                  ? {
+                      candidate: {
+                        candidate_id: "mcpcand_123",
+                        source_kind: "user_input",
+                        raw_endpoint: "https://api.example.com/mcp",
+                        transport_hint: "streamable_http",
+                        workspace_id: null,
+                        submitted_by_session_id: "sess_test",
+                        submitted_by_run_id: null,
+                        notes: null,
+                        resolution_state: "resolved",
+                        resolution_error: null,
+                        submitted_at: "2026-04-01T12:00:00.000Z",
+                        updated_at: "2026-04-01T12:05:00.000Z",
+                      },
+                      profile: {
+                        server_profile_id: "mcpprof_123",
+                        candidate_id: "mcpcand_123",
+                        display_name: "Example MCP",
+                        transport: "streamable_http",
+                        canonical_endpoint: "https://api.example.com/mcp",
+                        network_scope: "public_https",
+                        trust_tier: "operator_approved_public",
+                        status: "draft",
+                        drift_state: "clean",
+                        quarantine_reason_codes: [],
+                        allowed_execution_modes: ["local_proxy"],
+                        active_trust_decision_id: null,
+                        active_credential_binding_id: null,
+                        auth_descriptor: {
+                          mode: "none",
+                          audience: null,
+                          scope_labels: [],
+                        },
+                        identity_baseline: {
+                          canonical_host: "api.example.com",
+                          canonical_port: 443,
+                          tls_identity_summary: null,
+                          auth_issuer: null,
+                          publisher_identity: null,
+                          tool_inventory_hash: "hash_tools",
+                          fetched_at: "2026-04-01T12:05:00.000Z",
+                        },
+                        imported_tools: [],
+                        tool_inventory_version: "hash_tools",
+                        last_resolved_at: "2026-04-01T12:05:00.000Z",
+                        created_at: "2026-04-01T12:05:00.000Z",
+                        updated_at: "2026-04-01T12:05:00.000Z",
+                      },
+                      created_profile: true,
+                      drift_detected: false,
+                    }
+                  : method === "list_mcp_server_profiles"
+                    ? {
+                        profiles: [],
+                      }
+                    : method === "list_mcp_server_trust_decisions"
+                      ? {
+                          trust_decisions: [],
+                        }
+                      : method === "list_mcp_server_credential_bindings"
+                        ? {
+                            credential_bindings: [],
+                          }
+                        : method === "bind_mcp_server_credentials"
+                          ? {
+                              profile: {
+                                server_profile_id: "mcpprof_123",
+                                candidate_id: "mcpcand_123",
+                                display_name: "Example MCP",
+                                transport: "streamable_http",
+                                canonical_endpoint: "https://api.example.com/mcp",
+                                network_scope: "public_https",
+                                trust_tier: "operator_approved_public",
+                                status: "pending_approval",
+                                drift_state: "clean",
+                                quarantine_reason_codes: [],
+                                allowed_execution_modes: ["local_proxy"],
+                                active_trust_decision_id: "mcptrust_123",
+                                active_credential_binding_id: "mcpbind_123",
+                                auth_descriptor: {
+                                  mode: "bearer_secret_ref",
+                                  audience: null,
+                                  scope_labels: ["remote:mcp"],
+                                },
+                                identity_baseline: {
+                                  canonical_host: "api.example.com",
+                                  canonical_port: 443,
+                                  tls_identity_summary: null,
+                                  auth_issuer: null,
+                                  publisher_identity: null,
+                                  tool_inventory_hash: "hash_tools",
+                                  fetched_at: "2026-04-01T12:05:00.000Z",
+                                },
+                                imported_tools: [],
+                                tool_inventory_version: "hash_tools",
+                                last_resolved_at: "2026-04-01T12:05:00.000Z",
+                                created_at: "2026-04-01T12:05:00.000Z",
+                                updated_at: "2026-04-01T12:06:30.000Z",
+                              },
+                              credential_binding: {
+                                credential_binding_id: "mcpbind_123",
+                                server_profile_id: "mcpprof_123",
+                                binding_mode: "bearer_secret_ref",
+                                broker_profile_id: "mcp_secret_123",
+                                scope_labels: ["remote:mcp"],
+                                audience: null,
+                                status: "active",
+                                created_at: "2026-04-01T12:06:30.000Z",
+                                updated_at: "2026-04-01T12:06:30.000Z",
+                                revoked_at: null,
+                              },
+                              created: true,
+                            }
+                          : method === "revoke_mcp_server_credentials"
+                            ? {
+                                profile: {
+                                  server_profile_id: "mcpprof_123",
+                                  candidate_id: "mcpcand_123",
+                                  display_name: "Example MCP",
+                                  transport: "streamable_http",
+                                  canonical_endpoint: "https://api.example.com/mcp",
+                                  network_scope: "public_https",
+                                  trust_tier: "operator_approved_public",
+                                  status: "draft",
+                                  drift_state: "clean",
+                                  quarantine_reason_codes: [],
+                                  allowed_execution_modes: ["local_proxy"],
+                                  active_trust_decision_id: "mcptrust_123",
+                                  active_credential_binding_id: null,
+                                  auth_descriptor: {
+                                    mode: "bearer_secret_ref",
+                                    audience: null,
+                                    scope_labels: ["remote:mcp"],
+                                  },
+                                  identity_baseline: {
+                                    canonical_host: "api.example.com",
+                                    canonical_port: 443,
+                                    tls_identity_summary: null,
+                                    auth_issuer: null,
+                                    publisher_identity: null,
+                                    tool_inventory_hash: "hash_tools",
+                                    fetched_at: "2026-04-01T12:05:00.000Z",
+                                  },
+                                  imported_tools: [],
+                                  tool_inventory_version: "hash_tools",
+                                  last_resolved_at: "2026-04-01T12:05:00.000Z",
+                                  created_at: "2026-04-01T12:05:00.000Z",
+                                  updated_at: "2026-04-01T12:07:30.000Z",
+                                },
+                                credential_binding: {
+                                  credential_binding_id: "mcpbind_123",
+                                  server_profile_id: "mcpprof_123",
+                                  binding_mode: "bearer_secret_ref",
+                                  broker_profile_id: "mcp_secret_123",
+                                  scope_labels: ["remote:mcp"],
+                                  audience: null,
+                                  status: "revoked",
+                                  created_at: "2026-04-01T12:06:30.000Z",
+                                  updated_at: "2026-04-01T12:07:30.000Z",
+                                  revoked_at: "2026-04-01T12:07:30.000Z",
+                                },
+                              }
+                            : method === "approve_mcp_server_profile"
+                              ? {
+                                  profile: {
+                                    server_profile_id: "mcpprof_123",
+                                    candidate_id: "mcpcand_123",
+                                    display_name: "Example MCP",
+                                    transport: "streamable_http",
+                                    canonical_endpoint: "https://api.example.com/mcp",
+                                    network_scope: "public_https",
+                                    trust_tier: "operator_approved_public",
+                                    status: "pending_approval",
+                                    drift_state: "clean",
+                                    quarantine_reason_codes: [],
+                                    allowed_execution_modes: ["local_proxy"],
+                                    active_trust_decision_id: "mcptrust_123",
+                                    active_credential_binding_id: null,
+                                    auth_descriptor: {
+                                      mode: "none",
+                                      audience: null,
+                                      scope_labels: [],
+                                    },
+                                    identity_baseline: {
+                                      canonical_host: "api.example.com",
+                                      canonical_port: 443,
+                                      tls_identity_summary: null,
+                                      auth_issuer: null,
+                                      publisher_identity: null,
+                                      tool_inventory_hash: "hash_tools",
+                                      fetched_at: "2026-04-01T12:05:00.000Z",
+                                    },
+                                    imported_tools: [],
+                                    tool_inventory_version: "hash_tools",
+                                    last_resolved_at: "2026-04-01T12:05:00.000Z",
+                                    created_at: "2026-04-01T12:05:00.000Z",
+                                    updated_at: "2026-04-01T12:06:00.000Z",
+                                  },
+                                  trust_decision: {
+                                    trust_decision_id: "mcptrust_123",
+                                    server_profile_id: "mcpprof_123",
+                                    decision: "allow_policy_managed",
+                                    trust_tier: "operator_approved_public",
+                                    allowed_execution_modes: ["local_proxy"],
+                                    max_side_effect_level_without_approval: "read_only",
+                                    reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+                                    approved_by_session_id: "sess_test",
+                                    approved_at: "2026-04-01T12:06:00.000Z",
+                                    valid_until: null,
+                                    reapproval_triggers: [],
+                                  },
+                                  created: true,
+                                }
+                              : method === "activate_mcp_server_profile"
+                                ? {
+                                    profile: {
+                                      server_profile_id: "mcpprof_123",
+                                      candidate_id: "mcpcand_123",
+                                      display_name: "Example MCP",
+                                      transport: "streamable_http",
+                                      canonical_endpoint: "https://api.example.com/mcp",
+                                      network_scope: "public_https",
+                                      trust_tier: "operator_approved_public",
+                                      status: "active",
+                                      drift_state: "clean",
+                                      quarantine_reason_codes: [],
+                                      allowed_execution_modes: ["local_proxy"],
+                                      active_trust_decision_id: "mcptrust_123",
+                                      active_credential_binding_id: "mcpbind_123",
+                                      auth_descriptor: {
+                                        mode: "bearer_secret_ref",
+                                        audience: null,
+                                        scope_labels: ["remote:mcp"],
+                                      },
+                                      identity_baseline: {
+                                        canonical_host: "api.example.com",
+                                        canonical_port: 443,
+                                        tls_identity_summary: null,
+                                        auth_issuer: null,
+                                        publisher_identity: null,
+                                        tool_inventory_hash: "hash_tools",
+                                        fetched_at: "2026-04-01T12:05:00.000Z",
+                                      },
+                                      imported_tools: [],
+                                      tool_inventory_version: "hash_tools",
+                                      last_resolved_at: "2026-04-01T12:05:00.000Z",
+                                      created_at: "2026-04-01T12:05:00.000Z",
+                                      updated_at: "2026-04-01T12:07:00.000Z",
+                                    },
+                                  }
+                                : method === "quarantine_mcp_server_profile"
+                                  ? {
+                                      profile: {
+                                        server_profile_id: "mcpprof_123",
+                                        candidate_id: "mcpcand_123",
+                                        display_name: "Example MCP",
+                                        transport: "streamable_http",
+                                        canonical_endpoint: "https://api.example.com/mcp",
+                                        network_scope: "public_https",
+                                        trust_tier: "operator_approved_public",
+                                        status: "quarantined",
+                                        drift_state: "drifted",
+                                        quarantine_reason_codes: ["MCP_TOOL_INVENTORY_CHANGED"],
+                                        allowed_execution_modes: ["local_proxy"],
+                                        active_trust_decision_id: "mcptrust_123",
+                                        active_credential_binding_id: "mcpbind_123",
+                                        auth_descriptor: {
+                                          mode: "bearer_secret_ref",
+                                          audience: null,
+                                          scope_labels: ["remote:mcp"],
+                                        },
+                                        identity_baseline: {
+                                          canonical_host: "api.example.com",
+                                          canonical_port: 443,
+                                          tls_identity_summary: null,
+                                          auth_issuer: null,
+                                          publisher_identity: null,
+                                          tool_inventory_hash: "hash_tools",
+                                          fetched_at: "2026-04-01T12:05:00.000Z",
+                                        },
+                                        imported_tools: [],
+                                        tool_inventory_version: "hash_tools",
+                                        last_resolved_at: "2026-04-01T12:05:00.000Z",
+                                        created_at: "2026-04-01T12:05:00.000Z",
+                                        updated_at: "2026-04-01T12:08:00.000Z",
+                                      },
+                                    }
+                                  : method === "revoke_mcp_server_profile"
+                                    ? {
+                                        profile: {
+                                          server_profile_id: "mcpprof_123",
+                                          candidate_id: "mcpcand_123",
+                                          display_name: "Example MCP",
+                                          transport: "streamable_http",
+                                          canonical_endpoint: "https://api.example.com/mcp",
+                                          network_scope: "public_https",
+                                          trust_tier: "operator_approved_public",
+                                          status: "revoked",
+                                          drift_state: "drifted",
+                                          quarantine_reason_codes: ["MANUAL_REVOKE"],
+                                          allowed_execution_modes: ["local_proxy"],
+                                          active_trust_decision_id: "mcptrust_123",
+                                          active_credential_binding_id: "mcpbind_123",
+                                          auth_descriptor: {
+                                            mode: "bearer_secret_ref",
+                                            audience: null,
+                                            scope_labels: ["remote:mcp"],
+                                          },
+                                          identity_baseline: {
+                                            canonical_host: "api.example.com",
+                                            canonical_port: 443,
+                                            tls_identity_summary: null,
+                                            auth_issuer: null,
+                                            publisher_identity: null,
+                                            tool_inventory_hash: "hash_tools",
+                                            fetched_at: "2026-04-01T12:05:00.000Z",
+                                          },
+                                          imported_tools: [],
+                                          tool_inventory_version: "hash_tools",
+                                          last_resolved_at: "2026-04-01T12:05:00.000Z",
+                                          created_at: "2026-04-01T12:05:00.000Z",
+                                          updated_at: "2026-04-01T12:09:00.000Z",
+                                        },
+                                      }
+                                    : {
+                                        profiles: [],
+                                      };
+
+      socket.write(
+        `${JSON.stringify({
+          api_version: API_VERSION,
+          request_id: request.request_id,
+          session_id: request.session_id ?? "sess_test",
+          ok: true,
+          result,
+          error: null,
+        })}\n`,
+      );
+      socket.end();
+    });
+
+    const client = new AuthorityClient({
+      socketPath: harness.socketPath,
+      connectTimeoutMs: 50,
+      responseTimeoutMs: 100,
+      maxConnectRetries: 0,
+    });
+
+    await client.listMcpServerCandidates();
+    await client.getMcpServerReview({
+      candidate_id: "mcpcand_123",
+    });
+    await client.submitMcpServerCandidate(
+      {
+        source_kind: "user_input",
+        raw_endpoint: "https://api.example.com/mcp",
+        transport_hint: "streamable_http",
+      },
+      { idempotencyKey: "idem_mcp_candidate_submit" },
+    );
+    await client.listMcpServerProfiles();
+    await client.resolveMcpServerCandidate(
+      {
+        candidate_id: "mcpcand_123",
+        display_name: "Example MCP",
+      },
+      { idempotencyKey: "idem_mcp_candidate_resolve" },
+    );
+    await client.listMcpServerTrustDecisions("mcpprof_123");
+    await client.listMcpServerCredentialBindings("mcpprof_123");
+    await client.bindMcpServerCredentials(
+      {
+        server_profile_id: "mcpprof_123",
+        binding_mode: "bearer_secret_ref",
+        broker_profile_id: "mcp_secret_123",
+        scope_labels: ["remote:mcp"],
+      },
+      { idempotencyKey: "idem_mcp_profile_bind" },
+    );
+    await client.approveMcpServerProfile(
+      {
+        server_profile_id: "mcpprof_123",
+        decision: "allow_policy_managed",
+        trust_tier: "operator_approved_public",
+        allowed_execution_modes: ["local_proxy"],
+        reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+      },
+      { idempotencyKey: "idem_mcp_profile_approve" },
+    );
+    await client.activateMcpServerProfile("mcpprof_123", { idempotencyKey: "idem_mcp_profile_activate" });
+    await client.quarantineMcpServerProfile(
+      {
+        server_profile_id: "mcpprof_123",
+        reason_codes: ["MCP_TOOL_INVENTORY_CHANGED"],
+      },
+      { idempotencyKey: "idem_mcp_profile_quarantine" },
+    );
+    await client.revokeMcpServerCredentials("mcpbind_123", { idempotencyKey: "idem_mcp_profile_binding_revoke" });
+    await client.revokeMcpServerProfile(
+      {
+        server_profile_id: "mcpprof_123",
+        reason_codes: ["MANUAL_REVOKE"],
+      },
+      { idempotencyKey: "idem_mcp_profile_revoke" },
+    );
+
+    expect(seenRequests.find((request) => request.method === "list_mcp_server_candidates")?.payload).toEqual({});
+    expect(seenRequests.find((request) => request.method === "get_mcp_server_review")?.payload).toEqual({
+      candidate_id: "mcpcand_123",
+    });
+    expect(seenRequests.find((request) => request.method === "submit_mcp_server_candidate")?.payload).toEqual({
+      candidate: {
+        source_kind: "user_input",
+        raw_endpoint: "https://api.example.com/mcp",
+        transport_hint: "streamable_http",
+      },
+    });
+    expect(seenRequests.find((request) => request.method === "submit_mcp_server_candidate")?.idempotency_key).toBe(
+      "idem_mcp_candidate_submit",
+    );
+    expect(seenRequests.find((request) => request.method === "list_mcp_server_profiles")?.payload).toEqual({});
+    expect(seenRequests.find((request) => request.method === "resolve_mcp_server_candidate")?.payload).toEqual({
+      candidate_id: "mcpcand_123",
+      display_name: "Example MCP",
+    });
+    expect(seenRequests.find((request) => request.method === "resolve_mcp_server_candidate")?.idempotency_key).toBe(
+      "idem_mcp_candidate_resolve",
+    );
+    expect(seenRequests.find((request) => request.method === "list_mcp_server_trust_decisions")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+    });
+    expect(seenRequests.find((request) => request.method === "list_mcp_server_credential_bindings")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+    });
+    expect(seenRequests.find((request) => request.method === "bind_mcp_server_credentials")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+      binding_mode: "bearer_secret_ref",
+      broker_profile_id: "mcp_secret_123",
+      scope_labels: ["remote:mcp"],
+    });
+    expect(seenRequests.find((request) => request.method === "bind_mcp_server_credentials")?.idempotency_key).toBe(
+      "idem_mcp_profile_bind",
+    );
+    expect(seenRequests.find((request) => request.method === "approve_mcp_server_profile")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+      decision: "allow_policy_managed",
+      trust_tier: "operator_approved_public",
+      allowed_execution_modes: ["local_proxy"],
+      reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+    });
+    expect(seenRequests.find((request) => request.method === "approve_mcp_server_profile")?.idempotency_key).toBe(
+      "idem_mcp_profile_approve",
+    );
+    expect(seenRequests.find((request) => request.method === "activate_mcp_server_profile")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+    });
+    expect(seenRequests.find((request) => request.method === "activate_mcp_server_profile")?.idempotency_key).toBe(
+      "idem_mcp_profile_activate",
+    );
+    expect(seenRequests.find((request) => request.method === "quarantine_mcp_server_profile")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+      reason_codes: ["MCP_TOOL_INVENTORY_CHANGED"],
+    });
+    expect(seenRequests.find((request) => request.method === "quarantine_mcp_server_profile")?.idempotency_key).toBe(
+      "idem_mcp_profile_quarantine",
+    );
+    expect(seenRequests.find((request) => request.method === "revoke_mcp_server_credentials")?.payload).toEqual({
+      credential_binding_id: "mcpbind_123",
+    });
+    expect(seenRequests.find((request) => request.method === "revoke_mcp_server_credentials")?.idempotency_key).toBe(
+      "idem_mcp_profile_binding_revoke",
+    );
+    expect(seenRequests.find((request) => request.method === "revoke_mcp_server_profile")?.payload).toEqual({
+      server_profile_id: "mcpprof_123",
+      reason_codes: ["MANUAL_REVOKE"],
+    });
+    expect(seenRequests.find((request) => request.method === "revoke_mcp_server_profile")?.idempotency_key).toBe(
+      "idem_mcp_profile_revoke",
+    );
   });
 
   it("sends MCP secret and host-policy management requests with the expected methods and payloads", async () => {
@@ -875,7 +2040,15 @@ describe("AuthorityClient transport", () => {
               schema_pack_version: "schema-pack.v1",
               capabilities: {
                 local_only: true,
-                methods: ["hello", "query_timeline", "query_helper", "query_artifact", "get_capabilities", "diagnostics", "run_maintenance"],
+                methods: [
+                  "hello",
+                  "query_timeline",
+                  "query_helper",
+                  "query_artifact",
+                  "get_capabilities",
+                  "diagnostics",
+                  "run_maintenance",
+                ],
               },
             }
           : {

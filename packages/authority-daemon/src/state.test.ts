@@ -78,40 +78,42 @@ describe("AuthorityState", () => {
     expect(session.client_type).toBe("rehydrated");
     expect(run.rehydrated).toBe(true);
     expect(state.rehydrateSession("sess_rehydrated", ["/workspace/project"])).toBe(session);
-    expect(state.rehydrateRun({
-      run_id: "run_rehydrated",
-      session_id: "sess_rehydrated",
-      workflow_name: "workflow",
-      agent_framework: "cli",
-      agent_name: "agentgit-cli",
-      workspace_roots: ["/workspace/project"],
-      event_count: 3,
-      latest_event: null,
-      budget_config: {
-        max_mutating_actions: 5,
-        max_destructive_actions: 2,
-      },
-      budget_usage: {
-        mutating_actions: 1,
-        destructive_actions: 0,
-      },
-      maintenance_status: {
-        projection_status: "fresh",
-        projection_lag_events: 0,
-        degraded_artifact_capture_actions: 0,
-        low_disk_pressure_signals: 0,
-        artifact_health: {
-          total: 0,
-          available: 0,
-          missing: 0,
-          expired: 0,
-          corrupted: 0,
-          tampered: 0,
+    expect(
+      state.rehydrateRun({
+        run_id: "run_rehydrated",
+        session_id: "sess_rehydrated",
+        workflow_name: "workflow",
+        agent_framework: "cli",
+        agent_name: "agentgit-cli",
+        workspace_roots: ["/workspace/project"],
+        event_count: 3,
+        latest_event: null,
+        budget_config: {
+          max_mutating_actions: 5,
+          max_destructive_actions: 2,
         },
-      },
-      created_at: "2026-03-29T12:00:00.000Z",
-      started_at: "2026-03-29T12:00:00.000Z",
-    })).toBe(run);
+        budget_usage: {
+          mutating_actions: 1,
+          destructive_actions: 0,
+        },
+        maintenance_status: {
+          projection_status: "fresh",
+          projection_lag_events: 0,
+          degraded_artifact_capture_actions: 0,
+          low_disk_pressure_signals: 0,
+          artifact_health: {
+            total: 0,
+            available: 0,
+            missing: 0,
+            expired: 0,
+            corrupted: 0,
+            tampered: 0,
+          },
+        },
+        created_at: "2026-03-29T12:00:00.000Z",
+        started_at: "2026-03-29T12:00:00.000Z",
+      }),
+    ).toBe(run);
     expect(state.getSessionCount()).toBe(1);
     expect(state.getRunCount()).toBe(1);
   });

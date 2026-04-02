@@ -194,11 +194,7 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
     return normalized;
   }
 
-  putIfAbsent<K extends CollectionName<TCollections>>(
-    collection: K,
-    key: string,
-    document: TCollections[K],
-  ): boolean {
+  putIfAbsent<K extends CollectionName<TCollections>>(collection: K, key: string, document: TCollections[K]): boolean {
     const normalized = this.parseDocument(collection, key, document);
     const bodyJson = JSON.stringify(normalized);
     const now = new Date().toISOString();
@@ -222,9 +218,9 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
   get<K extends CollectionName<TCollections>>(collection: K, key: string): TCollections[K] | null {
     let row: { body_json: string } | undefined;
     try {
-      row = this.db
-        .prepare("SELECT body_json FROM documents WHERE collection = ? AND key = ?")
-        .get(collection, key) as { body_json: string } | undefined;
+      row = this.db.prepare("SELECT body_json FROM documents WHERE collection = ? AND key = ?").get(collection, key) as
+        | { body_json: string }
+        | undefined;
     } catch (error) {
       throw storageUnavailableError("Integration state document could not be read.", error, {
         collection,
@@ -239,10 +235,7 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
     return this.deserializeRow(collection, key, row.body_json);
   }
 
-  list<K extends CollectionName<TCollections>>(
-    collection: K,
-    filter?: Partial<TCollections[K]>,
-  ): TCollections[K][] {
+  list<K extends CollectionName<TCollections>>(collection: K, filter?: Partial<TCollections[K]>): TCollections[K][] {
     let rows: Array<{ key: string; body_json: string }>;
     try {
       rows = this.db
@@ -269,9 +262,7 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
 
   delete<K extends CollectionName<TCollections>>(collection: K, key: string): boolean {
     try {
-      const result = this.db
-        .prepare("DELETE FROM documents WHERE collection = ? AND key = ?")
-        .run(collection, key);
+      const result = this.db.prepare("DELETE FROM documents WHERE collection = ? AND key = ?").run(collection, key);
       return result.changes > 0;
     } catch (error) {
       throw storageUnavailableError("Integration state document could not be deleted.", error, {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 import { IntegrationState } from "@agentgit/integration-state";
 import { AgentGitError } from "@agentgit/schemas";
@@ -48,6 +49,7 @@ interface StoredMcpBearerSecretDocument {
   updated_at: string;
   rotated_at: string | null;
   last_used_at: string | null;
+  expires_at: string | null;
   source: "operator_api";
   envelope: EncryptedSecretEnvelope;
 }
@@ -62,6 +64,7 @@ export interface McpBearerSecretMetadata {
   updated_at: string;
   rotated_at: string | null;
   last_used_at: string | null;
+  expires_at: string | null;
   source: "operator_api";
 }
 
@@ -80,10 +83,25 @@ export interface ResolvedMcpBearerSecretAccess {
 export interface LocalEncryptedSecretStoreOptions {
   dbPath: string;
   keyPath?: string;
+  serviceName?: string;
+  keyProvider?: SecretKeyProvider;
 }
 
 export interface CredentialBrokerOptions {
   mcpSecretStore?: LocalEncryptedSecretStore | null;
+}
+
+type SecretKeyProviderKind = "macos_keychain" | "linux_secret_service";
+
+export interface SecretKeyProviderDetails {
+  provider: SecretKeyProviderKind;
+  key_identifier: string;
+  legacy_key_path: string | null;
+}
+
+export interface SecretKeyProvider {
+  readonly kind: SecretKeyProviderKind;
+  loadOrCreateKey(params: { serviceName: string; keyIdentifier: string; legacyKeyPath?: string }): Buffer;
 }
 
 function createId(prefix: string): string {
@@ -132,6 +150,194 @@ function normalizeNullableDisplayName(value: string | undefined): string | null 
   return normalized.length > 0 ? normalized : null;
 }
 
+function normalizeOptionalIsoTimestamp(value: string | undefined, field: string): string | null {
+  if (value === undefined) {
+    return null;
+  }
+
+  const normalized = normalizeNonEmpty(value, field);
+  if (Number.isNaN(Date.parse(normalized))) {
+    throw new AgentGitError("MCP secret timestamp is malformed.", "BROKER_UNAVAILABLE", {
+      field,
+      value: normalized,
+    });
+  }
+
+  return normalized;
+}
+
+function normalizeStoredKeyMaterial(encoded: string, details: Record<string, unknown>): Buffer {
+  const key = Buffer.from(encoded.trim(), "base64");
+  if (key.length !== 32) {
+    throw new AgentGitError("Local MCP secret store key is malformed.", "STORAGE_UNAVAILABLE", details);
+  }
+
+  return key;
+}
+
+function readLegacyKeyFile(keyPath: string): Buffer | null {
+  if (!fs.existsSync(keyPath)) {
+    return null;
+  }
+
+  const encoded = fs.readFileSync(keyPath, "utf8").trim();
+  const key = normalizeStoredKeyMaterial(encoded, {
+    key_path: keyPath,
+  });
+  fs.chmodSync(keyPath, 0o600);
+  return key;
+}
+
+function removeLegacyKeyFile(keyPath: string): void {
+  if (!fs.existsSync(keyPath)) {
+    return;
+  }
+
+  fs.rmSync(keyPath, { force: true });
+}
+
+function runSecretCommand(command: string, args: string[], stdin?: string): string {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    input: stdin,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  if (result.error) {
+    throw new AgentGitError("OS-backed secret storage command failed to execute.", "BROKER_UNAVAILABLE", {
+      command,
+      cause: result.error.message,
+    });
+  }
+
+  if (result.status !== 0) {
+    throw new AgentGitError("OS-backed secret storage command failed.", "BROKER_UNAVAILABLE", {
+      command,
+      args,
+      status: result.status,
+      stderr: result.stderr.trim() || null,
+    });
+  }
+
+  return result.stdout.trim();
+}
+
+function commandExists(command: string): boolean {
+  const result = spawnSync(command, ["--help"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  return !result.error;
+}
+
+class MacOsKeychainSecretKeyProvider implements SecretKeyProvider {
+  readonly kind = "macos_keychain";
+
+  loadOrCreateKey(params: { serviceName: string; keyIdentifier: string; legacyKeyPath?: string }): Buffer {
+    if (!commandExists("security")) {
+      throw new AgentGitError("macOS Keychain access is unavailable on this host.", "BROKER_UNAVAILABLE", {
+        provider: this.kind,
+      });
+    }
+
+    const service = `${params.serviceName}:${params.keyIdentifier}`;
+    const account = "mcp-envelope-key";
+
+    try {
+      const existing = runSecretCommand("security", ["find-generic-password", "-a", account, "-s", service, "-w"]);
+      return normalizeStoredKeyMaterial(existing, {
+        provider: this.kind,
+        service,
+      });
+    } catch (error) {
+      if (
+        error instanceof AgentGitError &&
+        typeof error.details?.stderr === "string" &&
+        error.details.stderr.includes("could not be found")
+      ) {
+        const legacyKey = params.legacyKeyPath ? readLegacyKeyFile(params.legacyKeyPath) : null;
+        const key = legacyKey ?? randomBytes(32);
+        runSecretCommand("security", [
+          "add-generic-password",
+          "-U",
+          "-a",
+          account,
+          "-s",
+          service,
+          "-w",
+          key.toString("base64"),
+        ]);
+        if (legacyKey && params.legacyKeyPath) {
+          removeLegacyKeyFile(params.legacyKeyPath);
+        }
+        return key;
+      }
+
+      throw error;
+    }
+  }
+}
+
+class LinuxSecretServiceKeyProvider implements SecretKeyProvider {
+  readonly kind = "linux_secret_service";
+
+  loadOrCreateKey(params: { serviceName: string; keyIdentifier: string; legacyKeyPath?: string }): Buffer {
+    if (!commandExists("secret-tool")) {
+      throw new AgentGitError("Linux Secret Service access is unavailable on this host.", "BROKER_UNAVAILABLE", {
+        provider: this.kind,
+      });
+    }
+
+    const label = `${params.serviceName}:${params.keyIdentifier}`;
+
+    try {
+      const existing = runSecretCommand("secret-tool", [
+        "lookup",
+        "service",
+        params.serviceName,
+        "account",
+        params.keyIdentifier,
+      ]);
+      return normalizeStoredKeyMaterial(existing, {
+        provider: this.kind,
+        service: params.serviceName,
+        account: params.keyIdentifier,
+      });
+    } catch {
+      const legacyKey = params.legacyKeyPath ? readLegacyKeyFile(params.legacyKeyPath) : null;
+      const key = legacyKey ?? randomBytes(32);
+      runSecretCommand(
+        "secret-tool",
+        ["store", "--label", label, "service", params.serviceName, "account", params.keyIdentifier],
+        `${key.toString("base64")}\n`,
+      );
+      if (legacyKey && params.legacyKeyPath) {
+        removeLegacyKeyFile(params.legacyKeyPath);
+      }
+      return key;
+    }
+  }
+}
+
+function createDefaultSecretKeyProvider(): SecretKeyProvider {
+  if (process.platform === "darwin") {
+    return new MacOsKeychainSecretKeyProvider();
+  }
+
+  if (process.platform === "linux") {
+    return new LinuxSecretServiceKeyProvider();
+  }
+
+  throw new AgentGitError("Durable MCP secret storage is not supported on this host platform.", "BROKER_UNAVAILABLE", {
+    platform: process.platform,
+  });
+}
+
+function createKeyIdentifier(dbPath: string): string {
+  return createHash("sha256").update(path.resolve(dbPath)).digest("hex");
+}
+
 function toMetadata(document: StoredMcpBearerSecretDocument): McpBearerSecretMetadata {
   return {
     secret_id: document.secret_id,
@@ -143,6 +349,7 @@ function toMetadata(document: StoredMcpBearerSecretDocument): McpBearerSecretMet
     updated_at: document.updated_at,
     rotated_at: document.rotated_at,
     last_used_at: document.last_used_at,
+    expires_at: document.expires_at,
     source: document.source,
   };
 }
@@ -177,7 +384,12 @@ function normalizeEnvelope(value: unknown, secretId: string): EncryptedSecretEnv
   const authTag = record.auth_tag_b64;
   const ciphertext = record.ciphertext_b64;
 
-  if (algorithm !== "aes-256-gcm" || typeof iv !== "string" || typeof authTag !== "string" || typeof ciphertext !== "string") {
+  if (
+    algorithm !== "aes-256-gcm" ||
+    typeof iv !== "string" ||
+    typeof authTag !== "string" ||
+    typeof ciphertext !== "string"
+  ) {
     throw new AgentGitError("Stored MCP secret document encryption envelope is malformed.", "STORAGE_UNAVAILABLE", {
       secret_id: secretId,
     });
@@ -252,7 +464,11 @@ function normalizeStoredSecretDocument(key: string, value: unknown): StoredMcpBe
     created_at: createdAt,
     updated_at: updatedAt,
     rotated_at: ensureIsoTimestamp(typeof record.rotated_at === "string" ? record.rotated_at : null, "rotated_at"),
-    last_used_at: ensureIsoTimestamp(typeof record.last_used_at === "string" ? record.last_used_at : null, "last_used_at"),
+    last_used_at: ensureIsoTimestamp(
+      typeof record.last_used_at === "string" ? record.last_used_at : null,
+      "last_used_at",
+    ),
+    expires_at: ensureIsoTimestamp(typeof record.expires_at === "string" ? record.expires_at : null, "expires_at"),
     source: "operator_api",
     envelope: normalizeEnvelope(record.envelope, secretId),
   };
@@ -260,12 +476,23 @@ function normalizeStoredSecretDocument(key: string, value: unknown): StoredMcpBe
 
 export class LocalEncryptedSecretStore {
   private readonly state: IntegrationState<{ mcp_bearer_secrets: StoredMcpBearerSecretDocument }>;
-  private readonly keyPath: string;
   private readonly encryptionKey: Buffer;
+  private readonly keyProviderDetails: SecretKeyProviderDetails;
 
   constructor(options: LocalEncryptedSecretStoreOptions) {
-    this.keyPath = options.keyPath ?? path.join(path.dirname(options.dbPath), "local-secret-store.key");
-    this.encryptionKey = this.loadOrCreateKey(this.keyPath);
+    const keyProvider = options.keyProvider ?? createDefaultSecretKeyProvider();
+    const serviceName = normalizeNonEmpty(options.serviceName ?? "com.agentgit.mcp.secret-store", "service_name");
+    const keyIdentifier = createKeyIdentifier(options.dbPath);
+    this.encryptionKey = keyProvider.loadOrCreateKey({
+      serviceName,
+      keyIdentifier,
+      legacyKeyPath: options.keyPath,
+    });
+    this.keyProviderDetails = {
+      provider: keyProvider.kind,
+      key_identifier: keyIdentifier,
+      legacy_key_path: options.keyPath ?? null,
+    };
     this.state = new IntegrationState({
       dbPath: options.dbPath,
       collections: {
@@ -276,27 +503,6 @@ export class LocalEncryptedSecretStore {
         },
       },
     });
-  }
-
-  private loadOrCreateKey(keyPath: string): Buffer {
-    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
-
-    if (fs.existsSync(keyPath)) {
-      const encoded = fs.readFileSync(keyPath, "utf8").trim();
-      const key = Buffer.from(encoded, "base64");
-      if (key.length !== 32) {
-        throw new AgentGitError("Local MCP secret store key is malformed.", "STORAGE_UNAVAILABLE", {
-          key_path: keyPath,
-        });
-      }
-      fs.chmodSync(keyPath, 0o600);
-      return key;
-    }
-
-    const key = randomBytes(32);
-    fs.writeFileSync(keyPath, key.toString("base64"), { mode: 0o600 });
-    fs.chmodSync(keyPath, 0o600);
-    return key;
   }
 
   private encrypt(value: string): EncryptedSecretEnvelope {
@@ -315,11 +521,7 @@ export class LocalEncryptedSecretStore {
 
   private decrypt(envelope: EncryptedSecretEnvelope): string {
     try {
-      const decipher = createDecipheriv(
-        "aes-256-gcm",
-        this.encryptionKey,
-        Buffer.from(envelope.iv_b64, "base64"),
-      );
+      const decipher = createDecipheriv("aes-256-gcm", this.encryptionKey, Buffer.from(envelope.iv_b64, "base64"));
       decipher.setAuthTag(Buffer.from(envelope.auth_tag_b64, "base64"));
       const plaintext = Buffer.concat([
         decipher.update(Buffer.from(envelope.ciphertext_b64, "base64")),
@@ -337,8 +539,10 @@ export class LocalEncryptedSecretStore {
     return "local_encrypted_store";
   }
 
-  keyFilePath(): string {
-    return this.keyPath;
+  storageDetails(): SecretKeyProviderDetails {
+    return {
+      ...this.keyProviderDetails,
+    };
   }
 
   checkpointWal() {
@@ -346,9 +550,7 @@ export class LocalEncryptedSecretStore {
   }
 
   listMcpBearerSecrets(): McpBearerSecretMetadata[] {
-    return this.state
-      .list("mcp_bearer_secrets")
-      .map((document: StoredMcpBearerSecretDocument) => toMetadata(document));
+    return this.state.list("mcp_bearer_secrets").map((document: StoredMcpBearerSecretDocument) => toMetadata(document));
   }
 
   getMcpBearerSecret(secretId: string): McpBearerSecretMetadata | null {
@@ -361,10 +563,12 @@ export class LocalEncryptedSecretStore {
     secret_id: string;
     bearer_token: string;
     display_name?: string;
+    expires_at?: string;
   }): UpsertMcpBearerSecretResult {
     const secretId = normalizeNonEmpty(input.secret_id, "secret_id");
     const token = normalizeNonEmpty(input.bearer_token, "bearer_token");
     const displayName = normalizeNullableDisplayName(input.display_name);
+    const expiresAt = normalizeOptionalIsoTimestamp(input.expires_at, "expires_at");
     const now = new Date().toISOString();
     const existing = this.state.get("mcp_bearer_secrets", secretId);
     const existingToken = existing ? this.decrypt(existing.envelope) : null;
@@ -379,8 +583,9 @@ export class LocalEncryptedSecretStore {
       version,
       created_at: existing?.created_at ?? now,
       updated_at: now,
-      rotated_at: rotated ? now : existing?.rotated_at ?? null,
+      rotated_at: rotated ? now : (existing?.rotated_at ?? null),
       last_used_at: existing?.last_used_at ?? null,
+      expires_at: expiresAt,
       source: "operator_api",
       envelope: this.encrypt(token),
     };
@@ -411,6 +616,17 @@ export class LocalEncryptedSecretStore {
       throw new AgentGitError("Governed MCP secret is not configured.", "BROKER_UNAVAILABLE", {
         secret_id: normalizedSecretId,
       });
+    }
+
+    if (existing.expires_at !== null && Date.parse(existing.expires_at) <= Date.now()) {
+      throw new AgentGitError(
+        "Governed MCP secret is expired and must be rotated before execution.",
+        "BROKER_UNAVAILABLE",
+        {
+          secret_id: normalizedSecretId,
+          expires_at: existing.expires_at,
+        },
+      );
     }
 
     const now = new Date().toISOString();
@@ -474,10 +690,7 @@ export class SessionCredentialBroker {
     return this.profilesByIntegration.has(integration);
   }
 
-  resolveBearerAccess(params: {
-    integration: string;
-    required_scope?: string;
-  }): ResolvedBearerAccess {
+  resolveBearerAccess(params: { integration: string; required_scope?: string }): ResolvedBearerAccess {
     const integration = normalizeNonEmpty(params.integration, "integration");
     const profile = this.profilesByIntegration.get(integration);
     if (!profile) {
@@ -487,11 +700,15 @@ export class SessionCredentialBroker {
     }
 
     if (params.required_scope && !profile.scopes.includes(params.required_scope)) {
-      throw new AgentGitError("Brokered credential profile does not satisfy the required scope.", "BROKER_UNAVAILABLE", {
-        integration,
-        required_scope: params.required_scope,
-        profile_id: profile.profile_id,
-      });
+      throw new AgentGitError(
+        "Brokered credential profile does not satisfy the required scope.",
+        "BROKER_UNAVAILABLE",
+        {
+          integration,
+          required_scope: params.required_scope,
+          profile_id: profile.profile_id,
+        },
+      );
     }
 
     const issuedAt = new Date().toISOString();
@@ -518,19 +735,19 @@ export class SessionCredentialBroker {
     return this.mcpSecretStore ? this.mcpSecretStore.storageMode() : "session_env_only";
   }
 
-  durableSecretStorageDetails():
-    | {
-        mode: "local_encrypted_store";
-        key_path: string;
-      }
-    | null {
+  durableSecretStorageDetails(): {
+    mode: "local_encrypted_store";
+    provider: SecretKeyProviderKind;
+    key_identifier: string;
+    legacy_key_path: string | null;
+  } | null {
     if (!this.mcpSecretStore) {
       return null;
     }
 
     return {
       mode: "local_encrypted_store",
-      key_path: this.mcpSecretStore.keyFilePath(),
+      ...this.mcpSecretStore.storageDetails(),
     };
   }
 
@@ -542,6 +759,7 @@ export class SessionCredentialBroker {
     secret_id: string;
     bearer_token: string;
     display_name?: string;
+    expires_at?: string;
   }): UpsertMcpBearerSecretResult {
     if (!this.mcpSecretStore) {
       throw new AgentGitError("Durable MCP secret storage is not available on this host.", "BROKER_UNAVAILABLE");

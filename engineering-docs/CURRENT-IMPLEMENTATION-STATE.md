@@ -1,6 +1,6 @@
 # Current Implementation State
 
-Status date: 2026-03-31
+Status date: 2026-04-02
 
 This document is the audited source of truth for what the repo actually implements today.
 
@@ -8,10 +8,13 @@ Historical planning and subsystem docs remain useful for intent and rationale, b
 
 ## Verification Basis
 
-This audit is grounded in the current codebase and current green verification:
+This audit is grounded in the current codebase and latest verification snapshot:
 
-- `pnpm test`
-- `pnpm py:test`
+- `pnpm lint` (pass)
+- `pnpm format:check` (pass)
+- `pnpm test:coverage` (pass)
+- `pnpm py:test` (pass)
+- installed CLI smoke gates are green (`pnpm smoke:cli-install`, `pnpm smoke:cli-compat`) and `pnpm release:verify` currently passes end-to-end
 
 ## What Is Real Today
 
@@ -25,6 +28,7 @@ The repo has a real local authority runtime with:
 - operator CLI
 - local inspector UI
 - schema-backed request/response contracts
+- a real release/install path for the public TypeScript packages (`@agentgit/schemas`, `@agentgit/authority-sdk`, `@agentgit/authority-cli`)
 
 Core runtime entrypoints are real in:
 
@@ -128,8 +132,13 @@ If we describe the repo conservatively and truthfully, the following surface is 
 - governed filesystem mutations
 - governed shell mutations
 - governed MCP proxy execution for operator-managed servers and configured tools over `stdio` and `streamable_http` with explicit `loopback`, `private`, or `public_https` network scope
+- sandboxed `stdio` MCP execution with digest-pinned OCI container isolation as the required production path, explicit `allowed_registries` policy, cosign-based signature verification with SLSA provenance enforcement for remote images, and `oci_container.build` support for local development on the same boundary
+- OS-backed MCP bearer secret key protection via macOS Keychain or Linux Secret Service with secret expiry enforcement
+- connect-time DNS/IP scope validation and redirect-chain revalidation for `streamable_http`
+- per-server `streamable_http` concurrency enforcement in-process or through shared SQLite leases with heartbeat renewal
 - daemon/CLI/SDK management of MCP servers, MCP bearer secrets, and MCP public host policies
 - first-class CLI submission of governed MCP tool calls through the daemon
+- enterprise CLI evidence workflows for audit export, verify, report, share, compare, and artifact export
 - owned function integrations for drafts, notes, and tickets
 - snapshot-backed local recovery
 - compensating recovery for owned integrations
@@ -199,6 +208,8 @@ And explicitly exclude from the production claim until built:
 - there is no live simulated execution fallback in the daemon path
 - unsupported non-MCP governed surfaces fail closed with structured errors
 - `/Users/geoffreyfernald/Documents/agentgit/packages/test-fixtures` is now a real reusable internal fixture package used by live tests
+- the public npm package surface now has active `.changeset/` versioning, GitHub Actions CI, a GitHub Actions release workflow, a real installed-binary smoke test that verifies packaged tarballs outside the monorepo, and a real CLI compatibility/upgrade/rollback smoke matrix that validates baseline skew and legacy audit-bundle compatibility
+- operator runbooks for CLI bring-up, secure secret handling, audit workflows, and upgrade/rollback procedures are documented in `/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CLI-OPERATOR-RUNBOOK.md`
 
 ## Bottom Line
 
@@ -207,7 +218,8 @@ The repo is no longer a scaffold. It is a substantial, working local-first autho
 For the current launch scope, the code and docs now line up cleanly:
 
 - supported governed execution is real for filesystem, shell, owned function integrations, and operator-managed MCP tools over `stdio` and `streamable_http`
+- the CLI now has production-real audit export, verify, report, share, compare, and artifact-export workflows backed by live daemon E2E tests
 - unsupported governed surfaces fail closed instead of simulating
 - browser/computer, generic HTTP, hosted MCP, arbitrary remote agent/user registration, and durable workers are excluded from launch truth until they are actually built
 
-The current MCP claim is still intentionally controlled: operator-owned durable registry state, durable local encrypted bearer-secret storage with rotation metadata, daemon/CLI/SDK management of servers/secrets/public-host policies, `tools/list`, `tools/call`, direct-credential denial, approval-first mutation policy, and per-server concurrency limits are real today. `streamable_http` is supported for explicit operator-managed `loopback`, `private`, and `public_https` targets alongside `stdio`, with public HTTPS requiring `https`, an explicit host allowlist policy, and governed bearer auth via either durable `bearer_secret_ref` or legacy `bearer_env`, with secret refs now the production path and env auth remaining a degraded compatibility path. Hosted MCP execution and arbitrary remote registration from agent or user input remain future work.
+The current MCP claim is still intentionally controlled: operator-owned durable registry state, durable local encrypted bearer-secret storage with rotation metadata and enforced secret expiry, daemon/CLI/SDK management of servers/secrets/public-host policies, `tools/list`, `tools/call`, direct-credential denial, approval-first mutation policy, and per-server concurrency limits are real today. `stdio` execution now requires explicit `oci_container` sandbox configuration at registration time and fails closed if the configured OCI runtime is unavailable. Digest-pinned OCI container isolation is the required governed path on Linux, macOS, and Windows; remote images must declare `allowed_registries`, configure cosign-based `signature_verification`, and by default require SLSA provenance attestations, while mutable-tag OCI registrations are rejected unless `oci_container.build` is configured for local development. For local development, `oci_container.build` can build a dev image from local source so teams can stay on the same OCI boundary without publishing images first, but those build-based registrations are surfaced as development-only rather than production-ready. On Windows, the supported plan is OCI sandboxing through Docker Desktop with WSL2 or Podman machine; there is no native host-process fallback. `doctor` now surfaces legacy mutable-tag registrations, local-build-only registrations, missing registry trust policy, missing signature verification, and missing provenance enforcement so operators can close the loop before rollout. `streamable_http` is supported for explicit operator-managed `loopback`, `private`, and `public_https` targets alongside `stdio`, with public HTTPS requiring `https`, an explicit host allowlist policy, connect-time DNS/IP scope verification, redirect-chain revalidation, and governed bearer auth via either durable `bearer_secret_ref` or legacy `bearer_env`, with secret refs now the production path and env auth remaining a degraded compatibility path. Shared SQLite lease enforcement with heartbeat renewal is available for multi-daemon concurrency control. Hosted MCP execution and arbitrary remote registration from agent or user input remain future work.

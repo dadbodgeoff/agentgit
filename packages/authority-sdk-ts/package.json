@@ -2,17 +2,44 @@
   "name": "@agentgit/authority-sdk",
   "version": "0.1.0",
   "private": false,
+  "description": "TypeScript client SDK for the local-first agentgit authority daemon.",
+  "license": "UNLICENSED",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": [
-    "dist"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/authority-sdk-ts"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/authority-sdk-ts",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "authority",
+    "sdk",
+    "typescript",
+    "mcp"
   ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run --dir src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@agentgit/schemas": "workspace:*",

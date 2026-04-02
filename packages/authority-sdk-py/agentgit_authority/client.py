@@ -75,9 +75,146 @@ class AuthorityClient:
         payload: JSONObject = {"workspace_root": workspace_root} if workspace_root else {}
         return self._send_request("get_capabilities", payload, self._session_id)
 
+    def get_effective_policy(self) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("get_effective_policy", {}, self._session_id)
+
+    def validate_policy_config(self, config: JSONObject) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("validate_policy_config", {"config": config}, self._session_id)
+
+    def get_policy_calibration_report(
+        self,
+        *,
+        run_id: str | None = None,
+        include_samples: bool = False,
+        sample_limit: int | None = None,
+    ) -> JSONObject:
+        self._ensure_session()
+        payload: JSONObject = {}
+        if run_id is not None:
+            payload["run_id"] = run_id
+        if include_samples:
+            payload["include_samples"] = include_samples
+        if sample_limit is not None:
+            payload["sample_limit"] = sample_limit
+        return self._send_request("get_policy_calibration_report", payload, self._session_id)
+
+    def explain_policy_action(self, attempt: JSONObject) -> JSONObject:
+        if self._session_id is None:
+            workspace_roots = attempt.get("environment_context", {}).get("workspace_roots", [])
+            self.hello(workspace_roots if isinstance(workspace_roots, list) else [])
+        return self._send_request(
+            "explain_policy_action", {"attempt": attempt}, self._session_id
+        )
+
+    def get_policy_threshold_recommendations(
+        self, *, run_id: str | None = None, min_samples: int | None = None
+    ) -> JSONObject:
+        if self._session_id is None:
+            self.hello()
+        payload: JSONObject = {}
+        if run_id is not None:
+            payload["run_id"] = run_id
+        if min_samples is not None:
+            payload["min_samples"] = min_samples
+        return self._send_request(
+            "get_policy_threshold_recommendations", payload, self._session_id
+        )
+
     def list_mcp_servers(self) -> JSONObject:
         self._ensure_session()
         return self._send_request("list_mcp_servers", {}, self._session_id)
+
+    def list_mcp_server_candidates(self) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("list_mcp_server_candidates", {}, self._session_id)
+
+    def submit_mcp_server_candidate(self, candidate: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "submit_mcp_server_candidate",
+            {"candidate": candidate},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def list_mcp_server_profiles(self) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("list_mcp_server_profiles", {}, self._session_id)
+
+    def resolve_mcp_server_candidate(self, payload: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "resolve_mcp_server_candidate",
+            payload,
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def list_mcp_server_trust_decisions(self, server_profile_id: str | None = None) -> JSONObject:
+        self._ensure_session()
+        payload: JSONObject = {"server_profile_id": server_profile_id} if server_profile_id is not None else {}
+        return self._send_request("list_mcp_server_trust_decisions", payload, self._session_id)
+
+    def list_mcp_server_credential_bindings(self, server_profile_id: str | None = None) -> JSONObject:
+        self._ensure_session()
+        payload: JSONObject = {"server_profile_id": server_profile_id} if server_profile_id is not None else {}
+        return self._send_request("list_mcp_server_credential_bindings", payload, self._session_id)
+
+    def bind_mcp_server_credentials(self, payload: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "bind_mcp_server_credentials",
+            payload,
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def revoke_mcp_server_credentials(self, credential_binding_id: str, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "revoke_mcp_server_credentials",
+            {"credential_binding_id": credential_binding_id},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def approve_mcp_server_profile(self, payload: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "approve_mcp_server_profile",
+            payload,
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def activate_mcp_server_profile(self, server_profile_id: str, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "activate_mcp_server_profile",
+            {"server_profile_id": server_profile_id},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def quarantine_mcp_server_profile(self, payload: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "quarantine_mcp_server_profile",
+            payload,
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def revoke_mcp_server_profile(self, payload: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "revoke_mcp_server_profile",
+            payload,
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
 
     def list_mcp_secrets(self) -> JSONObject:
         self._ensure_session()

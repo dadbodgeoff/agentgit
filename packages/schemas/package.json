@@ -2,23 +2,51 @@
   "name": "@agentgit/schemas",
   "version": "0.1.0",
   "private": false,
+  "description": "Schema pack and TypeScript contract helpers for the agentgit authority runtime.",
+  "license": "UNLICENSED",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/schemas"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/schemas",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "authority",
+    "schema",
+    "typescript",
+    "json-schema"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
       "default": "./dist/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "python3 ../../engineering-docs/schema-pack/examples/validate_examples.py",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "zod": "^4.3.6"

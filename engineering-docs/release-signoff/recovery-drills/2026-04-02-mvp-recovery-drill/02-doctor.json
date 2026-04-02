@@ -1,0 +1,119 @@
+{
+  "cli_version": "0.1.0",
+  "config": {
+    "config_root": "/Users/geoffreyfernald/.config/agentgit",
+    "user_config_path": "/Users/geoffreyfernald/.config/agentgit/authority-cli.toml",
+    "workspace_config_path": "/tmp/agentgit-recovery-drill-DEfxMi/workspace/.agentgit/authority-cli.toml",
+    "active_profile": null,
+    "workspace_root": "/tmp/agentgit-recovery-drill-DEfxMi/workspace",
+    "socket_path": "/tmp/agentgit-recovery-drill-DEfxMi/authority.sock"
+  },
+  "daemon": {
+    "reachable": true,
+    "session_id": "sess_019d4bf0482470cbb03cbf74722c6d66",
+    "accepted_api_version": "authority.v1",
+    "runtime_version": "0.1.0",
+    "schema_pack_version": "v1"
+  },
+  "security_posture_status": "healthy",
+  "checks": [
+    {
+      "code": "WORKSPACE_ROOT",
+      "status": "pass",
+      "summary": "Workspace root exists.",
+      "details": {
+        "workspace_root": "/tmp/agentgit-recovery-drill-DEfxMi/workspace",
+        "source": "runtime_flag:workspace_root"
+      }
+    },
+    {
+      "code": "DAEMON_REACHABLE",
+      "status": "pass",
+      "summary": "Authority daemon handshake succeeded.",
+      "details": {
+        "session_id": "sess_019d4bf0482470cbb03cbf74722c6d66",
+        "accepted_api_version": "authority.v1",
+        "runtime_version": "0.1.0",
+        "schema_pack_version": "v1"
+      }
+    },
+    {
+      "code": "CAPABILITIES",
+      "status": "warn",
+      "summary": "1 degraded capability warning(s) detected.",
+      "details": {
+        "warnings": [
+          "Owned ticket mutations are unavailable until brokered ticket credentials are configured."
+        ]
+      }
+    },
+    {
+      "code": "SECRET_STORAGE_MODE",
+      "status": "pass",
+      "summary": "Credential broker mode: local_encrypted_store via macos_keychain.",
+      "details": {
+        "mode": "local_encrypted_store",
+        "secure_store": true,
+        "encrypted_at_rest": true,
+        "secret_expiry_enforced": true,
+        "rotation_metadata_tracked": true,
+        "key_provider": "macos_keychain",
+        "key_identifier": "9cea7cca2b86feaac391e4ba1150efbcbb4dbb91ffe30f2789a6eb484cfc31f2",
+        "legacy_key_path": "/tmp/agentgit-recovery-drill-DEfxMi/workspace/.agentgit/state/mcp/secret-store.key",
+        "legacy_session_env_profiles_enabled": true
+      }
+    },
+    {
+      "code": "MCP_REGISTRY",
+      "status": "pass",
+      "summary": "MCP registry contains 0 server(s), 0 secret(s), and 0 host policy item(s).",
+      "details": {
+        "servers": 0,
+        "secrets": 0,
+        "host_policies": 0
+      }
+    },
+    {
+      "code": "SECURITY_POSTURE",
+      "status": "pass",
+      "summary": "Security posture is production-ready on this host (oci_container_ready).",
+      "details": {
+        "primary_reason": null,
+        "warnings": [],
+        "current_host_mode": "oci_container_ready",
+        "current_host_mode_reason": "Docker is usable on this host for OCI sandboxing."
+      }
+    },
+    {
+      "code": "HOSTED_WORKER",
+      "status": "pass",
+      "summary": "Hosted MCP worker is reachable at unix:/tmp/agentgit-recovery-drill-DEfxMi/workspace/.agentgit/state/mcp/hosted-worker.sock.",
+      "details": {
+        "endpoint": "unix:/tmp/agentgit-recovery-drill-DEfxMi/workspace/.agentgit/state/mcp/hosted-worker.sock",
+        "endpoint_kind": "unix",
+        "managed_by_daemon": true,
+        "runtime_id": "4f25e5a5bcf10df9",
+        "image_digest": "sha256:de6ad97b56b7705e2f79ae43b0ffdb3f8cd75e76ebcd90a556c34551ed4a2846",
+        "warnings": []
+      }
+    },
+    {
+      "code": "HOSTED_QUEUE",
+      "status": "pass",
+      "summary": "Hosted MCP queue is healthy (0 queued, 0 running).",
+      "details": {
+        "queued_jobs": 0,
+        "running_jobs": 0,
+        "failed_jobs": 0,
+        "retryable_failed_jobs": 0,
+        "active_server_profiles": [],
+        "warnings": []
+      }
+    }
+  ],
+  "recommendations": [
+    "Remove the legacy local key file once migration is confirmed: /tmp/agentgit-recovery-drill-DEfxMi/workspace/.agentgit/state/mcp/secret-store.key",
+    "For local development, prefer `oci_container` with a `build` config so developers can build from source locally while staying on the same OCI boundary used in production.",
+    "Windows plan: On Windows, use Docker Desktop with WSL2 or Podman machine for OCI sandboxing. No native host-process fallback is supported."
+  ]
+}

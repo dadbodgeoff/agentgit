@@ -1,0 +1,9 @@
+{
+  "run_id": "run_019d4bf04b057445bf6469d7f4844aa7",
+  "run_handle": {
+    "run_id": "run_019d4bf04b057445bf6469d7f4844aa7",
+    "session_id": "sess_019d4bf04b047599a1beddd188097708",
+    "workflow_name": "operator-tabletop"
+  },
+  "effective_policy_profile": "coding-agent-v1"
+}

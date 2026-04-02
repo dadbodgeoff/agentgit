@@ -47,7 +47,10 @@ function sortJsonValue(value: unknown): unknown {
 }
 
 function stableJsonHash(value: unknown): string {
-  return crypto.createHash("sha256").update(JSON.stringify(sortJsonValue(value))).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify(sortJsonValue(value)))
+    .digest("hex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,7 +66,11 @@ function normalizeFilesystemAttempt(attempt: RawActionAttempt, sessionId: string
   const isWorkspacePath = isPathInsideWorkspace(normalizedPath, attempt.environment_context.workspace_roots);
 
   const sideEffectLevel =
-    rawOperation === "delete" ? "destructive" : rawOperation === "write" || rawOperation === "overwrite" ? "mutating" : "unknown";
+    rawOperation === "delete"
+      ? "destructive"
+      : rawOperation === "write" || rawOperation === "overwrite"
+        ? "mutating"
+        : "unknown";
 
   return {
     schema_version: "action.v1",
@@ -190,10 +197,19 @@ interface FunctionRawCall {
 
 interface McpRawCall {
   server_id?: unknown;
+  server_profile_id?: unknown;
+  candidate_id?: unknown;
   tool_name?: unknown;
   arguments?: unknown;
   annotations?: unknown;
   input_schema?: unknown;
+  execution_mode_requested?: unknown;
+  trust_tier_at_submit?: unknown;
+  drift_state_at_submit?: unknown;
+  credential_binding_mode?: unknown;
+  profile_status?: unknown;
+  candidate_source_kind?: unknown;
+  allowed_execution_modes?: unknown;
 }
 
 function normalizeStringArray(value: unknown, fieldName: string): string[] {
@@ -389,7 +405,9 @@ function classifyShellCommand(argv: string[]): ShellClassification {
   }
 
   if (PACKAGE_MANAGER_COMMANDS.has(command)) {
-    const isInstallLike = ["install", "add", "update", "upgrade", "remove", "rm", "uninstall", "sync"].includes(subcommand);
+    const isInstallLike = ["install", "add", "update", "upgrade", "remove", "rm", "uninstall", "sync"].includes(
+      subcommand,
+    );
     const isRunLike = ["run", "exec", "dlx"].includes(subcommand);
 
     return {
@@ -537,6 +555,8 @@ function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): Ac
 function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): ActionRecord {
   const rawCall = attempt.raw_call as McpRawCall;
   const serverId = typeof rawCall.server_id === "string" ? rawCall.server_id.trim() : "";
+  const serverProfileId = typeof rawCall.server_profile_id === "string" ? rawCall.server_profile_id.trim() : "";
+  const candidateId = typeof rawCall.candidate_id === "string" ? rawCall.candidate_id.trim() : "";
   const toolName = typeof rawCall.tool_name === "string" ? rawCall.tool_name.trim() : "";
   const toolArguments = rawCall.arguments ?? {};
 
@@ -564,6 +584,55 @@ function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): Acti
 
   const annotations = isRecord(rawCall.annotations) ? rawCall.annotations : null;
   const inputSchema = isRecord(rawCall.input_schema) ? rawCall.input_schema : null;
+  const executionModeRequested =
+    rawCall.execution_mode_requested === "local_proxy" || rawCall.execution_mode_requested === "hosted_delegated"
+      ? rawCall.execution_mode_requested
+      : null;
+  const trustTierAtSubmit =
+    rawCall.trust_tier_at_submit === "operator_owned" ||
+    rawCall.trust_tier_at_submit === "publisher_verified" ||
+    rawCall.trust_tier_at_submit === "operator_approved_public"
+      ? rawCall.trust_tier_at_submit
+      : null;
+  const driftStateAtSubmit =
+    rawCall.drift_state_at_submit === "clean" ||
+    rawCall.drift_state_at_submit === "drifted" ||
+    rawCall.drift_state_at_submit === "unknown"
+      ? rawCall.drift_state_at_submit
+      : null;
+  const credentialBindingMode =
+    rawCall.credential_binding_mode === "oauth_session" ||
+    rawCall.credential_binding_mode === "derived_token" ||
+    rawCall.credential_binding_mode === "bearer_secret_ref" ||
+    rawCall.credential_binding_mode === "session_token" ||
+    rawCall.credential_binding_mode === "hosted_token_exchange"
+      ? rawCall.credential_binding_mode
+      : null;
+  const profileStatus =
+    rawCall.profile_status === "draft" ||
+    rawCall.profile_status === "pending_approval" ||
+    rawCall.profile_status === "active" ||
+    rawCall.profile_status === "quarantined" ||
+    rawCall.profile_status === "revoked"
+      ? rawCall.profile_status
+      : null;
+  const candidateSourceKind =
+    rawCall.candidate_source_kind === "operator_seeded" ||
+    rawCall.candidate_source_kind === "user_input" ||
+    rawCall.candidate_source_kind === "agent_discovered" ||
+    rawCall.candidate_source_kind === "catalog_import"
+      ? rawCall.candidate_source_kind
+      : null;
+  const allowedExecutionModes = Array.isArray(rawCall.allowed_execution_modes)
+    ? [
+        ...new Set(
+          rawCall.allowed_execution_modes.filter(
+            (entry): entry is "local_proxy" | "hosted_delegated" =>
+              entry === "local_proxy" || entry === "hosted_delegated",
+          ),
+        ),
+      ]
+    : [];
   const declaredReadOnlyHint =
     typeof annotations?.readOnlyHint === "boolean"
       ? annotations.readOnlyHint
@@ -572,12 +641,28 @@ function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): Acti
         : null;
   const normalizedRawCall: Record<string, unknown> = {
     server_id: serverId,
+    ...(serverProfileId.length > 0 ? { server_profile_id: serverProfileId } : {}),
+    ...(candidateId.length > 0 ? { candidate_id: candidateId } : {}),
     tool_name: toolName,
     arguments: toolArguments,
     ...(annotations ? { annotations } : {}),
     ...(inputSchema ? { input_schema: inputSchema } : {}),
+    ...(executionModeRequested ? { execution_mode_requested: executionModeRequested } : {}),
+    ...(trustTierAtSubmit ? { trust_tier_at_submit: trustTierAtSubmit } : {}),
+    ...(driftStateAtSubmit ? { drift_state_at_submit: driftStateAtSubmit } : {}),
+    ...(credentialBindingMode ? { credential_binding_mode: credentialBindingMode } : {}),
+    ...(profileStatus ? { profile_status: profileStatus } : {}),
+    ...(candidateSourceKind ? { candidate_source_kind: candidateSourceKind } : {}),
+    ...(allowedExecutionModes.length > 0 ? { allowed_execution_modes: allowedExecutionModes } : {}),
   };
   const toolLocator = `mcp://server/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolName)}`;
+  const executionSurface = executionModeRequested === "hosted_delegated" ? "provider_hosted" : "mcp_proxy";
+  const credentialMode =
+    executionModeRequested === "hosted_delegated"
+      ? "delegated"
+      : credentialBindingMode
+        ? "brokered"
+        : (attempt.environment_context.credential_mode ?? "unknown");
 
   return {
     schema_version: "action.v1",
@@ -608,9 +693,9 @@ function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): Acti
       display_name: `Call MCP tool ${serverId}/${toolName}`,
     },
     execution_path: {
-      surface: "mcp_proxy",
+      surface: executionSurface,
       mode: "pre_execution",
-      credential_mode: attempt.environment_context.credential_mode ?? "unknown",
+      credential_mode: credentialMode,
     },
     target: {
       primary: {
@@ -640,6 +725,8 @@ function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): Acti
     facets: {
       mcp: {
         server_id: serverId,
+        ...(serverProfileId.length > 0 ? { server_profile_id: serverProfileId } : {}),
+        ...(candidateId.length > 0 ? { candidate_id: candidateId } : {}),
         tool_name: toolName,
         tool_locator: toolLocator,
         argument_keys: Object.keys(toolArguments).sort(),
@@ -647,6 +734,13 @@ function normalizeMcpAttempt(attempt: RawActionAttempt, sessionId: string): Acti
         input_schema_sha256: inputSchema ? stableJsonHash(inputSchema) : null,
         annotations,
         declared_read_only_hint: declaredReadOnlyHint,
+        execution_mode_requested: executionModeRequested,
+        trust_tier_at_submit: trustTierAtSubmit,
+        drift_state_at_submit: driftStateAtSubmit,
+        credential_binding_mode: credentialBindingMode,
+        profile_status: profileStatus,
+        candidate_source_kind: candidateSourceKind,
+        allowed_execution_modes: allowedExecutionModes,
       },
     },
     normalization: {
@@ -713,7 +807,8 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
   const userId = typeof rawCall.user_id === "string" ? rawCall.user_id.trim() : "";
   const draftRestoreLabels =
     integration === "drafts" && operation === "restore_draft" ? normalizeDraftRestoreLabels(rawCall.labels) : [];
-  const restoreLabels = integration === "tickets" && operation === "restore_ticket" ? normalizeStringArray(rawCall.labels, "labels") : [];
+  const restoreLabels =
+    integration === "tickets" && operation === "restore_ticket" ? normalizeStringArray(rawCall.labels, "labels") : [];
   const restoreAssignedUsers =
     integration === "tickets" && operation === "restore_ticket"
       ? normalizeStringArray(rawCall.assigned_users, "assigned_users")
@@ -723,7 +818,12 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
   const rawTicketId = typeof rawCall.ticket_id === "string" ? rawCall.ticket_id : "";
   const draftId = operation === "create_draft" ? `draft_${actionId}` : rawDraftId.trim();
   const noteId = operation === "create_note" ? `note_${actionId}` : rawNoteId.trim();
-  const ticketId = operation === "create_ticket" ? (rawTicketId.trim().length > 0 ? rawTicketId.trim() : `ticket_${actionId}`) : rawTicketId.trim();
+  const ticketId =
+    operation === "create_ticket"
+      ? rawTicketId.trim().length > 0
+        ? rawTicketId.trim()
+        : `ticket_${actionId}`
+      : rawTicketId.trim();
 
   if ((operation === "create_draft" || operation === "update_draft") && hasSubject && subject.trim().length === 0) {
     throw new ValidationError("Draft subject must be non-empty when provided.", {
@@ -860,8 +960,8 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
         ? "Ticket labeling requires a non-empty ticket_id."
         : "Ticket label removal requires a non-empty ticket_id.",
       {
-      integration,
-      operation,
+        integration,
+        operation,
       },
     );
   }
@@ -876,8 +976,8 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
         ? "Ticket assignment requires a non-empty ticket_id."
         : "Ticket unassignment requires a non-empty ticket_id.",
       {
-      integration,
-      operation,
+        integration,
+        operation,
       },
     );
   }
@@ -989,8 +1089,8 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
           : "Ticket label removal requires a non-empty label."
         : "Draft labeling requires a non-empty label.",
       {
-      integration,
-      operation,
+        integration,
+        operation,
       },
     );
   }
@@ -1005,8 +1105,8 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
         ? "Ticket assignment requires a non-empty user_id."
         : "Ticket unassignment requires a non-empty user_id.",
       {
-      integration,
-      operation,
+        integration,
+        operation,
       },
     );
   }
@@ -1045,107 +1145,107 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
       ? `drafts://message_draft/${draftId}/labels/${encodeURIComponent(label)}`
       : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
         ? `tickets://issue/${ticketId}/labels/${encodeURIComponent(label)}`
-      : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
-        ? `tickets://issue/${ticketId}/assignees/${encodeURIComponent(userId)}`
-      : integration === "drafts"
-        ? `drafts://message_draft/${draftId}`
-        : integration === "notes"
-          ? `notes://workspace_note/${noteId}`
-          : `tickets://issue/${ticketId}`;
+        : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
+          ? `tickets://issue/${ticketId}/assignees/${encodeURIComponent(userId)}`
+          : integration === "drafts"
+            ? `drafts://message_draft/${draftId}`
+            : integration === "notes"
+              ? `notes://workspace_note/${noteId}`
+              : `tickets://issue/${ticketId}`;
   const targetLabel =
     operation === "create_draft"
       ? subject
       : operation === "create_note"
         ? title
-      : operation === "create_ticket"
-        ? title
-      : operation === "update_ticket"
-        ? `Ticket ${ticketId}`
-      : operation === "delete_ticket"
-        ? `Ticket ${ticketId}`
-      : operation === "restore_ticket"
-        ? `Ticket ${ticketId}`
-      : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
-        ? `Ticket ${ticketId} label ${label}`
-      : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
-        ? `Ticket ${ticketId} assignee ${userId}`
-      : operation === "close_ticket"
-        ? `Ticket ${ticketId}`
-      : operation === "reopen_ticket"
-        ? `Ticket ${ticketId}`
-      : operation === "add_label"
-        ? `Draft ${draftId} label ${label}`
-      : operation === "remove_label" && integration === "drafts"
-        ? `Draft ${draftId} label ${label}`
-      : operation === "delete_draft"
-        ? `Draft ${draftId}`
-      : operation === "unarchive_draft"
-        ? `Draft ${draftId}`
-      : operation === "restore_draft"
-        ? `Draft ${draftId}`
-      : operation === "archive_note"
-        ? `Note ${noteId}`
-      : operation === "update_note"
-        ? `Note ${noteId}`
-      : operation === "restore_note"
-        ? `Note ${noteId}`
-      : operation === "delete_note"
-        ? `Note ${noteId}`
-      : operation === "unarchive_note"
-        ? `Note ${noteId}`
-        : integration === "drafts"
-          ? `Draft ${draftId}`
-          : integration === "notes"
-            ? `Note ${noteId}`
-            : `Ticket ${ticketId}`;
+        : operation === "create_ticket"
+          ? title
+          : operation === "update_ticket"
+            ? `Ticket ${ticketId}`
+            : operation === "delete_ticket"
+              ? `Ticket ${ticketId}`
+              : operation === "restore_ticket"
+                ? `Ticket ${ticketId}`
+                : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
+                  ? `Ticket ${ticketId} label ${label}`
+                  : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
+                    ? `Ticket ${ticketId} assignee ${userId}`
+                    : operation === "close_ticket"
+                      ? `Ticket ${ticketId}`
+                      : operation === "reopen_ticket"
+                        ? `Ticket ${ticketId}`
+                        : operation === "add_label"
+                          ? `Draft ${draftId} label ${label}`
+                          : operation === "remove_label" && integration === "drafts"
+                            ? `Draft ${draftId} label ${label}`
+                            : operation === "delete_draft"
+                              ? `Draft ${draftId}`
+                              : operation === "unarchive_draft"
+                                ? `Draft ${draftId}`
+                                : operation === "restore_draft"
+                                  ? `Draft ${draftId}`
+                                  : operation === "archive_note"
+                                    ? `Note ${noteId}`
+                                    : operation === "update_note"
+                                      ? `Note ${noteId}`
+                                      : operation === "restore_note"
+                                        ? `Note ${noteId}`
+                                        : operation === "delete_note"
+                                          ? `Note ${noteId}`
+                                          : operation === "unarchive_note"
+                                            ? `Note ${noteId}`
+                                            : integration === "drafts"
+                                              ? `Draft ${draftId}`
+                                              : integration === "notes"
+                                                ? `Note ${noteId}`
+                                                : `Ticket ${ticketId}`;
   const trustedCompensator =
     operation === "create_draft"
       ? "drafts.archive_draft"
       : operation === "create_note"
         ? "notes.archive_note"
-      : operation === "create_ticket"
-        ? "tickets.delete_ticket"
-      : operation === "update_ticket"
-        ? "tickets.restore_ticket"
-      : operation === "delete_ticket"
-        ? "tickets.restore_ticket"
-      : operation === "restore_ticket"
-        ? "tickets.restore_ticket"
-      : operation === "add_label" && integration === "tickets"
-        ? "tickets.remove_label"
-      : operation === "remove_label" && integration === "tickets"
-        ? "tickets.add_label"
-      : operation === "assign_user" && integration === "tickets"
-        ? "tickets.unassign_user"
-      : operation === "unassign_user" && integration === "tickets"
-        ? "tickets.assign_user"
-      : operation === "close_ticket"
-        ? "tickets.reopen_ticket"
-      : operation === "reopen_ticket"
-        ? "tickets.close_ticket"
-      : operation === "archive_draft"
-        ? "drafts.unarchive_draft"
-      : operation === "delete_draft"
-        ? "drafts.restore_draft"
-      : operation === "unarchive_draft"
-        ? "drafts.archive_draft"
-        : operation === "update_draft"
-          ? "drafts.restore_draft"
-        : operation === "restore_draft"
-          ? "drafts.restore_draft"
-        : operation === "remove_label" && integration === "drafts"
-          ? "drafts.add_label"
-        : operation === "archive_note"
-          ? "notes.unarchive_note"
-        : operation === "update_note"
-          ? "notes.restore_note"
-        : operation === "restore_note"
-          ? "notes.restore_note"
-        : operation === "delete_note"
-          ? "notes.restore_note"
-        : operation === "unarchive_note"
-          ? "notes.archive_note"
-        : "drafts.remove_label";
+        : operation === "create_ticket"
+          ? "tickets.delete_ticket"
+          : operation === "update_ticket"
+            ? "tickets.restore_ticket"
+            : operation === "delete_ticket"
+              ? "tickets.restore_ticket"
+              : operation === "restore_ticket"
+                ? "tickets.restore_ticket"
+                : operation === "add_label" && integration === "tickets"
+                  ? "tickets.remove_label"
+                  : operation === "remove_label" && integration === "tickets"
+                    ? "tickets.add_label"
+                    : operation === "assign_user" && integration === "tickets"
+                      ? "tickets.unassign_user"
+                      : operation === "unassign_user" && integration === "tickets"
+                        ? "tickets.assign_user"
+                        : operation === "close_ticket"
+                          ? "tickets.reopen_ticket"
+                          : operation === "reopen_ticket"
+                            ? "tickets.close_ticket"
+                            : operation === "archive_draft"
+                              ? "drafts.unarchive_draft"
+                              : operation === "delete_draft"
+                                ? "drafts.restore_draft"
+                                : operation === "unarchive_draft"
+                                  ? "drafts.archive_draft"
+                                  : operation === "update_draft"
+                                    ? "drafts.restore_draft"
+                                    : operation === "restore_draft"
+                                      ? "drafts.restore_draft"
+                                      : operation === "remove_label" && integration === "drafts"
+                                        ? "drafts.add_label"
+                                        : operation === "archive_note"
+                                          ? "notes.unarchive_note"
+                                          : operation === "update_note"
+                                            ? "notes.restore_note"
+                                            : operation === "restore_note"
+                                              ? "notes.restore_note"
+                                              : operation === "delete_note"
+                                                ? "notes.restore_note"
+                                                : operation === "unarchive_note"
+                                                  ? "notes.archive_note"
+                                                  : "drafts.remove_label";
   const payloadKeys =
     operation === "create_draft"
       ? body.length > 0
@@ -1155,91 +1255,91 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
         ? body.length > 0
           ? ["title", "body"]
           : ["title"]
-      : operation === "create_ticket"
-        ? body.length > 0
-          ? ["title", "body", "ticket_id"]
-          : ["title", "ticket_id"]
-      : operation === "update_ticket"
-        ? ["ticket_id", ...(hasTitle ? ["title"] : []), ...(hasBody ? ["body"] : [])]
-      : operation === "delete_ticket"
-        ? ["ticket_id"]
-      : operation === "restore_ticket"
-        ? ["ticket_id", "title", "body", "status", "labels", "assigned_users"]
-      : operation === "close_ticket"
-        ? ["ticket_id"]
-      : operation === "reopen_ticket"
-        ? ["ticket_id"]
-      : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
-        ? ["ticket_id", "label"]
-      : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
-        ? ["ticket_id", "user_id"]
-      : operation === "archive_draft"
-        ? ["draft_id"]
-      : operation === "delete_draft"
-        ? ["draft_id"]
-      : operation === "unarchive_draft"
-        ? ["draft_id"]
-        : operation === "update_draft"
-          ? ["draft_id", ...(hasSubject ? ["subject"] : []), ...(hasBody ? ["body"] : [])]
-        : operation === "restore_draft"
-          ? ["draft_id", "subject", "body", "status", "labels"]
-        : operation === "update_note"
-          ? ["note_id", ...(hasTitle ? ["title"] : []), ...(hasBody ? ["body"] : [])]
-        : operation === "restore_note"
-          ? ["note_id", "title", "body", "status"]
-        : operation === "delete_note"
-          ? ["note_id"]
-        : operation === "archive_note" || operation === "unarchive_note"
-          ? ["note_id"]
-        : ["draft_id", "label"];
+        : operation === "create_ticket"
+          ? body.length > 0
+            ? ["title", "body", "ticket_id"]
+            : ["title", "ticket_id"]
+          : operation === "update_ticket"
+            ? ["ticket_id", ...(hasTitle ? ["title"] : []), ...(hasBody ? ["body"] : [])]
+            : operation === "delete_ticket"
+              ? ["ticket_id"]
+              : operation === "restore_ticket"
+                ? ["ticket_id", "title", "body", "status", "labels", "assigned_users"]
+                : operation === "close_ticket"
+                  ? ["ticket_id"]
+                  : operation === "reopen_ticket"
+                    ? ["ticket_id"]
+                    : (operation === "add_label" || operation === "remove_label") && integration === "tickets"
+                      ? ["ticket_id", "label"]
+                      : (operation === "assign_user" || operation === "unassign_user") && integration === "tickets"
+                        ? ["ticket_id", "user_id"]
+                        : operation === "archive_draft"
+                          ? ["draft_id"]
+                          : operation === "delete_draft"
+                            ? ["draft_id"]
+                            : operation === "unarchive_draft"
+                              ? ["draft_id"]
+                              : operation === "update_draft"
+                                ? ["draft_id", ...(hasSubject ? ["subject"] : []), ...(hasBody ? ["body"] : [])]
+                                : operation === "restore_draft"
+                                  ? ["draft_id", "subject", "body", "status", "labels"]
+                                  : operation === "update_note"
+                                    ? ["note_id", ...(hasTitle ? ["title"] : []), ...(hasBody ? ["body"] : [])]
+                                    : operation === "restore_note"
+                                      ? ["note_id", "title", "body", "status"]
+                                      : operation === "delete_note"
+                                        ? ["note_id"]
+                                        : operation === "archive_note" || operation === "unarchive_note"
+                                          ? ["note_id"]
+                                          : ["draft_id", "label"];
   const displayName =
     operation === "create_draft"
       ? "Create draft message"
       : operation === "create_note"
         ? "Create workspace note"
-      : operation === "create_ticket"
-        ? "Create external ticket"
-      : operation === "update_ticket"
-        ? "Update external ticket"
-      : operation === "delete_ticket"
-        ? "Delete external ticket"
-      : operation === "restore_ticket"
-        ? "Restore external ticket"
-      : operation === "close_ticket"
-        ? "Close external ticket"
-      : operation === "reopen_ticket"
-        ? "Reopen external ticket"
-      : operation === "add_label" && integration === "tickets"
-        ? "Add external ticket label"
-      : operation === "remove_label" && integration === "tickets"
-        ? "Remove external ticket label"
-      : operation === "assign_user" && integration === "tickets"
-        ? "Assign external ticket user"
-      : operation === "unassign_user" && integration === "tickets"
-        ? "Unassign external ticket user"
-      : operation === "archive_draft"
-        ? "Archive draft message"
-      : operation === "delete_draft"
-        ? "Delete draft message"
-      : operation === "unarchive_draft"
-        ? "Unarchive draft message"
-        : operation === "update_draft"
-          ? "Update draft message"
-        : operation === "restore_draft"
-          ? "Restore draft message"
-        : operation === "remove_label" && integration === "drafts"
-          ? "Remove draft label"
-        : operation === "archive_note"
-          ? "Archive workspace note"
-        : operation === "update_note"
-          ? "Update workspace note"
-        : operation === "restore_note"
-          ? "Restore workspace note"
-        : operation === "delete_note"
-          ? "Delete workspace note"
-        : operation === "unarchive_note"
-          ? "Unarchive workspace note"
-        : "Add draft label";
+        : operation === "create_ticket"
+          ? "Create external ticket"
+          : operation === "update_ticket"
+            ? "Update external ticket"
+            : operation === "delete_ticket"
+              ? "Delete external ticket"
+              : operation === "restore_ticket"
+                ? "Restore external ticket"
+                : operation === "close_ticket"
+                  ? "Close external ticket"
+                  : operation === "reopen_ticket"
+                    ? "Reopen external ticket"
+                    : operation === "add_label" && integration === "tickets"
+                      ? "Add external ticket label"
+                      : operation === "remove_label" && integration === "tickets"
+                        ? "Remove external ticket label"
+                        : operation === "assign_user" && integration === "tickets"
+                          ? "Assign external ticket user"
+                          : operation === "unassign_user" && integration === "tickets"
+                            ? "Unassign external ticket user"
+                            : operation === "archive_draft"
+                              ? "Archive draft message"
+                              : operation === "delete_draft"
+                                ? "Delete draft message"
+                                : operation === "unarchive_draft"
+                                  ? "Unarchive draft message"
+                                  : operation === "update_draft"
+                                    ? "Update draft message"
+                                    : operation === "restore_draft"
+                                      ? "Restore draft message"
+                                      : operation === "remove_label" && integration === "drafts"
+                                        ? "Remove draft label"
+                                        : operation === "archive_note"
+                                          ? "Archive workspace note"
+                                          : operation === "update_note"
+                                            ? "Update workspace note"
+                                            : operation === "restore_note"
+                                              ? "Restore workspace note"
+                                              : operation === "delete_note"
+                                                ? "Delete workspace note"
+                                                : operation === "unarchive_note"
+                                                  ? "Unarchive workspace note"
+                                                  : "Add draft label";
   const normalizedRawCall: Record<string, unknown> = {
     integration,
     operation,
@@ -1369,11 +1469,7 @@ function normalizeFunctionAttempt(attempt: RawActionAttempt, sessionId: string):
         integration,
         operation,
         object_type:
-          integration === "drafts"
-            ? "message_draft"
-            : integration === "notes"
-              ? "workspace_note"
-              : "issue_ticket",
+          integration === "drafts" ? "message_draft" : integration === "notes" ? "workspace_note" : "issue_ticket",
         object_locator: locator,
         trusted_compensator: trustedCompensator,
         payload_keys: payloadKeys,
@@ -1407,15 +1503,12 @@ export function normalizeActionAttempt(attempt: RawActionAttempt, sessionId: str
     }
 
     if (attempt.tool_registration.tool_kind === "browser") {
-      throw new PreconditionError(
-        "Governed browser/computer execution is not part of the supported runtime surface.",
-        {
-          requested_tool_kind: attempt.tool_registration.tool_kind,
-          requested_tool_name: attempt.tool_registration.tool_name,
-          supported_tool_kinds: ["filesystem", "shell", "function", "mcp"],
-          unsupported_surface: "browser_computer",
-        },
-      );
+      throw new PreconditionError("Governed browser/computer execution is not part of the supported runtime surface.", {
+        requested_tool_kind: attempt.tool_registration.tool_kind,
+        requested_tool_name: attempt.tool_registration.tool_name,
+        supported_tool_kinds: ["filesystem", "shell", "function", "mcp"],
+        unsupported_surface: "browser_computer",
+      });
     }
 
     throw new ValidationError("Unsupported tool kind.", {

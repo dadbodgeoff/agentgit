@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentGitError, type ActionRecord } from "@agentgit/schemas";
 import { createTempDirTracker } from "@agentgit/test-fixtures";
 
-import { LocalSnapshotEngine } from "./index.js";
+import { LocalSnapshotEngine, selectSnapshotClass } from "./index.js";
 
 let tempDir: string | null = null;
 const tempDirs = createTempDirTracker("agentgit-snapshot-");
@@ -158,6 +158,77 @@ function makeShellAction(workspaceRoot: string): ActionRecord {
   };
 }
 
+function makeFunctionAction(workspaceRoot: string): ActionRecord {
+  return {
+    schema_version: "action.v1",
+    action_id: "act_function",
+    run_id: "run_function",
+    session_id: "sess_function",
+    status: "normalized",
+    timestamps: {
+      requested_at: "2026-03-29T12:00:00.000Z",
+      normalized_at: "2026-03-29T12:00:01.000Z",
+    },
+    provenance: {
+      mode: "governed",
+      source: "test",
+      confidence: 0.95,
+    },
+    actor: {
+      type: "agent",
+      tool_name: "drafts_create",
+      tool_kind: "function",
+    },
+    operation: {
+      domain: "function",
+      kind: "create",
+      name: "function.create",
+      display_name: "Create draft",
+    },
+    execution_path: {
+      surface: "governed_function",
+      mode: "pre_execution",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "workspace",
+        locator: workspaceRoot,
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: {},
+      redacted: {},
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: "mutating",
+      external_effects: "none",
+      reversibility_hint: "compensatable",
+      sensitivity_hint: "low",
+      batch: false,
+    },
+    facets: {
+      function: {
+        integration: "drafts",
+        operation: "create_draft",
+      },
+    },
+    normalization: {
+      mapper: "test",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: 0.95,
+    },
+  };
+}
+
 afterEach(() => {
   if (tempDir) {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -167,6 +238,72 @@ afterEach(() => {
 });
 
 describe("LocalSnapshotEngine", () => {
+  it("selects journal_only for narrow reversible filesystem mutations", () => {
+    const selection = selectSnapshotClass({
+      action: makeAction("/tmp/workspace/file.txt"),
+      policy_decision: "allow_with_snapshot",
+      capability_state: "healthy",
+      journal_chain_depth: 3,
+    });
+
+    expect(selection.snapshot_class).toBe("journal_only");
+    expect(selection.reason_codes).toContain("snapshot.narrow_reversible_mutation");
+  });
+
+  it("selects journal_plus_anchor for shell workspace mutations", () => {
+    const selection = selectSnapshotClass({
+      action: makeShellAction("/tmp/workspace"),
+      policy_decision: "allow_with_snapshot",
+      capability_state: "healthy",
+      journal_chain_depth: 6,
+    });
+
+    expect(selection.snapshot_class).toBe("journal_plus_anchor");
+    expect(selection.reason_codes).toContain("snapshot.shell_mutation_boundary");
+  });
+
+  it("selects exact_anchor for package-manager style branch points", () => {
+    const action = makeShellAction("/tmp/workspace");
+    action.facets.shell = {
+      ...(action.facets.shell as Record<string, unknown>),
+      command_family: "package_manager",
+    };
+
+    const selection = selectSnapshotClass({
+      action,
+      policy_decision: "allow_with_snapshot",
+      capability_state: "healthy",
+      journal_chain_depth: 12,
+    });
+
+    expect(selection.snapshot_class).toBe("exact_anchor");
+    expect(selection.reason_codes).toContain("snapshot.opaque_workspace_wide_tooling");
+  });
+
+  it("selects metadata_only for compensatable non-filesystem mutations", () => {
+    const selection = selectSnapshotClass({
+      action: makeFunctionAction("/tmp/workspace"),
+      policy_decision: "allow_with_snapshot",
+      capability_state: "healthy",
+      journal_chain_depth: 2,
+    });
+
+    expect(selection.snapshot_class).toBe("metadata_only");
+    expect(selection.reason_codes).toContain("snapshot.non_filesystem_metadata_only");
+  });
+
+  it("strengthens journal_only to journal_plus_anchor when capability state is stale", () => {
+    const selection = selectSnapshotClass({
+      action: makeAction("/tmp/workspace/file.txt"),
+      policy_decision: "allow_with_snapshot",
+      capability_state: "stale",
+      journal_chain_depth: 3,
+    });
+
+    expect(selection.snapshot_class).toBe("journal_plus_anchor");
+    expect(selection.reason_codes).toContain("snapshot.capability_state_strengthened");
+  });
+
   it("captures and restores a preexisting file", async () => {
     tempDir = tempDirs.make("agentgit-snapshot-");
     const targetPath = path.join(tempDir, "file.txt");
@@ -254,6 +391,40 @@ describe("LocalSnapshotEngine", () => {
     await expect(engine.restore(snapshot.snapshot_id)).resolves.toBe(false);
   });
 
+  it("captures layered workspace snapshots for shell mutations when requested", async () => {
+    tempDir = tempDirs.make("agentgit-snapshot-");
+    const sourcePath = path.join(tempDir, "move-me.txt");
+    fs.writeFileSync(sourcePath, "before", "utf8");
+    const engine = new LocalSnapshotEngine({
+      rootDir: path.join(tempDir, "snapshots"),
+    });
+
+    const snapshot = await engine.createSnapshot({
+      action: makeShellAction(tempDir),
+      requested_class: "journal_plus_anchor",
+      workspace_root: tempDir,
+    });
+
+    fs.renameSync(sourcePath, path.join(tempDir, "moved.txt"));
+    const manifest = await engine.getSnapshotManifest(snapshot.snapshot_id);
+    const restored = await engine.restore(snapshot.snapshot_id);
+
+    expect(snapshot.snapshot_class).toBe("journal_plus_anchor");
+    expect(snapshot.fidelity).toBe("full");
+    expect(manifest).toEqual(
+      expect.objectContaining({
+        snapshot_class: "journal_plus_anchor",
+        operation_domain: "shell",
+        operation_kind: "exec",
+        execution_surface: "governed_shell",
+        tool_kind: "shell",
+        tool_name: "exec_command",
+      }),
+    );
+    expect(restored).toBe(true);
+    expect(fs.existsSync(sourcePath)).toBe(true);
+  });
+
   it("surfaces low-disk metadata snapshot writes as retryable storage failures", async () => {
     tempDir = tempDirs.make("agentgit-snapshot-");
     const engine = new LocalSnapshotEngine({
@@ -315,7 +486,11 @@ describe("LocalSnapshotEngine", () => {
 
     const preservedLegacyDir = path.join(tempDir, "snapshots", "snap_legacy_preserved");
     fs.mkdirSync(preservedLegacyDir, { recursive: true });
-    fs.writeFileSync(path.join(preservedLegacyDir, "manifest.json"), JSON.stringify({ snapshot_id: "snap_legacy_preserved" }), "utf8");
+    fs.writeFileSync(
+      path.join(preservedLegacyDir, "manifest.json"),
+      JSON.stringify({ snapshot_id: "snap_legacy_preserved" }),
+      "utf8",
+    );
 
     const summary = await engine.garbageCollectSnapshots();
 
@@ -367,7 +542,14 @@ describe("LocalSnapshotEngine", () => {
       workspace_root: tempDir,
     });
 
-    const duplicateAnchorPath = path.join(tempDir, "snapshots", "snaps", secondSnapshot.snapshot_id, "files", "config.json");
+    const duplicateAnchorPath = path.join(
+      tempDir,
+      "snapshots",
+      "snaps",
+      secondSnapshot.snapshot_id,
+      "files",
+      "config.json",
+    );
     expect(fs.readFileSync(duplicateAnchorPath, "utf8")).toBe('{"version":1}');
 
     const summary = await engine.rebaseSyntheticAnchors();

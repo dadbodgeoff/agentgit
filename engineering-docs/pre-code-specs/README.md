@@ -28,6 +28,8 @@ Verification date for the versioned baselines in this folder: **2026-03-29**
 - `11-support-infrastructure-spec.md`
 - `12-cross-cutting-spec.md`
 - `13-examples-and-validation-spec.md`
+- `14-hosted-mcp-and-remote-trust-spec.md`
+- `15-policy-hardening-and-calibration-spec.md`
 
 ## Verified Version Choices
 

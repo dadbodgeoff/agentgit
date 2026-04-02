@@ -2,6 +2,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -10,7 +11,8 @@ import { z } from "zod";
 
 import { LocalEncryptedSecretStore, SessionCredentialBroker } from "@agentgit/credential-broker";
 import { IntegrationState } from "@agentgit/integration-state";
-import type { ActionRecord, PolicyOutcomeRecord } from "@agentgit/schemas";
+import { McpPublicHostPolicyRegistry } from "@agentgit/mcp-registry";
+import type { ActionRecord, McpServerDefinition, PolicyOutcomeRecord } from "@agentgit/schemas";
 import { createTempDirTracker } from "@agentgit/test-fixtures";
 
 import {
@@ -30,6 +32,92 @@ const tempDirs = createTempDirTracker("agentgit-exec-");
 const ticketServers = new Set<http.Server>();
 const storeClosers: Array<{ close(): void }> = [];
 const mcpTestServerScript = decodeURIComponent(new URL("./mcp-test-server.mjs", import.meta.url).pathname);
+const ociTestImageRoot = decodeURIComponent(new URL("./oci-test-image", import.meta.url).pathname);
+const TEST_OCI_BUILD_IMAGE = `agentgit/test-stdio:${process.pid}`;
+
+function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | null {
+  for (const runtime of ["docker", "podman"] as const) {
+    const result = spawnSync(runtime, ["info"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    if (result.status === 0 && !result.error) {
+      const imageResult = spawnSync(runtime, ["image", "inspect", "node:22-bookworm-slim"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (imageResult.status !== 0 || imageResult.error) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(imageResult.stdout) as Array<{ RepoDigests?: string[] }>;
+        const repoDigest = parsed[0]?.RepoDigests?.find(
+          (digest) => typeof digest === "string" && digest.includes("@sha256:"),
+        );
+        if (repoDigest) {
+          return {
+            runtime,
+            image: repoDigest,
+          };
+        }
+      } catch {
+        // Try the next runtime.
+      }
+    }
+  }
+
+  return null;
+}
+
+const TEST_OCI_SANDBOX = detectOciSandbox();
+
+function makeGovernedTestStdioServer(
+  scenario: string,
+  extraEnv: Record<string, string> = {},
+): Extract<McpServerDefinition, { transport: "stdio" }> | null {
+  if (!TEST_OCI_SANDBOX) {
+    return null;
+  }
+  return {
+    server_id: "notes_server",
+    transport: "stdio",
+    command: "node",
+    args: ["/agentgit-test/mcp-test-server.mjs"],
+    env: {
+      AGENTGIT_TEST_MCP_SCENARIO: scenario,
+      ...extraEnv,
+    },
+    sandbox: {
+      type: "oci_container",
+      runtime: TEST_OCI_SANDBOX.runtime,
+      image: TEST_OCI_BUILD_IMAGE,
+      build: {
+        context_path: ociTestImageRoot,
+        dockerfile_path: path.join(ociTestImageRoot, "Dockerfile"),
+        rebuild_policy: "if_missing",
+      },
+      workspace_mount_path: "/workspace",
+      workdir: "/workspace",
+      workspace_access: "read_only",
+      additional_mounts: [
+        {
+          host_path: path.dirname(mcpTestServerScript),
+          container_path: "/agentgit-test",
+          read_only: true,
+        },
+      ],
+    },
+    tools: [
+      {
+        tool_name: "echo_note",
+        side_effect_level: "read_only",
+        approval_mode: "allow",
+      },
+    ],
+  };
+}
 
 function trackStore<T extends { close(): void }>(store: T): T {
   storeClosers.push(store);
@@ -215,15 +303,17 @@ function makeMcpPolicyOutcome(action: ActionRecord): PolicyOutcomeRecord {
   };
 }
 
-async function startTicketService(options: {
-  token?: string;
-  failCreateStatus?: number;
-  failUpdateStatus?: number;
-  failRestoreStatus?: number;
-  failCloseStatus?: number;
-  failReopenStatus?: number;
-  failDeleteStatus?: number;
-} = {}): Promise<{
+async function startTicketService(
+  options: {
+    token?: string;
+    failCreateStatus?: number;
+    failUpdateStatus?: number;
+    failRestoreStatus?: number;
+    failCloseStatus?: number;
+    failReopenStatus?: number;
+    failDeleteStatus?: number;
+  } = {},
+): Promise<{
   baseUrl: string;
   close: () => Promise<void>;
   requests: Array<{ method: string; url: string; authorization: string | undefined }>;
@@ -420,11 +510,14 @@ async function startTicketService(options: {
   };
 }
 
-async function startMcpHttpService(options: {
-  requireBearerToken?: string;
-  scenario?: "default" | "missing_tool" | "call_error";
-  toolDelayMs?: number;
-} = {}): Promise<{
+async function startMcpHttpService(
+  options: {
+    requireBearerToken?: string;
+    scenario?: "default" | "missing_tool" | "call_error" | "redirect";
+    toolDelayMs?: number;
+    redirectLocation?: string;
+  } = {},
+): Promise<{
   url: string;
   close: () => Promise<void>;
   waitForCallCount: (count: number) => Promise<void>;
@@ -441,6 +534,14 @@ async function startMcpHttpService(options: {
   };
 
   const server = http.createServer(async (req, res) => {
+    if (options.scenario === "redirect") {
+      res.writeHead(307, {
+        location: options.redirectLocation ?? "http://192.168.0.10/mcp",
+      });
+      res.end();
+      return;
+    }
+
     if (options.requireBearerToken && req.headers.authorization !== `Bearer ${options.requireBearerToken}`) {
       res.writeHead(401, { "content-type": "application/json" });
       res.end(
@@ -2458,7 +2559,7 @@ describe("FunctionExecutionAdapter", () => {
     expect(result.mode).toBe("executed");
     expect(result.output.external_object_status).toBe("active");
     expect(result.output.subject).toBe("Updated launch plan");
-    expect((await store.getDraft("draft_existing"))).toMatchObject({
+    expect(await store.getDraft("draft_existing")).toMatchObject({
       subject: "Updated launch plan",
       body: "Tighten the compensator with preimage restore.",
       status: "active",
@@ -2542,7 +2643,7 @@ describe("FunctionExecutionAdapter", () => {
     expect(result.output.external_object_status).toBe("archived");
     expect(result.output.subject).toBe("Restored launch plan");
     expect(result.output.labels).toEqual(["priority/high", "ops"]);
-    expect((await store.getDraft("draft_existing"))).toMatchObject({
+    expect(await store.getDraft("draft_existing")).toMatchObject({
       subject: "Restored launch plan",
       body: "Return the original draft body.",
       status: "archived",
@@ -2585,7 +2686,7 @@ describe("FunctionExecutionAdapter", () => {
 
     expect(result.mode).toBe("executed");
     expect(result.output.external_object_status).toBe("deleted");
-    expect((await store.getDraft("draft_existing"))).toMatchObject({
+    expect(await store.getDraft("draft_existing")).toMatchObject({
       status: "deleted",
       subject: "Restored launch plan",
       body: "Return the original draft body.",
@@ -4298,23 +4399,14 @@ describe("OwnedNoteStore", () => {
   });
 
   it("executes a governed MCP stdio tool call and captures request/response evidence", async () => {
+    const server = makeGovernedTestStdioServer("stderr_noise");
+    if (!server) {
+      return;
+    }
     const adapter = new McpExecutionAdapter([
       {
-        server_id: "notes_server",
+        ...server,
         display_name: "Notes server",
-        transport: "stdio",
-        command: process.execPath,
-        args: [mcpTestServerScript],
-        env: {
-          AGENTGIT_TEST_MCP_SCENARIO: "stderr_noise",
-        },
-        tools: [
-          {
-            tool_name: "echo_note",
-            side_effect_level: "read_only",
-            approval_mode: "allow",
-          },
-        ],
       },
     ]);
     const action = makeMcpAction();
@@ -4341,6 +4433,197 @@ describe("OwnedNoteStore", () => {
     });
     expect(result.artifacts.map((artifact) => artifact.type)).toContain("request_response");
     expect(result.artifacts.map((artifact) => artifact.type)).toContain("stderr");
+  }, 20_000);
+
+  it("sandboxes a governed stdio MCP server against file and network escape attempts with OCI isolation", async () => {
+    if (!TEST_OCI_SANDBOX) {
+      return;
+    }
+
+    const workspaceRoot = tempDirs.make();
+    const forbiddenRoot = path.join(os.homedir(), `.agentgit-sandbox-test-${process.pid}-${Date.now()}`);
+    const forbiddenReadPath = path.join(forbiddenRoot, "secret.txt");
+    const forbiddenWritePath = path.join(forbiddenRoot, "written.txt");
+    fs.mkdirSync(forbiddenRoot, { recursive: true });
+    fs.writeFileSync(forbiddenReadPath, "launch-secrets", "utf8");
+
+    let networkCallCount = 0;
+    const networkServer = http.createServer((req, res) => {
+      networkCallCount += 1;
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("reachable");
+    });
+    await new Promise<void>((resolve, reject) => {
+      networkServer.listen(0, "127.0.0.1", () => resolve());
+      networkServer.once("error", reject);
+    });
+
+    const address = networkServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("sandbox network server did not bind to a TCP address");
+    }
+
+    try {
+      const adapter = new McpExecutionAdapter([
+        {
+          server_id: "notes_server_sandboxed",
+          transport: "stdio",
+          command: "node",
+          args: ["/agentgit-test/mcp-test-server.mjs"],
+          sandbox: {
+            type: "oci_container",
+            runtime: TEST_OCI_SANDBOX.runtime,
+            image: TEST_OCI_BUILD_IMAGE,
+            build: {
+              context_path: ociTestImageRoot,
+              dockerfile_path: path.join(ociTestImageRoot, "Dockerfile"),
+              rebuild_policy: "if_missing",
+            },
+            workspace_mount_path: "/workspace",
+            workdir: "/workspace",
+            workspace_access: "read_only",
+            additional_mounts: [
+              {
+                host_path: path.dirname(mcpTestServerScript),
+                container_path: "/agentgit-test",
+                read_only: true,
+              },
+            ],
+          },
+          env: {
+            AGENTGIT_TEST_MCP_SCENARIO: "sandbox_probe",
+            AGENTGIT_SANDBOX_READ_PATH: forbiddenReadPath,
+            AGENTGIT_SANDBOX_WRITE_PATH: forbiddenWritePath,
+            AGENTGIT_SANDBOX_NETWORK_URL: `http://127.0.0.1:${address.port}/probe`,
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]);
+
+      const action = makeMcpAction({
+        facets: {
+          mcp: {
+            server_id: "notes_server_sandboxed",
+            tool_name: "echo_note",
+          },
+        },
+      });
+      const result = await adapter.execute({
+        action,
+        policy_outcome: makeMcpPolicyOutcome(action),
+        workspace_root: workspaceRoot,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output.structured_content).toMatchObject({
+        read_success: false,
+        write_success: false,
+        network_success: false,
+      });
+      expect(fs.existsSync(forbiddenWritePath)).toBe(false);
+      expect(networkCallCount).toBe(0);
+    } finally {
+      await closeTicketServer(networkServer);
+      fs.rmSync(forbiddenRoot, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("sandboxes a governed stdio MCP server inside an OCI container on Linux", async () => {
+    if (process.platform !== "linux" || !TEST_OCI_SANDBOX) {
+      return;
+    }
+
+    const workspaceRoot = process.cwd();
+    const forbiddenRoot = path.join(os.tmpdir(), `agentgit-linux-sandbox-test-${process.pid}-${Date.now()}`);
+    const forbiddenReadPath = path.join(forbiddenRoot, "secret.txt");
+    const forbiddenWritePath = path.join(forbiddenRoot, "written.txt");
+    fs.mkdirSync(forbiddenRoot, { recursive: true });
+    fs.writeFileSync(forbiddenReadPath, "launch-secrets", "utf8");
+
+    let networkCallCount = 0;
+    const networkServer = http.createServer((req, res) => {
+      networkCallCount += 1;
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("reachable");
+    });
+    await new Promise<void>((resolve, reject) => {
+      networkServer.listen(0, "127.0.0.1", () => resolve());
+      networkServer.once("error", reject);
+    });
+
+    const address = networkServer.address();
+    if (!address || typeof address === "string") {
+      throw new Error("sandbox network server did not bind to a TCP address");
+    }
+
+    try {
+      const adapter = new McpExecutionAdapter([
+        {
+          server_id: "notes_server_oci_sandboxed",
+          transport: "stdio",
+          command: "node",
+          args: ["packages/execution-adapters/src/mcp-test-server.mjs"],
+          sandbox: {
+            type: "oci_container",
+            runtime: TEST_OCI_SANDBOX.runtime,
+            image: TEST_OCI_BUILD_IMAGE,
+            build: {
+              context_path: ociTestImageRoot,
+              dockerfile_path: path.join(ociTestImageRoot, "Dockerfile"),
+              rebuild_policy: "if_missing",
+            },
+            workspace_access: "read_only",
+            network: "none",
+          },
+          env: {
+            AGENTGIT_TEST_MCP_SCENARIO: "sandbox_probe",
+            AGENTGIT_SANDBOX_READ_PATH: forbiddenReadPath,
+            AGENTGIT_SANDBOX_WRITE_PATH: forbiddenWritePath,
+            AGENTGIT_SANDBOX_NETWORK_URL: `http://127.0.0.1:${address.port}/probe`,
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]);
+
+      const action = makeMcpAction({
+        facets: {
+          mcp: {
+            server_id: "notes_server_oci_sandboxed",
+            tool_name: "echo_note",
+          },
+        },
+      });
+      const result = await adapter.execute({
+        action,
+        policy_outcome: makeMcpPolicyOutcome(action),
+        workspace_root: workspaceRoot,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.output.structured_content).toMatchObject({
+        read_success: false,
+        write_success: false,
+        network_success: false,
+      });
+      expect((result.output.structured_content as { uid?: number | null }).uid).not.toBe(0);
+      expect(fs.existsSync(forbiddenWritePath)).toBe(false);
+      expect(networkCallCount).toBe(0);
+    } finally {
+      await closeTicketServer(networkServer);
+      fs.rmSync(forbiddenRoot, { recursive: true, force: true });
+    }
   });
 
   it("executes a governed MCP streamable_http tool call with operator-owned bearer auth", async () => {
@@ -4502,25 +4785,81 @@ describe("OwnedNoteStore", () => {
     }
   });
 
-  it("fails closed when the upstream MCP server does not advertise the requested tool", async () => {
-    const adapter = new McpExecutionAdapter([
-      {
-        server_id: "notes_server",
-        transport: "stdio",
-        command: process.execPath,
-        args: [mcpTestServerScript],
-        env: {
-          AGENTGIT_TEST_MCP_SCENARIO: "missing_tool",
-        },
-        tools: [
+  it("fails closed when a durable MCP secret has expired", async () => {
+    const service = await startMcpHttpService({
+      requireBearerToken: "http-secret-ref-token",
+    });
+    const secretsRoot = tempDirs.make();
+    const secretStore = trackStore(
+      new LocalEncryptedSecretStore({
+        dbPath: path.join(secretsRoot, "mcp-secrets.db"),
+        keyPath: path.join(secretsRoot, "mcp-secrets.key"),
+      }),
+    );
+    const broker = new SessionCredentialBroker({
+      mcpSecretStore: secretStore,
+    });
+    broker.upsertMcpBearerSecret({
+      secret_id: "mcp_secret_expired",
+      display_name: "Expired Notes HTTP MCP",
+      bearer_token: "http-secret-ref-token",
+      expires_at: "2000-01-01T00:00:00.000Z",
+    });
+
+    try {
+      const adapter = new McpExecutionAdapter(
+        [
           {
-            tool_name: "echo_note",
-            side_effect_level: "read_only",
-            approval_mode: "allow",
+            server_id: "notes_http_expired_secret",
+            transport: "streamable_http",
+            url: service.url,
+            network_scope: "private",
+            auth: {
+              type: "bearer_secret_ref",
+              secret_id: "mcp_secret_expired",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
           },
         ],
-      },
-    ]);
+        {
+          credentialBroker: broker,
+        },
+      );
+      const action = makeMcpAction({
+        facets: {
+          mcp: {
+            server_id: "notes_http_expired_secret",
+            tool_name: "echo_note",
+          },
+        },
+      });
+
+      await expect(
+        adapter.verifyPreconditions({
+          action,
+          policy_outcome: makeMcpPolicyOutcome(action),
+          workspace_root: process.cwd(),
+        }),
+      ).rejects.toMatchObject({
+        code: "BROKER_UNAVAILABLE",
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("fails closed when the upstream MCP server does not advertise the requested tool", async () => {
+    const server = makeGovernedTestStdioServer("missing_tool");
+    if (!server) {
+      return;
+    }
+    const adapter = new McpExecutionAdapter([server]);
     const action = makeMcpAction();
 
     await expect(
@@ -4532,27 +4871,14 @@ describe("OwnedNoteStore", () => {
     ).rejects.toMatchObject({
       code: "CAPABILITY_UNAVAILABLE",
     });
-  });
+  }, 20_000);
 
   it("returns an honest unsuccessful execution result when the MCP tool responds with isError", async () => {
-    const adapter = new McpExecutionAdapter([
-      {
-        server_id: "notes_server",
-        transport: "stdio",
-        command: process.execPath,
-        args: [mcpTestServerScript],
-        env: {
-          AGENTGIT_TEST_MCP_SCENARIO: "call_error",
-        },
-        tools: [
-          {
-            tool_name: "echo_note",
-            side_effect_level: "read_only",
-            approval_mode: "allow",
-          },
-        ],
-      },
-    ]);
+    const server = makeGovernedTestStdioServer("call_error");
+    if (!server) {
+      return;
+    }
+    const adapter = new McpExecutionAdapter([server]);
     const action = makeMcpAction();
     const result = await adapter.execute({
       action,
@@ -4568,7 +4894,7 @@ describe("OwnedNoteStore", () => {
       is_error: true,
       summary: "upstream-error:launch blocker",
     });
-  });
+  }, 20_000);
 
   it("rejects unsafe MCP auto-approval configuration for mutating tools", () => {
     expect(() =>
@@ -4587,6 +4913,30 @@ describe("OwnedNoteStore", () => {
         },
       ]),
     ).toThrow("Only explicitly read-only MCP tools can be auto-approved in the governed runtime.");
+  });
+
+  it("rejects governed stdio MCP servers that omit an explicit OCI sandbox configuration", async () => {
+    expect(
+      () =>
+        new McpExecutionAdapter([
+          {
+            server_id: "notes_server",
+            transport: "stdio",
+            command: process.execPath,
+            args: [mcpTestServerScript],
+            env: {
+              AGENTGIT_TEST_MCP_SCENARIO: "stderr_noise",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        ]),
+    ).toThrow("requires an explicit oci_container sandbox configuration");
   });
 
   it("fails closed before execution when a streamable_http MCP bearer env var is missing", async () => {
@@ -4708,7 +5058,115 @@ describe("OwnedNoteStore", () => {
           ],
         },
       ]),
-    ).toThrow("requires operator-managed bearer authentication backed by a secret reference or legacy env configuration");
+    ).toThrow(
+      "requires operator-managed bearer authentication backed by a secret reference or legacy env configuration",
+    );
+  });
+
+  it("fails closed when a streamable_http redirect crosses into a disallowed network scope", async () => {
+    const service = await startMcpHttpService({
+      scenario: "redirect",
+      redirectLocation: "http://192.168.0.10/mcp",
+    });
+
+    try {
+      const adapter = new McpExecutionAdapter([
+        {
+          server_id: "notes_http_redirect",
+          transport: "streamable_http",
+          url: service.url,
+          network_scope: "loopback",
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]);
+      const action = makeMcpAction({
+        facets: {
+          mcp: {
+            server_id: "notes_http_redirect",
+            tool_name: "echo_note",
+          },
+        },
+      });
+
+      await expect(
+        adapter.execute({
+          action,
+          policy_outcome: makeMcpPolicyOutcome(action),
+          workspace_root: process.cwd(),
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("fails closed when a public_https hostname resolves to loopback at execution time", async () => {
+    process.env.AGENTGIT_TEST_PUBLIC_REBIND_TOKEN = "rebinding-token";
+    const policyRoot = tempDirs.make();
+    const policyRegistry = new McpPublicHostPolicyRegistry({
+      dbPath: path.join(policyRoot, "mcp-host-policies.db"),
+    });
+    policyRegistry.upsertPolicy({
+      host: "rebind.example.test",
+      display_name: "Rebinding test host",
+    });
+
+    try {
+      const adapter = new McpExecutionAdapter(
+        [
+          {
+            server_id: "notes_public_rebind",
+            transport: "streamable_http",
+            url: "https://rebind.example.test/mcp",
+            network_scope: "public_https",
+            auth: {
+              type: "bearer_env",
+              bearer_env_var: "AGENTGIT_TEST_PUBLIC_REBIND_TOKEN",
+            },
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        ],
+        {
+          publicHostPolicyRegistry: policyRegistry,
+          hostnameResolver: async () => [{ address: "127.0.0.1", family: 4 }],
+        },
+      );
+      const action = makeMcpAction({
+        facets: {
+          mcp: {
+            server_id: "notes_public_rebind",
+            tool_name: "echo_note",
+          },
+        },
+      });
+
+      await expect(
+        adapter.execute({
+          action,
+          policy_outcome: makeMcpPolicyOutcome(action),
+          workspace_root: process.cwd(),
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+      });
+    } finally {
+      delete process.env.AGENTGIT_TEST_PUBLIC_REBIND_TOKEN;
+      policyRegistry.close();
+    }
   });
 
   it("fails closed when streamable_http MCP concurrency would exceed the configured limit", async () => {
@@ -4797,6 +5255,201 @@ describe("OwnedNoteStore", () => {
 
       await expect(
         adapter.execute({
+          action: secondAction,
+          policy_outcome: makeMcpPolicyOutcome(secondAction),
+          workspace_root: process.cwd(),
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        retryable: true,
+      });
+
+      await expect(firstExecution).resolves.toMatchObject({
+        success: true,
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("enforces streamable_http MCP concurrency across adapter instances with a shared SQLite lease store", async () => {
+    const service = await startMcpHttpService({
+      toolDelayMs: 200,
+    });
+    const leaseRoot = tempDirs.make();
+    const leaseDbPath = path.join(leaseRoot, "mcp-concurrency.db");
+
+    try {
+      const adapterOne = new McpExecutionAdapter(
+        [
+          {
+            server_id: "notes_http_shared_limit",
+            transport: "streamable_http",
+            url: service.url,
+            max_concurrent_calls: 1,
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        ],
+        {
+          concurrencyLeaseDbPath: leaseDbPath,
+        },
+      );
+      const adapterTwo = new McpExecutionAdapter(
+        [
+          {
+            server_id: "notes_http_shared_limit",
+            transport: "streamable_http",
+            url: service.url,
+            max_concurrent_calls: 1,
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        ],
+        {
+          concurrencyLeaseDbPath: leaseDbPath,
+        },
+      );
+
+      const firstAction = makeMcpAction({
+        action_id: "act_mcp_concurrent_shared_1",
+        facets: {
+          mcp: {
+            server_id: "notes_http_shared_limit",
+            tool_name: "echo_note",
+          },
+        },
+      });
+      const secondAction = makeMcpAction({
+        action_id: "act_mcp_concurrent_shared_2",
+        facets: {
+          mcp: {
+            server_id: "notes_http_shared_limit",
+            tool_name: "echo_note",
+          },
+        },
+      });
+
+      const firstExecution = adapterOne.execute({
+        action: firstAction,
+        policy_outcome: makeMcpPolicyOutcome(firstAction),
+        workspace_root: process.cwd(),
+      });
+      await service.waitForCallCount(1);
+
+      await expect(
+        adapterTwo.execute({
+          action: secondAction,
+          policy_outcome: makeMcpPolicyOutcome(secondAction),
+          workspace_root: process.cwd(),
+        }),
+      ).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        retryable: true,
+      });
+
+      await expect(firstExecution).resolves.toMatchObject({
+        success: true,
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("renews shared SQLite concurrency leases during long-running streamable_http calls", async () => {
+    const service = await startMcpHttpService({
+      toolDelayMs: 350,
+    });
+    const leaseRoot = tempDirs.make();
+    const leaseDbPath = path.join(leaseRoot, "mcp-concurrency-heartbeat.db");
+
+    try {
+      const adapterOne = new McpExecutionAdapter(
+        [
+          {
+            server_id: "notes_http_shared_heartbeat",
+            transport: "streamable_http",
+            url: service.url,
+            timeout_ms: 2_000,
+            max_concurrent_calls: 1,
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        ],
+        {
+          concurrencyLeaseDbPath: leaseDbPath,
+          concurrencyLeaseTtlMs: 150,
+          concurrencyLeaseHeartbeatMs: 50,
+        },
+      );
+      const adapterTwo = new McpExecutionAdapter(
+        [
+          {
+            server_id: "notes_http_shared_heartbeat",
+            transport: "streamable_http",
+            url: service.url,
+            timeout_ms: 2_000,
+            max_concurrent_calls: 1,
+            tools: [
+              {
+                tool_name: "echo_note",
+                side_effect_level: "read_only",
+                approval_mode: "allow",
+              },
+            ],
+          },
+        ],
+        {
+          concurrencyLeaseDbPath: leaseDbPath,
+          concurrencyLeaseTtlMs: 150,
+          concurrencyLeaseHeartbeatMs: 50,
+        },
+      );
+
+      const firstAction = makeMcpAction({
+        action_id: "act_mcp_concurrent_heartbeat_1",
+        facets: {
+          mcp: {
+            server_id: "notes_http_shared_heartbeat",
+            tool_name: "echo_note",
+          },
+        },
+      });
+      const secondAction = makeMcpAction({
+        action_id: "act_mcp_concurrent_heartbeat_2",
+        facets: {
+          mcp: {
+            server_id: "notes_http_shared_heartbeat",
+            tool_name: "echo_note",
+          },
+        },
+      });
+
+      const firstExecution = adapterOne.execute({
+        action: firstAction,
+        policy_outcome: makeMcpPolicyOutcome(firstAction),
+        workspace_root: process.cwd(),
+      });
+      await service.waitForCallCount(1);
+      await new Promise((resolve) => setTimeout(resolve, 225));
+
+      await expect(
+        adapterTwo.execute({
           action: secondAction,
           policy_outcome: makeMcpPolicyOutcome(secondAction),
           workspace_root: process.cwd(),

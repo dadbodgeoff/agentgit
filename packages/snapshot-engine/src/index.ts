@@ -7,11 +7,13 @@ import {
   AgentGitError,
   InternalError,
   type ActionRecord,
+  type PolicyOutcomeRecord,
   type SnapshotClass,
   type SnapshotRecord,
 } from "@agentgit/schemas";
 import {
   inspectPersistedWorkspaceSnapshotIndex,
+  type LayeredSnapshotRecord,
   type SnapManifest,
   WorkspaceIndex,
 } from "@agentgit/workspace-index";
@@ -48,6 +50,35 @@ export interface SnapshotRequest {
   requested_class: SnapshotClass;
   workspace_root: string;
   captured_preimage?: Record<string, unknown> | null;
+}
+
+export interface SnapshotSelectionInput {
+  action: ActionRecord;
+  policy_decision: PolicyOutcomeRecord["decision"];
+  capability_state?: "healthy" | "stale" | "degraded";
+  low_disk_pressure_observed?: boolean;
+  journal_chain_depth?: number;
+  explicit_branch_point?: boolean;
+  explicit_hard_checkpoint?: boolean;
+}
+
+export interface SnapshotSelectionResult {
+  snapshot_class: SnapshotClass;
+  reason_codes: string[];
+  basis: {
+    operation_family: string;
+    scope_breadth: ActionRecord["target"]["scope"]["breadth"];
+    scope_unknowns: string[];
+    normalization_confidence: number;
+    side_effect_level: ActionRecord["risk_hints"]["side_effect_level"];
+    external_effects: ActionRecord["risk_hints"]["external_effects"];
+    reversibility_hint: ActionRecord["risk_hints"]["reversibility_hint"];
+    capability_state: "healthy" | "stale" | "degraded";
+    low_disk_pressure_observed: boolean;
+    journal_chain_depth: number;
+    explicit_branch_point: boolean;
+    explicit_hard_checkpoint: boolean;
+  };
 }
 
 export interface SnapshotEngine {
@@ -207,6 +238,131 @@ function workspaceKey(workspaceRoot: string): string {
   return createHash("sha1").update(path.resolve(workspaceRoot)).digest("hex").slice(0, 16);
 }
 
+function snapshotOperationFamily(action: ActionRecord): string {
+  if (action.operation.domain === "shell") {
+    const commandFamily =
+      typeof action.facets.shell === "object" &&
+      action.facets.shell !== null &&
+      typeof (action.facets.shell as { command_family?: unknown }).command_family === "string"
+        ? (action.facets.shell as { command_family: string }).command_family
+        : "unclassified";
+    return `shell/${commandFamily}`;
+  }
+
+  if (action.operation.domain === "filesystem") {
+    const operation =
+      typeof action.facets.filesystem === "object" &&
+      action.facets.filesystem !== null &&
+      typeof (action.facets.filesystem as { operation?: unknown }).operation === "string"
+        ? (action.facets.filesystem as { operation: string }).operation
+        : action.operation.kind;
+    return `filesystem/${operation}`;
+  }
+
+  if (action.operation.domain === "function") {
+    const operation =
+      typeof action.facets.function === "object" &&
+      action.facets.function !== null &&
+      typeof (action.facets.function as { operation?: unknown }).operation === "string"
+        ? (action.facets.function as { operation: string }).operation
+        : action.operation.kind;
+    return `function/${operation}`;
+  }
+
+  return `${action.operation.domain}/${action.operation.kind}`;
+}
+
+export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSelectionResult {
+  const capabilityState = input.capability_state ?? "healthy";
+  const lowDiskPressureObserved = input.low_disk_pressure_observed ?? false;
+  const journalChainDepth = input.journal_chain_depth ?? 0;
+  const explicitBranchPoint = input.explicit_branch_point ?? false;
+  const explicitHardCheckpoint = input.explicit_hard_checkpoint ?? false;
+  const operationFamily = snapshotOperationFamily(input.action);
+  const scopeBreadth = input.action.target.scope.breadth;
+  const scopeUnknowns = input.action.target.scope.unknowns;
+  const normalizationConfidence = input.action.normalization.normalization_confidence;
+  const { side_effect_level, external_effects, reversibility_hint } = input.action.risk_hints;
+  const reasonCodes: string[] = [];
+  let snapshotClass: SnapshotClass = "metadata_only";
+
+  if (input.policy_decision !== "allow_with_snapshot") {
+    reasonCodes.push("policy.no_snapshot_required");
+  } else if (explicitHardCheckpoint) {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.explicit_hard_checkpoint");
+  } else if (explicitBranchPoint) {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.explicit_branch_point");
+  } else if (operationFamily === "shell/package_manager" || operationFamily === "shell/build_tool") {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.opaque_workspace_wide_tooling");
+  } else if (
+    input.action.operation.domain === "filesystem" &&
+    (scopeBreadth === "workspace" ||
+      scopeBreadth === "repository" ||
+      scopeBreadth === "origin" ||
+      scopeBreadth === "external" ||
+      scopeBreadth === "unknown")
+  ) {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.broad_scope_branch_point");
+  } else if (
+    input.action.operation.domain === "filesystem" &&
+    scopeBreadth === "single" &&
+    scopeUnknowns.length === 0 &&
+    normalizationConfidence >= 0.9 &&
+    side_effect_level === "mutating" &&
+    external_effects === "none" &&
+    reversibility_hint === "reversible"
+  ) {
+    snapshotClass = "journal_only";
+    reasonCodes.push("snapshot.narrow_reversible_mutation");
+  } else if (input.action.operation.domain === "filesystem") {
+    snapshotClass = "journal_plus_anchor";
+    reasonCodes.push("snapshot.filesystem_recovery_boundary");
+  } else if (input.action.operation.domain === "shell") {
+    snapshotClass = "journal_plus_anchor";
+    reasonCodes.push("snapshot.shell_mutation_boundary");
+  } else {
+    snapshotClass = "metadata_only";
+    reasonCodes.push("snapshot.non_filesystem_metadata_only");
+  }
+
+  if (capabilityState !== "healthy" && snapshotClass === "journal_only") {
+    snapshotClass = "journal_plus_anchor";
+    reasonCodes.push("snapshot.capability_state_strengthened");
+  }
+
+  if (lowDiskPressureObserved) {
+    reasonCodes.push("snapshot.low_disk_pressure_observed");
+  }
+
+  if (journalChainDepth >= 25 && snapshotClass === "journal_plus_anchor") {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.deep_journal_chain_branch_point");
+  }
+
+  return {
+    snapshot_class: snapshotClass,
+    reason_codes: [...new Set(reasonCodes)],
+    basis: {
+      operation_family: operationFamily,
+      scope_breadth: scopeBreadth,
+      scope_unknowns: scopeUnknowns,
+      normalization_confidence: normalizationConfidence,
+      side_effect_level,
+      external_effects,
+      reversibility_hint,
+      capability_state: capabilityState,
+      low_disk_pressure_observed: lowDiskPressureObserved,
+      journal_chain_depth: journalChainDepth,
+      explicit_branch_point: explicitBranchPoint,
+      explicit_hard_checkpoint: explicitHardCheckpoint,
+    },
+  };
+}
+
 export class MetadataOnlySnapshotEngine implements SnapshotEngine {
   async createSnapshot(request: SnapshotRequest): Promise<SnapshotRecord> {
     return createMetadataSnapshot(request);
@@ -223,6 +379,46 @@ export class MetadataOnlySnapshotEngine implements SnapshotEngine {
 
 export interface LocalSnapshotEngineOptions {
   rootDir: string;
+}
+
+function layeredTargetEntryKind(
+  action: ActionRecord,
+  layered: {
+    anchor_exists: boolean;
+  },
+): SnapshotManifest["entry_kind"] {
+  if (action.target.primary.type === "workspace" || action.target.primary.type === "repository") {
+    return "directory";
+  }
+
+  return layered.anchor_exists ? "file" : "missing";
+}
+
+function createLayeredMetadataManifest(request: SnapshotRequest, layered: LayeredSnapshotRecord): SnapshotManifest {
+  return {
+    snapshot_id: layered.snap_id,
+    action_id: request.action.action_id,
+    run_id: request.action.run_id,
+    target_path: request.action.target.primary.locator,
+    workspace_root: request.workspace_root,
+    existed_before: layered.anchor_exists,
+    entry_kind: layeredTargetEntryKind(request.action, layered),
+    snapshot_class: request.requested_class,
+    fidelity: "full",
+    created_at: layered.created_at,
+    anchor_content_hash: layered.anchor_content_hash,
+    anchor_file_mode: layered.anchor_file_mode,
+    operation_domain: request.action.operation.domain,
+    operation_kind: request.action.operation.kind,
+    action_display_name: request.action.operation.display_name ?? null,
+    execution_surface: request.action.execution_path.surface,
+    tool_kind: request.action.actor.tool_kind,
+    tool_name: request.action.actor.tool_name ?? null,
+    side_effect_level: request.action.risk_hints.side_effect_level,
+    external_effects: request.action.risk_hints.external_effects,
+    reversibility_hint: request.action.risk_hints.reversibility_hint,
+    captured_preimage: request.captured_preimage ?? null,
+  };
 }
 
 export class LocalSnapshotEngine implements SnapshotEngine {
@@ -293,9 +489,7 @@ export class LocalSnapshotEngine implements SnapshotEngine {
     workspaces_considered: number;
     snapshot_ids: Set<string>;
   }> {
-    const requestedRoots = workspaceRoots
-      ? new Set(workspaceRoots.map((root) => path.resolve(root)))
-      : null;
+    const requestedRoots = workspaceRoots ? new Set(workspaceRoots.map((root) => path.resolve(root))) : null;
     const snapshotIds = new Set<string>();
     let workspacesConsidered = 0;
 
@@ -490,7 +684,11 @@ export class LocalSnapshotEngine implements SnapshotEngine {
   }
 
   async createSnapshot(request: SnapshotRequest): Promise<SnapshotRecord> {
-    if (request.action.operation.domain !== "filesystem") {
+    const usesWorkspaceSnapshot =
+      request.action.operation.domain === "filesystem" ||
+      (request.action.operation.domain === "shell" && request.requested_class !== "metadata_only");
+
+    if (!usesWorkspaceSnapshot) {
       return this.createPersistedMetadataSnapshot(request);
     }
 
@@ -511,6 +709,10 @@ export class LocalSnapshotEngine implements SnapshotEngine {
         layered.dirty_files.length > 0
           ? layered.dirty_files.map((file: { path: string }) => path.join(request.workspace_root, file.path))
           : [targetPath];
+      const metadataManifest = createLayeredMetadataManifest(request, layered);
+
+      await fs.mkdir(path.dirname(this.metadataManifestPath(layered.snap_id)), { recursive: true });
+      await fs.writeFile(this.metadataManifestPath(layered.snap_id), JSON.stringify(metadataManifest, null, 2), "utf8");
 
       return {
         snapshot_id: layered.snap_id,
@@ -723,32 +925,40 @@ export class LocalSnapshotEngine implements SnapshotEngine {
       return currentState.exists === false;
     }
 
-    return (
-      currentState.exists === true &&
-      currentState.content_hash === layeredManifest.anchor_content_hash
-    );
+    return currentState.exists === true && currentState.content_hash === layeredManifest.anchor_content_hash;
   }
 
   async getSnapshotManifest(snapshotId: string): Promise<SnapshotManifest | null> {
     const layeredManifest = await this.loadLayeredManifest(snapshotId);
     if (layeredManifest) {
+      const metadataManifest = await this.loadMetadataManifest(snapshotId);
       const targetPath = layeredManifest.anchor_path
         ? path.join(layeredManifest.workspace_root, layeredManifest.anchor_path)
         : layeredManifest.workspace_root;
 
       return {
         snapshot_id: layeredManifest.snap_id,
-        action_id: layeredManifest.action_id ?? "unknown_action",
-        run_id: layeredManifest.run_id ?? "unknown_run",
-        target_path: targetPath,
+        action_id: metadataManifest?.action_id ?? layeredManifest.action_id ?? "unknown_action",
+        run_id: metadataManifest?.run_id ?? layeredManifest.run_id ?? "unknown_run",
+        target_path: metadataManifest?.target_path ?? targetPath,
         workspace_root: layeredManifest.workspace_root,
-        existed_before: layeredManifest.anchor_exists,
-        entry_kind: layeredManifest.anchor_exists ? "file" : "missing",
-        snapshot_class: "journal_plus_anchor",
-        fidelity: "full",
+        existed_before: metadataManifest?.existed_before ?? layeredManifest.anchor_exists,
+        entry_kind: metadataManifest?.entry_kind ?? (layeredManifest.anchor_exists ? "file" : "missing"),
+        snapshot_class: metadataManifest?.snapshot_class ?? "journal_plus_anchor",
+        fidelity: metadataManifest?.fidelity ?? "full",
         created_at: layeredManifest.created_at,
         anchor_content_hash: layeredManifest.anchor_content_hash,
         anchor_file_mode: layeredManifest.anchor_file_mode,
+        operation_domain: metadataManifest?.operation_domain,
+        operation_kind: metadataManifest?.operation_kind,
+        action_display_name: metadataManifest?.action_display_name,
+        execution_surface: metadataManifest?.execution_surface,
+        tool_kind: metadataManifest?.tool_kind,
+        tool_name: metadataManifest?.tool_name,
+        side_effect_level: metadataManifest?.side_effect_level,
+        external_effects: metadataManifest?.external_effects,
+        reversibility_hint: metadataManifest?.reversibility_hint,
+        captured_preimage: metadataManifest?.captured_preimage ?? null,
       };
     }
 

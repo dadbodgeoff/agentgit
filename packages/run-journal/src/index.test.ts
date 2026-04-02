@@ -6,7 +6,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AgentGitError, NotFoundError } from "@agentgit/schemas";
+import { AgentGitError, NotFoundError, type ActionRecord, type PolicyOutcomeRecord } from "@agentgit/schemas";
 
 import { createRunJournal, type RunJournal, type RunJournalOptions } from "./index.js";
 
@@ -20,6 +20,115 @@ function makeJournal(options: Partial<RunJournalOptions> = {}): RunJournal {
     ...options,
   });
   return currentJournal;
+}
+
+function makeAction(actionId: string, runId: string, family: "filesystem/write" | "shell/exec"): ActionRecord {
+  const isShell = family === "shell/exec";
+  return {
+    schema_version: "action.v1",
+    action_id: actionId,
+    run_id: runId,
+    session_id: "sess_test",
+    status: "normalized",
+    timestamps: {
+      requested_at: "2026-04-01T12:00:00.000Z",
+      normalized_at: "2026-04-01T12:00:01.000Z",
+    },
+    provenance: {
+      mode: "governed",
+      source: "test",
+      confidence: 0.98,
+    },
+    actor: {
+      type: "agent",
+      tool_name: isShell ? "exec_command" : "write_file",
+      tool_kind: isShell ? "shell" : "filesystem",
+    },
+    operation: {
+      domain: isShell ? "shell" : "filesystem",
+      kind: isShell ? "exec" : "write",
+      name: family,
+      display_name: isShell ? "Run shell command" : "Write file",
+    },
+    execution_path: {
+      surface: isShell ? "governed_shell" : "governed_fs",
+      mode: "pre_execution",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "path",
+        locator: isShell ? "/workspace" : "/workspace/README.md",
+      },
+      scope: {
+        breadth: isShell ? "workspace" : "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: {},
+      redacted: {},
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: "mutating",
+      external_effects: "none",
+      reversibility_hint: isShell ? "potentially_reversible" : "reversible",
+      sensitivity_hint: "low",
+      batch: false,
+    },
+    facets: {},
+    normalization: {
+      mapper: "test",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: isShell ? 0.42 : 0.96,
+    },
+  };
+}
+
+function makePolicyOutcome(
+  actionId: string,
+  decision: PolicyOutcomeRecord["decision"],
+  matchedRules: string[],
+): PolicyOutcomeRecord {
+  return {
+    schema_version: "policy-outcome.v1",
+    policy_outcome_id: `pol_${actionId}`,
+    action_id: actionId,
+    decision,
+    reasons: [
+      {
+        code: decision === "ask" ? "APPROVAL_REQUIRED" : "SAFE_TO_RUN",
+        severity: decision === "ask" ? "moderate" : "low",
+        message: decision === "ask" ? "Approval required." : "Safe to run.",
+      },
+    ],
+    trust_requirements: {
+      wrapped_path_required: true,
+      brokered_credentials_required: false,
+      direct_credentials_forbidden: false,
+    },
+    preconditions: {
+      snapshot_required: decision === "allow_with_snapshot",
+      approval_required: decision === "ask",
+      simulation_supported: false,
+    },
+    approval: null,
+    budget_effects: {
+      budget_check: "passed",
+      estimated_cost: 0,
+      remaining_mutating_actions: null,
+      remaining_destructive_actions: null,
+    },
+    policy_context: {
+      matched_rules: matchedRules,
+      sticky_decision_applied: false,
+    },
+    evaluated_at: "2026-04-01T12:00:02.000Z",
+  };
 }
 
 afterEach(() => {
@@ -622,17 +731,19 @@ describe("RunJournal", () => {
 
     const missingDigest = crypto.createHash("sha256").update("artifact_missing_status").digest("hex");
     fs.rmSync(
-      path.join(currentDir!, "artifacts", missingDigest.slice(0, 2), missingDigest.slice(2, 4), "artifact_missing_status.txt"),
+      path.join(
+        currentDir!,
+        "artifacts",
+        missingDigest.slice(0, 2),
+        missingDigest.slice(2, 4),
+        "artifact_missing_status.txt",
+      ),
       { force: true },
     );
     const rawDb = new Database(path.join(currentDir!, "authority.db"));
     rawDb
       .prepare("UPDATE artifacts SET expires_at = ?, expired_at = ? WHERE artifact_id = ?")
-      .run(
-        "2026-03-29T12:00:01.000Z",
-        "2026-03-29T12:00:01.000Z",
-        "artifact_expired_status",
-      );
+      .run("2026-03-29T12:00:01.000Z", "2026-03-29T12:00:01.000Z", "artifact_expired_status");
     rawDb.close();
 
     journal.appendRunEvent("run_maintenance", {
@@ -701,7 +812,9 @@ describe("RunJournal", () => {
         started_at: "2026-03-31T12:00:00.000Z",
         completed_at: "2026-03-31T12:00:01.000Z",
       },
-      degraded_mode_warnings: ["Owned ticket mutations are unavailable until brokered ticket credentials are configured."],
+      degraded_mode_warnings: [
+        "Owned ticket mutations are unavailable until brokered ticket credentials are configured.",
+      ],
       workspace_root: "/tmp/workspace",
       refreshed_at: "2026-03-31T12:00:01.000Z",
     });
@@ -721,7 +834,9 @@ describe("RunJournal", () => {
         started_at: "2026-03-31T12:00:00.000Z",
         completed_at: "2026-03-31T12:00:01.000Z",
       },
-      degraded_mode_warnings: ["Owned ticket mutations are unavailable until brokered ticket credentials are configured."],
+      degraded_mode_warnings: [
+        "Owned ticket mutations are unavailable until brokered ticket credentials are configured.",
+      ],
       workspace_root: "/tmp/workspace",
       refreshed_at: "2026-03-31T12:00:01.000Z",
     });
@@ -923,5 +1038,136 @@ describe("RunJournal", () => {
       digest: crypto.createHash("sha256").update("original!", "utf8").digest("hex"),
     });
     expect(artifact.content).toBeNull();
+  });
+
+  it("builds a policy calibration report with approvals, recovery, and samples", () => {
+    const journal = makeJournal();
+    journal.registerRunLifecycle({
+      run_id: "run_policy_calibration",
+      session_id: "sess_policy_calibration",
+      workflow_name: "workflow",
+      agent_framework: "cli",
+      agent_name: "agentgit-cli",
+      workspace_roots: ["/workspace/project"],
+      client_metadata: {},
+      budget_config: {
+        max_mutating_actions: null,
+        max_destructive_actions: null,
+      },
+      created_at: "2026-03-29T12:00:00.000Z",
+    });
+
+    const writeAction = makeAction("act_write", "run_policy_calibration", "filesystem/write");
+    const writeOutcome = makePolicyOutcome("act_write", "allow_with_snapshot", ["builtin.fs.snapshot"]);
+    journal.appendRunEvent("run_policy_calibration", {
+      event_type: "policy.evaluated",
+      occurred_at: writeOutcome.evaluated_at,
+      recorded_at: writeOutcome.evaluated_at,
+      payload: {
+        action_id: writeAction.action_id,
+        policy_outcome_id: writeOutcome.policy_outcome_id,
+        evaluated_at: writeOutcome.evaluated_at,
+        decision: writeOutcome.decision,
+        reasons: writeOutcome.reasons,
+        matched_rules: writeOutcome.policy_context.matched_rules,
+        normalization_confidence: writeAction.normalization.normalization_confidence,
+        action_family: `${writeAction.operation.domain}/${writeAction.operation.kind}`,
+        snapshot_required: true,
+        snapshot_selection: {
+          snapshot_class: "journal_plus_anchor",
+        },
+      },
+    });
+
+    const shellAction = makeAction("act_shell", "run_policy_calibration", "shell/exec");
+    const shellOutcome = makePolicyOutcome("act_shell", "ask", ["builtin.shell.ask"]);
+    journal.appendRunEvent("run_policy_calibration", {
+      event_type: "policy.evaluated",
+      occurred_at: shellOutcome.evaluated_at,
+      recorded_at: shellOutcome.evaluated_at,
+      payload: {
+        action_id: shellAction.action_id,
+        policy_outcome_id: shellOutcome.policy_outcome_id,
+        evaluated_at: shellOutcome.evaluated_at,
+        decision: shellOutcome.decision,
+        reasons: shellOutcome.reasons,
+        matched_rules: shellOutcome.policy_context.matched_rules,
+        normalization_confidence: shellAction.normalization.normalization_confidence,
+        action_family: `${shellAction.operation.domain}/${shellAction.operation.kind}`,
+        snapshot_required: false,
+        snapshot_selection: null,
+      },
+    });
+
+    const approval = journal.createApprovalRequest({
+      run_id: "run_policy_calibration",
+      action: shellAction,
+      policy_outcome: shellOutcome,
+    });
+    const resolvedApproval = journal.resolveApproval(approval.approval_id, "approved", "looks safe");
+    expect(resolvedApproval.status).toBe("approved");
+
+    journal.appendRunEvent("run_policy_calibration", {
+      event_type: "recovery.executed",
+      occurred_at: "2026-03-29T12:05:00.000Z",
+      recorded_at: "2026-03-29T12:05:00.000Z",
+      payload: {
+        action_id: writeAction.action_id,
+        outcome: "restored",
+        recovery_class: "reversible",
+        strategy: "restore_path",
+      },
+    });
+
+    const report = journal.getPolicyCalibrationReport({
+      run_id: "run_policy_calibration",
+      include_samples: true,
+      sample_limit: 10,
+    });
+
+    expect(report.report.filters.run_id).toBe("run_policy_calibration");
+    expect(report.report.totals.sample_count).toBe(2);
+    expect(report.report.totals.unique_action_families).toBe(2);
+    expect(report.report.totals.decisions.allow_with_snapshot).toBe(1);
+    expect(report.report.totals.decisions.ask).toBe(1);
+    expect(report.report.totals.approvals.requested).toBe(1);
+    expect(report.report.totals.approvals.approved).toBe(1);
+    expect(report.report.totals.recovery_attempted_count).toBe(1);
+    expect(report.report.samples_truncated).toBe(false);
+    expect(report.report.samples).toHaveLength(2);
+
+    const filesystemFamily = report.report.action_families.find(
+      (family) => family.action_family === "filesystem/write",
+    );
+    expect(filesystemFamily).toEqual(
+      expect.objectContaining({
+        sample_count: 1,
+        recovery_attempted_count: 1,
+      }),
+    );
+    expect(filesystemFamily?.snapshot_classes).toEqual([{ key: "journal_plus_anchor", count: 1 }]);
+    expect(filesystemFamily?.top_matched_rules).toEqual([{ key: "builtin.fs.snapshot", count: 1 }]);
+
+    const shellSample = report.report.samples?.find((sample) => sample.action_id === "act_shell");
+    expect(shellSample).toEqual(
+      expect.objectContaining({
+        decision: "ask",
+        approval_requested: true,
+        approval_status: "approved",
+        recovery_attempted: false,
+      }),
+    );
+
+    const writeSample = report.report.samples?.find((sample) => sample.action_id === "act_write");
+    expect(writeSample).toEqual(
+      expect.objectContaining({
+        decision: "allow_with_snapshot",
+        snapshot_class: "journal_plus_anchor",
+        recovery_attempted: true,
+        recovery_result: "restored",
+        recovery_class: "reversible",
+        recovery_strategy: "restore_path",
+      }),
+    );
   });
 });

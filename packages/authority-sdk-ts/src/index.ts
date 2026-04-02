@@ -9,10 +9,32 @@ import {
   type ExecuteRecoveryResponsePayload,
   type DiagnosticsRequestPayload,
   type DiagnosticsResponsePayload,
+  type ExplainPolicyActionRequestPayload,
+  type ExplainPolicyActionResponsePayload,
+  type GetEffectivePolicyRequestPayload,
+  type GetEffectivePolicyResponsePayload,
+  type GetPolicyCalibrationReportRequestPayload,
+  type GetPolicyCalibrationReportResponsePayload,
+  type GetPolicyThresholdRecommendationsRequestPayload,
+  type GetPolicyThresholdRecommendationsResponsePayload,
   type GetCapabilitiesRequestPayload,
   type GetCapabilitiesResponsePayload,
   type GetRunSummaryRequestPayload,
   type GetRunSummaryResponsePayload,
+  type GetMcpServerReviewRequestPayload,
+  type GetMcpServerReviewResponsePayload,
+  type GetHostedMcpJobRequestPayload,
+  type GetHostedMcpJobResponsePayload,
+  type ListMcpServerCredentialBindingsRequestPayload,
+  type ListMcpServerCredentialBindingsResponsePayload,
+  type ListMcpServerTrustDecisionsRequestPayload,
+  type ListMcpServerTrustDecisionsResponsePayload,
+  type ListMcpServerCandidatesRequestPayload,
+  type ListMcpServerCandidatesResponsePayload,
+  type ListHostedMcpJobsRequestPayload,
+  type ListHostedMcpJobsResponsePayload,
+  type ListMcpServerProfilesRequestPayload,
+  type ListMcpServerProfilesResponsePayload,
   type ListMcpHostPoliciesRequestPayload,
   type ListMcpHostPoliciesResponsePayload,
   type ListMcpSecretsRequestPayload,
@@ -22,6 +44,7 @@ import {
   type ListApprovalsRequestPayload,
   type ListApprovalsResponsePayload,
   type McpPublicHostPolicy,
+  type McpServerCandidateInput,
   type McpSecretInput,
   type McpServerDefinition,
   type RemoveMcpHostPolicyRequestPayload,
@@ -33,6 +56,10 @@ import {
   type QueryArtifactRequestPayload,
   type QueryArtifactResponsePayload,
   type RawActionAttempt,
+  type CancelHostedMcpJobRequestPayload,
+  type CancelHostedMcpJobResponsePayload,
+  type RequeueHostedMcpJobRequestPayload,
+  type RequeueHostedMcpJobResponsePayload,
   type RunMaintenanceRequestPayload,
   type RunMaintenanceResponsePayload,
   type PlanRecoveryRequestPayload,
@@ -41,6 +68,10 @@ import {
   type QueryHelperResponsePayload,
   type QueryTimelineRequestPayload,
   type QueryTimelineResponsePayload,
+  type ResolveMcpServerCandidateRequestPayload,
+  type ResolveMcpServerCandidateResponsePayload,
+  type BindMcpServerCredentialsRequestPayload,
+  type BindMcpServerCredentialsResponsePayload,
   type SubmitActionAttemptRequestPayload,
   type SubmitActionAttemptResponsePayload,
   type ClientType,
@@ -54,6 +85,20 @@ import {
   type ResolveApprovalResponsePayload,
   type RequestEnvelope,
   type ResponseEnvelope,
+  type SubmitMcpServerCandidateRequestPayload,
+  type SubmitMcpServerCandidateResponsePayload,
+  type ValidatePolicyConfigRequestPayload,
+  type ValidatePolicyConfigResponsePayload,
+  type ApproveMcpServerProfileRequestPayload,
+  type ApproveMcpServerProfileResponsePayload,
+  type ActivateMcpServerProfileRequestPayload,
+  type ActivateMcpServerProfileResponsePayload,
+  type QuarantineMcpServerProfileRequestPayload,
+  type QuarantineMcpServerProfileResponsePayload,
+  type RevokeMcpServerProfileRequestPayload,
+  type RevokeMcpServerProfileResponsePayload,
+  type RevokeMcpServerCredentialsRequestPayload,
+  type RevokeMcpServerCredentialsResponsePayload,
   type UpsertMcpHostPolicyRequestPayload,
   type UpsertMcpHostPolicyResponsePayload,
   type UpsertMcpSecretRequestPayload,
@@ -127,7 +172,9 @@ export class AuthorityClient {
   constructor(options: AuthorityClientOptions = {}) {
     const projectRoot = process.env.AGENTGIT_ROOT ?? process.env.INIT_CWD ?? process.cwd();
     this.socketPath =
-      options.socketPath ?? process.env.AGENTGIT_SOCKET_PATH ?? path.resolve(projectRoot, ".agentgit", "authority.sock");
+      options.socketPath ??
+      process.env.AGENTGIT_SOCKET_PATH ??
+      path.resolve(projectRoot, ".agentgit", "authority.sock");
     this.clientType = options.clientType ?? "sdk_ts";
     this.clientVersion = options.clientVersion ?? "0.1.0";
     this.transport = {
@@ -196,6 +243,92 @@ export class AuthorityClient {
     );
   }
 
+  async getEffectivePolicy(): Promise<GetEffectivePolicyResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: GetEffectivePolicyRequestPayload = {};
+    return this.sendRequest<GetEffectivePolicyRequestPayload, GetEffectivePolicyResponsePayload>(
+      "get_effective_policy",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async validatePolicyConfig(config: unknown): Promise<ValidatePolicyConfigResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ValidatePolicyConfigRequestPayload = {
+      config,
+    };
+    return this.sendRequest<ValidatePolicyConfigRequestPayload, ValidatePolicyConfigResponsePayload>(
+      "validate_policy_config",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async getPolicyCalibrationReport(
+    options: {
+      run_id?: string;
+      include_samples?: boolean;
+      sample_limit?: number;
+    } = {},
+  ): Promise<GetPolicyCalibrationReportResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: GetPolicyCalibrationReportRequestPayload = {
+      ...(options.run_id ? { run_id: options.run_id } : {}),
+      ...(options.include_samples !== undefined ? { include_samples: options.include_samples } : {}),
+      ...(options.sample_limit !== undefined ? { sample_limit: options.sample_limit } : {}),
+    };
+    return this.sendRequest<GetPolicyCalibrationReportRequestPayload, GetPolicyCalibrationReportResponsePayload>(
+      "get_policy_calibration_report",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async explainPolicyAction(attempt: RawActionAttempt): Promise<ExplainPolicyActionResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello(attempt.environment_context.workspace_roots);
+    }
+
+    const payload: ExplainPolicyActionRequestPayload = {
+      attempt,
+    };
+    return this.sendRequest<ExplainPolicyActionRequestPayload, ExplainPolicyActionResponsePayload>(
+      "explain_policy_action",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async getPolicyThresholdRecommendations(
+    options: {
+      run_id?: string;
+      min_samples?: number;
+    } = {},
+  ): Promise<GetPolicyThresholdRecommendationsResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: GetPolicyThresholdRecommendationsRequestPayload = {
+      ...(options.run_id ? { run_id: options.run_id } : {}),
+      ...(options.min_samples !== undefined ? { min_samples: options.min_samples } : {}),
+    };
+    return this.sendRequest<
+      GetPolicyThresholdRecommendationsRequestPayload,
+      GetPolicyThresholdRecommendationsResponsePayload
+    >("get_policy_threshold_recommendations", payload, this.sessionId);
+  }
+
   async listMcpServers(): Promise<ListMcpServersResponsePayload> {
     if (!this.sessionId) {
       await this.hello();
@@ -206,6 +339,212 @@ export class AuthorityClient {
       "list_mcp_servers",
       payload,
       this.sessionId,
+    );
+  }
+
+  async listMcpServerCandidates(): Promise<ListMcpServerCandidatesResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListMcpServerCandidatesRequestPayload = {};
+    return this.sendRequest<ListMcpServerCandidatesRequestPayload, ListMcpServerCandidatesResponsePayload>(
+      "list_mcp_server_candidates",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async submitMcpServerCandidate(
+    candidate: McpServerCandidateInput,
+    options: MutatingRequestOptions = {},
+  ): Promise<SubmitMcpServerCandidateResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: SubmitMcpServerCandidateRequestPayload = {
+      candidate,
+    };
+    return this.sendRequest<SubmitMcpServerCandidateRequestPayload, SubmitMcpServerCandidateResponsePayload>(
+      "submit_mcp_server_candidate",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async listMcpServerProfiles(): Promise<ListMcpServerProfilesResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListMcpServerProfilesRequestPayload = {};
+    return this.sendRequest<ListMcpServerProfilesRequestPayload, ListMcpServerProfilesResponsePayload>(
+      "list_mcp_server_profiles",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async getMcpServerReview(payload: GetMcpServerReviewRequestPayload): Promise<GetMcpServerReviewResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<GetMcpServerReviewRequestPayload, GetMcpServerReviewResponsePayload>(
+      "get_mcp_server_review",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async resolveMcpServerCandidate(
+    payload: ResolveMcpServerCandidateRequestPayload,
+    options: MutatingRequestOptions = {},
+  ): Promise<ResolveMcpServerCandidateResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<ResolveMcpServerCandidateRequestPayload, ResolveMcpServerCandidateResponsePayload>(
+      "resolve_mcp_server_candidate",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async listMcpServerTrustDecisions(serverProfileId?: string): Promise<ListMcpServerTrustDecisionsResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListMcpServerTrustDecisionsRequestPayload = serverProfileId
+      ? { server_profile_id: serverProfileId }
+      : {};
+    return this.sendRequest<ListMcpServerTrustDecisionsRequestPayload, ListMcpServerTrustDecisionsResponsePayload>(
+      "list_mcp_server_trust_decisions",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async listMcpServerCredentialBindings(
+    serverProfileId?: string,
+  ): Promise<ListMcpServerCredentialBindingsResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListMcpServerCredentialBindingsRequestPayload = serverProfileId
+      ? { server_profile_id: serverProfileId }
+      : {};
+    return this.sendRequest<
+      ListMcpServerCredentialBindingsRequestPayload,
+      ListMcpServerCredentialBindingsResponsePayload
+    >("list_mcp_server_credential_bindings", payload, this.sessionId);
+  }
+
+  async bindMcpServerCredentials(
+    payload: BindMcpServerCredentialsRequestPayload,
+    options: MutatingRequestOptions = {},
+  ): Promise<BindMcpServerCredentialsResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<BindMcpServerCredentialsRequestPayload, BindMcpServerCredentialsResponsePayload>(
+      "bind_mcp_server_credentials",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async revokeMcpServerCredentials(
+    credentialBindingId: string,
+    options: MutatingRequestOptions = {},
+  ): Promise<RevokeMcpServerCredentialsResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: RevokeMcpServerCredentialsRequestPayload = {
+      credential_binding_id: credentialBindingId,
+    };
+    return this.sendRequest<RevokeMcpServerCredentialsRequestPayload, RevokeMcpServerCredentialsResponsePayload>(
+      "revoke_mcp_server_credentials",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async approveMcpServerProfile(
+    payload: ApproveMcpServerProfileRequestPayload,
+    options: MutatingRequestOptions = {},
+  ): Promise<ApproveMcpServerProfileResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<ApproveMcpServerProfileRequestPayload, ApproveMcpServerProfileResponsePayload>(
+      "approve_mcp_server_profile",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async activateMcpServerProfile(
+    serverProfileId: string,
+    options: MutatingRequestOptions = {},
+  ): Promise<ActivateMcpServerProfileResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ActivateMcpServerProfileRequestPayload = {
+      server_profile_id: serverProfileId,
+    };
+    return this.sendRequest<ActivateMcpServerProfileRequestPayload, ActivateMcpServerProfileResponsePayload>(
+      "activate_mcp_server_profile",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async quarantineMcpServerProfile(
+    payload: QuarantineMcpServerProfileRequestPayload,
+    options: MutatingRequestOptions = {},
+  ): Promise<QuarantineMcpServerProfileResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<QuarantineMcpServerProfileRequestPayload, QuarantineMcpServerProfileResponsePayload>(
+      "quarantine_mcp_server_profile",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async revokeMcpServerProfile(
+    payload: RevokeMcpServerProfileRequestPayload,
+    options: MutatingRequestOptions = {},
+  ): Promise<RevokeMcpServerProfileResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<RevokeMcpServerProfileRequestPayload, RevokeMcpServerProfileResponsePayload>(
+      "revoke_mcp_server_profile",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
     );
   }
 
@@ -349,9 +688,87 @@ export class AuthorityClient {
     );
   }
 
-  async diagnostics(
-    sections?: DiagnosticsRequestPayload["sections"],
-  ): Promise<DiagnosticsResponsePayload> {
+  async getHostedMcpJob(jobId: string): Promise<GetHostedMcpJobResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: GetHostedMcpJobRequestPayload = {
+      job_id: jobId,
+    };
+    return this.sendRequest<GetHostedMcpJobRequestPayload, GetHostedMcpJobResponsePayload>(
+      "get_hosted_mcp_job",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async listHostedMcpJobs(
+    filters: {
+      server_profile_id?: string;
+      status?: ListHostedMcpJobsRequestPayload["status"];
+      lifecycle_state?: ListHostedMcpJobsRequestPayload["lifecycle_state"];
+    } = {},
+  ): Promise<ListHostedMcpJobsResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: ListHostedMcpJobsRequestPayload = {
+      ...(filters.server_profile_id ? { server_profile_id: filters.server_profile_id } : {}),
+      ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.lifecycle_state ? { lifecycle_state: filters.lifecycle_state } : {}),
+    };
+    return this.sendRequest<ListHostedMcpJobsRequestPayload, ListHostedMcpJobsResponsePayload>(
+      "list_hosted_mcp_jobs",
+      payload,
+      this.sessionId,
+    );
+  }
+
+  async requeueHostedMcpJob(
+    jobId: string,
+    payloadOverrides: Omit<RequeueHostedMcpJobRequestPayload, "job_id"> = {},
+    options: MutatingRequestOptions = {},
+  ): Promise<RequeueHostedMcpJobResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: RequeueHostedMcpJobRequestPayload = {
+      job_id: jobId,
+      ...payloadOverrides,
+    };
+    return this.sendRequest<RequeueHostedMcpJobRequestPayload, RequeueHostedMcpJobResponsePayload>(
+      "requeue_hosted_mcp_job",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async cancelHostedMcpJob(
+    jobId: string,
+    payloadOverrides: Omit<CancelHostedMcpJobRequestPayload, "job_id"> = {},
+    options: MutatingRequestOptions = {},
+  ): Promise<CancelHostedMcpJobResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    const payload: CancelHostedMcpJobRequestPayload = {
+      job_id: jobId,
+      ...payloadOverrides,
+    };
+    return this.sendRequest<CancelHostedMcpJobRequestPayload, CancelHostedMcpJobResponsePayload>(
+      "cancel_hosted_mcp_job",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
+    );
+  }
+
+  async diagnostics(sections?: DiagnosticsRequestPayload["sections"]): Promise<DiagnosticsResponsePayload> {
     if (!this.sessionId) {
       await this.hello();
     }
@@ -405,10 +822,12 @@ export class AuthorityClient {
     );
   }
 
-  async listApprovals(filters: {
-    run_id?: string;
-    status?: ApprovalRequest["status"];
-  } = {}): Promise<ListApprovalsResponsePayload> {
+  async listApprovals(
+    filters: {
+      run_id?: string;
+      status?: ApprovalRequest["status"];
+    } = {},
+  ): Promise<ListApprovalsResponsePayload> {
     if (!this.sessionId) {
       await this.hello();
     }
@@ -421,10 +840,12 @@ export class AuthorityClient {
     );
   }
 
-  async queryApprovalInbox(filters: {
-    run_id?: string;
-    status?: ApprovalRequest["status"];
-  } = {}): Promise<QueryApprovalInboxResponsePayload> {
+  async queryApprovalInbox(
+    filters: {
+      run_id?: string;
+      status?: ApprovalRequest["status"];
+    } = {},
+  ): Promise<QueryApprovalInboxResponsePayload> {
     if (!this.sessionId) {
       await this.hello();
     }
@@ -587,7 +1008,11 @@ export class AuthorityClient {
     const rawResponse = await writeAndReadLine(this.socketPath, request, this.transport);
 
     if (!isResponseEnvelope(rawResponse)) {
-      throw new AuthorityClientTransportError("Daemon returned an invalid response envelope.", "INVALID_RESPONSE", false);
+      throw new AuthorityClientTransportError(
+        "Daemon returned an invalid response envelope.",
+        "INVALID_RESPONSE",
+        false,
+      );
     }
 
     const response = rawResponse as ResponseEnvelope<TResult>;
@@ -638,11 +1063,7 @@ function isRetryableConnectError(error: unknown): boolean {
   );
 }
 
-async function writeAndReadLine(
-  socketPath: string,
-  payload: unknown,
-  transport: TransportOptions,
-): Promise<unknown> {
+async function writeAndReadLine(socketPath: string, payload: unknown, transport: TransportOptions): Promise<unknown> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= transport.maxConnectRetries; attempt += 1) {
@@ -684,10 +1105,15 @@ async function writeAndReadLineOnce(
       settled = true;
       socket.destroy();
       reject(
-        new AuthorityClientTransportError("Timed out while connecting to the authority daemon.", "SOCKET_CONNECT_TIMEOUT", true, {
-          socket_path: socketPath,
-          timeout_ms: transport.connectTimeoutMs,
-        }),
+        new AuthorityClientTransportError(
+          "Timed out while connecting to the authority daemon.",
+          "SOCKET_CONNECT_TIMEOUT",
+          true,
+          {
+            socket_path: socketPath,
+            timeout_ms: transport.connectTimeoutMs,
+          },
+        ),
       );
     }, transport.connectTimeoutMs);
 
@@ -762,11 +1188,16 @@ async function writeAndReadLineOnce(
     socket.once("error", (error) => {
       settle(() => {
         reject(
-          new AuthorityClientTransportError("Failed to communicate with the authority daemon.", "SOCKET_CONNECT_FAILED", !connected, {
-            socket_path: socketPath,
-            cause: error.message,
-            errno: "code" in error ? error.code : undefined,
-          }),
+          new AuthorityClientTransportError(
+            "Failed to communicate with the authority daemon.",
+            "SOCKET_CONNECT_FAILED",
+            !connected,
+            {
+              socket_path: socketPath,
+              cause: error.message,
+              errno: "code" in error ? error.code : undefined,
+            },
+          ),
         );
       });
     });

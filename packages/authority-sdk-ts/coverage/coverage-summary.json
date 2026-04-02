@@ -1,0 +1,3 @@
+{"total": {"lines":{"total":271,"covered":210,"skipped":0,"pct":77.49},"statements":{"total":272,"covered":211,"skipped":0,"pct":77.57},"functions":{"total":69,"covered":63,"skipped":0,"pct":91.3},"branches":{"total":228,"covered":127,"skipped":0,"pct":55.7},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
+,"/Users/geoffreyfernald/Documents/agentgit/packages/authority-sdk-ts/src/index.ts": {"lines":{"total":271,"covered":210,"skipped":0,"pct":77.49},"functions":{"total":69,"covered":63,"skipped":0,"pct":91.3},"statements":{"total":272,"covered":211,"skipped":0,"pct":77.57},"branches":{"total":228,"covered":127,"skipped":0,"pct":55.7}}
+}

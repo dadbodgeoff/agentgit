@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,10 +8,28 @@ import { afterEach, describe, expect, it } from "vitest";
 import { LocalEncryptedSecretStore, SessionCredentialBroker } from "./index.js";
 
 const dirs: string[] = [];
+const keychainCleanup: Array<{ serviceName: string; keyIdentifier: string }> = [];
 
 afterEach(() => {
   while (dirs.length > 0) {
     fs.rmSync(dirs.pop()!, { recursive: true, force: true });
+  }
+
+  while (keychainCleanup.length > 0) {
+    const item = keychainCleanup.pop()!;
+    if (process.platform === "darwin") {
+      try {
+        execFileSync("security", [
+          "delete-generic-password",
+          "-a",
+          "mcp-envelope-key",
+          "-s",
+          `${item.serviceName}:${item.keyIdentifier}`,
+        ]);
+      } catch {
+        // ignore cleanup failures
+      }
+    }
   }
 });
 
@@ -71,42 +90,85 @@ describe("SessionCredentialBroker", () => {
   it("stores, rotates, and resolves MCP bearer secrets without listing the raw token", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-credential-broker-"));
     dirs.push(root);
+    const serviceName = `com.agentgit.tests.credential-broker.${Date.now()}`;
     const broker = new SessionCredentialBroker({
       mcpSecretStore: new LocalEncryptedSecretStore({
         dbPath: path.join(root, "mcp-secrets.db"),
         keyPath: path.join(root, "mcp-secrets.key"),
+        serviceName,
       }),
     });
+    const durableDetails = broker.durableSecretStorageDetails();
+    if (durableDetails) {
+      keychainCleanup.push({
+        serviceName,
+        keyIdentifier: durableDetails.key_identifier,
+      });
+    }
 
     const created = broker.upsertMcpBearerSecret({
       secret_id: "mcp_secret_notion",
       display_name: "Notion MCP",
       bearer_token: "secret-token-v1",
+      expires_at: "2099-01-01T00:00:00.000Z",
     });
     expect(created.created).toBe(true);
     expect(created.rotated).toBe(false);
     expect(created.secret.version).toBe(1);
+    expect(created.secret.expires_at).toBe("2099-01-01T00:00:00.000Z");
 
     const rotated = broker.upsertMcpBearerSecret({
       secret_id: "mcp_secret_notion",
       display_name: "Notion MCP",
       bearer_token: "secret-token-v2",
+      expires_at: "2099-06-01T00:00:00.000Z",
     });
     expect(rotated.created).toBe(false);
     expect(rotated.rotated).toBe(true);
     expect(rotated.secret.version).toBe(2);
+    expect(rotated.secret.expires_at).toBe("2099-06-01T00:00:00.000Z");
 
     const listed = broker.listMcpBearerSecrets();
     expect(listed).toEqual([
       expect.objectContaining({
         secret_id: "mcp_secret_notion",
         version: 2,
+        expires_at: "2099-06-01T00:00:00.000Z",
       }),
     ]);
     expect(JSON.stringify(listed)).not.toContain("secret-token-v2");
+    expect(fs.existsSync(path.join(root, "mcp-secrets.key"))).toBe(false);
 
     const resolved = broker.resolveMcpBearerSecret("mcp_secret_notion");
     expect(resolved.authorization_header).toBe("Bearer secret-token-v2");
     expect(resolved.secret.last_used_at).toBeTruthy();
+  });
+
+  it("fails closed when an MCP bearer secret is expired", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-credential-broker-"));
+    dirs.push(root);
+    const serviceName = `com.agentgit.tests.credential-broker.expired.${Date.now()}`;
+    const broker = new SessionCredentialBroker({
+      mcpSecretStore: new LocalEncryptedSecretStore({
+        dbPath: path.join(root, "mcp-secrets.db"),
+        keyPath: path.join(root, "mcp-secrets.key"),
+        serviceName,
+      }),
+    });
+    const durableDetails = broker.durableSecretStorageDetails();
+    if (durableDetails) {
+      keychainCleanup.push({
+        serviceName,
+        keyIdentifier: durableDetails.key_identifier,
+      });
+    }
+
+    broker.upsertMcpBearerSecret({
+      secret_id: "mcp_secret_expired",
+      bearer_token: "secret-token-expired",
+      expires_at: "2000-01-01T00:00:00.000Z",
+    });
+
+    expect(() => broker.resolveMcpBearerSecret("mcp_secret_expired")).toThrow("expired");
   });
 });

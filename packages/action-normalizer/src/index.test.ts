@@ -1674,6 +1674,52 @@ describe("normalizeActionAttempt", () => {
     expect(action.normalization.warnings).toContain("mcp_read_only_hint_untrusted");
   });
 
+  it("normalizes hosted delegated MCP profile calls with profile trust metadata", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "mcp_call_tool",
+          tool_kind: "mcp",
+        },
+        environment_context: {
+          workspace_roots: ["/workspace/project"],
+          cwd: "/workspace/project",
+          credential_mode: "none",
+        },
+        raw_call: {
+          server_id: "mcpprof_123",
+          server_profile_id: "mcpprof_123",
+          tool_name: "echo_note",
+          arguments: {
+            note: "launch blocker",
+          },
+          execution_mode_requested: "hosted_delegated",
+          trust_tier_at_submit: "operator_approved_public",
+          drift_state_at_submit: "clean",
+          credential_binding_mode: "hosted_token_exchange",
+          profile_status: "active",
+          candidate_source_kind: "agent_discovered",
+          allowed_execution_modes: ["hosted_delegated"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.execution_path.surface).toBe("provider_hosted");
+    expect(action.execution_path.credential_mode).toBe("delegated");
+    expect(action.facets.mcp).toMatchObject({
+      server_id: "mcpprof_123",
+      server_profile_id: "mcpprof_123",
+      execution_mode_requested: "hosted_delegated",
+      trust_tier_at_submit: "operator_approved_public",
+      drift_state_at_submit: "clean",
+      credential_binding_mode: "hosted_token_exchange",
+      profile_status: "active",
+      candidate_source_kind: "agent_discovered",
+      allowed_execution_modes: ["hosted_delegated"],
+    });
+  });
+
   it("rejects MCP tool calls without a server_id", () => {
     expect(() =>
       normalizeActionAttempt(

@@ -1,0 +1,3 @@
+{"total": {"lines":{"total":249,"covered":202,"skipped":0,"pct":81.12},"statements":{"total":270,"covered":217,"skipped":0,"pct":80.37},"functions":{"total":30,"covered":30,"skipped":0,"pct":100},"branches":{"total":891,"covered":753,"skipped":0,"pct":84.51},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
+,"/Users/geoffreyfernald/Documents/agentgit/packages/action-normalizer/src/index.ts": {"lines":{"total":249,"covered":202,"skipped":0,"pct":81.12},"functions":{"total":30,"covered":30,"skipped":0,"pct":100},"statements":{"total":270,"covered":217,"skipped":0,"pct":80.37},"branches":{"total":891,"covered":753,"skipped":0,"pct":84.51}}
+}

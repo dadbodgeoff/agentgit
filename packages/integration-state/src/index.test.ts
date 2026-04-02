@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import Database from "better-sqlite3";
@@ -109,7 +108,7 @@ describe("IntegrationState", () => {
         prepare(sql: string): { run(...args: unknown[]): unknown };
       };
     };
-    const prepareSpy = vi.spyOn(db.db, "prepare").mockImplementation((sql: string) => {
+    const prepareSpy = vi.spyOn(db.db, "prepare").mockImplementation((_sql: string) => {
       const statement = {
         run() {
           const error = new Error("database or disk is full") as Error & { code: string };
@@ -191,9 +190,7 @@ describe("IntegrationState", () => {
     const rawDb = new Database(dbPath);
 
     rawDb
-      .prepare(
-        "INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      )
+      .prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
       .run("drafts", "draft_1", "{broken-json", "2026-03-30T00:00:00.000Z", "2026-03-30T00:00:00.000Z");
 
     try {
@@ -216,9 +213,7 @@ describe("IntegrationState", () => {
     const rawDb = new Database(dbPath);
 
     rawDb
-      .prepare(
-        "INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      )
+      .prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
       .run(
         "drafts",
         "draft_1",

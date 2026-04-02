@@ -7,6 +7,13 @@ import { createTempDirTracker } from "@agentgit/test-fixtures";
 import { McpPublicHostPolicyRegistry, McpServerRegistry, validateMcpServerDefinitions } from "./index.js";
 
 const dirs = createTempDirTracker("agentgit-mcp-registry-");
+const TEST_PINNED_OCI_IMAGE =
+  "docker.io/library/node@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const TEST_OCI_SIGNATURE_POLICY = {
+  mode: "cosign_keyless" as const,
+  certificate_identity: "https://github.com/agentgit/agentgit/.github/workflows/release.yml@refs/heads/main",
+  certificate_oidc_issuer: "https://token.actions.githubusercontent.com",
+};
 
 afterEach(() => {
   dirs.cleanup();
@@ -157,7 +164,9 @@ describe("validateMcpServerDefinitions", () => {
           ],
         },
       ]),
-    ).toThrow("requires operator-managed bearer authentication backed by a secret reference or legacy env configuration");
+    ).toThrow(
+      "requires operator-managed bearer authentication backed by a secret reference or legacy env configuration",
+    );
   });
 
   it("rejects streamable_http custom authorization headers", () => {
@@ -194,6 +203,12 @@ describe("validateMcpServerDefinitions", () => {
           server_id: "notes_stdio",
           transport: "stdio",
           command: process.execPath,
+          sandbox: {
+            type: "oci_container",
+            image: TEST_PINNED_OCI_IMAGE,
+            allowed_registries: ["docker.io"],
+            signature_verification: TEST_OCI_SIGNATURE_POLICY,
+          },
           tools: [
             {
               tool_name: "echo_note",
@@ -209,6 +224,167 @@ describe("validateMcpServerDefinitions", () => {
         },
       ]),
     ).toThrow("Duplicate MCP tool_name configured");
+  });
+
+  it("rejects stdio servers without an explicit OCI sandbox configuration", () => {
+    expect(() =>
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_stdio",
+          transport: "stdio",
+          command: process.execPath,
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toThrow("requires an explicit oci_container sandbox configuration");
+  });
+
+  it("accepts stdio OCI sandbox definitions with local build metadata for development", () => {
+    expect(
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_stdio_oci_build",
+          transport: "stdio",
+          command: "node",
+          args: ["/workspace/server.mjs"],
+          sandbox: {
+            type: "oci_container",
+            image: "agentgit/notes-stdio:dev",
+            build: {
+              context_path: ".",
+              dockerfile_path: "./Dockerfile",
+              rebuild_policy: "always",
+              build_args: {
+                NODE_ENV: "development",
+              },
+            },
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        server_id: "notes_stdio_oci_build",
+        transport: "stdio",
+        sandbox: expect.objectContaining({
+          type: "oci_container",
+          image: "agentgit/notes-stdio:dev",
+          build: expect.objectContaining({
+            context_path: ".",
+            dockerfile_path: "./Dockerfile",
+            rebuild_policy: "always",
+          }),
+        }),
+      }),
+    ]);
+  });
+
+  it("rejects stdio OCI sandbox definitions that use mutable tags without build metadata", () => {
+    expect(() =>
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_stdio_mutable",
+          transport: "stdio",
+          command: "node",
+          sandbox: {
+            type: "oci_container",
+            image: "node:22-bookworm-slim",
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toThrow("must be pinned by sha256 digest unless oci_container.build is configured");
+  });
+
+  it("rejects stdio OCI sandbox definitions that omit allowed registries for remote images", () => {
+    expect(() =>
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_stdio_untrusted_registry",
+          transport: "stdio",
+          command: "node",
+          sandbox: {
+            type: "oci_container",
+            image: TEST_PINNED_OCI_IMAGE,
+            signature_verification: TEST_OCI_SIGNATURE_POLICY,
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toThrow("must declare allowed_registries unless oci_container.build is configured");
+  });
+
+  it("rejects stdio OCI sandbox definitions whose image registry is outside allowed_registries", () => {
+    expect(() =>
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_stdio_wrong_registry",
+          transport: "stdio",
+          command: "node",
+          sandbox: {
+            type: "oci_container",
+            image: TEST_PINNED_OCI_IMAGE,
+            allowed_registries: ["ghcr.io"],
+            signature_verification: TEST_OCI_SIGNATURE_POLICY,
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toThrow("image registry is not permitted by allowed_registries");
+  });
+
+  it("rejects stdio OCI sandbox definitions that omit signature verification for remote images", () => {
+    expect(() =>
+      validateMcpServerDefinitions([
+        {
+          server_id: "notes_stdio_unsigned",
+          transport: "stdio",
+          command: "node",
+          sandbox: {
+            type: "oci_container",
+            image: TEST_PINNED_OCI_IMAGE,
+            allowed_registries: ["docker.io"],
+          },
+          tools: [
+            {
+              tool_name: "echo_note",
+              side_effect_level: "read_only",
+              approval_mode: "allow",
+            },
+          ],
+        },
+      ]),
+    ).toThrow("must configure signature_verification unless oci_container.build is configured");
   });
 });
 
@@ -351,6 +527,16 @@ describe("McpServerRegistry", () => {
       display_name: "Operator owned",
       transport: "stdio",
       command: process.execPath,
+      sandbox: {
+        type: "oci_container",
+        image: TEST_PINNED_OCI_IMAGE,
+        allowed_registries: ["docker.io"],
+        signature_verification: {
+          mode: "cosign_keyless",
+          certificate_identity: "https://github.com/agentgit/agentgit/.github/workflows/release.yml@refs/heads/main",
+          certificate_oidc_issuer: "https://token.actions.githubusercontent.com",
+        },
+      },
       tools: [
         {
           tool_name: "echo_note",
@@ -366,6 +552,16 @@ describe("McpServerRegistry", () => {
         display_name: "Bootstrap owned",
         transport: "stdio",
         command: "/bin/false",
+        sandbox: {
+          type: "oci_container",
+          image: TEST_PINNED_OCI_IMAGE,
+          allowed_registries: ["docker.io"],
+          signature_verification: {
+            mode: "cosign_keyless",
+            certificate_identity: "https://github.com/agentgit/agentgit/.github/workflows/release.yml@refs/heads/main",
+            certificate_oidc_issuer: "https://token.actions.githubusercontent.com",
+          },
+        },
         tools: [
           {
             tool_name: "echo_note",
@@ -392,7 +588,9 @@ describe("McpServerRegistry", () => {
       imported: 1,
       skipped: 1,
     });
-    expect(registry.listServers().map((record) => ({ server_id: record.server.server_id, source: record.source }))).toEqual([
+    expect(
+      registry.listServers().map((record) => ({ server_id: record.server.server_id, source: record.source })),
+    ).toEqual([
       {
         server_id: "notes_http",
         source: "bootstrap_env",
@@ -403,5 +601,138 @@ describe("McpServerRegistry", () => {
       },
     ]);
     registry.close();
+  });
+
+  it("stores MCP server candidates durably", () => {
+    const root = dirs.make();
+    const dbPath = path.join(root, "registry.db");
+    const registry = new McpServerRegistry({ dbPath });
+
+    const stored = registry.submitCandidate({
+      candidate_id: "mcpcand_123",
+      source_kind: "user_input",
+      raw_endpoint: "https://api.example.com/mcp",
+      transport_hint: "streamable_http",
+      workspace_id: "workspace_demo",
+      submitted_by_session_id: "sess_demo",
+      submitted_by_run_id: null,
+      notes: "Initial candidate",
+      resolution_state: "pending",
+      resolution_error: null,
+      submitted_at: "2026-04-01T10:00:00.000Z",
+      updated_at: "2026-04-01T10:00:00.000Z",
+    });
+
+    expect(stored).toMatchObject({
+      candidate_id: "mcpcand_123",
+      source_kind: "user_input",
+      raw_endpoint: "https://api.example.com/mcp",
+    });
+
+    registry.close();
+
+    const reloaded = new McpServerRegistry({ dbPath });
+    expect(reloaded.listCandidates()).toMatchObject([
+      {
+        candidate_id: "mcpcand_123",
+        source_kind: "user_input",
+        resolution_state: "pending",
+        resolution_error: null,
+      },
+    ]);
+    reloaded.close();
+  });
+
+  it("stores MCP server profiles durably", () => {
+    const root = dirs.make();
+    const dbPath = path.join(root, "registry.db");
+    const registry = new McpServerRegistry({ dbPath });
+
+    const result = registry.upsertProfile({
+      server_profile_id: "mcpprof_123",
+      candidate_id: "mcpcand_123",
+      display_name: "Example MCP",
+      transport: "streamable_http",
+      canonical_endpoint: "https://api.example.com/mcp",
+      network_scope: "public_https",
+      trust_tier: "operator_approved_public",
+      status: "draft",
+      drift_state: "clean",
+      quarantine_reason_codes: [],
+      allowed_execution_modes: ["local_proxy"],
+      active_trust_decision_id: null,
+      auth_descriptor: {
+        mode: "none",
+        audience: null,
+        scope_labels: [],
+      },
+      identity_baseline: {
+        canonical_host: "api.example.com",
+        canonical_port: 443,
+        tls_identity_summary: null,
+        auth_issuer: null,
+        publisher_identity: null,
+        tool_inventory_hash: null,
+        fetched_at: "2026-04-01T10:00:00.000Z",
+      },
+      tool_inventory_version: null,
+      active_credential_binding_id: null,
+      imported_tools: [],
+      last_resolved_at: "2026-04-01T10:00:00.000Z",
+      created_at: "2026-04-01T10:00:00.000Z",
+      updated_at: "2026-04-01T10:00:00.000Z",
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.profile.server_profile_id).toBe("mcpprof_123");
+
+    registry.close();
+
+    const reloaded = new McpServerRegistry({ dbPath });
+    expect(reloaded.listProfiles()).toMatchObject([
+      {
+        server_profile_id: "mcpprof_123",
+        trust_tier: "operator_approved_public",
+        status: "draft",
+        drift_state: "clean",
+      },
+    ]);
+    reloaded.close();
+  });
+
+  it("stores MCP server trust decisions durably", () => {
+    const root = dirs.make();
+    const dbPath = path.join(root, "registry.db");
+    const registry = new McpServerRegistry({ dbPath });
+
+    const result = registry.upsertTrustDecision({
+      trust_decision_id: "mcptrust_123",
+      server_profile_id: "mcpprof_123",
+      decision: "allow_policy_managed",
+      trust_tier: "operator_approved_public",
+      allowed_execution_modes: ["local_proxy"],
+      max_side_effect_level_without_approval: "read_only",
+      reason_codes: ["INITIAL_REVIEW_COMPLETE"],
+      approved_by_session_id: "sess_demo",
+      approved_at: "2026-04-01T10:00:00.000Z",
+      valid_until: null,
+      reapproval_triggers: ["tool_inventory_hash_changed"],
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.trust_decision.trust_decision_id).toBe("mcptrust_123");
+
+    registry.close();
+
+    const reloaded = new McpServerRegistry({ dbPath });
+    expect(reloaded.listTrustDecisions("mcpprof_123")).toMatchObject([
+      {
+        trust_decision_id: "mcptrust_123",
+        server_profile_id: "mcpprof_123",
+        decision: "allow_policy_managed",
+        trust_tier: "operator_approved_public",
+      },
+    ]);
+    reloaded.close();
   });
 });

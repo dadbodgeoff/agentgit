@@ -1,8 +1,36 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import type { ActionRecord } from "@agentgit/schemas";
+import type { ActionRecord, PolicyCalibrationReport, PolicyConfig } from "@agentgit/schemas";
 
-import { evaluatePolicy, type PolicyEvaluationContext } from "./index.js";
+import {
+  compilePolicyPack,
+  DEFAULT_POLICY_PACK,
+  evaluatePolicy,
+  recommendPolicyThresholds,
+  type PolicyEvaluationContext,
+} from "./index.js";
+
+const deterministicFixturePath = new URL("./test-fixtures/deterministic-policy-golden.json", import.meta.url);
+
+interface DeterministicPolicyFixtureCase {
+  case_id: string;
+  expected: {
+    decision: string;
+    reason_codes: string[];
+  };
+}
+
+interface DeterministicPolicyFixture {
+  fixture_version: string;
+  cases: DeterministicPolicyFixtureCase[];
+}
+
+const deterministicFixture: DeterministicPolicyFixture = JSON.parse(
+  fs.readFileSync(path.resolve(fileURLToPath(deterministicFixturePath)), "utf8"),
+) as DeterministicPolicyFixture;
 
 function makeAction(overrides: Partial<ActionRecord> = {}): ActionRecord {
   return {
@@ -79,7 +107,31 @@ function makeAction(overrides: Partial<ActionRecord> = {}): ActionRecord {
   };
 }
 
-function makeBudgetContext(overrides: Partial<NonNullable<PolicyEvaluationContext["run_summary"]>> = {}): PolicyEvaluationContext {
+function normalizeOutcome(outcome: ReturnType<typeof evaluatePolicy>) {
+  return {
+    decision: outcome.decision,
+    reason_codes: outcome.reasons.map((reason) => reason.code),
+    matched_rules: outcome.policy_context.matched_rules,
+    trust_requirements: outcome.trust_requirements,
+    preconditions: outcome.preconditions,
+  };
+}
+
+function findDeterministicCase(caseId: string): DeterministicPolicyFixtureCase {
+  const fixtureCase = deterministicFixture.cases.find((entry) => entry.case_id === caseId);
+  if (!fixtureCase) {
+    throw new Error(
+      `Missing deterministic policy fixture case '${caseId}'. Available cases: ${deterministicFixture.cases
+        .map((entry) => entry.case_id)
+        .join(", ")}`,
+    );
+  }
+  return fixtureCase;
+}
+
+function makeBudgetContext(
+  overrides: Partial<NonNullable<PolicyEvaluationContext["run_summary"]>> = {},
+): PolicyEvaluationContext {
   return {
     run_summary: {
       budget_config: {
@@ -93,6 +145,114 @@ function makeBudgetContext(overrides: Partial<NonNullable<PolicyEvaluationContex
       ...overrides,
     },
   };
+}
+
+function makeShellReadOnlyAction(confidence = 0.42): ActionRecord {
+  return makeAction({
+    actor: {
+      type: "agent",
+      agent_name: "test-agent",
+      agent_framework: "test-framework",
+      tool_name: "exec_command",
+      tool_kind: "shell",
+    },
+    operation: {
+      domain: "shell",
+      kind: "exec",
+      name: "shell.exec",
+      display_name: "Run shell command",
+    },
+    execution_path: {
+      surface: "governed_shell",
+      mode: "pre_execution",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "path",
+        locator: "/workspace/project",
+        label: "project",
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    risk_hints: {
+      side_effect_level: "read_only",
+      external_effects: "none",
+      reversibility_hint: "reversible",
+      sensitivity_hint: "low",
+      batch: false,
+    },
+    facets: {
+      shell: {
+        command_family: "readonly_known_safe",
+      },
+    },
+    normalization: {
+      mapper: "test",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: confidence,
+    },
+  });
+}
+
+function makeOwnedNoteAction(confidence = 0.45): ActionRecord {
+  return makeAction({
+    actor: {
+      type: "agent",
+      agent_name: "test-agent",
+      agent_framework: "test-framework",
+      tool_name: "notes_update",
+      tool_kind: "function",
+    },
+    operation: {
+      domain: "function",
+      kind: "invoke",
+      name: "function.invoke",
+      display_name: "Update note",
+    },
+    execution_path: {
+      surface: "owned_integration",
+      mode: "pre_execution",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "resource",
+        locator: "note:123",
+        label: "note",
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    risk_hints: {
+      side_effect_level: "mutating",
+      external_effects: "none",
+      reversibility_hint: "reversible",
+      sensitivity_hint: "low",
+      batch: false,
+    },
+    facets: {
+      function: {
+        integration: "notes",
+        operation: "update_note",
+        trusted_compensator: "restore_note",
+      },
+    },
+    normalization: {
+      mapper: "test",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: confidence,
+    },
+  });
 }
 
 function makeCapabilityContext(
@@ -146,11 +306,448 @@ function makeCapabilityContext(
   };
 }
 
+describe("policy determinism fixtures", () => {
+  it("produces stable deny outcomes for protected secret reads", () => {
+    const fixtureCase = findDeterministicCase("deny_protected_secret_path");
+    const action = makeAction({
+      operation: {
+        domain: "filesystem",
+        kind: "read",
+        name: "filesystem.read",
+        display_name: "Read file",
+      },
+      actor: {
+        type: "agent",
+        agent_name: "test-agent",
+        agent_framework: "test-framework",
+        tool_name: "read_file",
+        tool_kind: "filesystem",
+      },
+      execution_path: {
+        surface: "governed_fs",
+        mode: "pre_execution",
+        credential_mode: "none",
+      },
+      target: {
+        primary: {
+          type: "path",
+          locator: "/workspace/project/.env",
+          label: ".env",
+        },
+        scope: {
+          breadth: "single",
+          estimated_count: 1,
+          unknowns: [],
+        },
+      },
+      risk_hints: {
+        side_effect_level: "read_only",
+        external_effects: "none",
+        reversibility_hint: "reversible",
+        sensitivity_hint: "high",
+        batch: false,
+      },
+      facets: {
+        filesystem: {
+          operation: "read",
+          byte_length: 0,
+        },
+      },
+    });
+
+    const firstOutcome = normalizeOutcome(evaluatePolicy(action));
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect(normalizeOutcome(evaluatePolicy(action))).toEqual(firstOutcome);
+    }
+
+    expect(firstOutcome.decision).toBe(fixtureCase.expected.decision);
+    expect(firstOutcome.reason_codes).toEqual(fixtureCase.expected.reason_codes);
+  });
+
+  it("produces stable ask outcomes when capability state is stale", () => {
+    const fixtureCase = findDeterministicCase("ask_capability_state_stale");
+    const action = makeAction();
+    const context = makeCapabilityContext({
+      is_stale: true,
+    });
+
+    const firstOutcome = normalizeOutcome(evaluatePolicy(action, context));
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect(normalizeOutcome(evaluatePolicy(action, context))).toEqual(firstOutcome);
+    }
+
+    expect(firstOutcome.decision).toBe(fixtureCase.expected.decision);
+    expect(firstOutcome.reason_codes).toEqual(fixtureCase.expected.reason_codes);
+  });
+
+  it("produces stable deny outcomes for direct credentials on brokered ticket actions", () => {
+    const fixtureCase = findDeterministicCase("deny_direct_credentials_ticket_broker");
+    const action = makeAction({
+      actor: {
+        type: "agent",
+        agent_name: "test-agent",
+        agent_framework: "test-framework",
+        tool_name: "tickets_update",
+        tool_kind: "function",
+      },
+      operation: {
+        domain: "function",
+        kind: "update_ticket",
+        name: "tickets.update_ticket",
+        display_name: "Update external ticket",
+      },
+      execution_path: {
+        surface: "sdk_function",
+        mode: "pre_execution",
+        credential_mode: "direct",
+      },
+      target: {
+        primary: {
+          type: "external_object",
+          locator: "tickets://issue/ticket_existing",
+          label: "Ticket ticket_existing",
+        },
+        scope: {
+          breadth: "single",
+          estimated_count: 1,
+          unknowns: [],
+        },
+      },
+      risk_hints: {
+        side_effect_level: "mutating",
+        external_effects: "network",
+        reversibility_hint: "compensatable",
+        sensitivity_hint: "moderate",
+        batch: false,
+      },
+      facets: {
+        function: {
+          integration: "tickets",
+          operation: "update_ticket",
+          trusted_compensator: "tickets.restore_ticket",
+        },
+      },
+    });
+
+    const firstOutcome = normalizeOutcome(evaluatePolicy(action));
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect(normalizeOutcome(evaluatePolicy(action))).toEqual(firstOutcome);
+    }
+
+    expect(firstOutcome.decision).toBe(fixtureCase.expected.decision);
+    expect(firstOutcome.reason_codes).toEqual(fixtureCase.expected.reason_codes);
+  });
+});
+
 describe("evaluatePolicy", () => {
+  it("should deny filesystem access to protected secret paths from the default policy pack", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        operation: {
+          domain: "filesystem",
+          kind: "read",
+          name: "filesystem.read",
+          display_name: "Read file",
+        },
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "read_file",
+          tool_kind: "filesystem",
+        },
+        execution_path: {
+          surface: "governed_fs",
+          mode: "pre_execution",
+          credential_mode: "none",
+        },
+        target: {
+          primary: {
+            type: "path",
+            locator: "/workspace/project/.env",
+            label: ".env",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "read_only",
+          external_effects: "none",
+          reversibility_hint: "reversible",
+          sensitivity_hint: "high",
+          batch: false,
+        },
+        facets: {
+          filesystem: {
+            operation: "read",
+            byte_length: 0,
+          },
+        },
+      }),
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("PROTECTED_SECRET_PATH_DENIED");
+  });
+
+  it("should deny mutation of protected agent configuration surfaces from the default policy pack", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        target: {
+          primary: {
+            type: "path",
+            locator: "/workspace/project/.claude/settings.json",
+            label: "settings.json",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "mutating",
+          external_effects: "none",
+          reversibility_hint: "reversible",
+          sensitivity_hint: "high",
+          batch: false,
+        },
+      }),
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("AGENT_CONFIG_MUTATION_DENIED");
+  });
+
   it("should allow small governed writes under 256KB", () => {
     const outcome = evaluatePolicy(makeAction());
 
     expect(outcome.decision).toBe("allow");
+  });
+
+  it("should allow the built-in default policy pack to be compiled explicitly", () => {
+    const compiled = compilePolicyPack([DEFAULT_POLICY_PACK]);
+
+    expect(compiled.profile_name).toBe("coding-agent-v1");
+    expect(compiled.rules.length).toBeGreaterThan(0);
+    expect(compiled.thresholds.low_confidence["filesystem/*"]).toBe(0.3);
+    expect(compiled.thresholds.low_confidence["function/*"]).toBe(0.5);
+  });
+
+  it("should let require_approval rules strengthen an otherwise allowed action", () => {
+    const customPolicy: PolicyConfig = {
+      profile_name: "custom-test",
+      policy_version: "1",
+      rules: [
+        {
+          rule_id: "runtime.package-json.ask",
+          description: "Require approval for package.json writes.",
+          rationale: "Dependency manifest edits are operator-reviewed in this test.",
+          binding_scope: "runtime_override",
+          decision: "allow",
+          enforcement_mode: "require_approval",
+          priority: 50,
+          match: {
+            type: "all",
+            conditions: [
+              {
+                type: "field",
+                field: "operation.domain",
+                operator: "eq",
+                value: "filesystem",
+              },
+              {
+                type: "field",
+                field: "target.primary.locator",
+                operator: "matches",
+                value: "/package\\.json$",
+              },
+            ],
+          },
+          reason: {
+            code: "PACKAGE_MANIFEST_REQUIRES_APPROVAL",
+            severity: "high",
+            message: "Package manifest writes require approval.",
+          },
+        },
+      ],
+    };
+
+    const outcome = evaluatePolicy(
+      makeAction({
+        target: {
+          primary: {
+            type: "path",
+            locator: "/workspace/project/package.json",
+            label: "package.json",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+      }),
+      {
+        compiled_policy: compilePolicyPack([DEFAULT_POLICY_PACK, customPolicy]),
+      },
+    );
+
+    expect(outcome.decision).toBe("ask");
+    expect(outcome.reasons[0]?.code).toBe("PACKAGE_MANIFEST_REQUIRES_APPROVAL");
+  });
+
+  it("should preserve snapshot preconditions when require_approval overlays a snapshot-backed action", () => {
+    const customPolicy: PolicyConfig = {
+      profile_name: "custom-test",
+      policy_version: "1",
+      rules: [
+        {
+          rule_id: "runtime.delete.ask",
+          description: "Require approval for deletes.",
+          rationale: "Delete operations must be approved by an operator.",
+          binding_scope: "runtime_override",
+          decision: "allow_with_snapshot",
+          enforcement_mode: "require_approval",
+          priority: 50,
+          match: {
+            type: "all",
+            conditions: [
+              {
+                type: "field",
+                field: "operation.domain",
+                operator: "eq",
+                value: "filesystem",
+              },
+              {
+                type: "field",
+                field: "operation.kind",
+                operator: "eq",
+                value: "delete",
+              },
+            ],
+          },
+          reason: {
+            code: "DELETE_REQUIRES_APPROVAL",
+            severity: "high",
+            message: "Delete operations require approval.",
+          },
+        },
+      ],
+    };
+
+    const outcome = evaluatePolicy(
+      makeAction({
+        operation: {
+          domain: "filesystem",
+          kind: "delete",
+          name: "filesystem.delete",
+          display_name: "Delete file",
+        },
+        risk_hints: {
+          side_effect_level: "destructive",
+          external_effects: "none",
+          reversibility_hint: "potentially_reversible",
+          sensitivity_hint: "low",
+          batch: false,
+        },
+        facets: {
+          filesystem: {
+            operation: "delete",
+            byte_length: 0,
+          },
+        },
+      }),
+      {
+        compiled_policy: compilePolicyPack([DEFAULT_POLICY_PACK, customPolicy]),
+      },
+    );
+
+    expect(outcome.decision).toBe("ask");
+    expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.preconditions.snapshot_required).toBe(true);
+    expect(outcome.reasons[0]?.code).toBe("DELETE_REQUIRES_APPROVAL");
+  });
+
+  it("should preserve deny precedence when a lower-priority policy tries to allow the same action", () => {
+    const allowPolicy: PolicyConfig = {
+      profile_name: "allow-test",
+      policy_version: "1",
+      rules: [
+        {
+          rule_id: "workspace.allow-dotenv",
+          description: "Attempt to allow dotenv access.",
+          rationale: "Test-only conflicting allow.",
+          binding_scope: "workspace",
+          decision: "allow",
+          enforcement_mode: "enforce",
+          priority: 5,
+          match: {
+            type: "field",
+            field: "target.primary.locator",
+            operator: "matches",
+            value: "/\\.env$",
+          },
+          reason: {
+            code: "TEST_ALLOW",
+            severity: "low",
+            message: "Test allow rule.",
+          },
+        },
+      ],
+    };
+
+    const outcome = evaluatePolicy(
+      makeAction({
+        operation: {
+          domain: "filesystem",
+          kind: "read",
+          name: "filesystem.read",
+          display_name: "Read file",
+        },
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "read_file",
+          tool_kind: "filesystem",
+        },
+        target: {
+          primary: {
+            type: "path",
+            locator: "/workspace/project/.env",
+            label: ".env",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "read_only",
+          external_effects: "none",
+          reversibility_hint: "reversible",
+          sensitivity_hint: "high",
+          batch: false,
+        },
+        facets: {
+          filesystem: {
+            operation: "read",
+            byte_length: 0,
+          },
+        },
+      }),
+      {
+        compiled_policy: compilePolicyPack([DEFAULT_POLICY_PACK, allowPolicy]),
+      },
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("PROTECTED_SECRET_PATH_DENIED");
   });
 
   it("should require approval for brokered ticket mutations when cached capability state is stale", () => {
@@ -390,6 +987,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.decision).toBe("ask");
     expect(outcome.reasons[0]?.code).toBe("RUNTIME_STORAGE_CAPABILITY_DEGRADED");
     expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.preconditions.snapshot_required).toBe(true);
   });
 
   it("should require approval for snapshot-backed shell mutations when cached capability state is stale", () => {
@@ -446,6 +1044,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.decision).toBe("ask");
     expect(outcome.reasons[0]?.code).toBe("CAPABILITY_STATE_STALE");
     expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.preconditions.snapshot_required).toBe(true);
   });
 
   it("should require snapshot for large governed writes over 256KB", () => {
@@ -527,6 +1126,321 @@ describe("evaluatePolicy", () => {
 
     expect(outcome.decision).toBe("ask");
     expect(outcome.preconditions.approval_required).toBe(true);
+  });
+
+  it("should let explicit low-confidence thresholds strengthen read-only shell actions", () => {
+    const customPolicy: PolicyConfig = {
+      profile_name: "custom-thresholds",
+      policy_version: "1",
+      thresholds: {
+        low_confidence: [
+          {
+            action_family: "shell/*",
+            ask_below: 0.45,
+          },
+        ],
+      },
+      rules: [],
+    };
+
+    const outcome = evaluatePolicy(makeShellReadOnlyAction(0.42), {
+      compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
+    });
+
+    expect(outcome.decision).toBe("ask");
+    expect(outcome.preconditions.approval_required).toBe(true);
+  });
+
+  it("should prefer exact action-family thresholds over wildcard thresholds", () => {
+    const customPolicy: PolicyConfig = {
+      profile_name: "custom-thresholds",
+      policy_version: "1",
+      thresholds: {
+        low_confidence: [
+          {
+            action_family: "shell/*",
+            ask_below: 0.2,
+          },
+          {
+            action_family: "shell/exec",
+            ask_below: 0.45,
+          },
+        ],
+      },
+      rules: [],
+    };
+
+    const outcome = evaluatePolicy(makeShellReadOnlyAction(0.42), {
+      compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
+    });
+
+    expect(outcome.decision).toBe("ask");
+    expect(outcome.preconditions.approval_required).toBe(true);
+  });
+
+  it("should only relax low-confidence gating when explicit policy config lowers the threshold", () => {
+    const defaultOutcome = evaluatePolicy(makeOwnedNoteAction(0.45));
+    expect(defaultOutcome.decision).toBe("ask");
+
+    const customPolicy: PolicyConfig = {
+      profile_name: "custom-thresholds",
+      policy_version: "1",
+      thresholds: {
+        low_confidence: [
+          {
+            action_family: "function/*",
+            ask_below: 0.4,
+          },
+        ],
+      },
+      rules: [],
+    };
+
+    const relaxedOutcome = evaluatePolicy(makeOwnedNoteAction(0.45), {
+      compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
+    });
+
+    expect(relaxedOutcome.decision).toBe("allow_with_snapshot");
+    expect(relaxedOutcome.preconditions.snapshot_required).toBe(true);
+  });
+
+  it("should recommend tightening thresholds when denied approvals appear above the current threshold", () => {
+    const report: PolicyCalibrationReport = {
+      generated_at: "2026-04-01T12:00:00.000Z",
+      filters: {
+        run_id: "run_policy",
+        include_samples: true,
+        sample_limit: null,
+      },
+      totals: {
+        sample_count: 2,
+        unique_action_families: 1,
+        confidence: {
+          average: 0.38,
+          min: 0.34,
+          max: 0.42,
+        },
+        decisions: {
+          allow: 0,
+          allow_with_snapshot: 0,
+          ask: 2,
+          deny: 0,
+        },
+        approvals: {
+          requested: 2,
+          pending: 0,
+          approved: 1,
+          denied: 1,
+        },
+        recovery_attempted_count: 0,
+      },
+      action_families: [
+        {
+          action_family: "shell/exec",
+          sample_count: 2,
+          confidence: {
+            average: 0.38,
+            min: 0.34,
+            max: 0.42,
+          },
+          decisions: {
+            allow: 0,
+            allow_with_snapshot: 0,
+            ask: 2,
+            deny: 0,
+          },
+          approvals: {
+            requested: 2,
+            pending: 0,
+            approved: 1,
+            denied: 1,
+          },
+          snapshot_classes: [],
+          top_matched_rules: [],
+          top_reason_codes: [],
+          recovery_attempted_count: 0,
+          approval_rate: 1,
+          denial_rate: 0.5,
+        },
+      ],
+      samples: [
+        {
+          sample_id: "a",
+          run_id: "run_policy",
+          action_id: "act_1",
+          evaluated_at: "2026-04-01T12:00:00.000Z",
+          action_family: "shell/exec",
+          decision: "ask",
+          normalization_confidence: 0.42,
+          matched_rules: [],
+          reason_codes: [],
+          snapshot_class: null,
+          approval_requested: true,
+          approval_id: "apr_1",
+          approval_status: "denied",
+          resolved_at: "2026-04-01T12:01:00.000Z",
+          recovery_attempted: false,
+          recovery_result: null,
+          recovery_class: null,
+          recovery_strategy: null,
+        },
+        {
+          sample_id: "b",
+          run_id: "run_policy",
+          action_id: "act_2",
+          evaluated_at: "2026-04-01T12:00:00.000Z",
+          action_family: "shell/exec",
+          decision: "ask",
+          normalization_confidence: 0.34,
+          matched_rules: [],
+          reason_codes: [],
+          snapshot_class: null,
+          approval_requested: true,
+          approval_id: "apr_2",
+          approval_status: "approved",
+          resolved_at: "2026-04-01T12:01:00.000Z",
+          recovery_attempted: false,
+          recovery_result: null,
+          recovery_class: null,
+          recovery_strategy: null,
+        },
+      ],
+      samples_truncated: false,
+    };
+
+    const recommendations = recommendPolicyThresholds(report, compilePolicyPack([DEFAULT_POLICY_PACK]), {
+      min_samples: 2,
+    });
+
+    expect(recommendations[0]).toEqual(
+      expect.objectContaining({
+        action_family: "shell/exec",
+        direction: "tighten",
+        current_ask_below: 0.3,
+        recommended_ask_below: 0.43,
+        automatic_live_application_allowed: false,
+      }),
+    );
+  });
+
+  it("should recommend relaxation only as a report when all approvals were granted", () => {
+    const report: PolicyCalibrationReport = {
+      generated_at: "2026-04-01T12:00:00.000Z",
+      filters: {
+        run_id: "run_policy",
+        include_samples: true,
+        sample_limit: null,
+      },
+      totals: {
+        sample_count: 2,
+        unique_action_families: 1,
+        confidence: {
+          average: 0.455,
+          min: 0.45,
+          max: 0.46,
+        },
+        decisions: {
+          allow: 0,
+          allow_with_snapshot: 0,
+          ask: 2,
+          deny: 0,
+        },
+        approvals: {
+          requested: 2,
+          pending: 0,
+          approved: 2,
+          denied: 0,
+        },
+        recovery_attempted_count: 0,
+      },
+      action_families: [
+        {
+          action_family: "function/invoke",
+          sample_count: 2,
+          confidence: {
+            average: 0.455,
+            min: 0.45,
+            max: 0.46,
+          },
+          decisions: {
+            allow: 0,
+            allow_with_snapshot: 0,
+            ask: 2,
+            deny: 0,
+          },
+          approvals: {
+            requested: 2,
+            pending: 0,
+            approved: 2,
+            denied: 0,
+          },
+          snapshot_classes: [],
+          top_matched_rules: [],
+          top_reason_codes: [],
+          recovery_attempted_count: 0,
+          approval_rate: 1,
+          denial_rate: 0,
+        },
+      ],
+      samples: [
+        {
+          sample_id: "a",
+          run_id: "run_policy",
+          action_id: "act_1",
+          evaluated_at: "2026-04-01T12:00:00.000Z",
+          action_family: "function/invoke",
+          decision: "ask",
+          normalization_confidence: 0.45,
+          matched_rules: [],
+          reason_codes: [],
+          snapshot_class: null,
+          approval_requested: true,
+          approval_id: "apr_1",
+          approval_status: "approved",
+          resolved_at: "2026-04-01T12:01:00.000Z",
+          recovery_attempted: false,
+          recovery_result: null,
+          recovery_class: null,
+          recovery_strategy: null,
+        },
+        {
+          sample_id: "b",
+          run_id: "run_policy",
+          action_id: "act_2",
+          evaluated_at: "2026-04-01T12:00:00.000Z",
+          action_family: "function/invoke",
+          decision: "ask",
+          normalization_confidence: 0.46,
+          matched_rules: [],
+          reason_codes: [],
+          snapshot_class: null,
+          approval_requested: true,
+          approval_id: "apr_2",
+          approval_status: "approved",
+          resolved_at: "2026-04-01T12:01:00.000Z",
+          recovery_attempted: false,
+          recovery_result: null,
+          recovery_class: null,
+          recovery_strategy: null,
+        },
+      ],
+      samples_truncated: false,
+    };
+
+    const recommendations = recommendPolicyThresholds(report, compilePolicyPack([DEFAULT_POLICY_PACK]), {
+      min_samples: 2,
+    });
+
+    expect(recommendations[0]).toEqual(
+      expect.objectContaining({
+        action_family: "function/invoke",
+        direction: "relax",
+        current_ask_below: 0.5,
+        recommended_ask_below: 0.44,
+        requires_policy_update: true,
+        automatic_live_application_allowed: false,
+      }),
+    );
   });
 
   it("should set snapshot_required true when decision is allow_with_snapshot", () => {
@@ -2634,4 +3548,155 @@ describe("evaluatePolicy", () => {
     expect(outcome.reasons[0]?.code).toBe("DIRECT_CREDENTIALS_FORBIDDEN");
   });
 
+  it("denies execution for quarantined MCP profiles", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "mcp_call_tool",
+          tool_kind: "mcp",
+        },
+        operation: {
+          domain: "mcp",
+          kind: "call_tool",
+          name: "mcp.mcpprof_123.echo_note",
+          display_name: "Call MCP tool mcpprof_123/echo_note",
+        },
+        execution_path: {
+          surface: "mcp_proxy",
+          mode: "pre_execution",
+          credential_mode: "brokered",
+        },
+        target: {
+          primary: {
+            type: "external_object",
+            locator: "mcp://server/mcpprof_123/tools/echo_note",
+            label: "mcpprof_123/echo_note",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "unknown",
+          external_effects: "network",
+          reversibility_hint: "unknown",
+          sensitivity_hint: "moderate",
+          batch: false,
+        },
+        facets: {
+          mcp: {
+            server_id: "mcpprof_123",
+            server_profile_id: "mcpprof_123",
+            tool_name: "echo_note",
+            profile_status: "quarantined",
+            drift_state_at_submit: "drifted",
+            allowed_execution_modes: ["local_proxy"],
+          },
+        },
+      }),
+      {
+        mcp_server_registry: {
+          servers: [
+            {
+              server_id: "mcpprof_123",
+              transport: "stdio",
+              command: "node",
+              tools: [
+                {
+                  tool_name: "echo_note",
+                  side_effect_level: "read_only",
+                  approval_mode: "allow",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("MCP_PROFILE_QUARANTINED");
+  });
+
+  it("denies hosted delegated execution for degraded session token bindings", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "mcp_call_tool",
+          tool_kind: "mcp",
+        },
+        operation: {
+          domain: "mcp",
+          kind: "call_tool",
+          name: "mcp.mcpprof_123.echo_note",
+          display_name: "Call MCP tool mcpprof_123/echo_note",
+        },
+        execution_path: {
+          surface: "provider_hosted",
+          mode: "pre_execution",
+          credential_mode: "delegated",
+        },
+        target: {
+          primary: {
+            type: "external_object",
+            locator: "mcp://server/mcpprof_123/tools/echo_note",
+            label: "mcpprof_123/echo_note",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "unknown",
+          external_effects: "network",
+          reversibility_hint: "unknown",
+          sensitivity_hint: "moderate",
+          batch: false,
+        },
+        facets: {
+          mcp: {
+            server_id: "mcpprof_123",
+            server_profile_id: "mcpprof_123",
+            tool_name: "echo_note",
+            execution_mode_requested: "hosted_delegated",
+            credential_binding_mode: "session_token",
+            profile_status: "active",
+            drift_state_at_submit: "clean",
+            allowed_execution_modes: ["hosted_delegated"],
+          },
+        },
+      }),
+      {
+        mcp_server_registry: {
+          servers: [
+            {
+              server_id: "mcpprof_123",
+              transport: "stdio",
+              command: "node",
+              tools: [
+                {
+                  tool_name: "echo_note",
+                  side_effect_level: "read_only",
+                  approval_mode: "allow",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("MCP_AUTH_BINDING_MISSING");
+  });
 });

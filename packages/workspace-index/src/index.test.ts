@@ -326,7 +326,14 @@ describe("WorkspaceIndex", () => {
       anchor_path: path.join(workspaceRoot, "config.json"),
     });
 
-    const duplicateAnchorPath = path.join(tempRoot, "snapshots", "snaps", secondSnapshot.snap_id, "files", "config.json");
+    const duplicateAnchorPath = path.join(
+      tempRoot,
+      "snapshots",
+      "snaps",
+      secondSnapshot.snap_id,
+      "files",
+      "config.json",
+    );
     expect(await fs.readFile(duplicateAnchorPath, "utf8")).toBe('{"version":1}');
 
     const result = await index.rebaseSyntheticAnchors();

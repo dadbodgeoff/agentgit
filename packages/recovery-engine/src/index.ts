@@ -113,11 +113,14 @@ function manifestExternalEffects(manifest: SnapshotManifest): string[] {
   return manifest.external_effects && manifest.external_effects !== "none" ? [manifest.external_effects] : [];
 }
 
-function buildReviewGuidance(manifest: SnapshotManifest): RecoveryPlan["review_guidance"] {
+function buildReviewGuidance(
+  manifest: SnapshotManifest,
+  extraUncertainty: string[] = [],
+): RecoveryPlan["review_guidance"] {
   const systemsTouched = [manifest.operation_domain ?? "unknown_system"];
   const objectsTouched = [manifest.target_path];
   const manualSteps: string[] = [];
-  const uncertainty: string[] = [];
+  const uncertainty: string[] = [...extraUncertainty];
 
   if (manifest.operation_domain === "shell") {
     manualSteps.push("Inspect workspace changes produced by the shell command before deciding on cleanup.");
@@ -128,7 +131,9 @@ function buildReviewGuidance(manifest: SnapshotManifest): RecoveryPlan["review_g
   if (manifest.external_effects && manifest.external_effects !== "none") {
     systemsTouched.push(manifest.external_effects);
     manualSteps.push("Check external systems touched by this action and perform any provider-specific undo manually.");
-    uncertainty.push("External side effects were recorded, but no trusted compensator is registered for this boundary.");
+    uncertainty.push(
+      "External side effects were recorded, but no trusted compensator is registered for this boundary.",
+    );
   }
 
   if (manifest.snapshot_class === "metadata_only" || manifest.fidelity === "metadata_only") {
@@ -146,10 +151,16 @@ function buildReviewGuidance(manifest: SnapshotManifest): RecoveryPlan["review_g
 function buildManualReviewWarnings(
   manifest: SnapshotManifest,
   integrityOk: boolean,
+  options?: {
+    omitMetadataWarning?: boolean;
+  },
 ): RecoveryPlan["warnings"] {
   const warnings: RecoveryPlan["warnings"] = [];
 
-  if (manifest.snapshot_class === "metadata_only" || manifest.fidelity === "metadata_only") {
+  if (
+    !options?.omitMetadataWarning &&
+    (manifest.snapshot_class === "metadata_only" || manifest.fidelity === "metadata_only")
+  ) {
     warnings.push({
       code: "METADATA_ONLY_BOUNDARY",
       message: "This boundary captured metadata only, so exact automated restore is unavailable.",
@@ -172,8 +183,7 @@ function buildManualReviewWarnings(
 }
 
 function metadataReviewConfidence(manifest: SnapshotManifest, integrityOk: boolean): number {
-  const baseConfidence =
-    manifest.external_effects && manifest.external_effects !== "none" ? 0.38 : 0.46;
+  const baseConfidence = manifest.external_effects && manifest.external_effects !== "none" ? 0.38 : 0.46;
 
   return integrityOk ? baseConfidence : Math.max(0.25, baseConfidence - 0.1);
 }
@@ -195,11 +205,16 @@ function createReviewOnlyPlan(params: {
   manifest: SnapshotManifest;
   integrityOk: boolean;
   preview: Awaited<ReturnType<LocalSnapshotEngine["previewRestore"]>>;
+  downgradeReason?: RecoveryDowngradeReason;
+  extraUncertainty?: string[];
+  omitMetadataWarning?: boolean;
 }): RecoveryPlan {
-  const downgradeReason: RecoveryDowngradeReason = {
-    code: "METADATA_ONLY_BOUNDARY",
-    message: "This boundary captured metadata only, so exact automated restore is unavailable.",
-  };
+  const downgradeReason =
+    params.downgradeReason ??
+    ({
+      code: "METADATA_ONLY_BOUNDARY",
+      message: "This boundary captured metadata only, so exact automated restore is unavailable.",
+    } satisfies RecoveryDowngradeReason);
   return {
     schema_version: "recovery-plan.v1",
     recovery_plan_id: createRecoveryPlanId(),
@@ -217,11 +232,27 @@ function createReviewOnlyPlan(params: {
       external_effects: manifestExternalEffects(params.manifest),
       data_loss_risk: "unknown",
     },
-    warnings: buildManualReviewWarnings(params.manifest, params.integrityOk),
+    warnings: [
+      downgradeReason,
+      ...buildManualReviewWarnings(params.manifest, params.integrityOk, {
+        omitMetadataWarning: params.omitMetadataWarning,
+      }),
+    ],
     downgrade_reason: downgradeReason,
-    review_guidance: buildReviewGuidance(params.manifest),
+    review_guidance: buildReviewGuidance(params.manifest, params.extraUncertainty),
     created_at: new Date().toISOString(),
   };
+}
+
+function requiresSnapshotManualReview(manifest: SnapshotManifest): RecoveryDowngradeReason | null {
+  if (manifest.operation_domain === "shell") {
+    return {
+      code: "OPAQUE_SHELL_BOUNDARY",
+      message: "Shell execution boundaries remain manual-review only even when a richer snapshot exists.",
+    };
+  }
+
+  return null;
 }
 
 function createPathSubsetReviewOnlyPlan(params: {
@@ -248,10 +279,7 @@ function createPathSubsetReviewOnlyPlan(params: {
       external_effects: manifestExternalEffects(params.manifest),
       data_loss_risk: "unknown",
     },
-    warnings: [
-      downgradeReason,
-      ...buildManualReviewWarnings(params.manifest, params.integrityOk),
-    ],
+    warnings: [downgradeReason, ...buildManualReviewWarnings(params.manifest, params.integrityOk)],
     downgrade_reason: downgradeReason,
     review_guidance: {
       systems_touched: Array.from(new Set([params.manifest.operation_domain ?? "filesystem"])),
@@ -259,9 +287,7 @@ function createPathSubsetReviewOnlyPlan(params: {
       manual_steps: [
         "Review the requested paths and apply a manual restore from a trusted boundary or external source.",
       ],
-      uncertainty: [
-        "This boundary cannot provide a trusted exact subset restore for the requested paths.",
-      ],
+      uncertainty: ["This boundary cannot provide a trusted exact subset restore for the requested paths."],
     },
     created_at: new Date().toISOString(),
   };
@@ -272,9 +298,7 @@ export function createActionBoundaryReviewPlan(evidence: ActionBoundaryEvidence)
     code: "NO_BOUNDARY_SNAPSHOT",
     message: "This action boundary has no persisted snapshot, so automated restore is unavailable.",
   };
-  const warnings: RecoveryPlan["warnings"] = [
-    downgradeReason,
-  ];
+  const warnings: RecoveryPlan["warnings"] = [downgradeReason];
 
   if (evidence.later_actions_affected > 0) {
     warnings.push({
@@ -296,8 +320,9 @@ export function createActionBoundaryReviewPlan(evidence: ActionBoundaryEvidence)
   const reviewGuidance: RecoveryPlan["review_guidance"] = {
     systems_touched: Array.from(
       new Set(
-        [evidence.operation_domain, evidence.external_effects]
-          .filter((value): value is string => Boolean(value && value !== "none")),
+        [evidence.operation_domain, evidence.external_effects].filter((value): value is string =>
+          Boolean(value && value !== "none"),
+        ),
       ),
     ),
     objects_touched: [evidence.target_locator],
@@ -306,9 +331,7 @@ export function createActionBoundaryReviewPlan(evidence: ActionBoundaryEvidence)
         ? `Inspect the effects of ${evidence.display_name} before applying manual cleanup.`
         : "Inspect the effects of this action before applying manual cleanup.",
     ],
-    uncertainty: [
-      "No persisted snapshot was captured for this action boundary, so recovery is review-only.",
-    ],
+    uncertainty: ["No persisted snapshot was captured for this action boundary, so recovery is review-only."],
   };
 
   if (evidence.reversibility_hint === "compensatable") {
@@ -395,7 +418,10 @@ function findWorkspaceCapabilityForManifest(
 function createCapabilityReviewOnlyPlan(params: {
   target: RecoveryTarget;
   manifest: SnapshotManifest;
-  preview: Pick<RecoveryPlan["impact_preview"], "paths_to_change" | "later_actions_affected" | "overlapping_paths" | "data_loss_risk">;
+  preview: Pick<
+    RecoveryPlan["impact_preview"],
+    "paths_to_change" | "later_actions_affected" | "overlapping_paths" | "data_loss_risk"
+  >;
   warning: RecoveryPlan["warnings"][number];
 }): RecoveryPlan {
   const reviewGuidance = buildReviewGuidance(params.manifest) ?? {
@@ -434,10 +460,16 @@ function createCapabilityReviewOnlyPlan(params: {
       external_effects: manifestExternalEffects(params.manifest),
       data_loss_risk: preview.data_loss_risk,
     },
-    warnings: [params.warning, ...buildWarnings({
-      ...preview,
-      confidence: 0.34,
-    }, true)],
+    warnings: [
+      params.warning,
+      ...buildWarnings(
+        {
+          ...preview,
+          confidence: 0.34,
+        },
+        true,
+      ),
+    ],
     downgrade_reason: params.warning,
     review_guidance: reviewGuidance,
     created_at: new Date().toISOString(),
@@ -464,8 +496,7 @@ function evaluateRestoreCapabilityState(
   if (!workspaceCapability) {
     return {
       code: "CAPABILITY_STATE_INCOMPLETE",
-      message:
-        "Cached capability state does not include governed workspace access for this recovery boundary.",
+      message: "Cached capability state does not include governed workspace access for this recovery boundary.",
     };
   }
 
@@ -535,6 +566,21 @@ export async function planSnapshotRecovery(
       manifest,
       integrityOk,
       preview,
+    });
+  }
+
+  const manualReviewReason = requiresSnapshotManualReview(manifest);
+  if (manualReviewReason) {
+    return createReviewOnlyPlan({
+      snapshotId,
+      manifest,
+      integrityOk,
+      preview,
+      downgradeReason: manualReviewReason,
+      extraUncertainty: [
+        "The original shell command may have produced broad or partially opaque side effects, so automated restore is not trusted.",
+      ],
+      omitMetadataWarning: true,
     });
   }
 
@@ -675,6 +721,14 @@ export async function planPathSubsetRecovery(
 
   const integrityOk = await snapshotEngine.verifyIntegrity(target.snapshot_id);
   if (manifest.snapshot_class === "metadata_only" || manifest.fidelity === "metadata_only") {
+    return createPathSubsetReviewOnlyPlan({
+      target,
+      manifest,
+      integrityOk,
+    });
+  }
+
+  if (requiresSnapshotManualReview(manifest)) {
     return createPathSubsetReviewOnlyPlan({
       target,
       manifest,

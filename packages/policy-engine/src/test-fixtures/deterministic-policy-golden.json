@@ -1,0 +1,26 @@
+{
+  "fixture_version": "2026-04-02.policy-determinism.v1",
+  "cases": [
+    {
+      "case_id": "deny_protected_secret_path",
+      "expected": {
+        "decision": "deny",
+        "reason_codes": ["PROTECTED_SECRET_PATH_DENIED"]
+      }
+    },
+    {
+      "case_id": "ask_capability_state_stale",
+      "expected": {
+        "decision": "ask",
+        "reason_codes": ["CAPABILITY_STATE_STALE"]
+      }
+    },
+    {
+      "case_id": "deny_direct_credentials_ticket_broker",
+      "expected": {
+        "decision": "deny",
+        "reason_codes": ["DIRECT_CREDENTIALS_FORBIDDEN"]
+      }
+    }
+  ]
+}

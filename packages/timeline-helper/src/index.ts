@@ -113,9 +113,7 @@ function visibilityRank(scope: VisibilityScope): number {
 }
 
 function parseVisibilityScope(value: unknown): VisibilityScope | null {
-  return value === "user" || value === "model" || value === "internal" || value === "sensitive_internal"
-    ? value
-    : null;
+  return value === "user" || value === "model" || value === "internal" || value === "sensitive_internal" ? value : null;
 }
 
 function parseRecoveryTargetType(value: string | null): RecoveryTargetType | null {
@@ -189,7 +187,12 @@ function eventStepType(eventType: string): TimelineStep["step_type"] {
     return "recovery_step";
   }
 
-  if (eventType.startsWith("action.") || eventType.startsWith("policy.") || eventType.startsWith("execution.") || eventType.startsWith("snapshot.")) {
+  if (
+    eventType.startsWith("action.") ||
+    eventType.startsWith("policy.") ||
+    eventType.startsWith("execution.") ||
+    eventType.startsWith("snapshot.")
+  ) {
     return "action_step";
   }
 
@@ -275,8 +278,7 @@ function eventSummary(event: JournalEventRecord): string {
       return `Execution failed: ${String(payload.error ?? "unknown error")}.`;
     case "execution.outcome_unknown":
       return String(
-        payload.message ??
-          `Execution outcome is unknown for action ${String(payload.action_id ?? "unknown")}.`,
+        payload.message ?? `Execution outcome is unknown for action ${String(payload.action_id ?? "unknown")}.`,
       );
     case "approval.requested":
       return `Queued approval ${String(payload.approval_id ?? "unknown")} for action ${String(payload.action_id ?? "unknown")}.`;
@@ -312,12 +314,7 @@ function reversibilityForEvent(eventType: string): TimelineStep["reversibility_c
 }
 
 function parseRecoveryClass(value: string | null): TimelineStep["reversibility_class"] {
-  if (
-    value === "reversible" ||
-    value === "compensatable" ||
-    value === "review_only" ||
-    value === "irreversible"
-  ) {
+  if (value === "reversible" || value === "compensatable" || value === "review_only" || value === "irreversible") {
     return value;
   }
 
@@ -477,41 +474,43 @@ function payloadArtifactSummaries(event: JournalEventRecord | undefined): Payloa
   }
 
   return value.flatMap((entry): PayloadArtifactSummary[] => {
-      if (entry === null || typeof entry !== "object") {
-        return [];
-      }
+    if (entry === null || typeof entry !== "object") {
+      return [];
+    }
 
-      const candidate = entry as Record<string, unknown>;
-      const artifactId = typeof candidate.artifact_id === "string" ? candidate.artifact_id : null;
-      const type = typeof candidate.type === "string" ? candidate.type : null;
-      const visibility = parseVisibilityScope(candidate.visibility) ?? "user";
-      const integrityCandidate =
-        candidate.integrity !== null && typeof candidate.integrity === "object"
-          ? (candidate.integrity as Record<string, unknown>)
-          : null;
-      const integrity =
-        integrityCandidate &&
-        integrityCandidate.schema_version === "artifact-integrity.v1" &&
-        integrityCandidate.digest_algorithm === "sha256" &&
-        (typeof integrityCandidate.digest === "string" || integrityCandidate.digest === null)
-          ? {
-              schema_version: "artifact-integrity.v1" as const,
-              digest_algorithm: "sha256" as const,
-              digest: integrityCandidate.digest,
-            }
-          : undefined;
+    const candidate = entry as Record<string, unknown>;
+    const artifactId = typeof candidate.artifact_id === "string" ? candidate.artifact_id : null;
+    const type = typeof candidate.type === "string" ? candidate.type : null;
+    const visibility = parseVisibilityScope(candidate.visibility) ?? "user";
+    const integrityCandidate =
+      candidate.integrity !== null && typeof candidate.integrity === "object"
+        ? (candidate.integrity as Record<string, unknown>)
+        : null;
+    const integrity =
+      integrityCandidate &&
+      integrityCandidate.schema_version === "artifact-integrity.v1" &&
+      integrityCandidate.digest_algorithm === "sha256" &&
+      (typeof integrityCandidate.digest === "string" || integrityCandidate.digest === null)
+        ? {
+            schema_version: "artifact-integrity.v1" as const,
+            digest_algorithm: "sha256" as const,
+            digest: integrityCandidate.digest,
+          }
+        : undefined;
 
-      if (!artifactId || !type) {
-        return [];
-      }
+    if (!artifactId || !type) {
+      return [];
+    }
 
-      return [{
+    return [
+      {
         artifact_id: artifactId,
         type,
         visibility,
         integrity,
-      }];
-    });
+      },
+    ];
+  });
 }
 
 function visibleArtifactId(
@@ -537,9 +536,7 @@ function visibleArtifactIntegrity(
 }
 
 function parseProvenanceMode(value: unknown): TimelineStep["provenance"] | null {
-  return value === "governed" || value === "observed" || value === "imported" || value === "unknown"
-    ? value
-    : null;
+  return value === "governed" || value === "observed" || value === "imported" || value === "unknown" ? value : null;
 }
 
 function inferredProvenance(event: JournalEventRecord | undefined): TimelineStep["provenance"] {
@@ -565,8 +562,9 @@ function inferredProvenance(event: JournalEventRecord | undefined): TimelineStep
 }
 
 function provenanceConfidence(event: JournalEventRecord | undefined, fallback = 0.97): number {
-  const value = payloadRecord(event ?? { sequence: 0, event_type: "", occurred_at: "", recorded_at: "" })
-    .provenance_confidence;
+  const value = payloadRecord(
+    event ?? { sequence: 0, event_type: "", occurred_at: "", recorded_at: "" },
+  ).provenance_confidence;
   return typeof value === "number" ? value : fallback;
 }
 
@@ -642,8 +640,9 @@ function parseDataLossRisk(value: string | null): TimelineStep["related"]["data_
 }
 
 function actionExternalEffects(sourceEvent: JournalEventRecord | undefined): TimelineStep["external_effects"] {
-  const riskHints = payloadRecord(sourceEvent ?? { sequence: 0, event_type: "", occurred_at: "", recorded_at: "" })
-    .risk_hints;
+  const riskHints = payloadRecord(
+    sourceEvent ?? { sequence: 0, event_type: "", occurred_at: "", recorded_at: "" },
+  ).risk_hints;
 
   if (!riskHints || typeof riskHints !== "object") {
     return [];
@@ -699,7 +698,6 @@ function buildActionStep(
   const provenance = inferredProvenance(normalizedEvent ?? importedEvent ?? observedEvent ?? firstEvent);
   const decision = policyEvent ? decisionForEvent(policyEvent) : null;
   const externalEffects = actionExternalEffects(normalizedEvent ?? importedEvent ?? observedEvent ?? firstEvent);
-  const normalizedPayload = payloadRecord(normalizedEvent ?? firstEvent);
   const executionPayload = payloadRecord(
     executionCompletedEvent ?? executionSimulatedEvent ?? executionFailedEvent ?? executionUnknownEvent ?? firstEvent,
   );
@@ -716,7 +714,9 @@ function buildActionStep(
   const targetLocator =
     visiblePayloadStringField(normalizedEvent, "target_locator", visibilityScope, tracker) ??
     visiblePayloadStringField(executionCompletedEvent, "target_path", visibilityScope, tracker);
-  const filesystemOperation = payloadStringField(normalizedEvent, "filesystem_operation") ?? payloadStringField(executionCompletedEvent, "operation");
+  const filesystemOperation =
+    payloadStringField(normalizedEvent, "filesystem_operation") ??
+    payloadStringField(executionCompletedEvent, "operation");
   const inputPreview = visiblePayloadPreviewField(normalizedEvent, "input_preview", visibilityScope, tracker);
   const diffPreview = visiblePayloadPreviewField(executionCompletedEvent, "diff_preview", visibilityScope, tracker);
   const beforePreview = visiblePayloadPreviewField(executionCompletedEvent, "before_preview", visibilityScope, tracker);
@@ -790,9 +790,7 @@ function buildActionStep(
   } else if (decision === "deny") {
     const reasons = reasonMessages(policyEvent);
     summary =
-      reasons.length > 0
-        ? `Blocked ${displayName}. ${reasons[0]}`
-        : `Blocked ${displayName} because policy denied it.`;
+      reasons.length > 0 ? `Blocked ${displayName}. ${reasons[0]}` : `Blocked ${displayName} because policy denied it.`;
   } else if (decision === "ask") {
     const reasons = reasonMessages(policyEvent);
     summary =
@@ -848,7 +846,12 @@ function buildActionStep(
       });
     }
     const stdoutArtifact = artifactSummaryByType.get("stdout")?.[0];
-    const stdoutExcerpt = visiblePayloadPreviewField(executionCompletedEvent, "stdout_excerpt", visibilityScope, tracker);
+    const stdoutExcerpt = visiblePayloadPreviewField(
+      executionCompletedEvent,
+      "stdout_excerpt",
+      visibilityScope,
+      tracker,
+    );
     if (stdoutExcerpt) {
       primaryArtifacts.push({
         artifact_id: visibleArtifactId(stdoutArtifact, visibilityScope),
@@ -863,7 +866,12 @@ function buildActionStep(
       });
     }
     const stderrArtifact = artifactSummaryByType.get("stderr")?.[0];
-    const stderrExcerpt = visiblePayloadPreviewField(executionCompletedEvent, "stderr_excerpt", visibilityScope, tracker);
+    const stderrExcerpt = visiblePayloadPreviewField(
+      executionCompletedEvent,
+      "stderr_excerpt",
+      visibilityScope,
+      tracker,
+    );
     if (stderrExcerpt) {
       primaryArtifacts.push({
         artifact_id: visibleArtifactId(stderrArtifact, visibilityScope),
@@ -963,15 +971,17 @@ function buildActionStep(
     action_id: group.actionId,
     decision,
     primary_reason: primaryReason,
-    reversibility_class:
-      snapshotEvent
-        ? "reversible"
-        : executionCompletedEvent
-          ? "compensatable"
-          : provenance === "governed"
-            ? null
-            : "review_only",
-    confidence: provenanceConfidence(normalizedEvent ?? importedEvent ?? observedEvent ?? firstEvent, provenance === "governed" ? 0.97 : 0.61),
+    reversibility_class: snapshotEvent
+      ? "reversible"
+      : executionCompletedEvent
+        ? "compensatable"
+        : provenance === "governed"
+          ? null
+          : "review_only",
+    confidence: provenanceConfidence(
+      normalizedEvent ?? importedEvent ?? observedEvent ?? firstEvent,
+      provenance === "governed" ? 0.97 : 0.61,
+    ),
     summary,
     warnings,
     primary_artifacts: primaryArtifacts,
@@ -986,8 +996,8 @@ function buildActionStep(
         executionCompletedEvent && typeof payloadRecord(executionCompletedEvent).execution_id === "string"
           ? (payloadRecord(executionCompletedEvent).execution_id as string)
           : executionSimulatedEvent && typeof payloadRecord(executionSimulatedEvent).execution_id === "string"
-          ? (payloadRecord(executionSimulatedEvent).execution_id as string)
-          : null,
+            ? (payloadRecord(executionSimulatedEvent).execution_id as string)
+            : null,
       recovery_plan_ids: [],
       target_locator: targetLocator,
       recovery_target_type: null,
@@ -1014,12 +1024,25 @@ function buildRecoveryStep(
   const recoveryPlanIds = group.events
     .map((event) => payloadRecord(event).recovery_plan_id)
     .filter((value): value is string => typeof value === "string");
-  const warnings = visiblePayloadStringList(plannedEvent ?? executedEvent ?? firstEvent, "warnings", visibilityScope, tracker);
+  const warnings = visiblePayloadStringList(
+    plannedEvent ?? executedEvent ?? firstEvent,
+    "warnings",
+    visibilityScope,
+    tracker,
+  );
   const targetPath = visiblePayloadStringField(executedEvent, "target_path", visibilityScope, tracker);
   const targetLocator =
-    visiblePayloadStringField(plannedEvent ?? executedEvent ?? firstEvent, "target_locator", visibilityScope, tracker) ?? targetPath;
+    visiblePayloadStringField(
+      plannedEvent ?? executedEvent ?? firstEvent,
+      "target_locator",
+      visibilityScope,
+      tracker,
+    ) ?? targetPath;
   const existedBefore = payloadRecord(executedEvent ?? firstEvent).existed_before;
-  const laterActionsAffected = payloadNumberField(plannedEvent ?? executedEvent ?? firstEvent, "later_actions_affected");
+  const laterActionsAffected = payloadNumberField(
+    plannedEvent ?? executedEvent ?? firstEvent,
+    "later_actions_affected",
+  );
   const overlappingPaths = visiblePayloadStringList(
     plannedEvent ?? executedEvent ?? firstEvent,
     "overlapping_paths",
@@ -1039,7 +1062,9 @@ function buildRecoveryStep(
       value === "network" || value === "communication" || value === "financial" || value === "unknown",
   );
   const boundaryLabel = group.actionId ?? group.snapshotId ?? group.recoveryKey;
-  const targetType = parseRecoveryTargetType(payloadStringField(plannedEvent ?? executedEvent ?? firstEvent, "target_type"));
+  const targetType = parseRecoveryTargetType(
+    payloadStringField(plannedEvent ?? executedEvent ?? firstEvent, "target_type"),
+  );
   const runCheckpoint = payloadStringField(plannedEvent ?? executedEvent ?? firstEvent, "run_checkpoint");
   const branchPointRunId = payloadStringField(plannedEvent ?? executedEvent ?? firstEvent, "branch_point_run_id");
   const branchPointSequence = payloadNumberField(plannedEvent ?? executedEvent ?? firstEvent, "branch_point_sequence");
@@ -1076,16 +1101,21 @@ function buildRecoveryStep(
   const recoveryClass =
     parseRecoveryClass(payloadStringField(plannedEvent ?? executedEvent ?? firstEvent, "recovery_class")) ??
     "reversible";
-  const strategy = visiblePayloadStringField(plannedEvent ?? executedEvent ?? firstEvent, "strategy", visibilityScope, tracker);
+  const strategy = visiblePayloadStringField(
+    plannedEvent ?? executedEvent ?? firstEvent,
+    "strategy",
+    visibilityScope,
+    tracker,
+  );
   const executionOutcome = visiblePayloadStringField(executedEvent ?? firstEvent, "outcome", visibilityScope, tracker);
   const restorePreview =
     targetType === "path_subset" && targetPaths.length > 0
       ? `Restored requested path subset from ${recoveryTargetLabel}.`
       : typeof targetPath === "string" && targetPath.length > 0
-      ? existedBefore === false
-        ? `Removed ${targetPath} to match the recovery target's original missing state.`
-        : `Restored ${targetPath} from ${recoveryTargetLabel}.`
-      : `Restored ${recoveryTargetLabel}.`;
+        ? existedBefore === false
+          ? `Removed ${targetPath} to match the recovery target's original missing state.`
+          : `Restored ${targetPath} from ${recoveryTargetLabel}.`
+        : `Restored ${recoveryTargetLabel}.`;
   const compensationPreview = strategy
     ? `Executed ${strategy} for ${recoveryTargetLabel}.`
     : `Executed compensating recovery for ${recoveryTargetLabel}.`;
@@ -1171,7 +1201,9 @@ function buildApprovalStep(runId: string, group: ApprovalEventGroup): TimelineSt
   const resolvedEvent = group.events.find((event) => event.event_type === "approval.resolved");
   const resolution = resolvedEvent ? payloadRecord(resolvedEvent).resolution : null;
   const actionSummary = String(
-    payloadRecord(requestedEvent ?? firstEvent).action_summary ?? payloadRecord(resolvedEvent ?? firstEvent).action_summary ?? "action",
+    payloadRecord(requestedEvent ?? firstEvent).action_summary ??
+      payloadRecord(resolvedEvent ?? firstEvent).action_summary ??
+      "action",
   );
   const resolutionNote = payloadRecord(resolvedEvent ?? firstEvent).resolution_note;
   const actionId =
@@ -1283,39 +1315,41 @@ export function projectTimelineView(
   }
 
   const projectedSteps: TimelineStep[] = [
-    ...standaloneEvents.map((event): TimelineStep => ({
-      schema_version: "timeline-step.v1",
-      step_id: `step_${runId}_${event.sequence}`,
-      run_id: runId,
-      sequence: event.sequence,
-      step_type: eventStepType(event.event_type),
-      title: eventTitle(event),
-      status: eventStatus(event.event_type),
-      provenance: "governed",
-      action_id: null,
-      decision: null,
-      reversibility_class: reversibilityForEvent(event.event_type),
-      confidence: 0.95,
-      summary: eventSummary(event),
-      warnings: [],
-      primary_artifacts: [],
-      artifact_previews: [],
-      external_effects: [],
-      related: {
-        snapshot_id: null,
-        execution_id: null,
-        recovery_plan_ids: [],
-        target_locator: null,
-        recovery_target_type: null,
-        recovery_target_label: null,
-        recovery_scope_paths: [],
-        recovery_strategy: null,
-        later_actions_affected: null,
-        overlapping_paths: [],
-        data_loss_risk: null,
-      },
-      occurred_at: event.occurred_at,
-    })),
+    ...standaloneEvents.map(
+      (event): TimelineStep => ({
+        schema_version: "timeline-step.v1",
+        step_id: `step_${runId}_${event.sequence}`,
+        run_id: runId,
+        sequence: event.sequence,
+        step_type: eventStepType(event.event_type),
+        title: eventTitle(event),
+        status: eventStatus(event.event_type),
+        provenance: "governed",
+        action_id: null,
+        decision: null,
+        reversibility_class: reversibilityForEvent(event.event_type),
+        confidence: 0.95,
+        summary: eventSummary(event),
+        warnings: [],
+        primary_artifacts: [],
+        artifact_previews: [],
+        external_effects: [],
+        related: {
+          snapshot_id: null,
+          execution_id: null,
+          recovery_plan_ids: [],
+          target_locator: null,
+          recovery_target_type: null,
+          recovery_target_label: null,
+          recovery_scope_paths: [],
+          recovery_strategy: null,
+          later_actions_affected: null,
+          overlapping_paths: [],
+          data_loss_risk: null,
+        },
+        occurred_at: event.occurred_at,
+      }),
+    ),
     ...Array.from(actionGroups.values()).map((group) => buildActionStep(runId, group, visibilityScope, tracker)),
     ...Array.from(approvalGroups.values()).map((group) => buildApprovalStep(runId, group)),
     ...Array.from(recoveryGroups.values()).map((group) => buildRecoveryStep(runId, group, visibilityScope, tracker)),
@@ -1386,7 +1420,9 @@ export function answerHelperQuery(
         })),
         uncertainty:
           trustClauses.length > 0
-            ? ["Some recorded steps were not governed pre-execution, so trust and reversibility claims should be read more carefully."]
+            ? [
+                "Some recorded steps were not governed pre-execution, so trust and reversibility claims should be read more carefully.",
+              ]
             : [],
       };
     }
@@ -1435,7 +1471,9 @@ export function answerHelperQuery(
       }
 
       if (focusStep.related.recovery_target_type && focusStep.related.recovery_target_label) {
-        detailParts.push(`Recovery target: ${focusStep.related.recovery_target_type} (${focusStep.related.recovery_target_label}).`);
+        detailParts.push(
+          `Recovery target: ${focusStep.related.recovery_target_type} (${focusStep.related.recovery_target_label}).`,
+        );
       }
 
       if (focusStep.related.recovery_scope_paths && focusStep.related.recovery_scope_paths.length > 0) {
@@ -1465,7 +1503,10 @@ export function answerHelperQuery(
       if (focusStep.artifact_previews.length > 0) {
         const previewSummary = focusStep.artifact_previews
           .slice(0, 3)
-          .map((artifact: TimelineStep["artifact_previews"][number]) => `${artifact.label ?? artifact.type}: ${artifact.preview}`)
+          .map(
+            (artifact: TimelineStep["artifact_previews"][number]) =>
+              `${artifact.label ?? artifact.type}: ${artifact.preview}`,
+          )
           .join(" | ");
         detailParts.push(`Artifact previews: ${previewSummary}.`);
       }
@@ -1563,7 +1604,9 @@ export function answerHelperQuery(
               title: focusStep.title,
             },
           ],
-          uncertainty: ["This step may represent execution, recovery, or system activity rather than a policy-evaluated action."],
+          uncertainty: [
+            "This step may represent execution, recovery, or system activity rather than a policy-evaluated action.",
+          ],
         };
       }
 
@@ -1693,7 +1736,10 @@ export function answerHelperQuery(
               title: latestBlocked.title,
             },
           ],
-          uncertainty: latestBlocked.status === "awaiting_approval" ? [] : ["No execution failure was recorded; this is inferred from the latest blocked step."],
+          uncertainty:
+            latestBlocked.status === "awaiting_approval"
+              ? []
+              : ["No execution failure was recorded; this is inferred from the latest blocked step."],
         };
       }
 
@@ -1837,9 +1883,7 @@ export function answerHelperQuery(
           answer: [
             `Reverting at ${focusStep.title} would affect ${focusStep.related.later_actions_affected} later action(s).`,
             overlapSummary,
-            focusStep.related.data_loss_risk
-              ? `Recorded data loss risk: ${focusStep.related.data_loss_risk}.`
-              : null,
+            focusStep.related.data_loss_risk ? `Recorded data loss risk: ${focusStep.related.data_loss_risk}.` : null,
             focusStep.reversibility_class === "review_only"
               ? "This boundary is review-only, so the restore preview is advisory rather than exact automation."
               : null,
@@ -1903,15 +1947,11 @@ export function answerHelperQuery(
       }
 
       if (reversibleLater.length > 0) {
-        impactParts.push(
-          `${reversibleLater.length} of those later step(s) are themselves marked reversible.`,
-        );
+        impactParts.push(`${reversibleLater.length} of those later step(s) are themselves marked reversible.`);
       }
 
       if (blockedLater.length > 0) {
-        impactParts.push(
-          `${blockedLater.length} later step(s) are blocked or awaiting approval.`,
-        );
+        impactParts.push(`${blockedLater.length} later step(s) are blocked or awaiting approval.`);
       }
 
       if (nonGovernedLater.length > 0) {
@@ -1930,9 +1970,7 @@ export function answerHelperQuery(
         })),
         uncertainty: [
           laterSteps.length > 5 ? "Only the first 5 later steps are included as evidence." : null,
-          nonGovernedLater.length > 0
-            ? "Some later steps were imported, observed, or otherwise non-governed."
-            : null,
+          nonGovernedLater.length > 0 ? "Some later steps were imported, observed, or otherwise non-governed." : null,
         ].filter((value): value is string => value !== null),
       };
     }
@@ -1998,7 +2036,9 @@ export function answerHelperQuery(
           ],
           uncertainty:
             focusStep.reversibility_class === "review_only"
-              ? ["The projected loss is grounded in the recovery plan, but execution still requires manual review or compensation."]
+              ? [
+                  "The projected loss is grounded in the recovery plan, but execution still requires manual review or compensation.",
+                ]
               : [],
         };
       }
@@ -2042,7 +2082,9 @@ export function answerHelperQuery(
       }
 
       if (failedLater > 0) {
-        lossParts.push(`${failedLater} later step(s) are already failed, so some of what you would lose is failure history rather than successful state.`);
+        lossParts.push(
+          `${failedLater} later step(s) are already failed, so some of what you would lose is failure history rather than successful state.`,
+        );
       }
 
       if (blockedLater > 0) {
@@ -2058,11 +2100,15 @@ export function answerHelperQuery(
       }
 
       if (externalLater > 0) {
-        lossParts.push(`${externalLater} later step(s) carry external side-effect hints, so some lost history may involve outside systems.`);
+        lossParts.push(
+          `${externalLater} later step(s) carry external side-effect hints, so some lost history may involve outside systems.`,
+        );
       }
 
       if (nonGovernedLater > 0) {
-        lossParts.push(`${nonGovernedLater} later step(s) are non-governed, so part of the projected loss rests on weaker trust provenance.`);
+        lossParts.push(
+          `${nonGovernedLater} later step(s) are non-governed, so part of the projected loss rests on weaker trust provenance.`,
+        );
       }
 
       return {
@@ -2154,7 +2200,9 @@ export function answerHelperQuery(
               title: focusStep.title,
             },
           ],
-          uncertainty: ["The timeline projection currently relies on recorded target locators to compute scope matches."],
+          uncertainty: [
+            "The timeline projection currently relies on recorded target locators to compute scope matches.",
+          ],
         };
       }
 
@@ -2193,9 +2241,7 @@ export function answerHelperQuery(
             .slice(0, 3)
             .map((step) => `${step.title} (${step.status})`)
             .join(", ")}.`,
-          nonGovernedTouching.length > 0
-            ? `${nonGovernedTouching.length} matching step(s) are non-governed.`
-            : null,
+          nonGovernedTouching.length > 0 ? `${nonGovernedTouching.length} matching step(s) are non-governed.` : null,
         ]
           .filter((value): value is string => value !== null)
           .join(" "),
@@ -2286,10 +2332,7 @@ export function answerHelperQuery(
             ]),
           ).values(),
         ),
-        uncertainty:
-          betweenSteps.length > 4
-            ? ["Only the first 4 intermediate steps are included as evidence."]
-            : [],
+        uncertainty: betweenSteps.length > 4 ? ["Only the first 4 intermediate steps are included as evidence."] : [],
       };
     }
   }

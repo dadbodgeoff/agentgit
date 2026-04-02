@@ -131,10 +131,12 @@ function successEnvelope(request: Record<string, unknown>, result: unknown): Rec
 
 describe("inspector ui", () => {
   it("renders the local inspector shell without leaking the daemon socket path", async () => {
-    const app = await listenHttp(createInspectorServer({
-      title: "AgentGit Inspector",
-      socketPath: "/tmp/private-authority.sock",
-    }));
+    const app = await listenHttp(
+      createInspectorServer({
+        title: "AgentGit Inspector",
+        socketPath: "/tmp/private-authority.sock",
+      }),
+    );
 
     const response = await fetch(`${app.origin}/`);
     const html = await response.text();
@@ -143,6 +145,33 @@ describe("inspector ui", () => {
     expect(html).toContain("Trust, evidence, and recovery in one room.");
     expect(html).toContain("AgentGit Local Inspector");
     expect(html).not.toContain("/tmp/private-authority.sock");
+  });
+
+  it("escapes custom page titles before rendering HTML", async () => {
+    const app = await listenHttp(
+      createInspectorServer({
+        title: "<img src=x onerror=alert('xss')>",
+      }),
+    );
+
+    const response = await fetch(`${app.origin}/`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain("&lt;img src=x onerror=alert(&#39;xss&#39;)&gt;");
+    expect(html).not.toContain("<img src=x onerror=alert('xss')>");
+  });
+
+  it("ships client-side escaping for daemon-provided content before any innerHTML render", async () => {
+    const app = await listenHttp(createInspectorServer());
+    const response = await fetch(`${app.origin}/`);
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain("function escapeClientHtml(value)");
+    expect(html).toContain("escapeClientHtml(item)");
+    expect(html).toContain("escapeClientHtml(step.title)");
+    expect(html).toContain("escapeClientHtml(card.answer)");
   });
 
   it("proxies a full run-view request to the daemon and preserves visibility scope", async () => {
@@ -336,6 +365,378 @@ describe("inspector ui", () => {
       requests
         .filter((request) => request.method === "query_timeline" || request.method === "query_helper")
         .every((request) => request.payload.visibility_scope === "internal"),
+    ).toBe(true);
+  });
+
+  it("streams overview and run-view payloads over websocket", async () => {
+    const requests: Array<{ method: string; payload: Record<string, unknown> }> = [];
+    const daemon = await createFakeDaemon((request) => {
+      const method = request.method as string;
+      const payload = (request.payload ?? {}) as Record<string, unknown>;
+      requests.push({ method, payload });
+
+      switch (method) {
+        case "hello":
+          return successEnvelope(request, { session_id: "sess_ws" });
+        case "diagnostics":
+          return successEnvelope(request, {
+            daemon_health: {
+              status: "healthy",
+              active_sessions: 1,
+              active_runs: 1,
+              primary_reason: null,
+              warnings: [],
+            },
+            journal_health: {
+              status: "healthy",
+              total_runs: 1,
+              total_events: 2,
+              pending_approvals: 0,
+              primary_reason: null,
+              warnings: [],
+            },
+            maintenance_backlog: {
+              pending_critical_jobs: 0,
+              pending_maintenance_jobs: 0,
+              oldest_pending_critical_job: null,
+              current_heavy_job: null,
+              snapshot_compaction_debt: null,
+              primary_reason: null,
+              warnings: [],
+            },
+            projection_lag: {
+              projection_status: "fresh",
+              lag_events: 0,
+            },
+            storage_summary: {
+              artifact_health: {
+                status: "healthy",
+                total: 0,
+                available: 0,
+                expired: 0,
+                missing: 0,
+                corrupted: 0,
+                tampered: 0,
+              },
+              degraded_artifact_capture_actions: 0,
+              low_disk_pressure_signals: 0,
+              primary_reason: null,
+              warnings: [],
+            },
+            capability_summary: {
+              cached: true,
+              refreshed_at: "2026-03-31T12:00:00.000Z",
+              workspace_root: "/workspace/project",
+              capability_count: 1,
+              degraded_capabilities: 0,
+              unavailable_capabilities: 0,
+              stale_after_ms: 300000,
+              is_stale: false,
+              primary_reason: null,
+              warnings: [],
+            },
+            policy_summary: null,
+            security_posture: null,
+            hosted_worker: null,
+            hosted_queue: null,
+          });
+        case "get_capabilities":
+          return successEnvelope(request, {
+            capabilities: [],
+            degraded_mode_warnings: [],
+            detection_timestamps: {
+              started_at: "2026-03-31T12:00:00.000Z",
+              completed_at: "2026-03-31T12:00:00.100Z",
+            },
+          });
+        case "get_run_summary":
+          return successEnvelope(request, {
+            run_id: payload.run_id,
+            session_id: "sess_ws",
+            workflow_name: "inspector-flow",
+            agent_framework: "cli",
+            agent_name: "agentgit-cli",
+            workspace_roots: ["/workspace/project"],
+            event_count: 2,
+            latest_event: {
+              sequence: 2,
+              event_type: "execution.completed",
+              occurred_at: "2026-03-31T12:00:02.000Z",
+              recorded_at: "2026-03-31T12:00:02.000Z",
+            },
+            budget_config: {
+              max_mutating_actions: null,
+              max_destructive_actions: null,
+            },
+            budget_usage: {
+              mutating_actions: 0,
+              destructive_actions: 0,
+            },
+            maintenance_status: {
+              projection_status: "fresh",
+              artifact_health: {
+                status: "healthy",
+                total: 0,
+                available: 0,
+                expired: 0,
+                missing: 0,
+                corrupted: 0,
+                tampered: 0,
+              },
+            },
+            created_at: "2026-03-31T12:00:00.000Z",
+            started_at: "2026-03-31T12:00:00.000Z",
+          });
+        case "query_timeline":
+          return successEnvelope(request, {
+            run_summary: {
+              run_id: payload.run_id,
+              session_id: "sess_ws",
+              workflow_name: "inspector-flow",
+              agent_framework: "cli",
+              agent_name: "agentgit-cli",
+              workspace_roots: ["/workspace/project"],
+              event_count: 2,
+              latest_event: {
+                sequence: 2,
+                event_type: "execution.completed",
+                occurred_at: "2026-03-31T12:00:02.000Z",
+                recorded_at: "2026-03-31T12:00:02.000Z",
+              },
+              budget_config: {
+                max_mutating_actions: null,
+                max_destructive_actions: null,
+              },
+              budget_usage: {
+                mutating_actions: 0,
+                destructive_actions: 0,
+              },
+              maintenance_status: {
+                projection_status: "fresh",
+                artifact_health: {
+                  status: "healthy",
+                  total: 0,
+                  available: 0,
+                  expired: 0,
+                  missing: 0,
+                  corrupted: 0,
+                  tampered: 0,
+                },
+              },
+              created_at: "2026-03-31T12:00:00.000Z",
+              started_at: "2026-03-31T12:00:00.000Z",
+            },
+            steps: [
+              {
+                schema_version: "timeline-step.v1",
+                step_id: "step_ws_1",
+                run_id: payload.run_id,
+                sequence: 1,
+                step_type: "action_step",
+                title: "WS step",
+                status: "completed",
+                provenance: "governed",
+                action_id: "act_ws_1",
+                decision: "allow",
+                primary_reason: {
+                  code: "SAFE",
+                  message: "Safe action.",
+                },
+                reversibility_class: "reversible",
+                confidence: 0.98,
+                summary: "Websocket timeline step.",
+                warnings: [],
+                primary_artifacts: [],
+                artifact_previews: [],
+                external_effects: [],
+                related: {
+                  target_locator: null,
+                },
+                occurred_at: "2026-03-31T12:00:01.000Z",
+              },
+            ],
+            projection_status: "fresh",
+            visibility_scope: payload.visibility_scope,
+            redactions_applied: 0,
+            preview_budget: {
+              max_inline_preview_chars: 160,
+              max_total_inline_preview_chars: 1200,
+              preview_chars_used: 0,
+              truncated_previews: 0,
+              omitted_previews: 0,
+            },
+          });
+        case "query_helper":
+          return successEnvelope(request, {
+            answer: `helper:${payload.question_type as string}`,
+            confidence: 0.9,
+            primary_reason: null,
+            visibility_scope: payload.visibility_scope ?? "user",
+            redactions_applied: 0,
+            preview_budget: {
+              max_inline_preview_chars: 160,
+              max_total_inline_preview_chars: 1200,
+              preview_chars_used: 0,
+              truncated_previews: 0,
+              omitted_previews: 0,
+            },
+            evidence: [],
+            uncertainty: [],
+          });
+        case "query_approval_inbox":
+          return successEnvelope(request, { items: [] });
+        case "list_approvals":
+          return successEnvelope(request, { approvals: [] });
+        default:
+          throw new Error(`Unexpected method ${method}`);
+      }
+    });
+
+    const app = await listenHttp(createInspectorServer({ socketPath: daemon.socketPath }));
+    const address = app.server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("HTTP server did not expose a TCP address.");
+    }
+
+    const socket = net.createConnection({
+      host: "127.0.0.1",
+      port: address.port,
+    });
+    const secWebSocketKey = Buffer.from("agentgit-inspector-ws-test", "utf8").toString("base64");
+    const requestLines = [
+      "GET /ws?run_id=run_ws&visibility_scope=internal HTTP/1.1",
+      `Host: 127.0.0.1:${address.port}`,
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Key: ${secWebSocketKey}`,
+      "Sec-WebSocket-Version: 13",
+      "\r\n",
+    ];
+
+    const receivedTypes = new Set<string>();
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        socket.destroy();
+        reject(new Error("Timed out waiting for websocket inspector payloads."));
+      }, 5_000);
+      let buffer = Buffer.alloc(0);
+      let upgraded = false;
+
+      const tryReadFrame = (): { opcode: number; payload: Buffer; bytes: number } | null => {
+        if (buffer.length < 2) {
+          return null;
+        }
+        const first = buffer[0];
+        const second = buffer[1];
+        const opcode = first & 0x0f;
+        let payloadLength = second & 0x7f;
+        let offset = 2;
+
+        if (payloadLength === 126) {
+          if (buffer.length < offset + 2) {
+            return null;
+          }
+          payloadLength = buffer.readUInt16BE(offset);
+          offset += 2;
+        } else if (payloadLength === 127) {
+          if (buffer.length < offset + 8) {
+            return null;
+          }
+          payloadLength = Number(buffer.readBigUInt64BE(offset));
+          offset += 8;
+        }
+
+        if (buffer.length < offset + payloadLength) {
+          return null;
+        }
+
+        const payload = buffer.slice(offset, offset + payloadLength);
+        return {
+          opcode,
+          payload,
+          bytes: offset + payloadLength,
+        };
+      };
+
+      socket.once("connect", () => {
+        socket.write(requestLines.join("\r\n"), "utf8");
+      });
+
+      socket.on("data", (chunk) => {
+        buffer = Buffer.concat([buffer, chunk]);
+
+        if (!upgraded) {
+          const headerEnd = buffer.indexOf("\r\n\r\n");
+          if (headerEnd < 0) {
+            return;
+          }
+
+          const headerText = buffer.slice(0, headerEnd).toString("utf8");
+          if (!headerText.startsWith("HTTP/1.1 101")) {
+            clearTimeout(timeout);
+            socket.destroy();
+            reject(new Error(`Websocket upgrade failed: ${headerText.split("\r\n")[0] ?? headerText}`));
+            return;
+          }
+
+          upgraded = true;
+          buffer = buffer.slice(headerEnd + 4);
+        }
+
+        while (upgraded) {
+          const frame = tryReadFrame();
+          if (!frame) {
+            return;
+          }
+
+          buffer = buffer.slice(frame.bytes);
+          if (frame.opcode !== 0x1) {
+            continue;
+          }
+
+          try {
+            const message = JSON.parse(frame.payload.toString("utf8")) as { type?: string; message?: string };
+            if (message.type === "error") {
+              clearTimeout(timeout);
+              socket.destroy();
+              reject(new Error(`Websocket stream error payload: ${message.message ?? "unknown error"}`));
+              return;
+            }
+            if (typeof message.type === "string") {
+              receivedTypes.add(message.type);
+            }
+            if (receivedTypes.has("overview") && receivedTypes.has("run_view")) {
+              clearTimeout(timeout);
+              socket.end();
+              resolve();
+              return;
+            }
+          } catch (error) {
+            clearTimeout(timeout);
+            socket.destroy();
+            reject(error);
+            return;
+          }
+        }
+      });
+
+      socket.once("error", (error) => {
+        clearTimeout(timeout);
+        socket.destroy();
+        reject(error);
+      });
+    });
+    socket.destroy();
+
+    expect(receivedTypes.has("overview")).toBe(true);
+    expect(receivedTypes.has("run_view")).toBe(true);
+    expect(requests.some((entry) => entry.method === "diagnostics")).toBe(true);
+    expect(requests.some((entry) => entry.method === "get_capabilities")).toBe(true);
+    expect(requests.some((entry) => entry.method === "query_timeline")).toBe(true);
+    expect(
+      requests
+        .filter((entry) => entry.method === "query_timeline" || entry.method === "query_helper")
+        .every((entry) => entry.payload.visibility_scope === "internal"),
     ).toBe(true);
   });
 

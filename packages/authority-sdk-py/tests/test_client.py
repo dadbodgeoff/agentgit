@@ -2242,7 +2242,24 @@ class AuthorityClientTest(unittest.TestCase):
                                 "query_helper",
                                 "query_artifact",
                                 "get_capabilities",
+                                "get_effective_policy",
+                                "get_policy_calibration_report",
+                                "explain_policy_action",
+                                "get_policy_threshold_recommendations",
+                                "validate_policy_config",
                                 "list_mcp_servers",
+                                "list_mcp_server_candidates",
+                                "submit_mcp_server_candidate",
+                                "list_mcp_server_profiles",
+                                "resolve_mcp_server_candidate",
+                                "list_mcp_server_trust_decisions",
+                                "approve_mcp_server_profile",
+                                "list_mcp_server_credential_bindings",
+                                "bind_mcp_server_credentials",
+                                "revoke_mcp_server_credentials",
+                                "activate_mcp_server_profile",
+                                "quarantine_mcp_server_profile",
+                                "revoke_mcp_server_profile",
                                 "list_mcp_secrets",
                                 "list_mcp_host_policies",
                                 "upsert_mcp_secret",
@@ -2287,6 +2304,32 @@ class AuthorityClientTest(unittest.TestCase):
         )
         artifact = client.query_artifact("artifact_secret", visibility_scope="internal")
         capabilities = client.get_capabilities("/tmp")
+        effective_policy = client.get_effective_policy()
+        calibration_report = client.get_policy_calibration_report(
+            run_id="run_abc", include_samples=True, sample_limit=10
+        )
+        explained_action = client.explain_policy_action(
+            {
+                "run_id": "run_abc",
+                "tool_registration": {
+                    "tool_name": "write_file",
+                    "tool_kind": "filesystem",
+                },
+                "raw_call": {"path": "/tmp/demo.txt", "content": "hello"},
+                "environment_context": {"workspace_roots": ["/tmp"]},
+                "received_at": "2026-04-01T12:00:00.000Z",
+            }
+        )
+        threshold_recommendations = client.get_policy_threshold_recommendations(
+            run_id="run_abc", min_samples=2
+        )
+        policy_validation = client.validate_policy_config(
+            {
+                "profile_name": "workspace-hardening",
+                "policy_version": "2026.04.01",
+                "rules": [],
+            }
+        )
         mcp_servers = client.list_mcp_servers()
         upserted_server = client.upsert_mcp_server(
             {
@@ -2334,8 +2377,95 @@ class AuthorityClientTest(unittest.TestCase):
         self.assertEqual(artifact["echo_payload"]["visibility_scope"], "internal")
         self.assertEqual(capabilities["echo_method"], "get_capabilities")
         self.assertEqual(capabilities["echo_payload"]["workspace_root"], "/tmp")
+        self.assertEqual(effective_policy["echo_method"], "get_effective_policy")
+        self.assertEqual(effective_policy["echo_payload"], {})
+        self.assertEqual(
+            calibration_report["echo_method"], "get_policy_calibration_report"
+        )
+        self.assertEqual(
+            calibration_report["echo_payload"],
+            {
+                "run_id": "run_abc",
+                "include_samples": True,
+                "sample_limit": 10,
+            },
+        )
+        self.assertEqual(explained_action["echo_method"], "explain_policy_action")
+        self.assertEqual(
+            explained_action["echo_payload"],
+            {
+                "attempt": {
+                    "run_id": "run_abc",
+                    "tool_registration": {
+                        "tool_name": "write_file",
+                        "tool_kind": "filesystem",
+                    },
+                    "raw_call": {"path": "/tmp/demo.txt", "content": "hello"},
+                    "environment_context": {"workspace_roots": ["/tmp"]},
+                    "received_at": "2026-04-01T12:00:00.000Z",
+                }
+            },
+        )
+        self.assertEqual(
+            threshold_recommendations["echo_method"],
+            "get_policy_threshold_recommendations",
+        )
+        self.assertEqual(
+            threshold_recommendations["echo_payload"],
+            {"run_id": "run_abc", "min_samples": 2},
+        )
+        self.assertEqual(policy_validation["echo_method"], "validate_policy_config")
+        self.assertEqual(policy_validation["echo_payload"]["config"]["profile_name"], "workspace-hardening")
         self.assertEqual(mcp_servers["echo_method"], "list_mcp_servers")
         self.assertEqual(mcp_servers["echo_payload"], {})
+        mcp_candidates = client.list_mcp_server_candidates()
+        submitted_candidate = client.submit_mcp_server_candidate(
+            {
+                "source_kind": "user_input",
+                "raw_endpoint": "https://api.example.com/mcp",
+                "transport_hint": "streamable_http",
+            }
+        )
+        mcp_profiles = client.list_mcp_server_profiles()
+        resolved_candidate = client.resolve_mcp_server_candidate(
+            {
+                "candidate_id": "mcpcand_123",
+                "display_name": "Example MCP",
+            }
+        )
+        mcp_trust_decisions = client.list_mcp_server_trust_decisions("mcpprof_123")
+        mcp_credential_bindings = client.list_mcp_server_credential_bindings("mcpprof_123")
+        bound_credentials = client.bind_mcp_server_credentials(
+            {
+                "server_profile_id": "mcpprof_123",
+                "binding_mode": "bearer_secret_ref",
+                "broker_profile_id": "mcp_secret_123",
+                "scope_labels": ["remote:mcp"],
+            }
+        )
+        approved_profile = client.approve_mcp_server_profile(
+            {
+                "server_profile_id": "mcpprof_123",
+                "decision": "allow_policy_managed",
+                "trust_tier": "operator_approved_public",
+                "allowed_execution_modes": ["local_proxy"],
+                "reason_codes": ["INITIAL_REVIEW_COMPLETE"],
+            }
+        )
+        activated_profile = client.activate_mcp_server_profile("mcpprof_123")
+        quarantined_profile = client.quarantine_mcp_server_profile(
+            {
+                "server_profile_id": "mcpprof_123",
+                "reason_codes": ["MCP_TOOL_INVENTORY_CHANGED"],
+            }
+        )
+        revoked_credentials = client.revoke_mcp_server_credentials("mcpbind_123")
+        revoked_profile = client.revoke_mcp_server_profile(
+            {
+                "server_profile_id": "mcpprof_123",
+                "reason_codes": ["MANUAL_REVOKE"],
+            }
+        )
         mcp_secrets = client.list_mcp_secrets()
         upserted_secret = client.upsert_mcp_secret(
             {
@@ -2359,6 +2489,36 @@ class AuthorityClientTest(unittest.TestCase):
         self.assertEqual(upserted_server["echo_payload"]["server"]["server_id"], "notes_http")
         self.assertEqual(removed_server["echo_method"], "remove_mcp_server")
         self.assertEqual(removed_server["echo_payload"]["server_id"], "notes_http")
+        self.assertEqual(mcp_candidates["echo_method"], "list_mcp_server_candidates")
+        self.assertEqual(mcp_candidates["echo_payload"], {})
+        self.assertEqual(submitted_candidate["echo_method"], "submit_mcp_server_candidate")
+        self.assertEqual(submitted_candidate["echo_payload"]["candidate"]["raw_endpoint"], "https://api.example.com/mcp")
+        self.assertEqual(mcp_profiles["echo_method"], "list_mcp_server_profiles")
+        self.assertEqual(mcp_profiles["echo_payload"], {})
+        self.assertEqual(resolved_candidate["echo_method"], "resolve_mcp_server_candidate")
+        self.assertEqual(resolved_candidate["echo_payload"]["candidate_id"], "mcpcand_123")
+        self.assertEqual(resolved_candidate["echo_payload"]["display_name"], "Example MCP")
+        self.assertEqual(mcp_trust_decisions["echo_method"], "list_mcp_server_trust_decisions")
+        self.assertEqual(mcp_trust_decisions["echo_payload"]["server_profile_id"], "mcpprof_123")
+        self.assertEqual(mcp_credential_bindings["echo_method"], "list_mcp_server_credential_bindings")
+        self.assertEqual(mcp_credential_bindings["echo_payload"]["server_profile_id"], "mcpprof_123")
+        self.assertEqual(bound_credentials["echo_method"], "bind_mcp_server_credentials")
+        self.assertEqual(bound_credentials["echo_payload"]["server_profile_id"], "mcpprof_123")
+        self.assertEqual(bound_credentials["echo_payload"]["binding_mode"], "bearer_secret_ref")
+        self.assertEqual(approved_profile["echo_method"], "approve_mcp_server_profile")
+        self.assertEqual(approved_profile["echo_payload"]["server_profile_id"], "mcpprof_123")
+        self.assertEqual(approved_profile["echo_payload"]["decision"], "allow_policy_managed")
+        self.assertEqual(activated_profile["echo_method"], "activate_mcp_server_profile")
+        self.assertEqual(activated_profile["echo_payload"]["server_profile_id"], "mcpprof_123")
+        self.assertEqual(quarantined_profile["echo_method"], "quarantine_mcp_server_profile")
+        self.assertEqual(
+            quarantined_profile["echo_payload"]["reason_codes"],
+            ["MCP_TOOL_INVENTORY_CHANGED"],
+        )
+        self.assertEqual(revoked_credentials["echo_method"], "revoke_mcp_server_credentials")
+        self.assertEqual(revoked_credentials["echo_payload"]["credential_binding_id"], "mcpbind_123")
+        self.assertEqual(revoked_profile["echo_method"], "revoke_mcp_server_profile")
+        self.assertEqual(revoked_profile["echo_payload"]["reason_codes"], ["MANUAL_REVOKE"])
         self.assertEqual(mcp_secrets["echo_method"], "list_mcp_secrets")
         self.assertEqual(mcp_secrets["echo_payload"], {})
         self.assertEqual(upserted_secret["echo_method"], "upsert_mcp_secret")

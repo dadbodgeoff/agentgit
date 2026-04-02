@@ -1,0 +1,12 @@
+dist
+coverage
+**/coverage
+**/lcov-report
+node_modules
+.turbo
+.release-artifacts
+.agentgit
+.claude
+.vscode
+packages/authority-sdk-py
+pnpm-lock.yaml

@@ -1,0 +1,9 @@
+{
+  "run_id": "run_019d4bf0495b7398808c973ed557cdb0",
+  "run_handle": {
+    "run_id": "run_019d4bf0495b7398808c973ed557cdb0",
+    "session_id": "sess_019d4bf049597530854b872cc42f3355",
+    "workflow_name": "recovery-drill"
+  },
+  "effective_policy_profile": "coding-agent-v1"
+}
