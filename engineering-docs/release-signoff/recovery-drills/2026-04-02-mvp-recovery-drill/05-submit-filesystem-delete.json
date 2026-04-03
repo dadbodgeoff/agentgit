@@ -1,13 +1,13 @@
 {
   "action": {
     "schema_version": "action.v1",
-    "action_id": "act_019d4bf04a4572fb837c178ca8b3104f",
-    "run_id": "run_019d4bf0495b7398808c973ed557cdb0",
-    "session_id": "sess_019d4bf049597530854b872cc42f3355",
+    "action_id": "act_019d508f9d8c709cb20ff3b143f5dea9",
+    "run_id": "run_019d508f9c68701c8e7be7a5cacf2662",
+    "session_id": "sess_019d508f9c6673288cca5c789b32d67d",
     "status": "normalized",
     "timestamps": {
-      "requested_at": "2026-04-02T02:05:32.095Z",
-      "normalized_at": "2026-04-02T02:05:32.101Z"
+      "requested_at": "2026-04-02T23:38:02.503Z",
+      "normalized_at": "2026-04-02T23:38:02.508Z"
     },
     "provenance": {
       "mode": "governed",
@@ -35,7 +35,7 @@
     "target": {
       "primary": {
         "type": "path",
-        "locator": "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt",
+        "locator": "/tmp/agentgit-recovery-drill-aNFDWs/workspace/recovery-drill.txt",
         "label": "recovery-drill.txt"
       },
       "scope": {
@@ -67,7 +67,7 @@
       "filesystem": {
         "operation": "delete",
         "paths": [
-          "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt"
+          "/tmp/agentgit-recovery-drill-aNFDWs/workspace/recovery-drill.txt"
         ],
         "path_count": 1,
         "recursive": false,
@@ -83,12 +83,62 @@
       ],
       "warnings": [],
       "normalization_confidence": 0.99
+    },
+    "confidence_assessment": {
+      "engine_version": "action-confidence/v1",
+      "score": 1,
+      "band": "high",
+      "requires_human_review": false,
+      "factors": [
+        {
+          "factor_id": "normalization_baseline",
+          "label": "Normalization baseline",
+          "kind": "baseline",
+          "delta": 0.99,
+          "rationale": "Started from mapper confidence 0.990."
+        },
+        {
+          "factor_id": "provenance_governed_high",
+          "label": "Strong provenance",
+          "kind": "boost",
+          "delta": 0.04,
+          "rationale": "Governed provenance is high-confidence and strengthens trust in the action envelope."
+        },
+        {
+          "factor_id": "scope_single",
+          "label": "Single-target scope",
+          "kind": "boost",
+          "delta": 0.04,
+          "rationale": "Single-target actions are easier to reason about and recover from."
+        },
+        {
+          "factor_id": "side_effect_destructive",
+          "label": "Destructive execution",
+          "kind": "penalty",
+          "delta": 0,
+          "rationale": "Destructive actions reduce confidence that automated execution should proceed without review."
+        },
+        {
+          "factor_id": "reversibility_partial",
+          "label": "Partially reversible",
+          "kind": "penalty",
+          "delta": 0,
+          "rationale": "Partial reversibility still leaves meaningful uncertainty about recovery quality."
+        },
+        {
+          "factor_id": "surface_governed_fs",
+          "label": "Governed filesystem surface",
+          "kind": "boost",
+          "delta": 0.03,
+          "rationale": "The governed filesystem surface exposes narrow, inspectable semantics."
+        }
+      ]
     }
   },
   "policy_outcome": {
     "schema_version": "policy-outcome.v1",
-    "policy_outcome_id": "pol_019d4bf04a46731c89810364867d4b48",
-    "action_id": "act_019d4bf04a4572fb837c178ca8b3104f",
+    "policy_outcome_id": "pol_019d508f9d8d7388a0603ff32357da9f",
+    "action_id": "act_019d508f9d8c709cb20ff3b143f5dea9",
     "decision": "allow_with_snapshot",
     "reasons": [
       {
@@ -120,18 +170,18 @@
       ],
       "sticky_decision_applied": false
     },
-    "evaluated_at": "2026-04-02T02:05:32.102Z"
+    "evaluated_at": "2026-04-02T23:38:02.509Z"
   },
   "execution_result": {
-    "execution_id": "exec_fs_1775095532137",
-    "action_id": "act_019d4bf04a4572fb837c178ca8b3104f",
+    "execution_id": "exec_fs_1775173082516",
+    "action_id": "act_019d508f9d8c709cb20ff3b143f5dea9",
     "mode": "executed",
     "success": true,
     "output": {
       "executed": true,
       "domain": "filesystem",
       "operation": "delete",
-      "target": "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt",
+      "target": "/tmp/agentgit-recovery-drill-aNFDWs/workspace/recovery-drill.txt",
       "deleted": true,
       "expected_bytes": 0,
       "before_preview": "drill-v1",
@@ -139,15 +189,15 @@
     },
     "artifacts": [
       {
-        "artifact_id": "artifact_diff_1775095532138",
+        "artifact_id": "artifact_diff_1775173082516",
         "type": "diff",
-        "content_ref": "inline://exec_fs_1775095532137/diff",
+        "content_ref": "inline://exec_fs_1775173082516/diff",
         "byte_size": 10,
         "visibility": "user"
       }
     ],
-    "started_at": "2026-04-02T02:05:32.137Z",
-    "completed_at": "2026-04-02T02:05:32.138Z",
+    "started_at": "2026-04-02T23:38:02.516Z",
+    "completed_at": "2026-04-02T23:38:02.516Z",
     "artifact_capture": {
       "requested_count": 1,
       "stored_count": 1,
@@ -156,15 +206,15 @@
     }
   },
   "snapshot_record": {
-    "snapshot_id": "snap_1775095532109_25ca59e1e59b4fa5a43676933100cd56",
-    "action_id": "act_019d4bf04a4572fb837c178ca8b3104f",
+    "snapshot_id": "snap_1775173082513_46d205fb2a8243d494873b8f5b8cb2c7",
+    "action_id": "act_019d508f9d8c709cb20ff3b143f5dea9",
     "snapshot_class": "journal_plus_anchor",
     "fidelity": "full",
     "scope_paths": [
-      "/tmp/agentgit-recovery-drill-DEfxMi/workspace/recovery-drill.txt"
+      "/tmp/agentgit-recovery-drill-aNFDWs/workspace/recovery-drill.txt"
     ],
     "storage_bytes": 8,
-    "created_at": "2026-04-02T02:05:32.109Z"
+    "created_at": "2026-04-02T23:38:02.513Z"
   },
   "approval_request": null
 }

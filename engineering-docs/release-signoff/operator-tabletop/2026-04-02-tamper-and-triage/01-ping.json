@@ -1,5 +1,5 @@
 {
-  "session_id": "sess_019d4bf0496574d7ac08b4ee96f24db9",
+  "session_id": "sess_019d508f95d1766e96629defea12cdc2",
   "accepted_api_version": "authority.v1",
   "runtime_version": "0.1.0",
   "schema_pack_version": "v1",
@@ -15,6 +15,7 @@
       "get_policy_calibration_report",
       "explain_policy_action",
       "get_policy_threshold_recommendations",
+      "replay_policy_thresholds",
       "list_mcp_servers",
       "list_mcp_server_candidates",
       "submit_mcp_server_candidate",

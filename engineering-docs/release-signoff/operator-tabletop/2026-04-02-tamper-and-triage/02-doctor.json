@@ -3,14 +3,14 @@
   "config": {
     "config_root": "/Users/geoffreyfernald/.config/agentgit",
     "user_config_path": "/Users/geoffreyfernald/.config/agentgit/authority-cli.toml",
-    "workspace_config_path": "/tmp/agentgit-tabletop-pDTulo/workspace/.agentgit/authority-cli.toml",
+    "workspace_config_path": "/tmp/agentgit-tabletop-dmQujx/workspace/.agentgit/authority-cli.toml",
     "active_profile": null,
-    "workspace_root": "/tmp/agentgit-tabletop-pDTulo/workspace",
-    "socket_path": "/tmp/agentgit-tabletop-pDTulo/authority.sock"
+    "workspace_root": "/tmp/agentgit-tabletop-dmQujx/workspace",
+    "socket_path": "/tmp/agentgit-tabletop-dmQujx/authority.sock"
   },
   "daemon": {
     "reachable": true,
-    "session_id": "sess_019d4bf049c07763ad08fe2d08fe59aa",
+    "session_id": "sess_019d508f963d719fbda6a80ca20076e7",
     "accepted_api_version": "authority.v1",
     "runtime_version": "0.1.0",
     "schema_pack_version": "v1"
@@ -22,7 +22,7 @@
       "status": "pass",
       "summary": "Workspace root exists.",
       "details": {
-        "workspace_root": "/tmp/agentgit-tabletop-pDTulo/workspace",
+        "workspace_root": "/tmp/agentgit-tabletop-dmQujx/workspace",
         "source": "runtime_flag:workspace_root"
       }
     },
@@ -31,7 +31,7 @@
       "status": "pass",
       "summary": "Authority daemon handshake succeeded.",
       "details": {
-        "session_id": "sess_019d4bf049c07763ad08fe2d08fe59aa",
+        "session_id": "sess_019d508f963d719fbda6a80ca20076e7",
         "accepted_api_version": "authority.v1",
         "runtime_version": "0.1.0",
         "schema_pack_version": "v1"
@@ -58,8 +58,8 @@
         "secret_expiry_enforced": true,
         "rotation_metadata_tracked": true,
         "key_provider": "macos_keychain",
-        "key_identifier": "ff712af9f9b6dc45aa875d6b37fe5ccac76498dd035c02c7e56cadc35ca84345",
-        "legacy_key_path": "/tmp/agentgit-tabletop-pDTulo/workspace/.agentgit/state/mcp/secret-store.key",
+        "key_identifier": "f34436e119a647ab4563127cab268ca12a3c63de6c7cb307b2ac74b526bd375c",
+        "legacy_key_path": "/tmp/agentgit-tabletop-dmQujx/workspace/.agentgit/state/mcp/secret-store.key",
         "legacy_session_env_profiles_enabled": true
       }
     },
@@ -87,12 +87,12 @@
     {
       "code": "HOSTED_WORKER",
       "status": "pass",
-      "summary": "Hosted MCP worker is reachable at unix:/tmp/agentgit-tabletop-pDTulo/workspace/.agentgit/state/mcp/hosted-worker.sock.",
+      "summary": "Hosted MCP worker is reachable at unix:/tmp/agentgit-tabletop-dmQujx/workspace/.agentgit/state/mcp/hosted-worker.sock.",
       "details": {
-        "endpoint": "unix:/tmp/agentgit-tabletop-pDTulo/workspace/.agentgit/state/mcp/hosted-worker.sock",
+        "endpoint": "unix:/tmp/agentgit-tabletop-dmQujx/workspace/.agentgit/state/mcp/hosted-worker.sock",
         "endpoint_kind": "unix",
         "managed_by_daemon": true,
-        "runtime_id": "1dc2d105ffec5534",
+        "runtime_id": "000cbde1eb36fc63",
         "image_digest": "sha256:de6ad97b56b7705e2f79ae43b0ffdb3f8cd75e76ebcd90a556c34551ed4a2846",
         "warnings": []
       }
@@ -112,7 +112,7 @@
     }
   ],
   "recommendations": [
-    "Remove the legacy local key file once migration is confirmed: /tmp/agentgit-tabletop-pDTulo/workspace/.agentgit/state/mcp/secret-store.key",
+    "Remove the legacy local key file once migration is confirmed: /tmp/agentgit-tabletop-dmQujx/workspace/.agentgit/state/mcp/secret-store.key",
     "For local development, prefer `oci_container` with a `build` config so developers can build from source locally while staying on the same OCI boundary used in production.",
     "Windows plan: On Windows, use Docker Desktop with WSL2 or Podman machine for OCI sandboxing. No native host-process fallback is supported."
   ]

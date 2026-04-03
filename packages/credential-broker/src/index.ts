@@ -235,6 +235,11 @@ class MacOsKeychainSecretKeyProvider implements SecretKeyProvider {
   readonly kind = "macos_keychain";
 
   loadOrCreateKey(params: { serviceName: string; keyIdentifier: string; legacyKeyPath?: string }): Buffer {
+    const legacyKey = params.legacyKeyPath ? readLegacyKeyFile(params.legacyKeyPath) : null;
+    if (legacyKey) {
+      return legacyKey;
+    }
+
     if (!commandExists("security")) {
       throw new AgentGitError("macOS Keychain access is unavailable on this host.", "BROKER_UNAVAILABLE", {
         provider: this.kind,
@@ -256,7 +261,6 @@ class MacOsKeychainSecretKeyProvider implements SecretKeyProvider {
         typeof error.details?.stderr === "string" &&
         error.details.stderr.includes("could not be found")
       ) {
-        const legacyKey = params.legacyKeyPath ? readLegacyKeyFile(params.legacyKeyPath) : null;
         const key = legacyKey ?? randomBytes(32);
         runSecretCommand("security", [
           "add-generic-password",
@@ -283,6 +287,11 @@ class LinuxSecretServiceKeyProvider implements SecretKeyProvider {
   readonly kind = "linux_secret_service";
 
   loadOrCreateKey(params: { serviceName: string; keyIdentifier: string; legacyKeyPath?: string }): Buffer {
+    const legacyKey = params.legacyKeyPath ? readLegacyKeyFile(params.legacyKeyPath) : null;
+    if (legacyKey) {
+      return legacyKey;
+    }
+
     if (!commandExists("secret-tool")) {
       throw new AgentGitError("Linux Secret Service access is unavailable on this host.", "BROKER_UNAVAILABLE", {
         provider: this.kind,
@@ -305,7 +314,6 @@ class LinuxSecretServiceKeyProvider implements SecretKeyProvider {
         account: params.keyIdentifier,
       });
     } catch {
-      const legacyKey = params.legacyKeyPath ? readLegacyKeyFile(params.legacyKeyPath) : null;
       const key = legacyKey ?? randomBytes(32);
       runSecretCommand(
         "secret-tool",

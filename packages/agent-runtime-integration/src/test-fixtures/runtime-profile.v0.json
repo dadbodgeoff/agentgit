@@ -1,0 +1,10 @@
+{
+  "schema_version": 0,
+  "profile_id": "profile_test",
+  "workspace_root": "/tmp/workspace",
+  "runtime_id": "generic-command",
+  "launch_command": "my-agent",
+  "integration_method": "launch_wrapper",
+  "install_scope": "workspace",
+  "governed_surfaces": ["launch boundary"]
+}

@@ -1,0 +1,20 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/tmp/original-openclaw-workspace",
+      "heartbeat": {
+        "every": "2h"
+      }
+    }
+  },
+  "gateway": {
+    "port": 19001
+  },
+  "plugins": {
+    "entries": {
+      "demo": {
+        "enabled": true
+      }
+    }
+  }
+}

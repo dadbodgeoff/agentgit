@@ -1,12 +1,12 @@
 # Recovery Drill Evidence
 
 - Status: PASS
-- Drill Start: 2026-04-02T02:05:30.670Z
-- Drill Finish: 2026-04-02T02:05:32.656Z
-- Measured RTO (ms): 192
+- Drill Start: 2026-04-02T23:37:59.290Z
+- Drill Finish: 2026-04-02T23:38:03.316Z
+- Measured RTO (ms): 314
 - RPO Target: latest valid action boundary
-- Run ID: run_019d4bf0495b7398808c973ed557cdb0
-- Recovery Target Action ID: act_019d4bf04a4572fb837c178ca8b3104f
+- Run ID: run_019d508f9c68701c8e7be7a5cacf2662
+- Recovery Target Action ID: act_019d508f9d8c709cb20ff3b143f5dea9
 - Recovery Strategy: restore_snapshot
 - Restored: true
 - Target Exists After Recovery: true

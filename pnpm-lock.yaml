@@ -66,6 +66,31 @@ importers:
         specifier: ^13.0.0
         version: 13.0.0
 
+  packages/agent-runtime-integration:
+    dependencies:
+      '@agentgit/authority-daemon':
+        specifier: workspace:*
+        version: link:../authority-daemon
+      '@agentgit/authority-sdk':
+        specifier: workspace:*
+        version: link:../authority-sdk-ts
+      '@agentgit/credential-broker':
+        specifier: workspace:*
+        version: link:../credential-broker
+      '@agentgit/integration-state':
+        specifier: workspace:*
+        version: link:../integration-state
+      '@agentgit/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      better-sqlite3:
+        specifier: ^12.8.0
+        version: 12.8.0
+
   packages/authority-cli:
     dependencies:
       '@agentgit/authority-daemon':

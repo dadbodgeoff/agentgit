@@ -1,19 +1,19 @@
 {
   "run": {
-    "run_id": "run_019d4bf0495b7398808c973ed557cdb0",
-    "session_id": "sess_019d4bf049597530854b872cc42f3355",
+    "run_id": "run_019d508f9c68701c8e7be7a5cacf2662",
+    "session_id": "sess_019d508f9c6673288cca5c789b32d67d",
     "workflow_name": "recovery-drill",
     "agent_framework": "cli",
     "agent_name": "agentgit-cli",
     "workspace_roots": [
-      "/tmp/agentgit-recovery-drill-DEfxMi/workspace"
+      "/tmp/agentgit-recovery-drill-aNFDWs/workspace"
     ],
     "event_count": 13,
     "latest_event": {
       "sequence": 13,
       "event_type": "recovery.executed",
-      "occurred_at": "2026-04-02T02:05:32.441Z",
-      "recorded_at": "2026-04-02T02:05:32.441Z"
+      "occurred_at": "2026-04-02T23:38:03.013Z",
+      "recorded_at": "2026-04-02T23:38:03.013Z"
     },
     "budget_config": {
       "max_mutating_actions": null,
@@ -37,7 +37,7 @@
         "tampered": 0
       }
     },
-    "created_at": "2026-04-02T02:05:31.867Z",
-    "started_at": "2026-04-02T02:05:31.867Z"
+    "created_at": "2026-04-02T23:38:02.216Z",
+    "started_at": "2026-04-02T23:38:02.216Z"
   }
 }
