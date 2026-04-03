@@ -10,7 +10,7 @@ import {
 } from "@agentgit/authority-sdk";
 import { resolveAuthorityDaemonRuntimeConfig, runAuthorityDaemon, type StartedAuthorityDaemon } from "@agentgit/authority-daemon";
 import { LocalEncryptedSecretStore } from "@agentgit/credential-broker";
-import { AgentGitError, type RecoveryTarget } from "@agentgit/schemas";
+import { AgentGitError, type RecoveryTarget, type RunCheckpointKind } from "@agentgit/schemas";
 
 import {
   createAdapterContext,
@@ -23,6 +23,8 @@ import {
 import { governedLaunchAssetsExist, prependPathEntry } from "./assets.js";
 import {
   createWorkspaceProjection,
+  deriveContainedEgressAssurance,
+  deriveContainedEgressMode,
   diffWorkspaceProjection,
   readProjectionFileText,
   resolveContainedBackendRuntime,
@@ -33,6 +35,7 @@ import {
   createContainedRunId,
   createContainedRunRoot,
   createDemoRunId,
+  createRunCheckpointId,
   createDemoWorkspaceRoot,
   createRestoreShortcutId,
 } from "./state.js";
@@ -40,12 +43,17 @@ import type {
   AssuranceLevel,
   ContainedRunDocument,
   ContainedCredentialMode,
+  ContainedEgressAssurance,
+  ContainedEgressMode,
   ContainerNetworkPolicy,
+  DefaultCheckpointPolicy,
   DemoRunDocument,
   DetectionResult,
   GovernanceGuarantee,
   GovernanceMode,
   InstallPlan,
+  RuntimeCredentialBindingDocument,
+  RunCheckpointDocument,
   RestoreShortcutDocument,
   RuntimeProfileDocument,
   SetupPreferences,
@@ -72,9 +80,24 @@ function buildAuthorityClient(socketPath: string): AuthorityClient {
     socketPath,
     connectTimeoutMs: 500,
     responseTimeoutMs: 5_000,
-    maxConnectRetries: 1,
-    connectRetryDelayMs: 50,
+    maxConnectRetries: 3,
+    connectRetryDelayMs: 100,
   });
+}
+
+const AUTHORITY_SESSION_MAX_ATTEMPTS = 4;
+const AUTHORITY_SESSION_RETRY_DELAY_MS = 100;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAddressInUseFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("EADDRINUSE") ||
+      ("code" in error && typeof error.code === "string" && error.code === "EADDRINUSE"))
+  );
 }
 
 export interface AuthoritySession {
@@ -83,6 +106,18 @@ export interface AuthoritySession {
   daemon_started: boolean;
   daemon?: StartedAuthorityDaemon;
 }
+
+interface AuthoritySessionRuntime {
+  build_client: (socketPath: string) => AuthorityClient;
+  start_daemon: (config: ReturnType<typeof resolveAuthorityDaemonRuntimeConfig>) => Promise<StartedAuthorityDaemon>;
+  sleep: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_AUTHORITY_SESSION_RUNTIME: AuthoritySessionRuntime = {
+  build_client: buildAuthorityClient,
+  start_daemon: (config) => suppressRuntimeNoise(() => runAuthorityDaemon(config)),
+  sleep,
+};
 
 function runtimeHash(workspaceRoot: string): string {
   return createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
@@ -167,35 +202,73 @@ async function ensureAuthoritySession(
   workspaceRoot: string,
   env: NodeJS.ProcessEnv,
   runtimeRoot: string,
+  runtime: AuthoritySessionRuntime = DEFAULT_AUTHORITY_SESSION_RUNTIME,
 ): Promise<AuthoritySession> {
   fs.mkdirSync(runtimeRoot, { recursive: true });
   const daemonEnv = buildAuthorityEnvironmentForWorkspace(workspaceRoot, env, runtimeRoot);
   const daemonConfig = resolveAuthorityDaemonRuntimeConfig(daemonEnv, workspaceRoot);
-  let client = buildAuthorityClient(daemonConfig.socketPath);
+  let lastError: unknown;
 
-  try {
-    await client.hello([workspaceRoot]);
-    return {
-      client,
-      daemon_config: daemonConfig,
-      daemon_started: false,
-    };
-  } catch (error) {
-    if (!isConnectFailure(error)) {
+  for (let attempt = 1; attempt <= AUTHORITY_SESSION_MAX_ATTEMPTS; attempt += 1) {
+    let client = runtime.build_client(daemonConfig.socketPath);
+
+    try {
+      await client.hello([workspaceRoot]);
+      return {
+        client,
+        daemon_config: daemonConfig,
+        daemon_started: false,
+      };
+    } catch (error) {
+      if (!isConnectFailure(error)) {
+        throw error;
+      }
+      lastError = error;
+    }
+
+    let daemon: StartedAuthorityDaemon | undefined;
+    try {
+      daemon = await runtime.start_daemon(daemonConfig);
+    } catch (error) {
+      lastError = error;
+      if (isAddressInUseFailure(error) && attempt < AUTHORITY_SESSION_MAX_ATTEMPTS) {
+        await runtime.sleep(AUTHORITY_SESSION_RETRY_DELAY_MS);
+        continue;
+      }
+      throw error;
+    }
+
+    client = runtime.build_client(daemonConfig.socketPath);
+    try {
+      await client.hello([workspaceRoot]);
+      return {
+        client,
+        daemon_config: daemonConfig,
+        daemon_started: true,
+        daemon,
+      };
+    } catch (error) {
+      lastError = error;
+      await daemon.shutdown().catch(() => undefined);
+      if (isConnectFailure(error) && attempt < AUTHORITY_SESSION_MAX_ATTEMPTS) {
+        await runtime.sleep(AUTHORITY_SESSION_RETRY_DELAY_MS);
+        continue;
+      }
       throw error;
     }
   }
 
-  const daemon = await suppressRuntimeNoise(() => runAuthorityDaemon(daemonConfig));
-  client = buildAuthorityClient(daemonConfig.socketPath);
-  await client.hello([workspaceRoot]);
-  return {
-    client,
-    daemon_config: daemonConfig,
-    daemon_started: true,
-    daemon,
-  };
+  throw lastError instanceof Error
+    ? lastError
+    : new AgentGitError("AgentGit could not establish a local authority daemon session.", "INTERNAL_ERROR", {
+        workspace_root: workspaceRoot,
+      });
 }
+
+export const __testables = {
+  ensureAuthoritySession,
+  isAddressInUseFailure,
+};
 
 async function suppressRuntimeNoise<T>(callback: () => Promise<T>): Promise<T> {
   const originalConsoleLog = console.log;
@@ -347,9 +420,73 @@ function summarizeLatestRunWithoutGovernedStep(
   };
 }
 
+function summarizeRunCheckpoint(runCheckpoint: RunCheckpointDocument): {
+  summary: string;
+  action_title: string;
+  action_status: string;
+} {
+  const checkpointLabel =
+    runCheckpoint.checkpoint_kind === "hard_checkpoint" ? "hard checkpoint" : "checkpoint";
+  const checkpointPrefix =
+    runCheckpoint.trigger === "default_policy" ? "automatic" : "deliberate";
+  return {
+    summary: runCheckpoint.reason
+      ? `AgentGit captured an ${checkpointPrefix} ${checkpointLabel} before the run continued: ${runCheckpoint.reason}`
+      : `AgentGit captured an ${checkpointPrefix} ${checkpointLabel} before the run continued, so you can restore back to that boundary even if no narrower governed action was captured later.`,
+    action_title: "Workspace checkpoint",
+    action_status: `${runCheckpoint.trigger}:${runCheckpoint.checkpoint_kind}`,
+  };
+}
+
+function latestCheckpointByTrigger(
+  checkpoints: RunCheckpointDocument[],
+  trigger: RunCheckpointDocument["trigger"],
+): RunCheckpointDocument | null {
+  return (
+    [...checkpoints]
+      .filter((checkpoint) => checkpoint.trigger === trigger)
+      .sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null
+  );
+}
+
+function shouldCreateDefaultCheckpoint(profile: RuntimeProfileDocument, degradedReasons: string[]): boolean {
+  if (profile.default_checkpoint_policy === "always_before_run") {
+    return true;
+  }
+
+  if (profile.default_checkpoint_policy !== "risky_runs") {
+    return false;
+  }
+
+  return (
+    profile.assurance_level !== "integrated" ||
+    profile.execution_mode === "docker_contained" ||
+    degradedReasons.length > 0
+  );
+}
+
+function checkpointReasonFromProfile(profile: RuntimeProfileDocument, fallback: string): string {
+  const template = profile.checkpoint_reason_template?.trim();
+  return template && template.length > 0 ? template : fallback;
+}
+
+function isCheckpointPlaceholderStep(
+  step: Awaited<ReturnType<AuthorityClient["queryTimeline"]>>["steps"][number] | null,
+): boolean {
+  if (!step) {
+    return false;
+  }
+
+  return (
+    step.summary.includes("checkpoint.created") ||
+    step.title.toLowerCase().includes("checkpoint.created")
+  );
+}
+
 function defaultRestoreTarget(
   shortcut: RestoreShortcutDocument | null,
   demoRun: DemoRunDocument | null,
+  runCheckpoint: RunCheckpointDocument | null,
 ): RecoveryTarget | null {
   if (shortcut) {
     return shortcut.preferred_restore_target;
@@ -368,6 +505,13 @@ function defaultRestoreTarget(
     };
   }
 
+  if (runCheckpoint) {
+    return {
+      type: "run_checkpoint",
+      run_checkpoint: runCheckpoint.run_checkpoint,
+    };
+  }
+
   return null;
 }
 
@@ -375,7 +519,10 @@ function buildContainedDetails(source: {
   execution_mode: RuntimeProfileDocument["execution_mode"];
   containment_backend?: RuntimeProfileDocument["containment_backend"];
   container_network_policy?: ContainerNetworkPolicy;
+  contained_egress_mode?: ContainedEgressMode;
+  contained_egress_assurance?: ContainedEgressAssurance;
   contained_credential_mode?: ContainedCredentialMode;
+  runtime_credential_bindings?: RuntimeProfileDocument["runtime_credential_bindings"];
   credential_passthrough_env_keys?: string[];
   contained_secret_env_bindings?: RuntimeProfileDocument["contained_secret_env_bindings"];
   contained_secret_file_bindings?: RuntimeProfileDocument["contained_secret_file_bindings"];
@@ -387,19 +534,46 @@ function buildContainedDetails(source: {
   }
 
   const credentialEnvKeys =
-    source.contained_credential_mode === "brokered_secret_refs"
-      ? (source.contained_secret_env_bindings ?? []).map((binding) => binding.env_key)
+    source.contained_credential_mode === "brokered_bindings"
+      ? (source.runtime_credential_bindings ?? [])
+          .filter(
+            (binding): binding is RuntimeCredentialBindingDocument & { target: { surface: "env"; env_key: string } } =>
+              binding.target.surface === "env",
+          )
+          .map((binding) => `${binding.kind}:${binding.target.env_key}`)
       : [...(source.credential_passthrough_env_keys ?? [])];
   const credentialFilePaths =
-    source.contained_credential_mode === "brokered_secret_refs"
-      ? (source.contained_secret_file_bindings ?? []).map(
-          (binding) => `${CONTAINED_SECRET_MOUNT_ROOT}/${binding.relative_path.replace(/^\/+/, "")}`,
-        )
+    source.contained_credential_mode === "brokered_bindings"
+      ? (source.runtime_credential_bindings ?? [])
+          .filter(
+            (
+              binding,
+            ): binding is RuntimeCredentialBindingDocument & { target: { surface: "file"; relative_path: string } } =>
+              binding.target.surface === "file",
+          )
+          .map((binding) => `${binding.kind}:${CONTAINED_SECRET_MOUNT_ROOT}/${binding.target.relative_path.replace(/^\/+/, "")}`)
       : [];
 
   return {
     backend: source.containment_backend,
     network_policy: source.container_network_policy ?? "inherit",
+    egress_mode:
+      source.contained_egress_mode ??
+      deriveContainedEgressMode({
+        network_policy: source.container_network_policy,
+        egress_allowlist_hosts: source.contained_proxy_allowlist_hosts,
+      }),
+    egress_assurance:
+      source.contained_egress_assurance ??
+      deriveContainedEgressAssurance({
+        egress_mode:
+          source.contained_egress_mode ??
+          deriveContainedEgressMode({
+            network_policy: source.container_network_policy,
+            egress_allowlist_hosts: source.contained_proxy_allowlist_hosts,
+          }),
+        backend_supports_enforced_allowlist: source.capability_snapshot?.backend_enforced_allowlist_supported ?? false,
+      }),
     credential_mode: source.contained_credential_mode ?? "none",
     credential_env_keys: credentialEnvKeys,
     credential_file_paths: credentialFilePaths,
@@ -473,6 +647,14 @@ function buildRestoreCommand(target: ProductRestoreTarget | null): string | null
     return `agentgit restore --snapshot-id ${target.snapshot_id}`;
   }
 
+  if (target.type === "run_checkpoint") {
+    return `agentgit restore --checkpoint ${target.run_checkpoint}`;
+  }
+
+  if (target.type === "branch_point") {
+    return `agentgit restore --branch-point ${target.run_id}#${target.sequence}`;
+  }
+
   return "agentgit restore";
 }
 
@@ -497,6 +679,97 @@ function summarizeRestoreTarget(target: ProductRestoreTarget): string {
   }
 }
 
+function describeRestoreBoundary(target: ProductRestoreTarget): string {
+  if (isContainedProjectionTarget(target)) {
+    return "contained projection discard";
+  }
+
+  switch (target.type) {
+    case "path_subset":
+      return "targeted path restore";
+    case "snapshot_id":
+      return "snapshot restore";
+    case "action_boundary":
+      return "action boundary restore";
+    case "run_checkpoint":
+      return "checkpoint restore";
+    case "branch_point":
+      return "branch point restore";
+    case "external_object":
+      return "external object compensation";
+  }
+}
+
+function explainRestoreBoundary(target: ProductRestoreTarget): string {
+  if (isContainedProjectionTarget(target)) {
+    return "AgentGit can discard unpublished projected changes directly because they have not been applied to the real workspace.";
+  }
+
+  switch (target.type) {
+    case "path_subset":
+      return target.paths.length === 1
+        ? "AgentGit can safely target the recorded changed path without widening the restore scope."
+        : "AgentGit can safely target the recorded changed paths without widening the restore scope.";
+    case "snapshot_id":
+      return "AgentGit needs the broader captured snapshot because a narrower targeted restore boundary was not available.";
+    case "action_boundary":
+      return "AgentGit is restoring the full governed action boundary because the safest recoverable scope is the action itself.";
+    case "run_checkpoint":
+      return "AgentGit is restoring from a deliberate run checkpoint boundary captured before later changes.";
+    case "branch_point":
+      return "AgentGit is restoring from a broader branch-point boundary captured before the run diverged.";
+    case "external_object":
+      return "This restore depends on adapter-specific compensation rather than a direct filesystem snapshot replay.";
+  }
+}
+
+function describeRestoreVsCheckpoint(
+  target: ProductRestoreTarget | null,
+  latestCheckpoint: RunCheckpointDocument | null,
+): string | null {
+  if (!target || !latestCheckpoint) {
+    return null;
+  }
+
+  if (isContainedProjectionTarget(target)) {
+    return "Contained projection discard is separate from the latest checkpoint boundary.";
+  }
+
+  if (target.type === "path_subset" || target.type === "action_boundary") {
+    return "Recommended restore target is narrower than the latest checkpoint boundary.";
+  }
+
+  if (target.type === "run_checkpoint" && target.run_checkpoint === latestCheckpoint.run_checkpoint) {
+    return "Recommended restore target matches the latest checkpoint boundary.";
+  }
+
+  if (target.type === "snapshot_id" || target.type === "branch_point" || target.type === "run_checkpoint") {
+    return "Recommended restore target is as broad as or broader than the latest checkpoint boundary.";
+  }
+
+  return null;
+}
+
+function explainRestorePreview(
+  recoveryClass: string,
+  conflictDetected: boolean,
+  previewOnly: boolean,
+): string | null {
+  if (!previewOnly) {
+    return null;
+  }
+
+  if (recoveryClass === "review_only") {
+    return "AgentGit is previewing only because this recovery boundary is not trusted for exact automatic restore.";
+  }
+
+  if (conflictDetected) {
+    return "AgentGit is previewing only because applying this restore would overwrite newer workspace changes.";
+  }
+
+  return "AgentGit is previewing the planned restore before applying it.";
+}
+
 interface ContainedProjectionTarget {
   type: "contained_projection";
   contained_run_id: string;
@@ -510,6 +783,30 @@ function isContainedProjectionTarget(target: ProductRestoreTarget): target is Co
 
 function buildContainedProjectionRestoreCommand(containedRunId: string): string {
   return `agentgit restore --contained-run-id ${containedRunId}`;
+}
+
+function parseBranchPointToken(token: string): { run_id: string; sequence: number } {
+  const separatorIndex = token.lastIndexOf("#");
+  if (separatorIndex <= 0 || separatorIndex === token.length - 1) {
+    throw new AgentGitError("Malformed branch point target.", "BAD_REQUEST", {
+      branch_point: token,
+      expected_format: "<run_id>#<snapshot_sequence>",
+    });
+  }
+
+  const runId = token.slice(0, separatorIndex);
+  const sequence = Number.parseInt(token.slice(separatorIndex + 1), 10);
+  if (!Number.isInteger(sequence) || sequence <= 0) {
+    throw new AgentGitError("Malformed branch point target.", "BAD_REQUEST", {
+      branch_point: token,
+      expected_format: "<run_id>#<snapshot_sequence>",
+    });
+  }
+
+  return {
+    run_id: runId,
+    sequence,
+  };
 }
 
 function detectPathOverwriteConflict(target: RecoveryTarget): boolean {
@@ -567,6 +864,9 @@ export interface ProductSetupResult {
   guarantees: GovernanceGuarantee[];
   governed_surfaces: string[];
   degraded_reasons: string[];
+  default_checkpoint_policy: DefaultCheckpointPolicy | null;
+  checkpoint_intent: RuntimeProfileDocument["checkpoint_intent"] | null;
+  checkpoint_reason_template: string | null;
   changed: boolean;
   next_command: string | null;
   health_checks: VerifyResult["health_checks"];
@@ -599,6 +899,14 @@ export interface ProductInspectResult {
   changed_paths: string[];
   restore_available: boolean;
   restore_command: string | null;
+  restore_boundary: string | null;
+  restore_guidance: string | null;
+  default_checkpoint_policy: DefaultCheckpointPolicy | null;
+  checkpoint_intent: RuntimeProfileDocument["checkpoint_intent"] | null;
+  checkpoint_reason_template: string | null;
+  latest_explicit_checkpoint: RunCheckpointDocument | null;
+  latest_automatic_checkpoint: RunCheckpointDocument | null;
+  restore_vs_checkpoint: string | null;
   degraded_reasons: string[];
   contained_details?: ProductContainedDetails;
 }
@@ -606,6 +914,8 @@ export interface ProductInspectResult {
 export interface ProductContainedDetails {
   backend: string;
   network_policy: ContainerNetworkPolicy;
+  egress_mode: ContainedEgressMode;
+  egress_assurance: ContainedEgressAssurance;
   credential_mode: ContainedCredentialMode;
   credential_env_keys: string[];
   credential_file_paths: string[];
@@ -623,7 +933,10 @@ export interface ProductRestoreResult {
   target: ProductRestoreTarget;
   target_summary: string;
   restore_source: string;
+  restore_boundary: string;
+  restore_guidance: string;
   exactness: "exact" | "review_only";
+  preview_reason: string | null;
   deletes_files: boolean | null;
   changed_path_count: number | null;
   overlapping_paths: string[];
@@ -638,6 +951,11 @@ export interface ProductRunResult {
   exit_code: number;
   signal?: NodeJS.Signals;
   daemon_started: boolean;
+  run_checkpoint?: string;
+  checkpoint_kind?: RunCheckpointKind;
+  checkpoint_trigger?: RunCheckpointDocument["trigger"];
+  checkpoint_reason?: string;
+  checkpoint_restore_command?: string;
 }
 
 export interface ProductCommandEnvironment {
@@ -724,49 +1042,53 @@ export class AgentRuntimeIntegrationService {
     return planSetup(context);
   }
 
-  private validateContainedSecretBindings(workspaceRoot: string, plan: InstallPlan): void {
-    if (plan.execution_mode !== "docker_contained" || plan.contained_credential_mode !== "brokered_secret_refs") {
+  private validateContainedRuntimeBindings(
+    workspaceRoot: string,
+    source: Pick<
+      InstallPlan | RuntimeProfileDocument,
+      "execution_mode" | "contained_credential_mode" | "runtime_credential_bindings"
+    >,
+  ): void {
+    if (source.execution_mode !== "docker_contained" || source.contained_credential_mode !== "brokered_bindings") {
       return;
     }
 
-    const envBindings = plan.contained_secret_env_bindings ?? [];
-    const fileBindings = plan.contained_secret_file_bindings ?? [];
-    if (envBindings.length === 0 && fileBindings.length === 0) {
+    const runtimeBindings = source.runtime_credential_bindings ?? [];
+    if (runtimeBindings.length === 0) {
       throw new AgentGitError(
-        "Brokered contained credentials were requested, but no secret env or file bindings were provided.",
+        "Brokered contained credentials were requested, but no runtime credential bindings were provided.",
         "PRECONDITION_FAILED",
         {
           workspace_root: workspaceRoot,
           recommended_command:
-            "agentgit setup --repair --credentials brokered-secret-refs --secret-env OPENAI_API_KEY=<secret-id> --secret-file openai.key=<secret-id>",
+            "agentgit setup --repair --credentials brokered-bindings --secret-env OPENAI_API_KEY=<secret-id> --secret-file openai.key=<secret-id>",
         },
       );
     }
 
     const secretStore = createWorkspaceSecretStore(workspaceRoot, this.env, this.runtimeRootForWorkspace(workspaceRoot));
     try {
-      for (const binding of [...envBindings, ...fileBindings]) {
-        secretStore.resolveMcpBearerSecret(binding.secret_id);
+      for (const binding of runtimeBindings) {
+        secretStore.resolveRuntimeCredentialBinding(binding);
       }
     } finally {
       secretStore.close();
     }
   }
 
-  private writeResolvedContainedSecretArtifacts(
+  private writeResolvedContainedBindingArtifacts(
     workspaceRoot: string,
     profile: RuntimeProfileDocument,
     containedRoot: string,
   ): { env_file_path?: string; secret_file_root?: string } {
-    if (profile.contained_credential_mode !== "brokered_secret_refs") {
+    if (profile.contained_credential_mode !== "brokered_bindings") {
       return {};
     }
 
-    const envBindings = profile.contained_secret_env_bindings ?? [];
-    const fileBindings = profile.contained_secret_file_bindings ?? [];
-    if (envBindings.length === 0 && fileBindings.length === 0) {
+    const runtimeBindings = profile.runtime_credential_bindings ?? [];
+    if (runtimeBindings.length === 0) {
       throw new AgentGitError(
-        "Contained runtime is configured for brokered secret refs, but no secret bindings are saved in this profile.",
+        "Contained runtime is configured for brokered runtime bindings, but no bindings are saved in this profile.",
         "PRECONDITION_FAILED",
         {
           workspace_root: workspaceRoot,
@@ -778,11 +1100,21 @@ export class AgentRuntimeIntegrationService {
     const secretStore = createWorkspaceSecretStore(workspaceRoot, this.env, this.runtimeRootForWorkspace(workspaceRoot));
     try {
       const resolved: { env_file_path?: string; secret_file_root?: string } = {};
+      const envBindings = runtimeBindings.filter(
+        (binding): binding is RuntimeCredentialBindingDocument & { target: { surface: "env"; env_key: string } } =>
+          binding.target.surface === "env",
+      );
+      const fileBindings = runtimeBindings.filter(
+        (
+          binding,
+        ): binding is RuntimeCredentialBindingDocument & { target: { surface: "file"; relative_path: string } } =>
+          binding.target.surface === "file",
+      );
       if (envBindings.length > 0) {
         const envFilePath = path.join(containedRoot, "brokered-env.list");
         const lines = envBindings.map((binding) => {
-          const secret = secretStore.resolveMcpBearerSecret(binding.secret_id);
-          return `${binding.env_key}=${secret.token}`;
+          const resolvedBinding = secretStore.resolveRuntimeCredentialBinding(binding);
+          return `${binding.target.env_key}=${resolvedBinding.resolved_value}`;
         });
         fs.writeFileSync(envFilePath, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
         resolved.env_file_path = envFilePath;
@@ -792,19 +1124,19 @@ export class AgentRuntimeIntegrationService {
         const secretFileRoot = path.join(containedRoot, "brokered-secrets");
         fs.mkdirSync(secretFileRoot, { recursive: true });
         for (const binding of fileBindings) {
-          const normalizedRelativePath = binding.relative_path.replace(/^\/+/, "");
+          const normalizedRelativePath = binding.target.relative_path.replace(/^\/+/, "");
           const targetPath = path.join(secretFileRoot, normalizedRelativePath);
           const normalizedTargetPath = path.normalize(targetPath);
           if (!normalizedTargetPath.startsWith(path.normalize(secretFileRoot + path.sep))) {
             throw new AgentGitError(
-              `Contained secret file binding escapes the managed mount root: ${binding.relative_path}`,
+              `Contained secret file binding escapes the managed mount root: ${binding.target.relative_path}`,
               "BAD_REQUEST",
-              { relative_path: binding.relative_path },
+              { relative_path: binding.target.relative_path },
             );
           }
           fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-          const secret = secretStore.resolveMcpBearerSecret(binding.secret_id);
-          fs.writeFileSync(targetPath, `${secret.token}\n`, { encoding: "utf8", mode: 0o600 });
+          const resolvedBinding = secretStore.resolveRuntimeCredentialBinding(binding);
+          fs.writeFileSync(targetPath, `${resolvedBinding.resolved_value}\n`, { encoding: "utf8", mode: 0o600 });
         }
         resolved.secret_file_root = secretFileRoot;
       }
@@ -831,6 +1163,10 @@ export class AgentRuntimeIntegrationService {
       this.state.deleteDemoRun(demoRun.demo_run_id);
     }
 
+    for (const checkpoint of this.state.listRunCheckpoints(workspaceRoot)) {
+      this.state.deleteRunCheckpoint(checkpoint.checkpoint_id);
+    }
+
     for (const containedRun of this.state.listContainedRuns(workspaceRoot)) {
       fs.rmSync(path.dirname(containedRun.projection_root), { recursive: true, force: true });
       this.state.deleteContainedRun(containedRun.contained_run_id);
@@ -844,18 +1180,22 @@ export class AgentRuntimeIntegrationService {
     governed_workspace_root: string | null;
     shortcut: RestoreShortcutDocument | null;
     demo_run: DemoRunDocument | null;
+    run_checkpoint: RunCheckpointDocument | null;
     profile: RuntimeProfileDocument | null;
     contained_run: ContainedRunDocument | null;
   } {
     const shortcut = this.state.latestRestoreShortcut(workspaceRoot);
     const demoRun = this.state.latestDemoRun(workspaceRoot);
+    const runCheckpoint = this.state.latestRunCheckpoint(workspaceRoot);
     const profile = this.state.getProfileForWorkspace(workspaceRoot);
     const containedRun = this.state.latestContainedRun(workspaceRoot);
     return {
-      run_id: shortcut?.run_id ?? demoRun?.run_id ?? containedRun?.run_id ?? profile?.last_run_id ?? null,
-      governed_workspace_root: shortcut?.governed_workspace_root ?? demoRun?.demo_workspace_root ?? workspaceRoot,
+      run_id: shortcut?.run_id ?? demoRun?.run_id ?? runCheckpoint?.run_id ?? containedRun?.run_id ?? profile?.last_run_id ?? null,
+      governed_workspace_root:
+        shortcut?.governed_workspace_root ?? demoRun?.demo_workspace_root ?? runCheckpoint?.governed_workspace_root ?? workspaceRoot,
       shortcut,
       demo_run: demoRun,
+      run_checkpoint: runCheckpoint,
       profile,
       contained_run: containedRun,
     };
@@ -872,10 +1212,16 @@ export class AgentRuntimeIntegrationService {
       policy_strictness: adapterMetadata.policy_strictness === "strict" ? "strict" : "balanced",
       install_scope: profile.install_scope,
       assurance_target: profile.assurance_level,
+      default_checkpoint_policy: profile.default_checkpoint_policy,
+      checkpoint_intent: profile.checkpoint_intent,
+      checkpoint_reason_template: profile.checkpoint_reason_template,
       containment_backend: profile.containment_backend,
       container_image: profile.container_image,
       container_network_policy: profile.container_network_policy,
+      contained_egress_mode: profile.contained_egress_mode,
+      contained_egress_assurance: profile.contained_egress_assurance,
       contained_credential_mode: profile.contained_credential_mode,
+      runtime_credential_bindings: profile.runtime_credential_bindings,
       credential_passthrough_env_keys: profile.credential_passthrough_env_keys,
       contained_secret_env_bindings: profile.contained_secret_env_bindings,
       contained_secret_file_bindings: profile.contained_secret_file_bindings,
@@ -923,7 +1269,7 @@ export class AgentRuntimeIntegrationService {
     try {
       const current = this.planAndVerifyProfileCurrentState(workspaceRoot, profile);
       try {
-        this.validateContainedSecretBindings(workspaceRoot, current.plan);
+        this.validateContainedRuntimeBindings(workspaceRoot, current.plan);
       } catch (error) {
         const degradedReason =
           error instanceof Error ? `Current runtime verification failed: ${error.message}` : String(error);
@@ -1035,7 +1381,10 @@ export class AgentRuntimeIntegrationService {
       launch_command: profile.launch_command,
       container_image: profile.container_image,
       container_network_policy: profile.container_network_policy,
+      contained_egress_mode: profile.contained_egress_mode,
+      contained_egress_assurance: profile.contained_egress_assurance,
       contained_credential_mode: profile.contained_credential_mode,
+      runtime_credential_bindings: profile.runtime_credential_bindings,
       credential_passthrough_env_keys: profile.credential_passthrough_env_keys,
       contained_secret_env_bindings: profile.contained_secret_env_bindings,
       contained_secret_file_bindings: profile.contained_secret_file_bindings,
@@ -1045,9 +1394,9 @@ export class AgentRuntimeIntegrationService {
       governed_action_ids: [],
     });
 
-    const resolvedSecretArtifacts = this.writeResolvedContainedSecretArtifacts(workspaceRoot, profile, containedRoot);
+    const resolvedSecretArtifacts = this.writeResolvedContainedBindingArtifacts(workspaceRoot, profile, containedRoot);
     const egressProxy =
-      profile.container_network_policy !== "none" &&
+      profile.contained_egress_mode === "proxy_http_https" &&
       profile.contained_proxy_allowlist_hosts &&
       profile.contained_proxy_allowlist_hosts.length > 0
         ? await startContainedEgressProxy(profile.contained_proxy_allowlist_hosts)
@@ -1144,7 +1493,7 @@ export class AgentRuntimeIntegrationService {
   setup(workspaceRoot: string, options: ProductSetupOptions = {}): ProductSetupResult {
     const context = this.createAdapterContext(workspaceRoot, options.user_command, options.setup_preferences);
     const { adapter, plan } = planSetup(context);
-    this.validateContainedSecretBindings(workspaceRoot, plan);
+    this.validateContainedRuntimeBindings(workspaceRoot, plan);
     const applyResult = adapter.apply(context, plan);
     const verifyResult = adapter.verify(context, plan);
     return {
@@ -1157,6 +1506,9 @@ export class AgentRuntimeIntegrationService {
       guarantees: plan.guarantees,
       governed_surfaces: plan.governed_surfaces,
       degraded_reasons: verifyResult.degraded_reasons,
+      default_checkpoint_policy: plan.default_checkpoint_policy ?? null,
+      checkpoint_intent: plan.checkpoint_intent ?? null,
+      checkpoint_reason_template: plan.checkpoint_reason_template ?? null,
       changed: applyResult.changed,
       next_command: verifyResult.recommended_next_command,
       health_checks: verifyResult.health_checks,
@@ -1179,6 +1531,9 @@ export class AgentRuntimeIntegrationService {
         guarantees: [],
         governed_surfaces: [],
         degraded_reasons: [],
+        default_checkpoint_policy: null,
+        checkpoint_intent: null,
+        checkpoint_reason_template: null,
         changed: false,
         next_command: "agentgit setup",
         health_checks: [],
@@ -1201,6 +1556,9 @@ export class AgentRuntimeIntegrationService {
         guarantees: profile.guarantees,
         governed_surfaces: profile.governed_surfaces,
         degraded_reasons: profile.degraded_reasons,
+        default_checkpoint_policy: profile.default_checkpoint_policy ?? null,
+        checkpoint_intent: profile.checkpoint_intent ?? null,
+        checkpoint_reason_template: profile.checkpoint_reason_template ?? null,
         changed: false,
         next_command: "agentgit setup",
         health_checks: [],
@@ -1224,6 +1582,9 @@ export class AgentRuntimeIntegrationService {
       guarantees: profile.guarantees,
       governed_surfaces: profile.governed_surfaces,
       degraded_reasons: profile.degraded_reasons,
+      default_checkpoint_policy: profile.default_checkpoint_policy ?? null,
+      checkpoint_intent: profile.checkpoint_intent ?? null,
+      checkpoint_reason_template: profile.checkpoint_reason_template ?? null,
       changed: result.changed || result.removed_install || result.removed_profile,
       next_command: "agentgit setup",
       health_checks: [],
@@ -1265,7 +1626,7 @@ export class AgentRuntimeIntegrationService {
     }
 
     const plan = adapter.plan(context, detection);
-    this.validateContainedSecretBindings(workspaceRoot, plan);
+    this.validateContainedRuntimeBindings(workspaceRoot, plan);
     adapter.apply(context, plan);
     const verifyResult = adapter.verify(context, plan);
     return {
@@ -1278,6 +1639,9 @@ export class AgentRuntimeIntegrationService {
       guarantees: plan.guarantees,
       governed_surfaces: plan.governed_surfaces,
       degraded_reasons: verifyResult.degraded_reasons,
+      default_checkpoint_policy: plan.default_checkpoint_policy ?? null,
+      checkpoint_intent: plan.checkpoint_intent ?? null,
+      checkpoint_reason_template: plan.checkpoint_reason_template ?? null,
       changed: true,
       next_command: verifyResult.recommended_next_command,
       health_checks: verifyResult.health_checks,
@@ -1365,11 +1729,15 @@ export class AgentRuntimeIntegrationService {
   }
 
   async inspect(workspaceRoot: string): Promise<ProductInspectResult> {
+    const allCheckpoints = this.state.listRunCheckpoints(workspaceRoot);
+    const latestExplicitCheckpoint = latestCheckpointByTrigger(allCheckpoints, "explicit_run_flag");
+    const latestAutomaticCheckpoint = latestCheckpointByTrigger(allCheckpoints, "default_policy");
     const {
       run_id: runId,
       governed_workspace_root: governedWorkspaceRoot,
       shortcut,
       demo_run: demoRun,
+      run_checkpoint: runCheckpoint,
       profile,
       contained_run: containedRun,
     } =
@@ -1392,6 +1760,14 @@ export class AgentRuntimeIntegrationService {
         changed_paths: [],
         restore_available: false,
         restore_command: null,
+        restore_boundary: null,
+        restore_guidance: null,
+        default_checkpoint_policy: profile?.default_checkpoint_policy ?? null,
+        checkpoint_intent: profile?.checkpoint_intent ?? null,
+        checkpoint_reason_template: profile?.checkpoint_reason_template ?? null,
+        latest_explicit_checkpoint: latestExplicitCheckpoint,
+        latest_automatic_checkpoint: latestAutomaticCheckpoint,
+        restore_vs_checkpoint: null,
         degraded_reasons: degradedReasons,
         contained_details: containedDetails,
       };
@@ -1404,8 +1780,12 @@ export class AgentRuntimeIntegrationService {
       async ({ client }) => {
       const timeline = await client.queryTimeline(runId, "user");
       const step = chooseInspectStep(timeline, shortcut?.action_id ?? demoRun?.dangerous_action_id);
-      const restoreTarget = shortcut?.preferred_restore_target ?? deriveRestoreTargetFromStep(step);
-      if (!step) {
+      const restoreTarget =
+        shortcut?.preferred_restore_target ??
+        deriveRestoreTargetFromStep(step) ??
+        (runCheckpoint ? { type: "run_checkpoint", run_checkpoint: runCheckpoint.run_checkpoint } : null);
+      const restoreVsCheckpoint = describeRestoreVsCheckpoint(restoreTarget, runCheckpoint);
+      if (!step || (runCheckpoint && isCheckpointPlaceholderStep(step))) {
         if (containedRun?.status === "publish_conflict" || containedRun?.status === "publish_failed") {
           return {
             workspace_root: workspaceRoot,
@@ -1424,6 +1804,57 @@ export class AgentRuntimeIntegrationService {
             changed_paths: containedRun.changed_paths,
             restore_available: true,
             restore_command: buildContainedProjectionRestoreCommand(containedRun.contained_run_id),
+            restore_boundary: describeRestoreBoundary({
+              type: "contained_projection",
+              contained_run_id: containedRun.contained_run_id,
+            }),
+            restore_guidance: explainRestoreBoundary({
+              type: "contained_projection",
+              contained_run_id: containedRun.contained_run_id,
+            }),
+            default_checkpoint_policy: profile?.default_checkpoint_policy ?? null,
+            checkpoint_intent: profile?.checkpoint_intent ?? null,
+            checkpoint_reason_template: profile?.checkpoint_reason_template ?? null,
+            latest_explicit_checkpoint: latestExplicitCheckpoint,
+            latest_automatic_checkpoint: latestAutomaticCheckpoint,
+            restore_vs_checkpoint: describeRestoreVsCheckpoint(
+              { type: "contained_projection", contained_run_id: containedRun.contained_run_id },
+              runCheckpoint,
+            ),
+            degraded_reasons: degradedReasons,
+            contained_details: containedDetails,
+          };
+        }
+        if (runCheckpoint) {
+          const checkpointSummary = summarizeRunCheckpoint(runCheckpoint);
+          return {
+            workspace_root: workspaceRoot,
+            governed_workspace_root: governedWorkspaceRoot,
+            run_id: runId,
+            found: true,
+            assurance_level: profile?.assurance_level ?? null,
+            governance_mode: profile?.governance_mode ?? null,
+            guarantees: profile?.guarantees ?? [],
+            summary: checkpointSummary.summary,
+            action_title: checkpointSummary.action_title,
+            action_status: checkpointSummary.action_status,
+            changed_paths: [],
+            restore_available: true,
+            restore_command: buildRestoreCommand({
+              type: "run_checkpoint",
+              run_checkpoint: runCheckpoint.run_checkpoint,
+            }),
+            restore_boundary: "checkpoint restore",
+            restore_guidance:
+              runCheckpoint.trigger === "default_policy"
+                ? "AgentGit can restore back to the automatic checkpoint captured because this run matched the profile checkpoint default."
+                : "AgentGit can restore back to the deliberate checkpoint captured before this run continued.",
+            default_checkpoint_policy: profile?.default_checkpoint_policy ?? null,
+            checkpoint_intent: profile?.checkpoint_intent ?? null,
+            checkpoint_reason_template: profile?.checkpoint_reason_template ?? null,
+            latest_explicit_checkpoint: latestExplicitCheckpoint,
+            latest_automatic_checkpoint: latestAutomaticCheckpoint,
+            restore_vs_checkpoint: restoreVsCheckpoint,
             degraded_reasons: degradedReasons,
             contained_details: containedDetails,
           };
@@ -1444,6 +1875,14 @@ export class AgentRuntimeIntegrationService {
           changed_paths: [],
           restore_available: Boolean(restoreTarget),
           restore_command: buildRestoreCommand(restoreTarget),
+          restore_boundary: restoreTarget ? describeRestoreBoundary(restoreTarget) : null,
+          restore_guidance: restoreTarget ? explainRestoreBoundary(restoreTarget) : null,
+          default_checkpoint_policy: profile?.default_checkpoint_policy ?? null,
+          checkpoint_intent: profile?.checkpoint_intent ?? null,
+          checkpoint_reason_template: profile?.checkpoint_reason_template ?? null,
+          latest_explicit_checkpoint: latestExplicitCheckpoint,
+          latest_automatic_checkpoint: latestAutomaticCheckpoint,
+          restore_vs_checkpoint: restoreVsCheckpoint,
           degraded_reasons: degradedReasons,
           contained_details: containedDetails,
         };
@@ -1464,6 +1903,14 @@ export class AgentRuntimeIntegrationService {
         changed_paths: changedPaths,
         restore_available: Boolean(restoreTarget),
         restore_command: buildRestoreCommand(restoreTarget),
+        restore_boundary: restoreTarget ? describeRestoreBoundary(restoreTarget) : null,
+        restore_guidance: restoreTarget ? explainRestoreBoundary(restoreTarget) : null,
+        default_checkpoint_policy: profile?.default_checkpoint_policy ?? null,
+        checkpoint_intent: profile?.checkpoint_intent ?? null,
+        checkpoint_reason_template: profile?.checkpoint_reason_template ?? null,
+        latest_explicit_checkpoint: latestExplicitCheckpoint,
+        latest_automatic_checkpoint: latestAutomaticCheckpoint,
+        restore_vs_checkpoint: restoreVsCheckpoint,
         degraded_reasons: degradedReasons,
         contained_details: containedDetails,
       };
@@ -1479,6 +1926,8 @@ export class AgentRuntimeIntegrationService {
       path?: string;
       action_id?: string;
       snapshot_id?: string;
+      run_checkpoint?: string;
+      branch_point?: string;
       contained_run_id?: string;
     } = {},
   ): Promise<ProductRestoreResult> {
@@ -1487,6 +1936,7 @@ export class AgentRuntimeIntegrationService {
       governed_workspace_root: governedWorkspaceRoot,
       shortcut,
       demo_run: demoRun,
+      run_checkpoint: runCheckpoint,
       contained_run: containedRun,
     } = this.resolveRecentRunContext(workspaceRoot);
     if (!governedWorkspaceRoot) {
@@ -1521,6 +1971,16 @@ export class AgentRuntimeIntegrationService {
         type: "snapshot_id",
         snapshot_id: options.snapshot_id,
       };
+    } else if (options.run_checkpoint) {
+      target = {
+        type: "run_checkpoint",
+        run_checkpoint: options.run_checkpoint,
+      };
+    } else if (options.branch_point) {
+      target = {
+        type: "branch_point",
+        ...parseBranchPointToken(options.branch_point),
+      };
     } else if (options.contained_run_id) {
       target = {
         type: "contained_projection",
@@ -1549,6 +2009,7 @@ export class AgentRuntimeIntegrationService {
 
       const targetSummary = summarizeRestoreTarget(target);
       if (options.preview || !options.force) {
+        const previewReason = explainRestorePreview("contained_projection", targetContainedRun.conflicting_paths.length > 0, true);
         return {
           workspace_root: workspaceRoot,
           governed_workspace_root: workspaceRoot,
@@ -1559,7 +2020,10 @@ export class AgentRuntimeIntegrationService {
           target,
           target_summary: targetSummary,
           restore_source: "contained projection",
+          restore_boundary: describeRestoreBoundary(target),
+          restore_guidance: explainRestoreBoundary(target),
           exactness: "exact",
+          preview_reason: previewReason,
           deletes_files: false,
           changed_path_count: targetContainedRun.changed_paths.length,
           overlapping_paths: targetContainedRun.conflicting_paths,
@@ -1582,7 +2046,10 @@ export class AgentRuntimeIntegrationService {
         target,
         target_summary: targetSummary,
         restore_source: "contained projection",
+        restore_boundary: describeRestoreBoundary(target),
+        restore_guidance: explainRestoreBoundary(target),
         exactness: "exact",
+        preview_reason: null,
         deletes_files: false,
         changed_path_count: discarded.changed_paths.length,
         overlapping_paths: discarded.conflicting_paths,
@@ -1595,7 +2062,7 @@ export class AgentRuntimeIntegrationService {
       this.env,
       this.runtimeRootForWorkspace(governedWorkspaceRoot),
       async ({ client }) => {
-      let resolvedDefaultTarget = defaultRestoreTarget(shortcut, demoRun);
+      let resolvedDefaultTarget = defaultRestoreTarget(shortcut, demoRun, runCheckpoint);
       if (!target && runId) {
         const timeline = await client.queryTimeline(runId, "user");
         const step = chooseInspectStep(timeline, shortcut?.action_id ?? demoRun?.dangerous_action_id);
@@ -1623,6 +2090,9 @@ export class AgentRuntimeIntegrationService {
         Boolean(options.preview) ||
         (conflictDetected && !options.force) ||
         planResult.recovery_plan.recovery_class === "review_only";
+      const restoreBoundary = describeRestoreBoundary(target);
+      const restoreGuidance = explainRestoreBoundary(target);
+      const previewReason = explainRestorePreview(planResult.recovery_plan.recovery_class, conflictDetected, previewOnly);
       if (previewOnly) {
         return {
           workspace_root: workspaceRoot,
@@ -1634,7 +2104,10 @@ export class AgentRuntimeIntegrationService {
           target,
           target_summary: targetSummary,
           restore_source: restoreSource,
+          restore_boundary: restoreBoundary,
+          restore_guidance: restoreGuidance,
           exactness: planResult.recovery_plan.recovery_class === "review_only" ? "review_only" : "exact",
+          preview_reason: previewReason,
           deletes_files: null,
           changed_path_count: planResult.recovery_plan.impact_preview.paths_to_change ?? null,
           overlapping_paths: planResult.recovery_plan.impact_preview.overlapping_paths,
@@ -1670,7 +2143,10 @@ export class AgentRuntimeIntegrationService {
         target,
         target_summary: targetSummary,
         restore_source: restoreSource,
+        restore_boundary: restoreBoundary,
+        restore_guidance: restoreGuidance,
         exactness: executeResult.recovery_plan.recovery_class === "review_only" ? "review_only" : "exact",
+        preview_reason: null,
         deletes_files: null,
         changed_path_count: executeResult.recovery_plan.impact_preview.paths_to_change ?? null,
         overlapping_paths: executeResult.recovery_plan.impact_preview.overlapping_paths,
@@ -1684,7 +2160,57 @@ export class AgentRuntimeIntegrationService {
     );
   }
 
-  async run(workspaceRoot: string): Promise<ProductRunResult> {
+  private async createRunCheckpoint(
+    workspaceRoot: string,
+    runId: string,
+    client: AuthorityClient,
+    options: {
+      kind?: RunCheckpointKind;
+      reason?: string;
+      trigger?: RunCheckpointDocument["trigger"];
+      checkpoint_policy?: DefaultCheckpointPolicy;
+      checkpoint_intent?: RuntimeProfileDocument["checkpoint_intent"];
+    } = {},
+  ): Promise<RunCheckpointDocument> {
+    const kind = options.kind ?? "branch_point";
+    const reason = options.reason ?? "Pre-run checkpoint before agent launch.";
+    const trigger = options.trigger ?? "explicit_run_flag";
+    const checkpointResult = await client.createRunCheckpoint(
+      {
+        run_id: runId,
+        checkpoint_kind: kind,
+        workspace_root: workspaceRoot,
+        reason,
+      },
+      {
+        idempotencyKey: `checkpoint:${runId}:${kind}`,
+      },
+    );
+
+    return this.state.saveRunCheckpoint({
+      checkpoint_id: createRunCheckpointId(checkpointResult.run_checkpoint),
+      workspace_root: workspaceRoot,
+      governed_workspace_root: workspaceRoot,
+      run_id: runId,
+      run_checkpoint: checkpointResult.run_checkpoint,
+      snapshot_id: checkpointResult.snapshot_record.snapshot_id,
+      sequence: checkpointResult.branch_point.sequence,
+      checkpoint_kind: checkpointResult.checkpoint_kind,
+      trigger,
+      checkpoint_policy: options.checkpoint_policy,
+      checkpoint_intent: options.checkpoint_intent,
+      reason,
+    });
+  }
+
+  async run(
+    workspaceRoot: string,
+    options: {
+      checkpoint?: boolean;
+      checkpoint_kind?: RunCheckpointKind;
+      checkpoint_reason?: string;
+    } = {},
+  ): Promise<ProductRunResult> {
     const profile = this.state.getProfileForWorkspace(workspaceRoot);
     if (!profile) {
       throw new AgentGitError("AgentGit has no active runtime profile for this workspace. Run agentgit setup first.", "NOT_FOUND", {
@@ -1711,7 +2237,7 @@ export class AgentRuntimeIntegrationService {
         },
       );
     }
-    this.validateContainedSecretBindings(workspaceRoot, current.plan);
+    this.validateContainedRuntimeBindings(workspaceRoot, current.plan);
 
     const session = await ensureAuthoritySession(workspaceRoot, this.env, this.runtimeRootForWorkspace(workspaceRoot));
     try {
@@ -1725,13 +2251,46 @@ export class AgentRuntimeIntegrationService {
           launch_command: profile.launch_command,
         },
       });
+      const createExplicitCheckpoint = options.checkpoint;
+      const createPolicyCheckpoint =
+        !createExplicitCheckpoint &&
+        shouldCreateDefaultCheckpoint(profile, current.verify_result.degraded_reasons);
+      const checkpointRecord =
+        createExplicitCheckpoint || createPolicyCheckpoint
+          ? await this.createRunCheckpoint(workspaceRoot, registerResult.run_id, session.client, {
+              kind: createExplicitCheckpoint ? (options.checkpoint_kind ?? "branch_point") : "branch_point",
+              reason: createExplicitCheckpoint
+                ? (options.checkpoint_reason ?? "Pre-run checkpoint before agent launch.")
+                : checkpointReasonFromProfile(
+                    profile,
+                    profile.default_checkpoint_policy === "always_before_run"
+                      ? "Automatic pre-run checkpoint created by the runtime profile default."
+                      : "Automatic pre-run checkpoint created because this run matched the risky-run checkpoint default.",
+                  ),
+              trigger: createExplicitCheckpoint ? "explicit_run_flag" : "default_policy",
+              checkpoint_policy: createPolicyCheckpoint ? profile.default_checkpoint_policy : undefined,
+              checkpoint_intent: createPolicyCheckpoint ? profile.checkpoint_intent : undefined,
+            })
+          : null;
       if (profile.execution_mode === "docker_contained") {
         const containedResult = await this.runDockerContainedProfile(workspaceRoot, profile, session, registerResult.run_id);
         this.state.saveRuntimeProfile({
           ...profile,
           last_run_id: registerResult.run_id,
         });
-        return containedResult;
+        return {
+          ...containedResult,
+          run_checkpoint: checkpointRecord?.run_checkpoint,
+          checkpoint_kind: checkpointRecord?.checkpoint_kind,
+          checkpoint_trigger: checkpointRecord?.trigger,
+          checkpoint_reason: checkpointRecord?.reason,
+          checkpoint_restore_command: checkpointRecord
+            ? (buildRestoreCommand({
+                type: "run_checkpoint",
+                run_checkpoint: checkpointRecord.run_checkpoint,
+              }) ?? undefined)
+            : undefined,
+        };
       }
 
       const shimBinDir = governedShimBinDirFromProfile(profile);
@@ -1790,6 +2349,16 @@ export class AgentRuntimeIntegrationService {
               exit_code: code ?? (signal ? 1 : 0),
               signal: signal ?? forwardedSignal,
               daemon_started: session.daemon_started,
+              run_checkpoint: checkpointRecord?.run_checkpoint,
+              checkpoint_kind: checkpointRecord?.checkpoint_kind,
+              checkpoint_trigger: checkpointRecord?.trigger,
+              checkpoint_reason: checkpointRecord?.reason,
+              checkpoint_restore_command: checkpointRecord
+                ? (buildRestoreCommand({
+                    type: "run_checkpoint",
+                    run_checkpoint: checkpointRecord.run_checkpoint,
+                  }) ?? undefined)
+                : undefined,
             });
           });
         });

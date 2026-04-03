@@ -271,6 +271,86 @@ describe.sequential("agentgit product CLI", () => {
     service.close();
   }, 20_000);
 
+  it("creates a deliberate checkpoint before launch and restores back to it when no narrower governed action exists", async () => {
+    const harness = setupWorkspace();
+    tempDir = harness.root;
+    const targetPath = path.join(harness.workspaceRoot, "checkpoint-note.txt");
+    fs.writeFileSync(targetPath, "before checkpoint\n", "utf8");
+
+    await runCli([
+      "setup",
+      "--command",
+      `node -e ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(targetPath)}, 'after checkpoint\\n', 'utf8')`)}`,
+    ]);
+    const runResult = await runCli(["run", "--checkpoint"]);
+    expect(runResult?.exit_code).toBe(0);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("after checkpoint\n");
+
+    const service = new AgentRuntimeIntegrationService({
+      cwd: harness.workspaceRoot,
+      env: process.env,
+    });
+    const inspectResult = await service.inspect(harness.workspaceRoot);
+    expect(inspectResult.found).toBe(true);
+    expect(inspectResult.restore_available).toBe(true);
+    expect(inspectResult.restore_boundary).toBe("checkpoint restore");
+    expect(inspectResult.restore_command).toMatch(/^agentgit restore --checkpoint run_/);
+    expect(inspectResult.summary).toContain("deliberate checkpoint");
+
+    const preview = await service.restore(harness.workspaceRoot, { preview: true });
+    expect(preview.preview_only).toBe(true);
+    expect(preview.restore_boundary).toBe("checkpoint restore");
+    expect(preview.preview_reason).toBe("AgentGit is previewing the planned restore before applying it.");
+
+    const restored = await service.restore(harness.workspaceRoot);
+    expect(restored.restored).toBe(true);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("before checkpoint\n");
+
+    service.close();
+  }, 20_000);
+
+  it("supports explicit hard-checkpoint options on run without expanding the top-level command surface", async () => {
+    const harness = setupWorkspace();
+    tempDir = harness.root;
+    const targetPath = path.join(harness.workspaceRoot, "hard-checkpoint-note.txt");
+    fs.writeFileSync(targetPath, "before hard checkpoint\n", "utf8");
+
+    await runCli([
+      "setup",
+      "--command",
+      `node -e ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(targetPath)}, 'after hard checkpoint\\n', 'utf8')`)}`,
+    ]);
+    const runResult = await runCli([
+      "run",
+      "--hard-checkpoint",
+      "--checkpoint-reason",
+      "Before a large refactor.",
+    ]);
+
+    expect(runResult?.exit_code).toBe(0);
+    expect(runResult?.checkpoint_kind).toBe("hard_checkpoint");
+    expect(runResult?.checkpoint_reason).toBe("Before a large refactor.");
+    expect(runResult?.checkpoint_restore_command).toMatch(/^agentgit restore --checkpoint run_/);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("after hard checkpoint\n");
+
+    const service = new AgentRuntimeIntegrationService({
+      cwd: harness.workspaceRoot,
+      env: process.env,
+    });
+    const inspectResult = await service.inspect(harness.workspaceRoot);
+    expect(inspectResult.found).toBe(true);
+    expect(inspectResult.restore_available).toBe(true);
+    expect(inspectResult.restore_boundary).toBe("checkpoint restore");
+    expect(inspectResult.summary).toContain("hard checkpoint");
+    expect(inspectResult.summary).toContain("Before a large refactor.");
+
+    const restored = await service.restore(harness.workspaceRoot);
+    expect(restored.restored).toBe(true);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("before hard checkpoint\n");
+
+    service.close();
+  }, 20_000);
+
   it("stores advanced setup preferences and degrades assurance honestly when the target exceeds the adapter ceiling", async () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
@@ -343,6 +423,8 @@ describe.sequential("agentgit product CLI", () => {
     expect(inspectResult.found).toBe(true);
     expect(inspectResult.assurance_level).toBe("attached");
     expect(inspectResult.restore_available).toBe(true);
+    expect(inspectResult.restore_boundary).toBe("targeted path restore");
+    expect(inspectResult.restore_guidance).toContain("without widening the restore scope");
 
     const store = new ProductStateStore(process.env);
     const demoRun = store.latestDemoRun(harness.workspaceRoot);
@@ -350,6 +432,8 @@ describe.sequential("agentgit product CLI", () => {
 
     const previewResult = await inspectService.restore(harness.workspaceRoot, { preview: true });
     expect(previewResult.preview_only).toBe(true);
+    expect(previewResult.restore_boundary).toBe("targeted path restore");
+    expect(previewResult.preview_reason).toBe("AgentGit is previewing the planned restore before applying it.");
 
     const restoreResult = await inspectService.restore(harness.workspaceRoot);
     expect(restoreResult.restored).toBe(true);
@@ -636,12 +720,22 @@ describe.sequential("agentgit product CLI", () => {
 
     const store = new ProductStateStore(process.env);
     const profile = store.getProfileForWorkspace(harness.workspaceRoot);
-    expect(profile?.contained_credential_mode).toBe("brokered_secret_refs");
+    expect(profile?.contained_credential_mode).toBe("brokered_bindings");
     expect(profile?.governance_mode).toBe("contained_projection");
     expect(profile?.guarantees).toEqual(
       expect.arrayContaining(["real_workspace_protected", "publish_path_governed", "brokered_credentials_only", "egress_policy_applied"]),
     );
     expect(profile?.credential_passthrough_env_keys ?? []).toEqual([]);
+    expect(profile?.runtime_credential_bindings).toEqual([
+      expect.objectContaining({
+        kind: "env",
+        target: {
+          surface: "env",
+          env_key: "OPENAI_API_KEY",
+        },
+        broker_source_ref: "contained_openai",
+      }),
+    ]);
     expect(profile?.contained_secret_env_bindings).toEqual([
       {
         env_key: "OPENAI_API_KEY",
@@ -667,7 +761,7 @@ describe.sequential("agentgit product CLI", () => {
       env: process.env,
     });
     const inspectResult = await service.inspect(harness.workspaceRoot);
-    expect(inspectResult.contained_details?.credential_mode).toBe("brokered_secret_refs");
+    expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
     expect(inspectResult.contained_details?.credential_env_keys).toEqual(["OPENAI_API_KEY"]);
     expect(inspectResult.contained_details?.capability_snapshot).toMatchObject({
       docker_available: true,
@@ -712,7 +806,17 @@ describe.sequential("agentgit product CLI", () => {
 
     const store = new ProductStateStore(process.env);
     const profile = store.getProfileForWorkspace(harness.workspaceRoot);
-    expect(profile?.contained_credential_mode).toBe("brokered_secret_refs");
+    expect(profile?.contained_credential_mode).toBe("brokered_bindings");
+    expect(profile?.runtime_credential_bindings).toEqual([
+      expect.objectContaining({
+        kind: "file",
+        target: {
+          surface: "file",
+          relative_path: "openai.key",
+        },
+        broker_source_ref: "contained_file_secret",
+      }),
+    ]);
     expect(profile?.contained_secret_file_bindings).toEqual([
       {
         relative_path: "openai.key",
@@ -731,7 +835,7 @@ describe.sequential("agentgit product CLI", () => {
       env: process.env,
     });
     const inspectResult = await service.inspect(harness.workspaceRoot);
-    expect(inspectResult.contained_details?.credential_mode).toBe("brokered_secret_refs");
+    expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
     expect(inspectResult.contained_details?.credential_file_paths).toEqual([
       "/run/agentgit-secrets/openai.key",
     ]);
@@ -976,7 +1080,7 @@ describe.sequential("agentgit product CLI", () => {
     expect(inspectResult.degraded_reasons.some((reason) => reason.includes("Governed MCP secret is not configured."))).toBe(
       true,
     );
-    expect(inspectResult.contained_details?.credential_mode).toBe("brokered_secret_refs");
+    expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
     service.close();
   }, 40_000);
 
@@ -1017,6 +1121,9 @@ describe.sequential("agentgit product CLI", () => {
     const previewOnly = await service.restore(harness.workspaceRoot);
     expect(previewOnly.preview_only).toBe(true);
     expect(previewOnly.conflict_detected).toBe(true);
+    expect(previewOnly.preview_reason).toBe(
+      "AgentGit is previewing only because applying this restore would overwrite newer workspace changes.",
+    );
     expect(fs.readFileSync(demoRun!.deleted_path, "utf8")).toContain("post-incident user change");
 
     const forced = await service.restore(harness.workspaceRoot, { force: true });

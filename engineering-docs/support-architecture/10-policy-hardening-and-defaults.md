@@ -146,10 +146,12 @@ The first durable default policy pack should optimize for coding-agent workflows
 - `allow_with_snapshot`
   - recoverable local file mutations
   - compensatable owned integration mutations
+  - trusted compensatable generic function mutations
   - destructive-but-recoverable local shell mutations
+  - package manager, build tool, interpreter, and opaque local shell execution when AgentGit can create a trustworthy recovery boundary first
 - `ask`
-  - package manager commands
-  - opaque or low-confidence shell commands
+  - degraded capability paths where AgentGit cannot trust automatic recovery
+  - shell or external execution that crosses clear consent or irreversibility boundaries
   - public mutating MCP
   - external side effects that cross user consent boundaries
 - `deny`

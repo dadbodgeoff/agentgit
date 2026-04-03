@@ -32,6 +32,7 @@
     "release:pack": "node scripts/pack-release-artifacts.mjs",
     "release:verify:artifacts": "node scripts/verify-release-artifacts.mjs --artifacts-dir .release-artifacts/packed --signature-mode allow-unsigned",
     "smoke:cli-install": "node scripts/smoke-installed-cli.mjs",
+    "smoke:agent-runtime": "node scripts/smoke-agent-runtime.mjs",
     "smoke:cli-compat": "node scripts/verify-cli-compatibility.mjs",
     "release:verify": "pnpm lint && pnpm format:check && pnpm release:verify:claims && pnpm release:verify:coverage-ratchet && pnpm security:audit && pnpm test:coverage && pnpm py:test && pnpm smoke:cli-install && pnpm smoke:cli-compat",
     "release:publish": "pnpm changeset publish --access public"

@@ -67,8 +67,11 @@ describe("ProductStateStore", () => {
       execution_mode: "host_attached",
       container_network_policy: "inherit",
       contained_credential_mode: "none",
+      default_checkpoint_policy: "never",
+      contained_egress_mode: "inherit",
+      contained_egress_assurance: "degraded",
       degraded_reasons: [],
-      schema_version: 9,
+      schema_version: 11,
     });
     expect(profile?.created_at).toBe("2026-04-02T00:00:00.000Z");
     db.close();
@@ -134,10 +137,23 @@ describe("ProductStateStore", () => {
       read_only_rootfs_enabled: true,
       network_restricted: true,
       credential_brokering_enabled: true,
+      egress_mode: "none",
+      egress_assurance: "boundary_enforced",
       server_platform: "Docker Desktop 4.63.0 (177762)",
       server_os: "linux",
       server_arch: "aarch64",
     });
+    expect(profile?.contained_credential_mode).toBe("brokered_bindings");
+    expect(profile?.runtime_credential_bindings).toEqual([
+      expect.objectContaining({
+        kind: "env",
+        target: {
+          surface: "env",
+          env_key: "OPENAI_API_KEY",
+        },
+        broker_source_ref: "contained_openai",
+      }),
+    ]);
     db.close();
     store.close();
   });

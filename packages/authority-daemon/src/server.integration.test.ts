@@ -434,6 +434,34 @@ async function restartHarness(harness: TestHarness): Promise<void> {
   });
 }
 
+function writeShellApprovalPolicy(workspaceRoot: string): void {
+  const policyDir = path.join(workspaceRoot, ".agentgit");
+  const policyPath = path.join(policyDir, "policy.toml");
+  fs.mkdirSync(policyDir, { recursive: true });
+  fs.writeFileSync(
+    policyPath,
+    [
+      'profile_name = "workspace-shell-review"',
+      'policy_version = "2026.04.03"',
+      "",
+      "[thresholds]",
+      'low_confidence = [{ action_family = "shell/*", ask_below = 0.3 }]',
+      "",
+      "[[rules]]",
+      'rule_id = "workspace.shell.require-approval"',
+      'description = "Require approval for shell execution in approval-path tests."',
+      'rationale = "Approval-path integration tests should exercise the explicit exception lane, not default recoverable automation."',
+      'binding_scope = "workspace"',
+      'decision = "allow"',
+      'enforcement_mode = "require_approval"',
+      "priority = 950",
+      'reason = { code = "WORKSPACE_SHELL_REQUIRES_APPROVAL", severity = "moderate", message = "Workspace policy requires approval before shell execution." }',
+      'match = { type = "field", field = "operation.domain", operator = "eq", value = "shell" }',
+    ].join("\n"),
+    "utf8",
+  );
+}
+
 function trackStore<T extends ClosableStore>(store: T): T {
   storeClosers.push(store);
   return store;
@@ -765,6 +793,140 @@ function makeShellAttempt(runId: string, workspaceRoot: string, argv: string[]) 
     },
     received_at: new Date().toISOString(),
   };
+}
+
+function makeShellActionRecord(
+  runId: string,
+  workspaceRoot: string,
+  argv: string[],
+  overrides: Partial<ActionRecord> = {},
+): ActionRecord {
+  const command = argv.join(" ");
+  return {
+    schema_version: "action.v1",
+    action_id: `act_shell_${crypto.createHash("sha1").update(command).digest("hex").slice(0, 10)}`,
+    run_id: runId,
+    session_id: "sess_test",
+    status: "normalized",
+    timestamps: {
+      requested_at: "2026-03-29T12:00:00.000Z",
+      normalized_at: "2026-03-29T12:00:01.000Z",
+    },
+    provenance: {
+      mode: "governed",
+      source: "test",
+      confidence: 0.9,
+    },
+    actor: {
+      type: "agent",
+      tool_name: "exec_command",
+      tool_kind: "shell",
+    },
+    operation: {
+      domain: "shell",
+      kind: "exec",
+      name: "shell.exec",
+      display_name: "Run shell command",
+    },
+    execution_path: {
+      surface: "governed_shell",
+      mode: "pre_execution",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "workspace",
+        locator: workspaceRoot,
+      },
+      scope: {
+        breadth: "workspace",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: { argv, command },
+      redacted: { argv, command },
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: "mutating",
+      external_effects: "none",
+      reversibility_hint: "compensatable",
+      sensitivity_hint: "moderate",
+      batch: false,
+    },
+    facets: {
+      shell: {
+        argv,
+        cwd: workspaceRoot,
+        command_family: "unclassified",
+      },
+    },
+    normalization: {
+      mapper: "test",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: 0.74,
+    },
+    confidence_assessment: {
+      engine_version: "test-confidence/v1",
+      score: 0.61,
+      band: "low",
+      requires_human_review: true,
+      factors: [
+        {
+          factor_id: "opaque_shell_history",
+          label: "Opaque shell mutation",
+          kind: "baseline",
+          delta: 0.61,
+          rationale: "Synthetic test shell history should widen future boundaries.",
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+function appendSyntheticActionHistory(
+  journal: RunJournal,
+  action: ActionRecord,
+  decision: "allow" | "allow_with_snapshot" | "ask" | "deny" = "allow_with_snapshot",
+): void {
+  journal.appendRunEvent(action.run_id, {
+    event_type: "action.normalized",
+    occurred_at: action.timestamps.normalized_at,
+    recorded_at: action.timestamps.normalized_at,
+    payload: {
+      action,
+      action_id: action.action_id,
+      operation: action.operation,
+      target_locator: action.target.primary.locator,
+      normalization: action.normalization,
+      confidence_score: action.confidence_assessment.score,
+      risk_hints: action.risk_hints,
+    },
+  });
+  journal.appendRunEvent(action.run_id, {
+    event_type: "policy.evaluated",
+    occurred_at: action.timestamps.normalized_at,
+    recorded_at: action.timestamps.normalized_at,
+    payload: {
+      action_id: action.action_id,
+      evaluated_at: action.timestamps.normalized_at,
+      decision,
+      reasons: [],
+      matched_rules: [],
+      normalization_confidence: action.normalization.normalization_confidence,
+      confidence_score: action.confidence_assessment.score,
+      action_family: `${action.operation.domain}/${action.operation.kind}`,
+      snapshot_required: decision === "allow_with_snapshot" || decision === "ask",
+      snapshot_selection: null,
+      low_confidence_threshold: null,
+      confidence_triggered: action.confidence_assessment.requires_human_review,
+    },
+  });
 }
 
 function makeMcpAttempt(
@@ -1952,6 +2114,8 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
 
   it("returns a policy calibration report for real run activity", async () => {
     const harness = await createHarness();
+    writeShellApprovalPolicy(harness.workspaceRoot);
+    await restartHarness(harness);
     const { sessionId, runId } = await createSessionAndRun(harness, "policy-calibration");
     const targetPath = path.join(harness.workspaceRoot, "calibration.txt");
 
@@ -2073,6 +2237,8 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
 
   it("returns threshold recommendations from calibration history without mutating policy", async () => {
     const harness = await createHarness();
+    writeShellApprovalPolicy(harness.workspaceRoot);
+    await restartHarness(harness);
     const { sessionId, runId } = await createSessionAndRun(harness, "policy-threshold-recommendations");
     const targetPath = path.join(harness.workspaceRoot, "thresholds.txt");
 
@@ -2255,14 +2421,14 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       sample_limit: 10,
     });
     expect(replayResponse.result?.summary.replayable_samples).toBe(1);
-    expect(replayResponse.result?.summary.approvals_increased).toBe(1);
-    expect(replayResponse.result?.summary.historically_allowed_newly_gated).toBe(1);
+    expect(replayResponse.result?.summary.approvals_increased).toBe(0);
+    expect(replayResponse.result?.summary.historically_allowed_newly_gated).toBe(0);
     expect(replayResponse.result?.changed_samples).toEqual([
       expect.objectContaining({
         action_id: action.action_id,
         current_decision: "allow",
-        candidate_decision: "ask",
-        change_kind: "historical_allow_now_gated",
+        candidate_decision: "allow_with_snapshot",
+        change_kind: "decision_changed",
       }),
     ]);
   });
@@ -2287,6 +2453,8 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     );
 
     const harness = await createHarness(seededRoot);
+    writeShellApprovalPolicy(harness.workspaceRoot);
+    await restartHarness(harness);
     const { sessionId, runId } = await createSessionAndRun(harness, "policy-threshold-calibration-maintenance");
 
     const baselinePolicyResponse = await sendRequest<{
@@ -2318,38 +2486,121 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       baselinePolicyResponse.result?.summary.loaded_sources.some((source) => source.scope === "workspace_generated"),
     ).toBe(false);
 
-    for (let index = 0; index < 5; index += 1) {
-      const submitResponse = await sendRequest<{
-        approval_request: { approval_id: string; status: string } | null;
-      }>(
-        harness,
-        "submit_action_attempt",
-        {
-          attempt: makeShellAttempt(runId, harness.workspaceRoot, [
-            process.execPath,
-            "-e",
-            `process.stdout.write('calibration denied ${index}')`,
-          ]),
-        },
-        sessionId,
-      );
-      expect(submitResponse.ok).toBe(true);
-      expect(submitResponse.result?.approval_request?.status).toBe("pending");
+    const calibrationJournal = createRunJournal({ dbPath: harness.journalPath });
+    try {
+      for (let index = 0; index < 5; index += 1) {
+        const evaluatedAt = new Date(Date.parse("2026-04-01T12:00:00.000Z") + index * 1_000).toISOString();
+        const action = makeShellActionRecord(
+          runId,
+          harness.workspaceRoot,
+          [process.execPath, "-e", `process.stdout.write('calibration denied ${index}')`],
+          {
+            normalization: {
+              mapper: "test",
+              inferred_fields: [],
+              warnings: ["opaque_execution"],
+              normalization_confidence: 0.42,
+            },
+            confidence_assessment: {
+              engine_version: "test-confidence/v1",
+              score: 0.42,
+              band: "low",
+              requires_human_review: true,
+              factors: [
+                {
+                  factor_id: "shell_calibration_sample",
+                  label: "Shell calibration sample",
+                  kind: "baseline",
+                  delta: 0.42,
+                  rationale: "Synthetic low-confidence shell sample for calibration maintenance coverage.",
+                },
+              ],
+            },
+          },
+        );
 
-      const denyResponse = await sendRequest<{
-        approval_request: { status: string } | null;
-      }>(
-        harness,
-        "resolve_approval",
-        {
-          approval_id: submitResponse.result!.approval_request!.approval_id,
-          resolution: "denied",
-          note: "deny to tighten calibration threshold",
-        },
-        sessionId,
-      );
-      expect(denyResponse.ok).toBe(true);
-      expect(denyResponse.result?.approval_request?.status).toBe("denied");
+        calibrationJournal.appendRunEvent(runId, {
+          event_type: "action.normalized",
+          occurred_at: evaluatedAt,
+          recorded_at: evaluatedAt,
+          payload: {
+            action_id: action.action_id,
+            action_family: "shell/exec",
+            action,
+          },
+        });
+
+        const policyOutcome = {
+          schema_version: "policy-outcome.v1" as const,
+          policy_outcome_id: `pol_cal_${index}`,
+          action_id: action.action_id,
+          decision: "ask" as const,
+          reasons: [
+            {
+              code: "LOW_NORMALIZATION_CONFIDENCE",
+              severity: "high" as const,
+              message: "Shell command confidence is below the configured automation threshold and requires approval.",
+            },
+          ],
+          trust_requirements: {
+            wrapped_path_required: true,
+            brokered_credentials_required: false,
+            direct_credentials_forbidden: false,
+          },
+          preconditions: {
+            snapshot_required: false,
+            approval_required: true,
+            simulation_supported: false,
+          },
+          approval: null,
+          budget_effects: {
+            budget_check: "passed" as const,
+            estimated_cost: 0,
+            remaining_mutating_actions: null,
+            remaining_destructive_actions: null,
+          },
+          policy_context: {
+            matched_rules: ["normalization.low_confidence.ask"],
+            sticky_decision_applied: false,
+          },
+          evaluated_at: evaluatedAt,
+        };
+
+        calibrationJournal.appendRunEvent(runId, {
+          event_type: "policy.evaluated",
+          occurred_at: evaluatedAt,
+          recorded_at: evaluatedAt,
+          payload: {
+            action_id: action.action_id,
+            policy_outcome_id: policyOutcome.policy_outcome_id,
+            evaluated_at: evaluatedAt,
+            decision: "ask",
+            reasons: policyOutcome.reasons,
+            matched_rules: policyOutcome.policy_context.matched_rules,
+            normalization_confidence: 0.42,
+            confidence_score: 0.42,
+            action_family: "shell/exec",
+            snapshot_required: false,
+            snapshot_selection: null,
+            low_confidence_threshold: 0.3,
+            confidence_triggered: true,
+          },
+        });
+
+        const approval = calibrationJournal.createApprovalRequest({
+          run_id: runId,
+          action,
+          policy_outcome: policyOutcome,
+        });
+        const resolvedApproval = calibrationJournal.resolveApproval(
+          approval.approval_id,
+          "denied",
+          "deny to tighten calibration threshold",
+        );
+        expect(resolvedApproval.status).toBe("denied");
+      }
+    } finally {
+      calibrationJournal.close();
     }
 
     const maintenanceResponse = await sendRequest<{
@@ -5540,6 +5791,8 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
 
   it("creates an approval request and executes an approved shell command for real", async () => {
     const harness = await createHarness();
+    writeShellApprovalPolicy(harness.workspaceRoot);
+    await restartHarness(harness);
     const { sessionId, runId } = await createSessionAndRun(harness, "approval-flow");
 
     const submitResponse = await sendRequest<{
@@ -5563,7 +5816,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
 
     expect(submitResponse.ok).toBe(true);
     expect(submitResponse.result?.approval_request?.status).toBe("pending");
-    expect(submitResponse.result?.approval_request?.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
+    expect(submitResponse.result?.approval_request?.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
 
     const inboxBeforeResolution = await sendRequest<{
       items: Array<{
@@ -5584,7 +5837,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(inboxBeforeResolution.result?.items[0]?.workflow_name).toBe("approval-flow");
     expect(inboxBeforeResolution.result?.items[0]?.status).toBe("pending");
     expect(inboxBeforeResolution.result?.items[0]?.reason_summary).toContain("requires approval");
-    expect(inboxBeforeResolution.result?.items[0]?.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
+    expect(inboxBeforeResolution.result?.items[0]?.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
 
     const timelineBeforeResolution = await sendRequest<{
       steps: Array<{
@@ -5598,11 +5851,11 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(timelineBeforeResolution.ok).toBe(true);
     const approvalStep = timelineBeforeResolution.result?.steps.find((step) => step.step_type === "approval_step");
     expect(approvalStep?.status).toBe("awaiting_approval");
-    expect(approvalStep?.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
+    expect(approvalStep?.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
     const blockedActionStep = timelineBeforeResolution.result?.steps.find(
       (step) => step.step_type === "action_step" && step.status === "awaiting_approval",
     );
-    expect(blockedActionStep?.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
+    expect(blockedActionStep?.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
 
     const helperBeforeResolution = await sendRequest<{
       answer: string;
@@ -5610,7 +5863,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     }>(harness, "query_helper", { run_id: runId, question_type: "why_blocked" }, sessionId);
     expect(helperBeforeResolution.ok).toBe(true);
     expect(helperBeforeResolution.result?.answer).toContain("waiting for approval");
-    expect(helperBeforeResolution.result?.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
+    expect(helperBeforeResolution.result?.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
 
     const approvalId = submitResponse.result?.approval_request?.approval_id as string;
     const resolveResponse = await sendRequest<{
@@ -6019,6 +6272,50 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(executeResponse.result?.recovery_plan.target.type).toBe("run_checkpoint");
     expect(executeResponse.result?.recovery_plan.target.run_checkpoint).toBe(runCheckpoint);
     expect(fs.readFileSync(targetPath, "utf8")).toBe("checkpoint me");
+  });
+
+  it("creates an explicit run checkpoint and restores back to it", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "explicit-run-checkpoint");
+    const targetPath = path.join(harness.workspaceRoot, "checkpoint-direct.txt");
+    fs.writeFileSync(targetPath, "before checkpoint", "utf8");
+
+    const checkpointResponse = await sendRequest<{
+      run_checkpoint: string;
+      branch_point: { run_id: string; sequence: number };
+      checkpoint_kind: string;
+      snapshot_record: { snapshot_id: string; snapshot_class: string };
+      snapshot_selection: { snapshot_class: string; reason_codes: string[] };
+    }>(
+      harness,
+      "create_run_checkpoint",
+      {
+        run_id: runId,
+        checkpoint_kind: "branch_point",
+        workspace_root: harness.workspaceRoot,
+        reason: "Checkpoint before opaque local mutations.",
+      },
+      sessionId,
+    );
+
+    expect(checkpointResponse.ok).toBe(true);
+    expect(checkpointResponse.result?.checkpoint_kind).toBe("branch_point");
+    expect(checkpointResponse.result?.snapshot_record.snapshot_class).toBe("exact_anchor");
+    expect(checkpointResponse.result?.snapshot_selection.reason_codes).toContain("snapshot.explicit_branch_point");
+
+    const runCheckpoint = checkpointResponse.result?.run_checkpoint as string;
+    fs.writeFileSync(targetPath, "after checkpoint", "utf8");
+
+    const executeResponse = await sendRequest<{
+      restored: boolean;
+      recovery_plan: { target: { type: string; run_checkpoint?: string } };
+    }>(harness, "execute_recovery", { target: { type: "run_checkpoint", run_checkpoint: runCheckpoint } }, sessionId);
+
+    expect(executeResponse.ok).toBe(true);
+    expect(executeResponse.result?.restored).toBe(true);
+    expect(executeResponse.result?.recovery_plan.target.type).toBe("run_checkpoint");
+    expect(executeResponse.result?.recovery_plan.target.run_checkpoint).toBe(runCheckpoint);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("before checkpoint");
   });
 
   it("plans and executes recovery against a structured branch-point target", async () => {
@@ -6471,9 +6768,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     const harness = await createHarness();
     const { sessionId, runId } = await createSessionAndRun(harness, "shell-failure");
 
-    const submitResponse = await sendRequest<{
-      approval_request: { approval_id: string; status: string } | null;
-    }>(
+    const submitResponse = await sendRequest<unknown>(
       harness,
       "submit_action_attempt",
       {
@@ -6486,22 +6781,8 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       sessionId,
     );
 
-    expect(submitResponse.ok).toBe(true);
-    const approvalId = submitResponse.result?.approval_request?.approval_id as string;
-
-    const resolveResponse = await sendRequest<unknown>(
-      harness,
-      "resolve_approval",
-      {
-        approval_id: approvalId,
-        resolution: "approved",
-        note: "run failing shell",
-      },
-      sessionId,
-    );
-
-    expect(resolveResponse.ok).toBe(false);
-    expect(resolveResponse.error?.code).toBe("PRECONDITION_FAILED");
+    expect(submitResponse.ok).toBe(false);
+    expect(submitResponse.error?.code).toBe("PRECONDITION_FAILED");
 
     const timelineResponse = await sendRequest<{
       steps: Array<{ status: string; summary: string; primary_artifacts: Array<{ type: string }> }>;
@@ -7021,7 +7302,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     const { sessionId, runId } = await createSessionAndRun(harness, "artifact-visibility");
     const oversized = "secret-token-".repeat(700);
     const submitResponse = await sendRequest<{
-      approval_request: { approval_id: string } | null;
+      execution_result: { mode: string } | null;
     }>(
       harness,
       "submit_action_attempt",
@@ -7035,21 +7316,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       sessionId,
     );
     expect(submitResponse.ok).toBe(true);
-    const approvalId = submitResponse.result?.approval_request?.approval_id as string;
-    const resolveResponse = await sendRequest<{
-      execution_result: { mode: string } | null;
-    }>(
-      harness,
-      "resolve_approval",
-      {
-        approval_id: approvalId,
-        resolution: "approved",
-        note: "artifact visibility",
-      },
-      sessionId,
-    );
-    expect(resolveResponse.ok).toBe(true);
-    expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
+    expect(submitResponse.result?.execution_result?.mode).toBe("executed");
 
     const timelineResponse = await sendRequest<{
       steps: Array<{ primary_artifacts: Array<{ type: string; artifact_id?: string }> }>;
@@ -9042,6 +9309,60 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     );
     expect(executeResponse.ok).toBe(false);
     expect(executeResponse.error?.code).toBe("PRECONDITION_FAILED");
+  });
+
+  it("widens a later narrow filesystem snapshot after repeated ambiguous shell history in the same run", async () => {
+    const harness = await createHarness();
+    const { sessionId, runId } = await createSessionAndRun(harness, "history-widened-snapshot");
+    const journal = createRunJournal({ dbPath: harness.journalPath });
+
+    try {
+      for (const suffix of ["one", "two"]) {
+        const action = makeShellActionRecord(
+          runId,
+          harness.workspaceRoot,
+          ["sh", "-lc", `echo ${suffix} >> history.log`],
+          {
+            action_id: `act_seed_${suffix}`,
+          },
+        );
+        appendSyntheticActionHistory(journal, action, "allow_with_snapshot");
+      }
+    } finally {
+      journal.close();
+    }
+
+    const targetPath = path.join(harness.workspaceRoot, "narrow.txt");
+    fs.writeFileSync(targetPath, "delete me", "utf8");
+    const explainResponse = await sendRequest<{
+      snapshot_selection: {
+        snapshot_class: string;
+        reason_codes: string[];
+        basis: {
+          recent_ambiguous_shell_mutations: number;
+        };
+      } | null;
+      policy_outcome: { decision: string };
+    }>(
+      harness,
+      "explain_policy_action",
+      {
+        attempt: makeFilesystemDeleteAttempt(runId, harness.workspaceRoot, targetPath),
+      },
+      sessionId,
+    );
+
+    expect(explainResponse.ok).toBe(true);
+    expect(explainResponse.result?.policy_outcome.decision).toBe("allow_with_snapshot");
+    expect(explainResponse.result?.snapshot_selection).toEqual(
+      expect.objectContaining({
+        snapshot_class: "exact_anchor",
+        reason_codes: expect.arrayContaining(["snapshot.repeated_ambiguous_shell_history"]),
+        basis: expect.objectContaining({
+          recent_ambiguous_shell_mutations: 2,
+        }),
+      }),
+    );
   });
 
   it("compensates owned draft creation through execute_recovery", async () => {

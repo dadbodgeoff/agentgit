@@ -1,4 +1,4 @@
-import type { RecoveryTarget } from "@agentgit/schemas";
+import type { RecoveryTarget, RunCheckpointKind } from "@agentgit/schemas";
 
 export type RuntimeId = "openclaw" | "generic-command";
 export type InstallScope = "workspace";
@@ -10,6 +10,8 @@ export type PolicyStrictness = "balanced" | "strict";
 export type ContainmentBackend = "docker";
 export type RuntimeExecutionMode = "host_attached" | "docker_contained";
 export type GovernanceMode = "attached_live" | "contained_projection" | "native_integrated";
+export type DefaultCheckpointPolicy = "never" | "risky_runs" | "always_before_run";
+export type CheckpointIntent = "operator_requested" | "broad_risk_default" | "high_value_workspace";
 export type GovernanceGuarantee =
   | "native_runtime_integration"
   | "known_plugin_surfaces_governed"
@@ -19,7 +21,30 @@ export type GovernanceGuarantee =
   | "brokered_credentials_only"
   | "egress_policy_applied";
 export type ContainerNetworkPolicy = "inherit" | "none";
-export type ContainedCredentialMode = "none" | "direct_env" | "brokered_secret_refs";
+export type ContainedEgressMode = "inherit" | "none" | "proxy_http_https" | "backend_enforced_allowlist";
+export type ContainedEgressAssurance = "degraded" | "scoped" | "boundary_enforced";
+export type ContainedCredentialMode = "none" | "direct_env" | "brokered_bindings";
+export type RuntimeCredentialBindingKind = "env" | "file" | "header_template" | "runtime_ticket" | "tool_scoped_ref";
+
+export type RuntimeCredentialBindingTarget =
+  | {
+      surface: "env";
+      env_key: string;
+    }
+  | {
+      surface: "file";
+      relative_path: string;
+    };
+
+export interface RuntimeCredentialBindingDocument {
+  binding_id: string;
+  kind: RuntimeCredentialBindingKind;
+  target: RuntimeCredentialBindingTarget;
+  broker_source_ref: string;
+  redacted_delivery_metadata: Record<string, unknown>;
+  expires_at?: string;
+  rotates: boolean;
+}
 
 export interface ContainedSecretEnvBinding {
   env_key: string;
@@ -41,6 +66,10 @@ export interface DockerCapabilitySnapshot {
   read_only_rootfs_enabled: boolean;
   network_restricted: boolean;
   credential_brokering_enabled: boolean;
+  egress_mode: ContainedEgressMode;
+  egress_assurance: ContainedEgressAssurance;
+  backend_enforced_allowlist_supported: boolean;
+  raw_socket_egress_blocked: boolean;
   proxy_egress_allowlist_applied?: boolean;
   egress_allowlist_hosts?: string[];
   server_platform?: string;
@@ -67,10 +96,16 @@ export interface RuntimeProfileDocument extends ProductStateDocument {
   execution_mode: RuntimeExecutionMode;
   governed_surfaces: string[];
   degraded_reasons: string[];
+  default_checkpoint_policy?: DefaultCheckpointPolicy;
+  checkpoint_intent?: CheckpointIntent;
+  checkpoint_reason_template?: string;
   containment_backend?: ContainmentBackend;
   container_image?: string;
   container_network_policy?: ContainerNetworkPolicy;
+  contained_egress_mode?: ContainedEgressMode;
+  contained_egress_assurance?: ContainedEgressAssurance;
   contained_credential_mode?: ContainedCredentialMode;
+  runtime_credential_bindings?: RuntimeCredentialBindingDocument[];
   credential_passthrough_env_keys?: string[];
   contained_secret_env_bindings?: ContainedSecretEnvBinding[];
   contained_secret_file_bindings?: ContainedSecretFileBinding[];
@@ -105,9 +140,15 @@ export interface RuntimeInstallDocument extends ProductStateDocument {
   governance_mode: GovernanceMode;
   guarantees: GovernanceGuarantee[];
   execution_mode: RuntimeExecutionMode;
+  default_checkpoint_policy?: DefaultCheckpointPolicy;
+  checkpoint_intent?: CheckpointIntent;
+  checkpoint_reason_template?: string;
   containment_backend?: ContainmentBackend;
   container_network_policy?: ContainerNetworkPolicy;
+  contained_egress_mode?: ContainedEgressMode;
+  contained_egress_assurance?: ContainedEgressAssurance;
   contained_credential_mode?: ContainedCredentialMode;
+  runtime_credential_bindings?: RuntimeCredentialBindingDocument[];
   contained_secret_env_bindings?: ContainedSecretEnvBinding[];
   contained_secret_file_bindings?: ContainedSecretFileBinding[];
   contained_proxy_allowlist_hosts?: string[];
@@ -145,12 +186,28 @@ export interface RestoreShortcutDocument extends ProductStateDocument {
   display_path?: string;
 }
 
+export interface RunCheckpointDocument extends ProductStateDocument {
+  checkpoint_id: string;
+  workspace_root: string;
+  governed_workspace_root: string;
+  run_id: string;
+  run_checkpoint: string;
+  snapshot_id: string;
+  sequence: number;
+  checkpoint_kind: RunCheckpointKind;
+  trigger: "explicit_run_flag" | "default_policy";
+  checkpoint_policy?: DefaultCheckpointPolicy;
+  checkpoint_intent?: CheckpointIntent;
+  reason?: string;
+}
+
 export type ProductStateCollections = {
   runtime_profiles: RuntimeProfileDocument;
   runtime_installs: RuntimeInstallDocument;
   config_backups: ConfigBackupDocument;
   demo_runs: DemoRunDocument;
   restore_shortcuts: RestoreShortcutDocument;
+  run_checkpoints: RunCheckpointDocument;
   contained_runs: ContainedRunDocument;
 };
 
@@ -177,10 +234,16 @@ export interface SetupPreferences {
   policy_strictness: PolicyStrictness;
   install_scope: InstallScope;
   assurance_target?: AssuranceLevel;
+  default_checkpoint_policy?: DefaultCheckpointPolicy;
+  checkpoint_intent?: CheckpointIntent;
+  checkpoint_reason_template?: string;
   containment_backend?: ContainmentBackend;
   container_image?: string;
   container_network_policy?: ContainerNetworkPolicy;
+  contained_egress_mode?: ContainedEgressMode;
+  contained_egress_assurance?: ContainedEgressAssurance;
   contained_credential_mode?: ContainedCredentialMode;
+  runtime_credential_bindings?: RuntimeCredentialBindingDocument[];
   credential_passthrough_env_keys?: string[];
   contained_secret_env_bindings?: ContainedSecretEnvBinding[];
   contained_secret_file_bindings?: ContainedSecretFileBinding[];
@@ -205,10 +268,16 @@ export interface InstallPlan {
   execution_mode: RuntimeExecutionMode;
   governed_surfaces: string[];
   degraded_reasons: string[];
+  default_checkpoint_policy?: DefaultCheckpointPolicy;
+  checkpoint_intent?: CheckpointIntent;
+  checkpoint_reason_template?: string;
   containment_backend?: ContainmentBackend;
   container_image?: string;
   container_network_policy?: ContainerNetworkPolicy;
+  contained_egress_mode?: ContainedEgressMode;
+  contained_egress_assurance?: ContainedEgressAssurance;
   contained_credential_mode?: ContainedCredentialMode;
+  runtime_credential_bindings?: RuntimeCredentialBindingDocument[];
   credential_passthrough_env_keys?: string[];
   contained_secret_env_bindings?: ContainedSecretEnvBinding[];
   contained_secret_file_bindings?: ContainedSecretFileBinding[];
@@ -257,7 +326,10 @@ export interface ContainedRunDocument extends ProductStateDocument {
   launch_command: string;
   container_image: string;
   container_network_policy?: ContainerNetworkPolicy;
+  contained_egress_mode?: ContainedEgressMode;
+  contained_egress_assurance?: ContainedEgressAssurance;
   contained_credential_mode?: ContainedCredentialMode;
+  runtime_credential_bindings?: RuntimeCredentialBindingDocument[];
   credential_passthrough_env_keys?: string[];
   contained_secret_env_bindings?: ContainedSecretEnvBinding[];
   contained_secret_file_bindings?: ContainedSecretFileBinding[];

@@ -127,6 +127,10 @@ async function createHarness(): Promise<CliHarness> {
     socketPath,
     journalPath,
     snapshotRootPath,
+    workspaceRootPath: workspaceRoot,
+    policyGlobalConfigPath: path.join(root, ".config", "agentgit", "authority-policy.toml"),
+    policyWorkspaceConfigPath: path.join(workspaceRoot, ".agentgit", "policy.toml"),
+    policyCalibrationConfigPath: path.join(workspaceRoot, ".agentgit", "policy.calibration.generated.json"),
   });
 
   const harness = {
@@ -139,6 +143,61 @@ async function createHarness(): Promise<CliHarness> {
   };
   harnesses.push(harness);
   return harness;
+}
+
+function writeShellApprovalPolicy(workspaceRoot: string): void {
+  const policyDir = path.join(workspaceRoot, ".agentgit");
+  const policyPath = path.join(policyDir, "policy.toml");
+  fs.mkdirSync(policyDir, { recursive: true });
+  fs.writeFileSync(
+    policyPath,
+    [
+      'profile_name = "workspace-shell-review"',
+      'policy_version = "2026.04.03"',
+      "",
+      "[thresholds]",
+      'low_confidence = [{ action_family = "shell/*", ask_below = 0.3 }]',
+      "",
+      "[[rules]]",
+      'rule_id = "workspace.shell.require-approval"',
+      'description = "Require approval for shell execution in CLI approval-path tests."',
+      'rationale = "CLI approval-path tests should exercise the explicit exception lane, not default recoverable automation."',
+      'binding_scope = "workspace"',
+      'decision = "allow"',
+      'enforcement_mode = "require_approval"',
+      "priority = 950",
+      'reason = { code = "WORKSPACE_SHELL_REQUIRES_APPROVAL", severity = "moderate", message = "Workspace policy requires approval before shell execution." }',
+      'match = { type = "field", field = "operation.domain", operator = "eq", value = "shell" }',
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+async function restartHarness(harness: CliHarness): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    harness.server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+
+  if (fs.existsSync(harness.socketPath)) {
+    fs.rmSync(harness.socketPath, { force: true });
+  }
+
+  harness.server = await startServer({
+    socketPath: harness.socketPath,
+    journalPath: harness.journalPath,
+    snapshotRootPath: harness.snapshotRootPath,
+    workspaceRootPath: harness.workspaceRoot,
+    policyGlobalConfigPath: path.join(harness.root, ".config", "agentgit", "authority-policy.toml"),
+    policyWorkspaceConfigPath: path.join(harness.workspaceRoot, ".agentgit", "policy.toml"),
+    policyCalibrationConfigPath: path.join(harness.workspaceRoot, ".agentgit", "policy.calibration.generated.json"),
+  });
 }
 
 async function startMcpHttpService(
@@ -1928,6 +1987,8 @@ describe("authority cli MCP integration", () => {
 
   it("drives approval, timeline, and helper workflows through the built CLI binary", async () => {
     const harness = await createHarness();
+    writeShellApprovalPolicy(harness.workspaceRoot);
+    await restartHarness(harness);
 
     const registerRun = await runCliProcess(["--json", "register-run", "cli-approval-flow"], {
       workspaceRoot: harness.workspaceRoot,
@@ -1954,7 +2015,7 @@ describe("authority cli MCP integration", () => {
       } | null;
     };
     expect(submitResult.approval_request?.status).toBe("pending");
-    expect(submitResult.approval_request?.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
+    expect(submitResult.approval_request?.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
     const approvalId = submitResult.approval_request?.approval_id as string;
 
     const inbox = await runCliProcess(["--json", "approval-inbox", run.run_id, "pending"], {
@@ -1995,7 +2056,7 @@ describe("authority cli MCP integration", () => {
         (step) =>
           step.step_type === "approval_step" &&
           step.status === "awaiting_approval" &&
-          step.primary_reason?.code === "UNKNOWN_SCOPE_REQUIRES_APPROVAL",
+          step.primary_reason?.code === "WORKSPACE_SHELL_REQUIRES_APPROVAL",
       ),
     ).toBe(true);
 
@@ -2009,7 +2070,7 @@ describe("authority cli MCP integration", () => {
       primary_reason?: { code: string } | null;
     };
     expect(helperBeforeResult.answer).toContain("waiting for approval");
-    expect(helperBeforeResult.primary_reason?.code).toBe("UNKNOWN_SCOPE_REQUIRES_APPROVAL");
+    expect(helperBeforeResult.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
 
     const approve = await runCliProcess(["--json", "approve", approvalId, "cli integration approval"], {
       workspaceRoot: harness.workspaceRoot,
@@ -2319,6 +2380,8 @@ describe("authority cli MCP integration", () => {
 
   it("denies pending approvals through the built CLI binary without executing side effects", async () => {
     const harness = await createHarness();
+    writeShellApprovalPolicy(harness.workspaceRoot);
+    await restartHarness(harness);
 
     const registerRun = await runCliProcess(["--json", "register-run", "cli-deny-flow"], {
       workspaceRoot: harness.workspaceRoot,

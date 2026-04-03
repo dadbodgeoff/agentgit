@@ -80,7 +80,8 @@ describe("containment helpers", () => {
         degraded_reasons: [],
       },
       network_policy: "none",
-      credential_mode: "brokered_secret_refs",
+      credential_mode: "brokered_bindings",
+      egress_mode: "none",
     });
 
     expect(snapshot).toEqual({
@@ -93,6 +94,10 @@ describe("containment helpers", () => {
       read_only_rootfs_enabled: true,
       network_restricted: true,
       credential_brokering_enabled: true,
+      egress_mode: "none",
+      egress_assurance: "boundary_enforced",
+      backend_enforced_allowlist_supported: false,
+      raw_socket_egress_blocked: true,
       proxy_egress_allowlist_applied: false,
       egress_allowlist_hosts: [],
       server_platform: "Docker Engine - Community",
@@ -113,7 +118,8 @@ describe("containment helpers", () => {
     const backend = resolveContainedBackendRuntime("docker");
     const capability = backend.detect_capability(context, {
       network_policy: "none",
-      credential_mode: "brokered_secret_refs",
+      credential_mode: "brokered_bindings",
+      egress_mode: "none",
     });
 
     expect(backend.backend).toBe("docker");
@@ -124,6 +130,8 @@ describe("containment helpers", () => {
       docker_available: true,
       network_restricted: true,
       credential_brokering_enabled: true,
+      egress_mode: "none",
+      egress_assurance: "boundary_enforced",
     });
     store.close();
   });

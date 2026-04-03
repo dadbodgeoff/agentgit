@@ -26,6 +26,7 @@ This package implements the launch product surface defined in the agent runtime 
 - The contained path now runs through a shared backend interface with normalized capability snapshots, so Docker is an implementation behind the seam instead of containment architecture leaking through the service layer.
 - Contained inspect and repair re-verify live Docker availability instead of trusting only the setup-time snapshot, so a missing or stopped Docker backend is surfaced as a degraded contained state immediately.
 - `agentgit run` now preflights the saved integration before registering a new governed run, so Docker outages and OpenClaw config drift fail cleanly without creating stale launch records.
+- `agentgit run` also supports deliberate checkpoint controls without adding a new top-level verb: `--checkpoint`, `--hard-checkpoint`, `--checkpoint-kind`, and `--checkpoint-reason` all map onto the existing authority run-checkpoint machinery and surface restore commands back to the operator.
 - That same run preflight now re-validates brokered contained secret bindings, so removed or expired workspace secrets fail before launch instead of half-starting a contained run.
 - `agentgit inspect` also surfaces missing brokered contained secrets as degraded state, so setup-time secret references do not look healthy after the underlying secret has been removed or expired.
 - Startup failures now avoid persisting misleading `last_run_id` or orphaned contained projection state, so launch bookkeeping only advances once the runtime actually starts cleanly.
@@ -55,3 +56,11 @@ The package ships with:
 - demo/inspect/restore integration coverage
 - conflict-safe restore coverage
 - restart resilience coverage
+
+For a real local smoke run across the product surface, use:
+
+```bash
+pnpm smoke:agent-runtime
+```
+
+That script builds the product CLI, runs the deterministic demo flow, verifies attached generic setup/run/inspect behavior, and exercises the Docker-contained lane when Docker is available locally.

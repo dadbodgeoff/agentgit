@@ -368,6 +368,7 @@ pnpm cli timeline <run-id>
 ```bash
 pnpm release:pack          # Pack publishable tarballs
 pnpm smoke:cli-install     # End-to-end install smoke test
+pnpm smoke:agent-runtime   # Product demo + generic + contained runtime smoke test
 pnpm release:verify        # Verify artifact signatures
 ```
 

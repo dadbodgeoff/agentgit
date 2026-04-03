@@ -74,6 +74,8 @@ import {
   type ResolveMcpServerCandidateResponsePayload,
   type BindMcpServerCredentialsRequestPayload,
   type BindMcpServerCredentialsResponsePayload,
+  type CreateRunCheckpointRequestPayload,
+  type CreateRunCheckpointResponsePayload,
   type SubmitActionAttemptRequestPayload,
   type SubmitActionAttemptResponsePayload,
   type ClientType,
@@ -229,6 +231,22 @@ export class AuthorityClient {
       "get_run_summary",
       payload,
       this.sessionId,
+    );
+  }
+
+  async createRunCheckpoint(
+    payload: CreateRunCheckpointRequestPayload,
+    options: MutatingRequestOptions = {},
+  ): Promise<CreateRunCheckpointResponsePayload> {
+    if (!this.sessionId) {
+      await this.hello();
+    }
+
+    return this.sendRequest<CreateRunCheckpointRequestPayload, CreateRunCheckpointResponsePayload>(
+      "create_run_checkpoint",
+      payload,
+      this.sessionId,
+      options.idempotencyKey,
     );
   }
 

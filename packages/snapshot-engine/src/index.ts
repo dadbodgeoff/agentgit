@@ -58,6 +58,10 @@ export interface SnapshotSelectionInput {
   capability_state?: "healthy" | "stale" | "degraded";
   low_disk_pressure_observed?: boolean;
   journal_chain_depth?: number;
+  recent_ambiguous_shell_mutations?: number;
+  recent_broad_mutation_actions?: number;
+  recent_review_or_blocked_mutations?: number;
+  recent_failed_mutations?: number;
   explicit_branch_point?: boolean;
   explicit_hard_checkpoint?: boolean;
 }
@@ -77,6 +81,10 @@ export interface SnapshotSelectionResult {
     capability_state: "healthy" | "stale" | "degraded";
     low_disk_pressure_observed: boolean;
     journal_chain_depth: number;
+    recent_ambiguous_shell_mutations: number;
+    recent_broad_mutation_actions: number;
+    recent_review_or_blocked_mutations: number;
+    recent_failed_mutations: number;
     explicit_branch_point: boolean;
     explicit_hard_checkpoint: boolean;
   };
@@ -277,6 +285,10 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
   const capabilityState = input.capability_state ?? "healthy";
   const lowDiskPressureObserved = input.low_disk_pressure_observed ?? false;
   const journalChainDepth = input.journal_chain_depth ?? 0;
+  const recentAmbiguousShellMutations = input.recent_ambiguous_shell_mutations ?? 0;
+  const recentBroadMutationActions = input.recent_broad_mutation_actions ?? 0;
+  const recentReviewOrBlockedMutations = input.recent_review_or_blocked_mutations ?? 0;
+  const recentFailedMutations = input.recent_failed_mutations ?? 0;
   const explicitBranchPoint = input.explicit_branch_point ?? false;
   const explicitHardCheckpoint = input.explicit_hard_checkpoint ?? false;
   const operationFamily = snapshotOperationFamily(input.action);
@@ -350,6 +362,30 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
     reasonCodes.push("snapshot.capability_state_strengthened");
   }
 
+  if (
+    snapshotClass !== "exact_anchor" &&
+    recentAmbiguousShellMutations >= 2 &&
+    (usesWorkspaceSnapshot || scopeBreadth !== "single" || scopeUnknowns.length > 0)
+  ) {
+    snapshotClass = "exact_anchor";
+    reasonCodes.push("snapshot.repeated_ambiguous_shell_history");
+  } else {
+    if (snapshotClass === "journal_only" && recentBroadMutationActions >= 2) {
+      snapshotClass = "journal_plus_anchor";
+      reasonCodes.push("snapshot.repeated_broad_mutation_history");
+    }
+
+    if (snapshotClass === "journal_only" && recentReviewOrBlockedMutations >= 2) {
+      snapshotClass = "journal_plus_anchor";
+      reasonCodes.push("snapshot.repeated_reviewed_mutation_history");
+    }
+
+    if (snapshotClass === "journal_only" && recentFailedMutations >= 1) {
+      snapshotClass = "journal_plus_anchor";
+      reasonCodes.push("snapshot.recent_failed_mutation_history");
+    }
+  }
+
   if (lowDiskPressureObserved) {
     reasonCodes.push("snapshot.low_disk_pressure_observed");
   }
@@ -374,6 +410,10 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
       capability_state: capabilityState,
       low_disk_pressure_observed: lowDiskPressureObserved,
       journal_chain_depth: journalChainDepth,
+      recent_ambiguous_shell_mutations: recentAmbiguousShellMutations,
+      recent_broad_mutation_actions: recentBroadMutationActions,
+      recent_review_or_blocked_mutations: recentReviewOrBlockedMutations,
+      recent_failed_mutations: recentFailedMutations,
       explicit_branch_point: explicitBranchPoint,
       explicit_hard_checkpoint: explicitHardCheckpoint,
     },
