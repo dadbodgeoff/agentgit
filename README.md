@@ -28,7 +28,6 @@ The result: agents can operate with real autonomy while operators keep control, 
 [Wiki →](https://github.com/dadbodgeoff/agentgit/wiki)
 
 ---
-
 ## Why agentgit?
 
 Autonomous agents need to act. But "just let the agent do it" breaks down fast:
@@ -37,7 +36,6 @@ Autonomous agents need to act. But "just let the agent do it" breaks down fast:
 - **No reversibility.** When an agent goes wrong mid-run, how do you roll back?
 - **No operator control.** How do you enforce "always ask before deleting" or "never write outside this workspace"?
 - **No trust model for external tools.** How do you let an agent call an MCP server without giving it unchecked credential access?
-
 agentgit solves all of this with a single local daemon that agents call through instead of calling the OS directly.
 
 ---
