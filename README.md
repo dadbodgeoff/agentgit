@@ -1,96 +1,39 @@
 # agentgit
 
-Local-first execution control for autonomous agents.
+**Local-first execution authority for autonomous agents.**
 
-The repo is past the initial scaffold phase and now contains a real local authority runtime, SDKs, CLI, recovery engine, maintenance surface, and inspector UI.
+agentgit sits between your agent runtime and the outside world. Every action an agent wants to take — write a file, run a shell command, call an MCP tool — passes through a governance layer that normalizes the intent, evaluates it against policy, optionally captures a recovery boundary, executes it in a governed adapter, and records the full causal history in an append-only journal.
 
-Day-one launch/runtime truth is intentionally conservative:
+The result: agents can operate with real autonomy while operators keep control, maintain reversibility, and have the evidence they need when something goes wrong.
 
-- supported governed execution: `filesystem`, `shell`, owned `function` integrations (`drafts`, `notes`, `tickets`), and operator-managed `mcp` tools over `stdio` and `streamable_http`
-- unsupported governed surfaces fail closed instead of simulating execution
-- current MCP launch claim: durable operator-owned local registry, durable local encrypted MCP secret storage backed by OS keychain or Secret Service protection with expiry enforcement and rotation metadata, sandboxed `stdio` MCP execution with digest-pinned OCI container isolation as the required production path, explicit `allowed_registries` policy, cosign-based signature verification with SLSA provenance enforcement for remote images, and `oci_container.build` support for local development on the same boundary, explicit public HTTPS host allowlist policy with connect-time DNS/IP scope validation and redirect-chain revalidation, CLI/SDK/daemon management APIs for servers/secrets/host policies, first-class CLI MCP tool submission, `tools/list`, `tools/call`, direct-credential denial, approval-first mutation policy, and per-server `streamable_http` concurrency limits enforced either in-process or through shared SQLite leases with heartbeat renewal
-- browser/computer governance, generic governed HTTP, hosted MCP, arbitrary remote MCP registration from agent or user input, and durable queued workers are not part of the launch/runtime claim today
-- maintenance is inline plus startup reconciliation, not a durable worker queue
-- the public npm release surface is now `@agentgit/authority-daemon`, `@agentgit/schemas`, `@agentgit/authority-sdk`, and `@agentgit/authority-cli`, with Changesets-driven versioning, GitHub Actions release automation, and installed-binary smoke verification; that release path is built even if a given version has not been published yet
+---
 
-For the audited answer to "what is actually built today," use:
+[![npm](https://img.shields.io/npm/v/@agentgit/authority-cli?label=%40agentgit%2Fauthority-cli)](https://www.npmjs.com/package/@agentgit/authority-cli)
+[![npm](https://img.shields.io/npm/v/@agentgit/authority-sdk?label=%40agentgit%2Fauthority-sdk)](https://www.npmjs.com/package/@agentgit/authority-sdk)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D24.14.0-brightgreen)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/agentgit/agentgit/actions/workflows/ci.yml/badge.svg)](https://github.com/agentgit/agentgit/actions/workflows/ci.yml)
 
-- [engineering-docs/CURRENT-IMPLEMENTATION-STATE.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CURRENT-IMPLEMENTATION-STATE.md)
+---
 
-For the explicit local-first MVP boundary and deferred cloud/hosted phases, use:
+## Why agentgit?
 
-- `agentgit-authority --json cloud-roadmap`
-- [engineering-docs/PHASE-1-TO-5-EXECUTION-AUDIT.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/PHASE-1-TO-5-EXECUTION-AUDIT.md)
+Autonomous agents need to act. But "just let the agent do it" breaks down fast:
 
-Historical design docs remain important, but they include planned future surfaces that are not all runtime-real yet.
+- **No audit trail.** What did the agent actually do? Which file did it write? What did the shell command output?
+- **No reversibility.** When an agent goes wrong mid-run, how do you roll back?
+- **No operator control.** How do you enforce "always ask before deleting" or "never write outside this workspace"?
+- **No trust model for external tools.** How do you let an agent call an MCP server without giving it unchecked credential access?
 
-## Current Local Loop
+agentgit solves all of this with a single local daemon that agents call through instead of calling the OS directly.
 
-```bash
-pnpm install
-pnpm build
-pnpm daemon:start
-pnpm cli ping
-pnpm cli list-mcp-servers
-pnpm cli list-mcp-secrets
-pnpm cli list-mcp-host-policies
-pnpm cli upsert-mcp-server '{"server_id":"notes_stdio","transport":"stdio","command":"node","args":["/absolute/path/to/mcp-test-server.mjs"],"tools":[{"tool_name":"echo_note","side_effect_level":"read_only","approval_mode":"allow"}]}'
-pnpm cli register-run first-run
-pnpm cli submit-mcp-tool <run-id> notes_stdio echo_note '{"note":"hello from cli"}'
-pnpm cli submit-filesystem-write <run-id> README.md "hello"
-pnpm cli submit-shell <run-id> ls
-pnpm cli artifact <artifact-id> internal
-pnpm cli artifact-export <artifact-id> ./exports/stdout.txt internal
-pnpm cli run-audit-export <run-id> ./audit-bundle internal
-pnpm cli run-audit-verify ./audit-bundle
-pnpm cli run-audit-report ./audit-bundle
-pnpm cli run-audit-share ./audit-bundle ./audit-share
-pnpm cli run-audit-compare ./audit-bundle ./audit-bundle-2
-pnpm cli run-summary <run-id>
-```
+---
 
-The CLI now defaults to human-readable summaries for inspection-style commands like `run-summary`, `timeline`, `helper`, approvals, and recovery. For scripting, use `--json` before the command, for example:
+## Quickstart
 
 ```bash
-pnpm cli -- --json timeline <run-id>
-```
-
-The operator policy loop is also real now: `policy show`, `policy explain`, `policy calibration-report`, `policy recommend-thresholds`, `policy diff`, and `policy render-threshold-patch` are all available through the CLI. The recommendation and patch-render flows are explicitly report-only and do not mutate live policy automatically.
-
-For operator evidence handling, `artifact` remains the inline inspection path, `artifact-export` writes one full stored artifact body to disk without truncation, `run-audit-export` emits a complete run bundle with summary, timeline, approvals, diagnostics, and exported visible artifact bodies, `run-audit-verify` checks that exported bundle for missing or tampered evidence, `run-audit-report` summarizes a verified bundle for incident review, `run-audit-share` emits a redaction-aware share package that withholds artifact bodies by default, and `run-audit-compare` highlights evidence drift between two bundles. These flows fail closed on visibility, truncation, verification, or overwrite violations.
-
-## Python SDK Loop
-
-The repo also includes a thin Python client in [packages/authority-sdk-py](/Users/geoffreyfernald/Documents/agentgit/packages/authority-sdk-py).
-
-With the daemon running, you can exercise the same governed flow from Python:
-
-```bash
-PYTHONPATH=packages/authority-sdk-py \
-python3 packages/authority-sdk-py/examples/governed_run.py \
-  --workspace-root "$(pwd)"
-```
-
-Or run the Python SDK tests directly:
-
-```bash
-PYTHONPATH=packages/authority-sdk-py \
-python3 -m unittest discover -s packages/authority-sdk-py/tests -v
-```
-
-With the daemon already running, the same Python demo is also exposed as a root shortcut:
-
-```bash
-pnpm smoke:py
-```
-
-The repo pins `better-sqlite3` as an approved native build dependency in `.npmrc` so the local journal can compile consistently.
-
-## Beginner Quickstart
-
-For MVP users, the shortest supported path is now:
-
-```bash
+# Run from your project directory — data lives in ./.agentgit/
+cd /your/project
 npm install -g @agentgit/authority-cli
 agentgit-authority setup
 agentgit-authority daemon start
@@ -101,49 +44,366 @@ In a second terminal:
 ```bash
 agentgit-authority doctor
 agentgit-authority ping
+
+# Register a run (returns a run_id)
+agentgit-authority register-run my-first-run
+
+# Submit a governed filesystem write
+agentgit-authority submit-filesystem-write <run-id> /tmp/hello.txt "hello from agentgit"
+
+# Submit a governed shell command
+agentgit-authority submit-shell <run-id> echo "hello"
+
+# Inspect what happened
+agentgit-authority timeline <run-id>
+agentgit-authority helper <run-id> what_happened
+agentgit-authority run-summary <run-id>
 ```
 
-## Release And Install Story
+> **Python agent?** See the [Python SDK quickstart](#python-sdk) below.
 
-The repo now has a real npm release path for the public TypeScript surface:
+---
 
-- `@agentgit/authority-daemon`
-- `@agentgit/schemas`
-- `@agentgit/authority-sdk`
-- `@agentgit/authority-cli`
+## How It Works
 
-What is true today:
+An agent action flows through eight subsystems in sequence:
 
-- package metadata is publish-ready
-- `.changeset/` is active for versioning
-- GitHub Actions CI runs `pnpm test`, `pnpm py:test`, and an installed-binary CLI smoke test
-- GitHub Actions release automation is wired for Changesets plus npm provenance/trusted-publishing setup
-- the installed-binary smoke path packs the publishable tarballs, installs them outside the monorepo, runs `setup`, starts the packaged daemon through the installed CLI, and proves the installed CLI can run `version`, `ping`, `doctor`, `register-run`, and a governed filesystem write end to end
+```
+Agent submits action attempt
+         │
+         ▼
+┌─────────────────────┐
+│  1. Action          │  Normalize to a canonical Action record
+│     Normalizer      │  (provenance, scope, risk hints, workspace validation)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  2. Policy          │  Evaluate against layered rules
+│     Engine          │  → allow | deny | ask | simulate | allow_with_snapshot
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  3. Snapshot        │  If allow_with_snapshot: capture rollback boundary
+│     Engine          │  (cheapest class satisfying recovery promise)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  4. Execution       │  Execute side effect in governed adapter
+│     Adapters        │  (filesystem / shell / MCP proxy / owned function)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  5. Run Journal     │  Append atomic RunEvent to durable SQLite history
+│     (spine)         │  (action + policy + snapshot + result, all linked)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  6. Recovery        │  Pre-compute restore/compensate/remediate plan
+│     Engine          │  (snapshot boundary, compensation, or review-only)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  7. Timeline &      │  Project raw history into readable steps
+│     Helper          │  (what happened? what changed? what's safe next?)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  8. Operator        │  CLI, TypeScript SDK, Python SDK, Inspector UI
+│     Surfaces        │  (inspect, approve, recover, audit, export)
+└─────────────────────┘
+```
 
-Useful commands:
+Everything is **local-first** — your data never leaves your machine unless you explicitly export an audit bundle.
+
+---
+
+## Governed Execution Domains
+
+| Surface | What it covers |
+|---------|---------------|
+| **Filesystem** | Read/write with workspace path validation and scope enforcement |
+| **Shell** | Command execution with arg/env inspection |
+| **MCP (stdio)** | Sandboxed local tool servers in digest-pinned OCI containers |
+| **MCP (streamable_http)** | Remote tool endpoints with explicit host allowlists and OS-backed secret injection |
+| **Owned Functions** | Drafts, notes, tickets — create/update/close with compensation support |
+
+Unsupported surfaces (browser/computer control, generic HTTP, arbitrary remote MCP) **fail closed** — they return an explicit `PRECONDITION_FAILED` error rather than silently proceeding or simulating.
+
+---
+
+## Key Features
+
+### Deterministic Policy
+Rules are explicit, layered, and operator-controlled. Outcomes are one of: `allow`, `deny`, `ask` (requires human approval), `simulate` (dry-run), or `allow_with_snapshot` (execute with a rollback boundary). No opaque ML scoring.
+
+### Recovery-Ready
+Every recoverable action gets a recovery plan pre-computed at execution time:
+- **Reversible**: restore from snapshot (e.g., a file write)
+- **Compensatable**: inverse operation (e.g., delete a created ticket)
+- **Review-only**: explain the outcome, no automatic action
+- **Irreversible**: document and prevent escalation
+
+### Durable Audit Journal
+SQLite append-only history ties every action to its policy outcome, snapshot, execution result, and approvals. Export a full evidence bundle with `run-audit-export`, verify its integrity with `run-audit-verify`, and share a redacted version with `run-audit-share`.
+
+### MCP with Real Trust Controls
+- OS-backed secret storage (macOS Keychain / Linux Secret Service)
+- Digest-pinned OCI container isolation for stdio servers
+- Cosign-based signature verification with SLSA provenance enforcement
+- Explicit public HTTPS host allowlists with DNS/IP scope validation
+- Per-server tool allowlists with approval-mode overrides
+
+### Policy Calibration Loop
+After a run, use `policy calibration-report` to see approval patterns and confidence quality, `policy recommend-thresholds` to get data-driven threshold guidance, and `policy replay-thresholds` to test candidate thresholds against real journaled actions before rolling them out. Threshold changes are always operator-reviewed — nothing mutates live policy automatically.
+
+---
+
+## Install
+
+### TypeScript / JavaScript
 
 ```bash
-pnpm release:pack
-pnpm smoke:cli-install
-pnpm smoke:cli-compat
-pnpm release:verify
+# Operator CLI + daemon (recommended)
+npm install -g @agentgit/authority-cli
+
+# SDK only (embed in your agent)
+npm install @agentgit/authority-sdk @agentgit/schemas
 ```
 
-Once the npm trusted publisher is configured for the GitHub repo, the release workflow can publish the public packages without local ad hoc npm credentials.
+### Python SDK
 
-For day-one operator procedures (bring-up, profile/config flows, secure secret handling, audit workflow, upgrade/rollback checks), use:
+```bash
+pip install agentgit-authority  # coming soon
+# or from source:
+PYTHONPATH=packages/authority-sdk-py python3 your_agent.py
+```
 
-- [engineering-docs/CLI-OPERATOR-RUNBOOK.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CLI-OPERATOR-RUNBOOK.md)
+---
 
-Relevant docs:
+## TypeScript SDK
 
-- [engineering-docs/system-architecture.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/system-architecture.md)
-- [engineering-docs/v1-repo-package-module-plan.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/v1-repo-package-module-plan.md)
-- [engineering-docs/CURRENT-IMPLEMENTATION-STATE.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CURRENT-IMPLEMENTATION-STATE.md)
-- [engineering-docs/MVP-PRODUCTION-READINESS-PLAN.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/MVP-PRODUCTION-READINESS-PLAN.md)
-- [engineering-docs/MVP-PRODUCTION-READINESS-AUDIT.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/MVP-PRODUCTION-READINESS-AUDIT.md)
-- [engineering-docs/CLI-RELEASE-AND-INSTALL.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CLI-RELEASE-AND-INSTALL.md)
-- [engineering-docs/CLI-OPERATOR-RUNBOOK.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/CLI-OPERATOR-RUNBOOK.md)
-- [.github/workflows/security-hardening.yml](/Users/geoffreyfernald/Documents/agentgit/.github/workflows/security-hardening.yml)
-- [engineering-docs/support-architecture/09-hosted-mcp-and-remote-trust.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/support-architecture/09-hosted-mcp-and-remote-trust.md)
-- [engineering-docs/pre-code-specs/14-hosted-mcp-and-remote-trust-spec.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/pre-code-specs/14-hosted-mcp-and-remote-trust-spec.md)
+```ts
+import { AuthorityClient } from "@agentgit/authority-sdk";
+
+const client = new AuthorityClient({
+  socketPath: "/absolute/path/to/.agentgit/authority.sock",
+});
+
+// Register a run
+const run = await client.registerRun({
+  display_name: "my-agent-run",
+  workspace_roots: ["/path/to/workspace"],
+});
+
+// Submit a governed action — the daemon handles policy, snapshots, execution, journaling
+const result = await client.submitActionAttempt({
+  run_id: run.run_id,
+  tool_name: "write_file",
+  execution_domain: "filesystem",
+  raw_inputs: { path: "/path/to/file.txt", content: "hello" },
+  workspace_roots: ["/path/to/workspace"],
+});
+
+// Inspect the timeline
+const timeline = await client.queryTimeline(run.run_id);
+console.log(timeline.steps);
+
+// Plan and execute recovery if needed
+const plan = await client.planRecovery(result.action_id);
+await client.executeRecovery(plan.plan_id);
+```
+
+→ Full reference: [TypeScript SDK](packages/authority-sdk-ts/README.md)
+
+---
+
+## Python SDK
+
+```python
+from agentgit_authority import AuthorityClient, build_register_run_payload
+
+client = AuthorityClient()  # auto-discovers socket via AGENTGIT_ROOT or cwd
+
+run = client.register_run(build_register_run_payload("my-run", ["/path/to/workspace"]))
+
+client.submit_filesystem_write(run["run_id"], "/path/file.txt", "content",
+                               workspace_roots=["/path/to/workspace"])
+
+timeline = client.query_timeline(run["run_id"])
+pending = client.list_approvals(run_id=run["run_id"])
+```
+
+→ Full reference: [Python SDK](packages/authority-sdk-py/README.md)
+
+---
+
+## CLI Reference
+
+```bash
+# Health
+agentgit-authority doctor
+agentgit-authority ping
+
+# Run lifecycle
+agentgit-authority register-run <name>
+agentgit-authority run-summary <run-id>
+agentgit-authority timeline <run-id>
+agentgit-authority helper <run-id> what_happened
+agentgit-authority helper <run-id> likely_cause
+
+# Governance
+agentgit-authority submit-filesystem-write <run-id> <path> <content>
+agentgit-authority submit-shell <run-id> <command>
+agentgit-authority submit-mcp-tool <run-id> <server-id> <tool-name> <json-args>
+agentgit-authority list-approvals <run-id>
+agentgit-authority approve <approval-id>
+agentgit-authority deny <approval-id> "outside expected scope"
+
+# Policy
+agentgit-authority policy show
+agentgit-authority policy validate <policy.toml>
+agentgit-authority policy explain <attempt.json>
+agentgit-authority policy calibration-report
+agentgit-authority policy recommend-thresholds <run-id>
+agentgit-authority policy replay-thresholds <run-id>
+agentgit-authority policy diff <policy.toml>
+
+# Recovery
+agentgit-authority plan-recovery <target-id>
+agentgit-authority execute-recovery <plan-id>
+
+# Audit
+agentgit-authority run-audit-export <run-id> <bundle-path>
+agentgit-authority run-audit-verify <bundle-path>
+agentgit-authority run-audit-report <bundle-path>
+agentgit-authority run-audit-share <bundle-path> <share-path>
+
+# MCP
+agentgit-authority onboard-mcp <plan.json>
+agentgit-authority trust-review-mcp <plan.json>
+agentgit-authority list-mcp-servers
+agentgit-authority list-mcp-secrets
+agentgit-authority list-mcp-host-policies
+```
+
+Add `--json` before any subcommand for machine-readable output.
+
+→ Full reference: [CLI README](packages/authority-cli/README.md)
+
+---
+
+## Repo Structure
+
+```
+packages/
+  authority-cli/         # Operator CLI  (public: @agentgit/authority-cli)
+  authority-daemon/      # Local daemon runtime  (public: @agentgit/authority-daemon)
+  authority-sdk-ts/      # TypeScript client SDK  (public: @agentgit/authority-sdk)
+  authority-sdk-py/      # Python client SDK
+  schemas/               # Canonical types + Zod schemas  (public: @agentgit/schemas)
+  action-normalizer/     # Action normalization engine  (internal)
+  policy-engine/         # Deterministic policy evaluation  (internal)
+  snapshot-engine/       # Recovery boundary capture  (internal)
+  execution-adapters/    # Governed side-effecting adapters  (internal)
+  run-journal/           # Append-only SQLite history spine  (internal)
+  recovery-engine/       # Recovery planning + execution  (internal)
+  timeline-helper/       # Timeline projection + helper Q&A  (internal)
+  credential-broker/     # OS-backed secret key protection  (internal)
+  mcp-registry/          # MCP server registry state  (internal)
+  integration-state/     # Owned integration state (drafts/notes/tickets)  (internal)
+  workspace-index/       # Workspace snapshot metadata  (internal)
+  hosted-mcp-worker/     # Hosted MCP worker (future work)  (internal)
+  test-fixtures/         # Shared test utilities  (internal)
+
+apps/
+  inspector-ui/          # Local operator timeline + recovery UI
+```
+
+---
+
+## Developing
+
+### Prerequisites
+
+- Node.js 24.14.0+
+- pnpm 10.33.0+
+- Python 3.11+ (for Python SDK tests)
+
+### Build and test
+
+```bash
+pnpm install
+pnpm build
+pnpm test
+
+# Start the daemon (foreground)
+pnpm daemon:start
+
+# In a second terminal — try a governed run
+pnpm cli register-run dev-test
+pnpm cli submit-filesystem-write <run-id> /tmp/test.txt "hello"
+pnpm cli timeline <run-id>
+```
+
+### Release flow
+
+```bash
+pnpm release:pack          # Pack publishable tarballs
+pnpm smoke:cli-install     # End-to-end install smoke test
+pnpm release:verify        # Verify artifact signatures
+```
+
+Releases are driven by [Changesets](https://github.com/changesets/changesets). Add a changeset with `pnpm changeset`, then the GitHub Actions release workflow handles versioning and npm publish with provenance.
+
+---
+
+## Documentation
+
+| Resource | Description |
+|----------|-------------|
+| [Wiki: Getting Started](wiki/Getting-Started.md) | Install, first run, beginner walkthrough |
+| [Wiki: Architecture](wiki/Architecture.md) | System design, subsystem responsibilities, data flow |
+| [Wiki: Core Concepts](wiki/Core-Concepts.md) | Actions, policy, snapshots, recovery, journal explained |
+| [Wiki: CLI Reference](wiki/CLI-Reference.md) | Every command with examples |
+| [Wiki: TypeScript SDK](wiki/TypeScript-SDK.md) | Full SDK API reference |
+| [Wiki: Python SDK](wiki/Python-SDK.md) | Python SDK reference |
+| [Wiki: Policy Engine](wiki/Policy-Engine.md) | Writing policies, calibration loop |
+| [Wiki: Recovery & Snapshots](wiki/Recovery-and-Snapshots.md) | Recovery types, execution, drills |
+| [Wiki: MCP Integration](wiki/MCP-Integration.md) | Onboarding MCP servers, secrets, trust review |
+| [Wiki: Audit & Evidence](wiki/Audit-and-Evidence.md) | Audit bundles, export, verify, share |
+| [Wiki: Configuration](wiki/Configuration.md) | Environment variables, profiles, policy files |
+| [Wiki: Contributing](wiki/Contributing.md) | Development setup, conventions, PR process |
+| [Wiki: FAQ](wiki/FAQ.md) | Common questions |
+| [engineering-docs/](engineering-docs/) | Architecture specs, subsystem design docs, runbooks |
+
+---
+
+## What's Not Supported (Yet)
+
+These surfaces are explicitly out of scope for the current release and fail closed:
+
+- **Browser / computer control** — not governed today
+- **Generic HTTP adapter** — use the owned ticket adapter for specific integrations
+- **Arbitrary remote MCP** — agents cannot register MCP servers; only operators can
+- **Durable queued workers** — maintenance is inline and at startup reconciliation
+
+See `agentgit-authority cloud-roadmap` for the explicit roadmap of deferred cloud/hosted phases.
+
+---
+
+## Contributing
+
+Contributions welcome. See [wiki/Contributing.md](wiki/Contributing.md) for the development setup, coding conventions, and PR process.
+
+---
+
+## License
+
+MIT
