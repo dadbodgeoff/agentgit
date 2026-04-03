@@ -1,129 +1,211 @@
-# agentgit-authority
+# agentgit-authority (Python SDK)
 
-Thin Python SDK for the local AgentGit authority daemon.
+Thin Python client for the local agentgit authority daemon. Mirrors the TypeScript SDK surface, communicates via newline-delimited JSON over the daemon's Unix socket.
 
-## Usage
+---
+
+## Requirements
+
+- Python 3.11+
+- agentgit daemon running (`agentgit-authority daemon start`)
+
+---
+
+## Install
+
+```bash
+pip install agentgit-authority   # coming soon
+
+# Or from source (monorepo):
+export PYTHONPATH=packages/authority-sdk-py
+```
+
+---
+
+## Quickstart
 
 ```python
 from agentgit_authority import AuthorityClient, build_register_run_payload
 
+# Auto-discovers socket: AGENTGIT_ROOT → INIT_CWD → os.getcwd()
+# Resolves to <root>/.agentgit/authority.sock
 client = AuthorityClient()
+
+# Verify daemon is reachable
 hello = client.hello()
+print(hello["accepted_api_version"])  # "authority.v1"
+
+# Register a run
 run = client.register_run(
-    build_register_run_payload(
-        "demo",
-        ["/path/to/workspace"],
-    )
+    build_register_run_payload("my-run", ["/path/to/workspace"])
 )
-timeline = client.query_timeline(run["run_id"])
-```
+run_id = run["run_id"]
 
-For governed attempts, you can either use convenience submitters:
-
-```python
+# Submit a governed action
 client.submit_filesystem_write(
-    run["run_id"],
-    "/path/to/workspace/README.md",
-    "hello\n",
+    run_id,
+    "/path/to/workspace/output.txt",
+    "hello from python agent",
     workspace_roots=["/path/to/workspace"],
 )
+
+# Inspect the timeline
+timeline = client.query_timeline(run_id)
+for step in timeline["steps"]:
+    print(step["summary"])
 ```
 
-Or build a custom attempt for other tool kinds:
+---
+
+## Governed Submissions
+
+### Filesystem
+
+```python
+client.submit_filesystem_write(run_id, path, content, workspace_roots=[...])
+```
+
+### Shell
+
+```python
+client.submit_shell(run_id, "git status", workspace_roots=[...])
+```
+
+### MCP tool call
 
 ```python
 from agentgit_authority import build_action_attempt
 
 attempt = build_action_attempt(
-    run["run_id"],
-    tool_name="crm_update",
+    run_id,
+    tool_name="search_pages",
     tool_kind="mcp",
-    raw_call={"operation": "update_contact", "contact_id": "123"},
-    workspace_roots=["/path/to/workspace"],
+    raw_call={"server_id": "notion_public", "arguments": {"query": "launch"}},
+    workspace_roots=[...],
 )
 client.submit_action_attempt(attempt)
 ```
 
-The SDK intentionally stays thin:
-
-- it speaks newline-delimited JSON over the local authority socket
-- it mirrors the TypeScript SDK method surface
-- it does not reimplement policy, snapshot, journal, or recovery logic
-- it now includes MCP server/secret/host-policy management wrappers like `list_mcp_servers`, `list_mcp_secrets`, `list_mcp_host_policies`, `upsert_mcp_server`, `upsert_mcp_secret`, and `upsert_mcp_host_policy`
-
-There are also thin workflow helpers for common operations:
+### Owned functions
 
 ```python
-pending = client.list_pending_approvals(run["run_id"])
-cause = client.likely_cause(run["run_id"])
-summary = client.summarize_run(run["run_id"])
-client.approve("apr_123", "looks safe")
-client.submit_draft_create(
-    run["run_id"],
-    "Launch plan",
-    "Ship the compensator carefully.",
-    workspace_roots=["/path/to/workspace"],
-)
-client.submit_ticket_create(
-    run["run_id"],
-    "Launch blocker",
-    "Credentialed adapters must use brokered auth.",
-    workspace_roots=["/path/to/workspace"],
-)
-client.submit_ticket_update(
-    run["run_id"],
-    "ticket_existing",
-    title="Updated blocker",
-    body="Recovered ticket flow needs preimage restore.",
-    workspace_roots=["/path/to/workspace"],
-)
-client.submit_ticket_close(
-    run["run_id"],
-    "ticket_existing",
-    workspace_roots=["/path/to/workspace"],
-)
-client.submit_ticket_add_label(
-    run["run_id"],
-    "ticket_existing",
-    "priority/high",
-    workspace_roots=["/path/to/workspace"],
-)
-client.plan_recovery("act_123")
+# Drafts
+client.submit_draft_create(run_id, "My Draft", "content...", workspace_roots=[...])
+
+# Notes
+client.submit_note_create(run_id, "My Note", "content...", workspace_roots=[...])
+
+# Tickets
+client.submit_ticket_create(run_id, "Bug: auth fails", "description...", workspace_roots=[...])
+client.submit_ticket_update(run_id, "ticket_123", title="Updated title", workspace_roots=[...])
+client.submit_ticket_close(run_id, "ticket_123", workspace_roots=[...])
+client.submit_ticket_add_label(run_id, "ticket_123", "priority/high", workspace_roots=[...])
 ```
 
-Recovery helpers accept either a snapshot id like `snap_123` or an action boundary id like `act_123`.
+---
 
-## Development
+## Inspection & Approvals
+
+```python
+# Timeline and run summary
+timeline = client.query_timeline(run_id)
+summary = client.get_run_summary(run_id)
+
+# Ask structured questions (uses HelperQuestionType enum values)
+answer = client.query_helper(run_id, "what_happened")
+cause  = client.query_helper(run_id, "likely_cause")
+# Other valid types: "run_summary", "reversible_steps", "why_blocked",
+# "external_side_effects", "compare_steps", etc.
+
+# Approvals
+pending = client.list_approvals(run_id=run_id)
+client.resolve_approval("apr_123", "approve", "looks safe")
+client.resolve_approval("apr_123", "deny",    "risky — needs review")
+```
+
+---
+
+## Recovery
+
+```python
+# Plan recovery for an action or snapshot
+plan = client.plan_recovery("act_123")
+print(f"Recovery type: {plan['recovery_type']}, confidence: {plan['confidence']}")
+
+# Execute the plan after reviewing it
+result = client.execute_recovery(plan["plan_id"])
+```
+
+---
+
+## MCP Management
+
+```python
+# List registered servers, secrets, and host policies
+servers = client.list_mcp_servers()
+secrets = client.list_mcp_secrets()
+policies = client.list_mcp_host_policies()
+
+# Register a new server
+client.upsert_mcp_server({
+    "server_id": "my_server",
+    "transport": "streamable_http",
+    "url": "https://api.example.com/mcp",
+    "network_scope": "public_https",
+    "auth": {"type": "bearer_secret_ref", "secret_id": "my_secret"},
+    "tools": [{"tool_name": "search", "side_effect_level": "read_only", "approval_mode": "allow"}],
+})
+```
+
+---
+
+## Running Tests
 
 ```bash
-PYTHONPATH=packages/authority-sdk-py python3 -m unittest discover -s packages/authority-sdk-py/tests -v
+PYTHONPATH=packages/authority-sdk-py \
+python3 -m unittest discover -s packages/authority-sdk-py/tests -v
 ```
 
-## Example
+Or from the repo root:
 
-Start the daemon in one terminal:
+```bash
+pnpm py:test
+```
+
+---
+
+## Running the Example
+
+With the daemon running in one terminal:
 
 ```bash
 pnpm daemon:start
 ```
 
-Then run the Python SDK example in another:
+Run the example in another:
 
 ```bash
 PYTHONPATH=packages/authority-sdk-py \
 python3 packages/authority-sdk-py/examples/governed_run.py \
-  --workspace-root /path/to/workspace
+  --workspace-root "$(pwd)"
+
+# Or from repo root:
+pnpm smoke:py
 ```
 
-If the package is installed, the same demo is available as:
+---
 
-```bash
-agentgit-authority-demo --workspace-root /path/to/workspace
-```
+## Design Notes
 
-The example will:
+- Speaks newline-delimited JSON over the local authority Unix socket
+- Mirrors the TypeScript SDK method surface — same method names, same semantics
+- Does not reimplement policy, snapshot, journal, or recovery logic (all in the daemon)
+- Intentionally thin — business logic lives in the daemon, not the SDK
 
-- open a daemon session
-- register a governed run
-- submit a filesystem write
-- print the run summary and projected timeline
+---
+
+## Related
+
+- [`@agentgit/authority-sdk`](../authority-sdk-ts/README.md) — TypeScript equivalent
+- [`@agentgit/authority-daemon`](../authority-daemon/README.md) — the daemon this SDK connects to
+- [`@agentgit/authority-cli`](../authority-cli/README.md) — CLI for operator-side management
