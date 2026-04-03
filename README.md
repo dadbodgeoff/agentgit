@@ -12,7 +12,20 @@ The result: agents can operate with real autonomy while operators keep control, 
 [![npm](https://img.shields.io/npm/v/@agentgit/authority-sdk?label=%40agentgit%2Fauthority-sdk)](https://www.npmjs.com/package/@agentgit/authority-sdk)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.14.0-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/agentgit/agentgit/actions/workflows/ci.yml/badge.svg)](https://github.com/agentgit/agentgit/actions/workflows/ci.yml)
+[![CI](https://github.com/dadbodgeoff/agentgit/actions/workflows/ci.yml/badge.svg)](https://github.com/dadbodgeoff/agentgit/actions/workflows/ci.yml)
+
+---
+
+**Jump to:**
+[Why agentgit?](#why-agentgit) •
+[Quickstart](#quickstart) •
+[How it works](#how-it-works) •
+[TypeScript SDK](#typescript-sdk) •
+[Python SDK](#python-sdk) •
+[CLI Reference](#cli-reference) •
+[Repo Structure](#repo-structure) •
+[Contributing](#contributing) •
+[Wiki →](https://github.com/dadbodgeoff/agentgit/wiki)
 
 ---
 
@@ -400,7 +413,7 @@ See `agentgit-authority cloud-roadmap` for the explicit roadmap of deferred clou
 
 ## Contributing
 
-Contributions welcome. See [wiki/Contributing.md](wiki/Contributing.md) for the development setup, coding conventions, and PR process.
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the quick-start and [wiki/Contributing](https://github.com/dadbodgeoff/agentgit/wiki/Contributing) for the full guide including coding conventions, commit message format, and release process.
 
 ---
 
