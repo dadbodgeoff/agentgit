@@ -292,7 +292,7 @@ describe("adapter planning", () => {
     store.close();
   });
 
-  it("plans brokered contained secret refs without host env passthrough", () => {
+  it("plans brokered contained runtime bindings without host env passthrough", () => {
     const root = makeTempDir();
     const workspaceRoot = path.join(root, "workspace");
     fs.mkdirSync(workspaceRoot, { recursive: true });
@@ -311,7 +311,7 @@ describe("adapter planning", () => {
         install_scope: "workspace",
         containment_backend: "docker",
         container_network_policy: "none",
-        contained_credential_mode: "brokered_secret_refs",
+        contained_credential_mode: "brokered_bindings",
         contained_secret_env_bindings: [
           {
             env_key: "OPENAI_API_KEY",
@@ -329,7 +329,7 @@ describe("adapter planning", () => {
 
     const planned = planSetup(context);
     expect(planned.plan.execution_mode).toBe("docker_contained");
-    expect(planned.plan.contained_credential_mode).toBe("brokered_secret_refs");
+    expect(planned.plan.contained_credential_mode).toBe("brokered_bindings");
     expect(planned.plan.governance_mode).toBe("contained_projection");
     expect(planned.plan.guarantees).toEqual(
       expect.arrayContaining(["real_workspace_protected", "publish_path_governed", "brokered_credentials_only", "egress_policy_applied"]),
@@ -344,6 +344,24 @@ describe("adapter planning", () => {
       credential_brokering_enabled: true,
     });
     expect(planned.plan.credential_passthrough_env_keys).toEqual([]);
+    expect(planned.plan.runtime_credential_bindings).toEqual([
+      expect.objectContaining({
+        kind: "env",
+        target: {
+          surface: "env",
+          env_key: "OPENAI_API_KEY",
+        },
+        broker_source_ref: "contained_openai",
+      }),
+      expect.objectContaining({
+        kind: "file",
+        target: {
+          surface: "file",
+          relative_path: "openai.key",
+        },
+        broker_source_ref: "contained_openai",
+      }),
+    ]);
     expect(planned.plan.contained_secret_env_bindings).toEqual([
       {
         env_key: "OPENAI_API_KEY",

@@ -390,14 +390,14 @@ Internally they should compile to rules.
 
 - allow reads
 - allow small file writes in approved roots
-- `allow_with_snapshot` on deletes, moves, recursive edits, broad refactors
-- ask on unknown-scope destructive operations
+- `allow_with_snapshot` on deletes, moves, recursive edits, broad refactors, and low-confidence recoverable local mutations
+- ask on degraded capability or truly unrecoverable destructive operations
 
 #### `shell.safe`
 
 - allow common read-only commands
-- `allow_with_snapshot` on likely workspace mutation commands
-- ask on networked commands, package installs, unknown commands, and broad deletes
+- `allow_with_snapshot` on likely workspace mutation commands, package manager/build/interpreter execution, and opaque local shell when AgentGit can establish recovery first
+- ask on consent or irreversibility boundaries, degraded capability, and untrusted external effects
 - deny commands matching explicit deny patterns
 
 #### `browser.safe`

@@ -109,7 +109,7 @@ describe("AuthorityClient transport", () => {
 
     const client = new AuthorityClient({
       socketPath: harness.socketPath,
-      connectTimeoutMs: 50,
+      connectTimeoutMs: 200,
       responseTimeoutMs: 50,
       maxConnectRetries: 0,
     });

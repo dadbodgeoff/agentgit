@@ -1,6 +1,6 @@
 # 09. Agent Runtime Integration
 
-Status date: 2026-04-02 (America/New_York)
+Status date: 2026-04-03 (America/New_York)
 
 This subsystem defines the productized integration layer that turns the existing AgentGit authority runtime into a dumb-easy safety and recovery layer for self-hosted autonomous agents.
 
@@ -31,6 +31,18 @@ What the repo does not yet provide is a product layer that:
 - makes inspect and restore feel like daily-driver verbs instead of operator forensics
 
 That product layer is the job of this subsystem.
+
+Current implementation progress:
+
+- Phase 1 is shipped: product `inspect` and `restore` explain recovery boundary strength and preview-only rationale
+- Phase 2 is shipped: `agentgit run --checkpoint` creates an explicit user-facing restore boundary, and `run` now supports deliberate checkpoint kind/reason controls without expanding the five-command surface
+- Phase 3 is shipped: snapshot selection now widens earlier based on repeated ambiguous shell and mutation history inside the same run
+- approval-light automation R&D is documented: humans should be reserved for degraded or unrecoverable situations, while recoverable risk shifts toward automatic `allow_with_snapshot` and contained publication control
+
+Related R&D:
+
+- [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/approval-light-automation-rd.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/approval-light-automation-rd.md)
+- [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/production-readiness-tdd.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/production-readiness-tdd.md)
 
 ## Product Law
 
@@ -179,6 +191,8 @@ This subsystem is successful when all of the following are true:
 
 - research notes: [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/research-notes.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/research-notes.md)
 - technical design document: [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/TDD.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/TDD.md)
+- production-readiness TDD: [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/production-readiness-tdd.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/production-readiness-tdd.md)
+- snapshot boundary audit: [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/snapshot-boundary-audit.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/snapshot-boundary-audit.md)
 - generic containment follow-on spec: [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/generic-containment-spec.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/generic-containment-spec.md)
 - contained GA implementation plan: [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/contained-ga-plan.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration/contained-ga-plan.md)
 - contained GA release checklist: [/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/contained-ga-signoff-checklist.md](/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/contained-ga-signoff-checklist.md)

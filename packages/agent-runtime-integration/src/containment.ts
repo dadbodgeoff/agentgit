@@ -7,6 +7,8 @@ import type { AdapterContext } from "./adapters.js";
 import type {
   ContainmentBackend,
   ContainedCredentialMode,
+  ContainedEgressAssurance,
+  ContainedEgressMode,
   ContainerNetworkPolicy,
   DockerCapabilitySnapshot,
   RuntimeProfileDocument,
@@ -63,6 +65,7 @@ export interface ContainedBackendRuntime {
   detect_capability(context: AdapterContext, params?: {
     network_policy?: ContainerNetworkPolicy;
     credential_mode?: ContainedCredentialMode;
+    egress_mode?: ContainedEgressMode;
     egress_allowlist_hosts?: string[];
   }): ContainedBackendCapability;
   prepare_launch(params: PrepareContainedLaunchParams): PreparedContainedLaunch;
@@ -182,6 +185,32 @@ export function containedCredentialModeForStrictness(
   return strictness === "strict" ? "none" : "direct_env";
 }
 
+export function deriveContainedEgressMode(params: {
+  network_policy?: ContainerNetworkPolicy;
+  egress_allowlist_hosts?: string[];
+}): ContainedEgressMode {
+  if (params.network_policy === "none") {
+    return "none";
+  }
+
+  return (params.egress_allowlist_hosts?.length ?? 0) > 0 ? "proxy_http_https" : "inherit";
+}
+
+export function deriveContainedEgressAssurance(params: {
+  egress_mode: ContainedEgressMode;
+  backend_supports_enforced_allowlist: boolean;
+}): ContainedEgressAssurance {
+  if (params.egress_mode === "none") {
+    return "boundary_enforced";
+  }
+
+  if (params.egress_mode === "backend_enforced_allowlist" && params.backend_supports_enforced_allowlist) {
+    return "boundary_enforced";
+  }
+
+  return "degraded";
+}
+
 export function isSupportedDirectCredentialEnvKey(key: string): boolean {
   return (SUPPORTED_DIRECT_CREDENTIAL_ENV_KEYS as readonly string[]).includes(key);
 }
@@ -203,8 +232,14 @@ export function buildDockerCapabilitySnapshot(params: {
   capability: DockerCapability;
   network_policy?: ContainerNetworkPolicy;
   credential_mode?: ContainedCredentialMode;
+  egress_mode?: ContainedEgressMode;
   egress_allowlist_hosts?: string[];
 }): DockerCapabilitySnapshot {
+  const egressMode =
+    params.egress_mode ?? deriveContainedEgressMode({
+      network_policy: params.network_policy,
+      egress_allowlist_hosts: params.egress_allowlist_hosts,
+    });
   return {
     backend_kind: "docker",
     capability_version: 1,
@@ -213,12 +248,17 @@ export function buildDockerCapabilitySnapshot(params: {
     rootless_docker: params.capability.rootless_docker,
     projection_enforced: true,
     read_only_rootfs_enabled: true,
-    network_restricted: params.network_policy === "none",
-    credential_brokering_enabled: params.credential_mode === "brokered_secret_refs",
-    proxy_egress_allowlist_applied:
-      params.network_policy !== "none" && (params.egress_allowlist_hosts?.length ?? 0) > 0,
-    egress_allowlist_hosts:
-      params.network_policy !== "none" ? (params.egress_allowlist_hosts ?? []) : [],
+    network_restricted: egressMode === "none",
+    credential_brokering_enabled: params.credential_mode === "brokered_bindings",
+    egress_mode: egressMode,
+    egress_assurance: deriveContainedEgressAssurance({
+      egress_mode: egressMode,
+      backend_supports_enforced_allowlist: false,
+    }),
+    backend_enforced_allowlist_supported: false,
+    raw_socket_egress_blocked: egressMode === "none",
+    proxy_egress_allowlist_applied: egressMode === "proxy_http_https" && (params.egress_allowlist_hosts?.length ?? 0) > 0,
+    egress_allowlist_hosts: egressMode !== "none" ? (params.egress_allowlist_hosts ?? []) : [],
     server_platform: params.capability.server_platform,
     server_os: params.capability.server_os,
     server_arch: params.capability.server_arch,
@@ -233,6 +273,7 @@ class DockerContainedBackend implements ContainedBackendRuntime {
     params?: {
       network_policy?: ContainerNetworkPolicy;
       credential_mode?: ContainedCredentialMode;
+      egress_mode?: ContainedEgressMode;
       egress_allowlist_hosts?: string[];
     },
   ): ContainedBackendCapability {
@@ -245,6 +286,7 @@ class DockerContainedBackend implements ContainedBackendRuntime {
         capability,
         network_policy: params?.network_policy,
         credential_mode: params?.credential_mode,
+        egress_mode: params?.egress_mode,
         egress_allowlist_hosts: params?.egress_allowlist_hosts,
       }),
     };
@@ -277,6 +319,9 @@ class DockerContainedBackend implements ContainedBackendRuntime {
     }
     if (params.profile.container_network_policy === "none") {
       args.push("--network", "none");
+    }
+    if (params.profile.contained_egress_mode === "backend_enforced_allowlist") {
+      throw new Error("Docker-contained runtime does not support backend-enforced allowlist egress.");
     }
     if (params.resolved_secret_env_file_path) {
       args.push("--env-file", params.resolved_secret_env_file_path);

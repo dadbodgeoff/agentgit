@@ -6,7 +6,6 @@ import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { normalizeActionAttempt } from "@agentgit/action-normalizer";
 import { LocalEncryptedSecretStore, SessionCredentialBroker } from "@agentgit/credential-broker";
 import {
   AdapterRegistry,
@@ -34,13 +33,7 @@ import {
   McpServerRegistry,
   validateMcpServerDefinitions,
 } from "@agentgit/mcp-registry";
-import {
-  evaluatePolicy,
-  replayPolicyThresholds,
-  recommendPolicyThresholds,
-  resolvePolicyLowConfidenceThreshold,
-  validatePolicyConfigDocument,
-} from "@agentgit/policy-engine";
+import { replayPolicyThresholds, recommendPolicyThresholds, validatePolicyConfigDocument } from "@agentgit/policy-engine";
 import {
   type CachedCapabilityState,
   StaticCompensationRegistry,
@@ -56,10 +49,8 @@ import { answerHelperQuery, projectTimelineView } from "@agentgit/timeline-helpe
 import {
   API_VERSION,
   type ActionRecord,
-  type CapabilityRecord,
   ActionRecordSchema,
   AgentGitError,
-  type ApprovalRequest,
   type ApprovalInboxItem,
   type DaemonMethod,
   ActivateMcpServerProfileRequestPayloadSchema,
@@ -72,6 +63,8 @@ import {
   type DiagnosticsResponsePayload,
   ExplainPolicyActionRequestPayloadSchema,
   type ExplainPolicyActionResponsePayload,
+  CreateRunCheckpointRequestPayloadSchema,
+  type CreateRunCheckpointResponsePayload,
   type ErrorEnvelope,
   ExecuteRecoveryRequestPayloadSchema,
   type ExecuteRecoveryResponsePayload,
@@ -158,11 +151,11 @@ import {
   RemoveMcpServerRequestPayloadSchema,
   type RemoveMcpServerResponsePayload,
   type PolicyOutcomeRecord,
-  PolicyOutcomeRecordSchema,
   PreconditionError,
   type ReasonDetail,
   type RecoveryPlan,
   type RecoveryTarget,
+  type RunCheckpointKind,
   RegisterRunRequestPayloadSchema,
   type RegisterRunResponsePayload,
   ResolveApprovalRequestPayloadSchema,
@@ -171,10 +164,7 @@ import {
   RequestEnvelopeSchema,
   type ResponseEnvelope,
   SCHEMA_PACK_VERSION,
-  SubmitActionAttemptRequestPayloadSchema,
-  type SubmitActionAttemptRequestPayload,
   SubmitMcpServerCandidateRequestPayloadSchema,
-  type ExecutionArtifact,
   type TimelineStep,
   type SubmitMcpServerCandidateResponsePayload,
   type SubmitActionAttemptResponsePayload,
@@ -194,6 +184,10 @@ import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import { selectSnapshotClass, type SnapshotSelectionResult } from "@agentgit/snapshot-engine";
 
 import { createPrefixedId } from "./ids.js";
+import {
+  handleSubmitActionAttempt as handleSubmitActionAttemptFlow,
+  prepareActionAttemptEvaluation,
+} from "./handlers/submit-action.js";
 import { HostedExecutionQueue } from "./hosted-execution-queue.js";
 import { HostedMcpWorkerClient } from "./hosted-worker-client.js";
 import {
@@ -202,6 +196,11 @@ import {
   type LoadPolicyRuntimeOptions,
   type PolicyRuntimeState,
 } from "./policy-runtime.js";
+import { executeGovernedAction as executeGovernedActionFlow } from "./services/action-execution.js";
+import {
+  deriveSnapshotCapabilityState as deriveSnapshotCapabilityStateService,
+  deriveSnapshotRunRiskContext as deriveSnapshotRunRiskContextService,
+} from "./services/snapshot-risk.js";
 import { AuthorityState } from "./state.js";
 
 const METHODS: DaemonMethod[] = [
@@ -572,30 +571,6 @@ function getRequestContext(rawRequest: unknown): {
   };
 }
 
-function validateActionRecord(data: unknown): ActionRecord {
-  try {
-    return validate(ActionRecordSchema, data);
-  } catch (error) {
-    if (error instanceof ValidationError) {
-      throw new InternalError("Normalized action failed schema validation.", error.details);
-    }
-
-    throw error;
-  }
-}
-
-function validatePolicyOutcomeRecord(data: unknown): PolicyOutcomeRecord {
-  try {
-    return validate(PolicyOutcomeRecordSchema, data);
-  } catch (error) {
-    if (error instanceof ValidationError) {
-      throw new InternalError("Policy outcome failed schema validation.", error.details);
-    }
-
-    throw error;
-  }
-}
-
 function normalizeRecoveryTarget(payload: { snapshot_id?: string; target?: RecoveryTarget }): RecoveryTarget {
   if (payload.target) {
     return payload.target;
@@ -644,6 +619,105 @@ function parseRunCheckpointToken(runCheckpoint: string): { runId: string; sequen
   }
 
   return { runId, sequence };
+}
+
+function buildSyntheticCheckpointAction(params: {
+  run_id: string;
+  session_id: string;
+  workspace_root: string;
+  checkpoint_kind: RunCheckpointKind;
+  reason?: string;
+}): ActionRecord {
+  const now = new Date().toISOString();
+  const checkpointLabel = params.checkpoint_kind === "hard_checkpoint" ? "hard checkpoint" : "checkpoint";
+  return ActionRecordSchema.parse({
+    schema_version: "action.v1",
+    action_id: `act_checkpoint_${randomUUID().replaceAll("-", "")}`,
+    run_id: params.run_id,
+    session_id: params.session_id,
+    status: "normalized",
+    timestamps: {
+      requested_at: now,
+      normalized_at: now,
+    },
+    provenance: {
+      mode: "governed",
+      source: "authority_daemon.checkpoint",
+      confidence: 1,
+    },
+    actor: {
+      type: "system",
+      tool_name: "agentgit_checkpoint",
+      tool_kind: "function",
+    },
+    operation: {
+      domain: "filesystem",
+      kind: "checkpoint_workspace",
+      name: "checkpoint_workspace",
+      display_name: `Create ${checkpointLabel}`,
+    },
+    execution_path: {
+      surface: "observer",
+      mode: "imported",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "workspace",
+        locator: params.workspace_root,
+        label: path.basename(params.workspace_root),
+      },
+      scope: {
+        breadth: "workspace",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: {
+        checkpoint_kind: params.checkpoint_kind,
+        ...(params.reason ? { reason: params.reason } : {}),
+      },
+      redacted: {
+        checkpoint_kind: params.checkpoint_kind,
+        ...(params.reason ? { reason: params.reason } : {}),
+      },
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: "read_only",
+      external_effects: "none",
+      reversibility_hint: "reversible",
+      sensitivity_hint: "moderate",
+      batch: false,
+    },
+    facets: {
+      checkpoint_kind: params.checkpoint_kind,
+      ...(params.reason ? { checkpoint_reason: params.reason } : {}),
+    },
+    normalization: {
+      mapper: "authority_daemon.synthetic_checkpoint",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: 1,
+    },
+    confidence_assessment: {
+      engine_version: "authority_daemon.synthetic_checkpoint.v1",
+      score: 1,
+      band: "high",
+      requires_human_review: false,
+      factors: [
+        {
+          factor_id: "synthetic_checkpoint",
+          label: "Synthetic checkpoint request",
+          kind: "baseline",
+          delta: 1,
+          rationale: "AgentGit created this deliberate recovery boundary directly.",
+        },
+      ],
+    },
+  });
 }
 
 function canonicalExternalObject(locator: string): { externalObjectId: string; canonicalLocator: string } | null {
@@ -2026,67 +2100,6 @@ function createOwnedCompensationRegistry(
   ]);
 }
 
-async function captureOwnedPreimage(
-  action: ActionRecord,
-  draftStore: OwnedDraftStore,
-  noteStore: OwnedNoteStore,
-  ticketStore: OwnedTicketStore,
-): Promise<Record<string, unknown> | null> {
-  if (action.operation.domain !== "function") {
-    return null;
-  }
-
-  if (action.operation.kind === "update_draft") {
-    const draftId = parseDraftLocator(action.target.primary.locator);
-    if (!draftId) {
-      return null;
-    }
-
-    const existing = await draftStore.getDraft(draftId);
-    return existing ? { ...existing } : null;
-  }
-
-  if (action.operation.kind === "restore_draft" || action.operation.kind === "delete_draft") {
-    const draftId = parseDraftLocator(action.target.primary.locator);
-    if (!draftId) {
-      return null;
-    }
-
-    const existing = await draftStore.getDraft(draftId);
-    return existing ? { ...existing } : null;
-  }
-
-  if (
-    action.operation.kind === "update_note" ||
-    action.operation.kind === "restore_note" ||
-    action.operation.kind === "delete_note"
-  ) {
-    const noteId = parseNoteLocator(action.target.primary.locator);
-    if (!noteId) {
-      return null;
-    }
-
-    const existing = await noteStore.getNote(noteId);
-    return existing ? { ...existing } : null;
-  }
-
-  if (
-    action.operation.kind === "update_ticket" ||
-    action.operation.kind === "delete_ticket" ||
-    action.operation.kind === "restore_ticket"
-  ) {
-    const ticketId = parseTicketLocator(action.target.primary.locator);
-    if (!ticketId) {
-      return null;
-    }
-
-    const existing = await ticketStore.getTicket(ticketId);
-    return existing ? { ...existing } : null;
-  }
-
-  return null;
-}
-
 function handleHello(state: AuthorityState, request: RequestEnvelope<unknown>): ResponseEnvelope<HelloResponsePayload> {
   const payload = validate(HelloRequestPayloadSchema, request.payload);
 
@@ -2184,53 +2197,25 @@ function handleExplainPolicyAction(
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<ExplainPolicyActionResponsePayload> {
   const payload = validate(ExplainPolicyActionRequestPayloadSchema, request.payload);
-  const runSummary = journal.getRunSummary(payload.attempt.run_id);
-
-  if (!runSummary) {
-    throw new NotFoundError(`No run found for ${payload.attempt.run_id}.`, {
-      run_id: payload.attempt.run_id,
-    });
-  }
-
-  assertLaunchSupportedToolKind(payload.attempt.tool_registration);
-
-  const hydratedAttempt = hydrateMcpAttempt(payload.attempt, mcpRegistry);
-  const action = validateActionRecord(normalizeActionAttempt(hydratedAttempt, runSummary.session_id));
-  const cachedCapabilityState = buildCachedCapabilityState(journal, runtimeOptions);
-  const policyOutcome = validatePolicyOutcomeRecord(
-    evaluatePolicy(action, {
-      run_summary: {
-        budget_config: runSummary.budget_config,
-        budget_usage: runSummary.budget_usage,
-      },
-      mcp_server_registry: {
-        servers: mcpRegistry.listDefinitions(),
-      },
-      cached_capability_state: cachedCapabilityState,
-      compiled_policy: policyRuntime.compiled_policy,
-    }),
-  );
-  const snapshotSelection = policyOutcome.preconditions.snapshot_required
-    ? selectSnapshotClass({
-        action,
-        policy_decision: policyOutcome.decision,
-        capability_state: deriveSnapshotCapabilityState(cachedCapabilityState),
-        low_disk_pressure_observed: runSummary.maintenance_status.low_disk_pressure_signals > 0,
-        journal_chain_depth: runSummary.event_count,
-      })
-    : null;
-  const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(policyRuntime.compiled_policy, action);
-  const confidenceScore = action.confidence_assessment.score;
+  const prepared = prepareActionAttemptEvaluation({
+    journal,
+    mcpRegistry,
+    policyRuntime,
+    runtimeOptions,
+    buildCachedCapabilityState,
+    attempt: payload.attempt,
+  });
+  const confidenceScore = prepared.action.confidence_assessment.score;
 
   return makeSuccessResponse(request.request_id, request.session_id, {
-    action,
-    policy_outcome: policyOutcome,
-    action_family: `${action.operation.domain}/${action.operation.kind}`,
+    action: prepared.action,
+    policy_outcome: prepared.policyOutcome,
+    action_family: `${prepared.action.operation.domain}/${prepared.action.operation.kind}`,
     effective_policy_profile: policyRuntime.effective_policy.summary.profile_name,
-    low_confidence_threshold: lowConfidenceThreshold,
+    low_confidence_threshold: prepared.lowConfidenceThreshold,
     confidence_score: confidenceScore,
-    confidence_triggered: lowConfidenceThreshold !== null && confidenceScore < lowConfidenceThreshold,
-    snapshot_selection: snapshotSelection,
+    confidence_triggered: prepared.confidenceTriggered,
+    snapshot_selection: prepared.snapshotSelection,
   });
 }
 
@@ -2340,6 +2325,104 @@ function handleGetRunSummary(
 
   return makeSuccessResponse(request.request_id, request.session_id, {
     run: runSummary,
+  });
+}
+
+async function handleCreateRunCheckpoint(
+  state: AuthorityState,
+  journal: RunJournal,
+  snapshotEngine: LocalSnapshotEngine,
+  runtimeOptions: Pick<StartServerOptions, "capabilityRefreshStaleMs">,
+  request: RequestEnvelope<unknown>,
+): Promise<ResponseEnvelope<CreateRunCheckpointResponsePayload>> {
+  const payload = validate(CreateRunCheckpointRequestPayloadSchema, request.payload);
+  const session = state.getSession(request.session_id);
+  if (!session) {
+    throw new PreconditionError("A valid session_id is required before create_run_checkpoint.", {
+      session_id: request.session_id,
+    });
+  }
+
+  const runSummary = journal.getRunSummary(payload.run_id);
+  if (!runSummary) {
+    throw new NotFoundError(`No run found for ${payload.run_id}.`, {
+      run_id: payload.run_id,
+    });
+  }
+
+  const workspaceRoot = payload.workspace_root ?? runSummary.workspace_roots[0];
+  if (!workspaceRoot || !runSummary.workspace_roots.includes(workspaceRoot)) {
+    throw new PreconditionError("Checkpoint workspace root is not registered on this run.", {
+      run_id: payload.run_id,
+      workspace_root: payload.workspace_root ?? null,
+      registered_workspace_roots: runSummary.workspace_roots,
+    });
+  }
+
+  const checkpointKind = payload.checkpoint_kind ?? "branch_point";
+  const action = buildSyntheticCheckpointAction({
+    run_id: payload.run_id,
+    session_id: session.session_id,
+    workspace_root: workspaceRoot,
+    checkpoint_kind: checkpointKind,
+    reason: payload.reason,
+  });
+  const cachedCapabilityState = buildCachedCapabilityState(journal, runtimeOptions);
+  const runRiskContext = deriveSnapshotRunRiskContextService(journal, payload.run_id);
+  const snapshotSelection = selectSnapshotClass({
+    action,
+    policy_decision: "allow_with_snapshot",
+    capability_state: deriveSnapshotCapabilityStateService(cachedCapabilityState),
+    low_disk_pressure_observed: runSummary.maintenance_status.low_disk_pressure_signals > 0,
+    journal_chain_depth: runSummary.event_count,
+    ...runRiskContext,
+    explicit_branch_point: checkpointKind === "branch_point",
+    explicit_hard_checkpoint: checkpointKind === "hard_checkpoint",
+  });
+  const snapshotRecord = await snapshotEngine.createSnapshot({
+    action,
+    requested_class: snapshotSelection.snapshot_class,
+    workspace_root: workspaceRoot,
+  });
+  const snapshotSequence = journal.appendRunEvent(payload.run_id, {
+    event_type: "snapshot.created",
+    occurred_at: snapshotRecord.created_at,
+    recorded_at: snapshotRecord.created_at,
+    payload: {
+      action_id: action.action_id,
+      snapshot_id: snapshotRecord.snapshot_id,
+      snapshot_class: snapshotRecord.snapshot_class,
+      fidelity: snapshotRecord.fidelity,
+      selection_reason_codes: snapshotSelection.reason_codes,
+      selection_basis: snapshotSelection.basis,
+      checkpoint_kind: checkpointKind,
+      checkpoint_reason: payload.reason ?? null,
+      synthetic_checkpoint: true,
+    },
+  });
+  const runCheckpoint = `${payload.run_id}#${snapshotSequence}`;
+  journal.appendRunEvent(payload.run_id, {
+    event_type: "checkpoint.created",
+    occurred_at: snapshotRecord.created_at,
+    recorded_at: snapshotRecord.created_at,
+    payload: {
+      action_id: action.action_id,
+      run_checkpoint: runCheckpoint,
+      snapshot_id: snapshotRecord.snapshot_id,
+      checkpoint_kind: checkpointKind,
+      checkpoint_reason: payload.reason ?? null,
+    },
+  });
+
+  return makeSuccessResponse(request.request_id, request.session_id, {
+    run_checkpoint: runCheckpoint,
+    branch_point: {
+      run_id: payload.run_id,
+      sequence: snapshotSequence,
+    },
+    checkpoint_kind: checkpointKind,
+    snapshot_record: snapshotRecord,
+    snapshot_selection: snapshotSelection,
   });
 }
 
@@ -5895,10 +5978,13 @@ async function handleResolveApproval(
         capability_state: "healthy",
         low_disk_pressure_observed: runSummary.maintenance_status.low_disk_pressure_signals > 0,
         journal_chain_depth: runSummary.event_count,
+        ...deriveSnapshotRunRiskContextService(journal, storedApproval.run_id, {
+          exclude_action_id: storedApproval.action.action_id,
+        }),
       })
     : null;
 
-  const execution = await executeGovernedAction({
+  const execution = await executeGovernedActionFlow({
     action: storedApproval.action,
     policyOutcome: approvedPolicyOutcome,
     snapshotSelection: approvalSnapshotSelection,
@@ -5909,8 +5995,13 @@ async function handleResolveApproval(
     draftStore,
     noteStore,
     ticketStore,
-    mcpRegistry,
-    hostedExecutionQueue,
+    executeHostedDelegatedAction: (action) =>
+      executeHostedDelegatedMcpAction({
+        action,
+        mcpRegistry,
+        journal,
+        hostedExecutionQueue,
+      }),
   });
 
   return makeSuccessResponse(request.request_id, request.session_id, {
@@ -6187,140 +6278,6 @@ async function handleExecuteRecovery(
   return makeSuccessResponse(request.request_id, request.session_id, result);
 }
 
-function appendActionEvents(journal: RunJournal, action: ActionRecord): void {
-  const filesystemFacet =
-    action.operation.domain === "filesystem" && isObject(action.facets.filesystem) ? action.facets.filesystem : null;
-  const rawInput = isObject(action.input.raw) ? action.input.raw : null;
-  const filesystemInputPreview =
-    action.operation.domain === "filesystem" && typeof rawInput?.content === "string"
-      ? stringPreview(rawInput.content, 160)
-      : null;
-
-  journal.appendRunEvent(action.run_id, {
-    event_type: "action.normalized",
-    occurred_at: action.timestamps.normalized_at,
-    recorded_at: action.timestamps.normalized_at,
-    payload: {
-      action,
-      action_id: action.action_id,
-      operation: action.operation,
-      provenance_mode: action.provenance.mode,
-      provenance_source: action.provenance.source,
-      provenance_confidence: action.provenance.confidence,
-      target_locator: action.target.primary.locator,
-      target_locator_visibility: "user",
-      filesystem_operation: typeof filesystemFacet?.operation === "string" ? filesystemFacet.operation : null,
-      input_preview: filesystemInputPreview,
-      input_preview_visibility: action.input.contains_sensitive_data ? "sensitive_internal" : "user",
-      normalization: action.normalization,
-      confidence_score: action.confidence_assessment.score,
-      confidence_assessment: action.confidence_assessment,
-      risk_hints: action.risk_hints,
-    },
-  });
-}
-
-function stringPreview(value: unknown, maxLength = 240): string | null {
-  if (typeof value !== "string" || value.length === 0) {
-    return null;
-  }
-
-  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
-}
-
-function artifactContentFromExecutionResult(
-  artifact: ExecutionArtifact,
-  action: ActionRecord,
-  executionResult: {
-    output: Record<string, unknown>;
-  },
-): string | null {
-  switch (artifact.type) {
-    case "stdout":
-      return typeof executionResult.output.stdout === "string" ? executionResult.output.stdout : null;
-    case "stderr":
-      return typeof executionResult.output.stderr === "string" ? executionResult.output.stderr : null;
-    case "diff":
-      return typeof executionResult.output.diff_preview === "string" ? executionResult.output.diff_preview : null;
-    case "request_response":
-      return typeof executionResult.output.preview === "string" ? executionResult.output.preview : null;
-    case "file_content": {
-      const rawInput = isObject(action.input.raw) ? action.input.raw : null;
-      return typeof rawInput?.content === "string" ? rawInput.content : null;
-    }
-    case "screenshot":
-      return null;
-  }
-}
-
-function artifactVisibilityForAction(
-  artifact: ExecutionArtifact,
-  action: ActionRecord,
-): ExecutionArtifact["visibility"] {
-  if ((artifact.type === "stdout" || artifact.type === "stderr") && action.operation.domain === "shell") {
-    return "internal";
-  }
-
-  if (
-    action.input.contains_sensitive_data &&
-    (artifact.type === "file_content" || artifact.type === "diff" || artifact.type === "request_response")
-  ) {
-    return "sensitive_internal";
-  }
-
-  return artifact.visibility;
-}
-
-function hydrateMcpAttempt(
-  attempt: SubmitActionAttemptRequestPayload["attempt"],
-  mcpRegistry: McpServerRegistry,
-): SubmitActionAttemptRequestPayload["attempt"] {
-  if (attempt.tool_registration.tool_kind !== "mcp" || !isObject(attempt.raw_call)) {
-    return attempt;
-  }
-
-  const rawCall = attempt.raw_call;
-  const candidateId = typeof rawCall.candidate_id === "string" ? rawCall.candidate_id.trim() : "";
-  const serverProfileId = typeof rawCall.server_profile_id === "string" ? rawCall.server_profile_id.trim() : "";
-  if (candidateId.length > 0 && serverProfileId.length === 0) {
-    throw new PreconditionError("Raw MCP candidates are not executable. Resolve and activate a server profile first.", {
-      candidate_id: candidateId,
-    });
-  }
-
-  if (serverProfileId.length === 0) {
-    return attempt;
-  }
-
-  const profile = mcpRegistry.getProfile(serverProfileId);
-  if (!profile) {
-    throw new NotFoundError(`No MCP server profile found for ${serverProfileId}.`, {
-      server_profile_id: serverProfileId,
-    });
-  }
-
-  const candidate = profile.candidate_id ? mcpRegistry.getCandidate(profile.candidate_id) : null;
-  const binding = mcpRegistry.getActiveCredentialBinding(serverProfileId);
-  const executionModeRequested =
-    rawCall.execution_mode_requested === "hosted_delegated" ? "hosted_delegated" : "local_proxy";
-
-  return {
-    ...attempt,
-    raw_call: {
-      ...rawCall,
-      server_id: serverProfileId,
-      server_profile_id: serverProfileId,
-      execution_mode_requested: executionModeRequested,
-      trust_tier_at_submit: profile.trust_tier,
-      drift_state_at_submit: profile.drift_state,
-      profile_status: profile.status,
-      candidate_source_kind: candidate?.source_kind,
-      allowed_execution_modes: profile.allowed_execution_modes,
-      ...(binding ? { credential_binding_mode: binding.binding_mode } : {}),
-    },
-  };
-}
-
 function clipArtifactContent(value: string): {
   content: string;
   content_truncated: boolean;
@@ -6371,487 +6328,12 @@ async function executeHostedDelegatedMcpAction(params: {
   });
   return params.hostedExecutionQueue.submitAndWait(job);
 }
-
-function getWorkspaceRoot(locator: string, fallbackRoots: string[]): string {
-  const resolvedLocator = path.resolve(locator);
-  const matchedRoot = fallbackRoots
-    .map((root) => path.resolve(root))
-    .find(
-      (resolvedRoot) => resolvedLocator === resolvedRoot || resolvedLocator.startsWith(`${resolvedRoot}${path.sep}`),
-    );
-  return matchedRoot ?? path.resolve(fallbackRoots[0] ?? process.cwd());
-}
-
-function assertLaunchSupportedToolKind(toolRegistration: { tool_kind: string; tool_name: string }): void {
-  if (toolRegistration.tool_kind === "browser") {
-    throw new PreconditionError("Governed browser/computer execution is not part of the supported runtime surface.", {
-      requested_tool_kind: toolRegistration.tool_kind,
-      requested_tool_name: toolRegistration.tool_name,
-      supported_tool_kinds: ["filesystem", "shell", "function"],
-      unsupported_surface: "browser_computer",
-    });
-  }
-}
-
-async function executeGovernedAction(params: {
-  action: ActionRecord;
-  policyOutcome: PolicyOutcomeRecord;
-  snapshotSelection: SnapshotSelectionResult | null;
-  runSummary: {
-    event_count: number;
-    maintenance_status: {
-      low_disk_pressure_signals: number;
-    };
-    workspace_roots: string[];
-  };
-  journal: RunJournal;
-  adapterRegistry: AdapterRegistry;
-  snapshotEngine: LocalSnapshotEngine;
-  draftStore: OwnedDraftStore;
-  noteStore: OwnedNoteStore;
-  ticketStore: OwnedTicketStore;
-  mcpRegistry: McpServerRegistry;
-  hostedExecutionQueue: HostedExecutionQueue;
-}): Promise<{
-  executionResult: SubmitActionAttemptResponsePayload["execution_result"];
-  snapshotRecord: SubmitActionAttemptResponsePayload["snapshot_record"];
-}> {
-  const workspaceRoot = getWorkspaceRoot(params.action.target.primary.locator, params.runSummary.workspace_roots);
-  let snapshotRecord: SubmitActionAttemptResponsePayload["snapshot_record"] = null;
-
-  if (params.policyOutcome.preconditions.snapshot_required) {
-    const requestedClass = params.snapshotSelection?.snapshot_class ?? "metadata_only";
-    const capturedPreimage =
-      requestedClass === "metadata_only"
-        ? await captureOwnedPreimage(params.action, params.draftStore, params.noteStore, params.ticketStore)
-        : null;
-    snapshotRecord = await params.snapshotEngine.createSnapshot({
-      action: params.action,
-      requested_class: requestedClass,
-      workspace_root: workspaceRoot,
-      captured_preimage: capturedPreimage,
-    });
-    const createdSnapshot = snapshotRecord;
-    params.journal.appendRunEvent(params.action.run_id, {
-      event_type: "snapshot.created",
-      occurred_at: createdSnapshot.created_at,
-      recorded_at: createdSnapshot.created_at,
-      payload: {
-        action_id: params.action.action_id,
-        snapshot_id: createdSnapshot.snapshot_id,
-        snapshot_class: createdSnapshot.snapshot_class,
-        fidelity: createdSnapshot.fidelity,
-        selection_reason_codes: params.snapshotSelection?.reason_codes ?? [],
-        selection_basis: params.snapshotSelection?.basis ?? null,
-      },
-    });
-  }
-
-  let executionResult: SubmitActionAttemptResponsePayload["execution_result"] = null;
-  if (params.policyOutcome.decision === "allow" || params.policyOutcome.decision === "allow_with_snapshot") {
-    const mcpFacet = isObject(params.action.facets.mcp) ? params.action.facets.mcp : null;
-    const executionModeRequested =
-      mcpFacet?.execution_mode_requested === "hosted_delegated" ? "hosted_delegated" : "local_proxy";
-    const adapter = params.adapterRegistry.findAdapter(params.action);
-    if (executionModeRequested !== "hosted_delegated" && !adapter) {
-      throw new AgentGitError(
-        "No governed execution adapter is available for this action domain.",
-        "CAPABILITY_UNAVAILABLE",
-        {
-          requested_domain: params.action.operation.domain,
-          requested_operation: params.action.operation.name,
-          supported_domains: params.adapterRegistry.supportedDomains(),
-        },
-      );
-    }
-
-    if (
-      snapshotRecord &&
-      params.action.operation.domain === "filesystem" &&
-      !(await params.snapshotEngine.verifyTargetUnchanged(
-        snapshotRecord.snapshot_id,
-        params.action.target.primary.locator,
-      ))
-    ) {
-      throw new PreconditionError("File modified between snapshot and execution. Another agent may have changed it.", {
-        path: params.action.target.primary.locator,
-        snapshot_id: snapshotRecord.snapshot_id,
-      });
-    }
-
-    if (executionModeRequested !== "hosted_delegated") {
-      await adapter!.verifyPreconditions({
-        action: params.action,
-        policy_outcome: params.policyOutcome,
-        snapshot_record: snapshotRecord,
-        workspace_root: workspaceRoot,
-      });
-    }
-
-    const executionStartedAt = new Date().toISOString();
-    params.journal.appendRunEvent(params.action.run_id, {
-      event_type: "execution.started",
-      occurred_at: executionStartedAt,
-      recorded_at: executionStartedAt,
-      payload: {
-        action_id: params.action.action_id,
-        adapter_domains:
-          executionModeRequested === "hosted_delegated"
-            ? ["mcp", "provider_hosted"]
-            : (adapter?.supported_domains ?? []),
-      },
-    });
-
-    try {
-      executionResult =
-        executionModeRequested === "hosted_delegated"
-          ? await executeHostedDelegatedMcpAction({
-              action: params.action,
-              mcpRegistry: params.mcpRegistry,
-              journal: params.journal,
-              hostedExecutionQueue: params.hostedExecutionQueue,
-            })
-          : await adapter!.execute({
-              action: params.action,
-              policy_outcome: params.policyOutcome,
-              snapshot_record: snapshotRecord,
-              workspace_root: workspaceRoot,
-            });
-      if (!executionResult) {
-        throw new InternalError("Execution adapter returned no execution result after an allow decision.", {
-          action_id: params.action.action_id,
-          requested_mode: executionModeRequested,
-        });
-      }
-      const completedExecutionResult = executionResult;
-      const artifactCaptureFailures: Array<{
-        artifact_id: string;
-        type: string;
-        code: ErrorEnvelope["code"];
-        retryable: boolean;
-        low_disk_pressure: boolean;
-      }> = [];
-
-      const storedArtifacts = completedExecutionResult.artifacts.flatMap((artifact) => {
-        const content = artifactContentFromExecutionResult(artifact, params.action, completedExecutionResult);
-        const visibility = artifactVisibilityForAction(artifact, params.action);
-        if (content === null) {
-          return [];
-        }
-
-        try {
-          const integrity = params.journal.storeArtifact({
-            artifact_id: artifact.artifact_id,
-            run_id: params.action.run_id,
-            action_id: params.action.action_id,
-            execution_id: completedExecutionResult.execution_id,
-            type: artifact.type,
-            content_ref: artifact.content_ref,
-            byte_size: artifact.byte_size,
-            visibility,
-            expires_at: null,
-            expired_at: null,
-            created_at: completedExecutionResult.completed_at,
-            content,
-          });
-          return [
-            {
-              artifact_id: artifact.artifact_id,
-              type: artifact.type,
-              byte_size: artifact.byte_size,
-              visibility,
-              integrity,
-            },
-          ];
-        } catch (error) {
-          const normalizedError =
-            error instanceof AgentGitError
-              ? error
-              : new InternalError("Artifact capture failed during execution completion.", {
-                  artifact_id: artifact.artifact_id,
-                  cause: error instanceof Error ? error.message : String(error),
-                });
-          artifactCaptureFailures.push({
-            artifact_id: artifact.artifact_id,
-            type: artifact.type,
-            code: normalizedError.code,
-            retryable: normalizedError.retryable,
-            low_disk_pressure: normalizedError.details?.low_disk_pressure === true,
-          });
-          return [];
-        }
-      });
-      const artifactCaptureWarnings =
-        artifactCaptureFailures.length > 0
-          ? [
-              artifactCaptureFailures.some((failure) => failure.low_disk_pressure)
-                ? `Supporting evidence capture degraded: ${artifactCaptureFailures.length} artifact(s) could not be stored because local storage was unavailable.`
-                : `Supporting evidence capture degraded: ${artifactCaptureFailures.length} artifact(s) could not be stored durably.`,
-            ]
-          : [];
-      executionResult = {
-        ...completedExecutionResult,
-        artifact_capture: {
-          requested_count: completedExecutionResult.artifacts.length,
-          stored_count: storedArtifacts.length,
-          degraded: artifactCaptureFailures.length > 0,
-          failures: artifactCaptureFailures,
-        },
-      };
-
-      params.journal.appendRunEvent(params.action.run_id, {
-        event_type: "execution.completed",
-        occurred_at: completedExecutionResult.completed_at,
-        recorded_at: completedExecutionResult.completed_at,
-        payload: {
-          action_id: params.action.action_id,
-          execution_id: completedExecutionResult.execution_id,
-          mode: completedExecutionResult.mode,
-          success: completedExecutionResult.success,
-          side_effect_level: params.action.risk_hints.side_effect_level,
-          artifact_types: completedExecutionResult.artifacts.map((artifact) => artifact.type),
-          artifact_count: completedExecutionResult.artifacts.length,
-          stored_artifact_count: storedArtifacts.length,
-          artifact_capture_failed_count: artifactCaptureFailures.length,
-          artifact_capture_failures: artifactCaptureFailures,
-          warnings: artifactCaptureWarnings,
-          artifacts: storedArtifacts,
-          target_path:
-            typeof completedExecutionResult.output.target === "string" ? completedExecutionResult.output.target : null,
-          target_path_visibility: "user",
-          operation:
-            typeof completedExecutionResult.output.operation === "string"
-              ? completedExecutionResult.output.operation
-              : null,
-          bytes_written:
-            typeof completedExecutionResult.output.bytes_written === "number"
-              ? completedExecutionResult.output.bytes_written
-              : null,
-          before_preview: stringPreview(completedExecutionResult.output.before_preview),
-          before_preview_visibility: params.action.input.contains_sensitive_data ? "sensitive_internal" : "user",
-          after_preview: stringPreview(completedExecutionResult.output.after_preview),
-          after_preview_visibility: params.action.input.contains_sensitive_data ? "sensitive_internal" : "user",
-          diff_preview: stringPreview(completedExecutionResult.output.diff_preview),
-          diff_preview_visibility: params.action.input.contains_sensitive_data ? "sensitive_internal" : "user",
-          deleted:
-            typeof completedExecutionResult.output.deleted === "boolean"
-              ? completedExecutionResult.output.deleted
-              : null,
-          exit_code:
-            typeof completedExecutionResult.output.exit_code === "number"
-              ? completedExecutionResult.output.exit_code
-              : null,
-          stdout_excerpt: stringPreview(completedExecutionResult.output.stdout),
-          stdout_excerpt_visibility: params.action.operation.domain === "shell" ? "internal" : "user",
-          stderr_excerpt: stringPreview(completedExecutionResult.output.stderr),
-          stderr_excerpt_visibility: params.action.operation.domain === "shell" ? "internal" : "user",
-        },
-      });
-    } catch (error) {
-      const now = new Date().toISOString();
-      const details = error instanceof AgentGitError && error.details ? error.details : undefined;
-      params.journal.appendRunEvent(params.action.run_id, {
-        event_type: "execution.failed",
-        occurred_at: now,
-        recorded_at: now,
-        payload: {
-          action_id: params.action.action_id,
-          error_code: error instanceof AgentGitError ? error.code : "INTERNAL_ERROR",
-          error: error instanceof Error ? error.message : String(error),
-          error_visibility: "user",
-          exit_code: typeof details?.exit_code === "number" ? details.exit_code : null,
-          signal: typeof details?.signal === "string" ? details.signal : null,
-          stdout_excerpt: stringPreview(details?.stdout),
-          stdout_excerpt_visibility: params.action.operation.domain === "shell" ? "internal" : "user",
-          stderr_excerpt: stringPreview(details?.stderr),
-          stderr_excerpt_visibility: params.action.operation.domain === "shell" ? "internal" : "user",
-        },
-      });
-      throw error;
-    }
-  }
-
-  return {
-    executionResult,
-    snapshotRecord,
-  };
-}
-
-async function handleSubmitActionAttempt(
-  state: AuthorityState,
-  journal: RunJournal,
-  adapterRegistry: AdapterRegistry,
-  snapshotEngine: LocalSnapshotEngine,
-  draftStore: OwnedDraftStore,
-  noteStore: OwnedNoteStore,
-  ticketStore: OwnedTicketStore,
-  mcpRegistry: McpServerRegistry,
-  hostedExecutionQueue: HostedExecutionQueue,
-  policyRuntime: PolicyRuntimeState,
-  runtimeOptions: Pick<StartServerOptions, "capabilityRefreshStaleMs">,
-  request: RequestEnvelope<unknown>,
-): Promise<ResponseEnvelope<SubmitActionAttemptResponsePayload>> {
-  const payload = validate(SubmitActionAttemptRequestPayloadSchema, request.payload);
-  const session = state.getSession(request.session_id);
-
-  if (!session) {
-    throw new PreconditionError("A valid session_id is required before submit_action_attempt.", {
-      session_id: request.session_id,
-    });
-  }
-
-  const runSummary = journal.getRunSummary(payload.attempt.run_id);
-
-  if (!runSummary) {
-    throw new NotFoundError(`No run found for ${payload.attempt.run_id}.`, {
-      run_id: payload.attempt.run_id,
-    });
-  }
-
-  assertLaunchSupportedToolKind(payload.attempt.tool_registration);
-
-  const hydratedAttempt = hydrateMcpAttempt(payload.attempt, mcpRegistry);
-  const action = validateActionRecord(normalizeActionAttempt(hydratedAttempt, runSummary.session_id));
-  const cachedCapabilityState = buildCachedCapabilityState(journal, runtimeOptions);
-  const policyOutcome = validatePolicyOutcomeRecord(
-    evaluatePolicy(action, {
-      run_summary: {
-        budget_config: runSummary.budget_config,
-        budget_usage: runSummary.budget_usage,
-      },
-      mcp_server_registry: {
-        servers: mcpRegistry.listDefinitions(),
-      },
-      cached_capability_state: cachedCapabilityState,
-      compiled_policy: policyRuntime.compiled_policy,
-    }),
-  );
-  const snapshotSelection = policyOutcome.preconditions.snapshot_required
-    ? selectSnapshotClass({
-        action,
-        policy_decision: policyOutcome.decision,
-        capability_state: deriveSnapshotCapabilityState(cachedCapabilityState),
-        low_disk_pressure_observed: runSummary.maintenance_status.low_disk_pressure_signals > 0,
-        journal_chain_depth: runSummary.event_count,
-      })
-    : null;
-  const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(policyRuntime.compiled_policy, action);
-  const confidenceTriggered =
-    lowConfidenceThreshold !== null && action.confidence_assessment.score < lowConfidenceThreshold;
-
-  appendActionEvents(journal, action);
-  journal.appendRunEvent(action.run_id, {
-    event_type: "policy.evaluated",
-    occurred_at: policyOutcome.evaluated_at,
-    recorded_at: policyOutcome.evaluated_at,
-    payload: {
-      action_id: action.action_id,
-      policy_outcome_id: policyOutcome.policy_outcome_id,
-      evaluated_at: policyOutcome.evaluated_at,
-      decision: policyOutcome.decision,
-      reasons: policyOutcome.reasons,
-      matched_rules: policyOutcome.policy_context.matched_rules,
-      normalization_confidence: action.normalization.normalization_confidence,
-      confidence_score: action.confidence_assessment.score,
-      low_confidence_threshold: lowConfidenceThreshold,
-      confidence_triggered: confidenceTriggered,
-      action_family: `${action.operation.domain}/${action.operation.kind}`,
-      snapshot_required: policyOutcome.preconditions.snapshot_required,
-      snapshot_selection:
-        snapshotSelection === null
-          ? null
-          : {
-              snapshot_class: snapshotSelection.snapshot_class,
-              reason_codes: snapshotSelection.reason_codes,
-              basis: snapshotSelection.basis,
-            },
-    },
-  });
-
-  let approvalRequest: ApprovalRequest | null = null;
-  if (policyOutcome.decision === "ask") {
-    approvalRequest = journal.createApprovalRequest({
-      run_id: action.run_id,
-      action,
-      policy_outcome: policyOutcome,
-    });
-    journal.appendRunEvent(action.run_id, {
-      event_type: "approval.requested",
-      occurred_at: approvalRequest.requested_at,
-      recorded_at: approvalRequest.requested_at,
-      payload: {
-        approval_id: approvalRequest.approval_id,
-        action_id: action.action_id,
-        action_summary: approvalRequest.action_summary,
-        status: approvalRequest.status,
-        primary_reason: approvalRequest.primary_reason,
-      },
-    });
-  }
-
-  let snapshotRecord: SubmitActionAttemptResponsePayload["snapshot_record"] = null;
-  let executionResult: SubmitActionAttemptResponsePayload["execution_result"] = null;
-  if (policyOutcome.decision === "allow" || policyOutcome.decision === "allow_with_snapshot") {
-    const execution = await executeGovernedAction({
-      action,
-      policyOutcome: policyOutcome,
-      snapshotSelection,
-      runSummary,
-      journal,
-      adapterRegistry,
-      snapshotEngine,
-      draftStore,
-      noteStore,
-      ticketStore,
-      mcpRegistry,
-      hostedExecutionQueue,
-    });
-    snapshotRecord = execution.snapshotRecord;
-    executionResult = execution.executionResult;
-  }
-
-  return makeSuccessResponse(request.request_id, request.session_id, {
-    action,
-    policy_outcome: policyOutcome,
-    execution_result: executionResult,
-    snapshot_record: snapshotRecord,
-    approval_request: approvalRequest,
-  });
-}
-
 function canUseIdempotency(request: RequestEnvelope<unknown>): boolean {
   return (
     IDEMPOTENT_MUTATION_METHODS.has(request.method) &&
     typeof request.idempotency_key === "string" &&
     request.idempotency_key.length > 0
   );
-}
-
-function deriveSnapshotCapabilityState(
-  cachedCapabilityState: {
-    capabilities: CapabilityRecord[];
-    degraded_mode_warnings: string[];
-    refreshed_at: string;
-    stale_after_ms: number;
-    is_stale: boolean;
-  } | null,
-): "healthy" | "stale" | "degraded" {
-  if (!cachedCapabilityState) {
-    return "degraded";
-  }
-
-  if (cachedCapabilityState.is_stale) {
-    return "stale";
-  }
-
-  const hasUnavailableCapability = cachedCapabilityState.capabilities.some(
-    (capability) => capability.status === "unavailable",
-  );
-  if (hasUnavailableCapability || cachedCapabilityState.degraded_mode_warnings.length > 0) {
-    return "degraded";
-  }
-
-  return "healthy";
 }
 
 async function handleRequest(
@@ -7106,7 +6588,7 @@ async function handleRequest(
           response = handleQueryArtifact(journal, request);
           break;
         case "submit_action_attempt":
-          response = await handleSubmitActionAttempt(
+          response = await handleSubmitActionAttemptFlow({
             state,
             journal,
             adapterRegistry,
@@ -7118,11 +6600,16 @@ async function handleRequest(
             hostedExecutionQueue,
             policyRuntime,
             runtimeOptions,
+            buildCachedCapabilityState,
+            executeHostedDelegatedAction: executeHostedDelegatedMcpAction,
             request,
-          );
+          });
           break;
         case "plan_recovery":
           response = await handlePlanRecovery(journal, snapshotEngine, compensationRegistry, runtimeOptions, request);
+          break;
+        case "create_run_checkpoint":
+          response = await handleCreateRunCheckpoint(state, journal, snapshotEngine, runtimeOptions, request);
           break;
         case "execute_recovery":
           response = await handleExecuteRecovery(

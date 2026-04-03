@@ -53,6 +53,7 @@ export const DaemonMethodSchema = z.enum([
   "diagnostics",
   "run_maintenance",
   "submit_action_attempt",
+  "create_run_checkpoint",
   "list_approvals",
   "query_approval_inbox",
   "resolve_approval",
@@ -605,6 +606,66 @@ export type ToolRegistration = z.infer<typeof ToolRegistrationSchema>;
 export const CredentialModeSchema = z.enum(["brokered", "delegated", "direct", "none", "unknown"]);
 export const VisibilityScopeSchema = z.enum(["user", "model", "internal", "sensitive_internal"]);
 export type VisibilityScope = z.infer<typeof VisibilityScopeSchema>;
+export type CredentialMode = z.infer<typeof CredentialModeSchema>;
+
+export const DefaultCheckpointPolicySchema = z.enum(["never", "risky_runs", "always_before_run"]);
+export type DefaultCheckpointPolicy = z.infer<typeof DefaultCheckpointPolicySchema>;
+
+export const CheckpointIntentSchema = z.enum([
+  "operator_requested",
+  "broad_risk_default",
+  "high_value_workspace",
+]);
+export type CheckpointIntent = z.infer<typeof CheckpointIntentSchema>;
+
+export const ContainedEgressModeSchema = z.enum([
+  "inherit",
+  "none",
+  "proxy_http_https",
+  "backend_enforced_allowlist",
+]);
+export type ContainedEgressMode = z.infer<typeof ContainedEgressModeSchema>;
+
+export const ContainedEgressAssuranceSchema = z.enum(["degraded", "scoped", "boundary_enforced"]);
+export type ContainedEgressAssurance = z.infer<typeof ContainedEgressAssuranceSchema>;
+
+export const RuntimeCredentialBindingKindSchema = z.enum([
+  "env",
+  "file",
+  "header_template",
+  "runtime_ticket",
+  "tool_scoped_ref",
+]);
+export type RuntimeCredentialBindingKind = z.infer<typeof RuntimeCredentialBindingKindSchema>;
+
+export const RuntimeCredentialBindingTargetSchema = z.discriminatedUnion("surface", [
+  z
+    .object({
+      surface: z.literal("env"),
+      env_key: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      surface: z.literal("file"),
+      relative_path: z.string().min(1),
+    })
+    .strict(),
+]);
+export type RuntimeCredentialBindingTarget = z.infer<typeof RuntimeCredentialBindingTargetSchema>;
+
+export const RuntimeCredentialBindingRecordSchema = z
+  .object({
+    binding_id: z.string().min(1),
+    kind: RuntimeCredentialBindingKindSchema,
+    target: RuntimeCredentialBindingTargetSchema,
+    broker_source_ref: z.string().min(1),
+    redacted_delivery_metadata: z.record(z.string(), z.unknown()),
+    expires_at: TimestampStringSchema.optional(),
+    rotates: z.boolean(),
+  })
+  .strict();
+export type RuntimeCredentialBindingRecord = z.infer<typeof RuntimeCredentialBindingRecordSchema>;
 
 export const EnvironmentContextSchema = z
   .object({
@@ -1518,6 +1579,25 @@ export type ActionRecord = z.infer<typeof ActionRecordSchema>;
 export const PolicyDecisionSchema = z.enum(["allow", "deny", "ask", "simulate", "allow_with_snapshot"]);
 export type PolicyDecision = z.infer<typeof PolicyDecisionSchema>;
 
+export const PolicyRecoverabilityClassSchema = z.enum([
+  "recoverable_local",
+  "recoverable_external_compensated",
+  "recoverable_contained_publish",
+  "unrecoverable_or_degraded",
+]);
+export type PolicyRecoverabilityClass = z.infer<typeof PolicyRecoverabilityClassSchema>;
+
+export const RecoveryProofKindSchema = z.enum([
+  "snapshot_preimage",
+  "explicit_checkpoint",
+  "trusted_compensator",
+  "contained_publish_boundary",
+]);
+export type RecoveryProofKind = z.infer<typeof RecoveryProofKindSchema>;
+
+export const RecoveryProofScopeSchema = z.enum(["path", "workspace", "external_object", "contained_projection"]);
+export type RecoveryProofScope = z.infer<typeof RecoveryProofScopeSchema>;
+
 export const PolicyReasonSchema = z
   .object({
     code: z.string().min(1),
@@ -1561,6 +1641,10 @@ export const PolicyOutcomeRecordSchema = z
       .object({
         matched_rules: z.array(z.string().min(1)),
         sticky_decision_applied: z.boolean(),
+        recoverability_class: PolicyRecoverabilityClassSchema.optional(),
+        recovery_proof_kind: RecoveryProofKindSchema.optional(),
+        recovery_proof_source: z.string().min(1).optional(),
+        recovery_proof_scope: RecoveryProofScopeSchema.optional(),
       })
       .strict(),
     evaluated_at: TimestampStringSchema,
@@ -2359,6 +2443,10 @@ export const SnapshotSelectionBasisSchema = z
     capability_state: z.enum(["healthy", "stale", "degraded"]),
     low_disk_pressure_observed: z.boolean(),
     journal_chain_depth: z.number().int().nonnegative(),
+    recent_ambiguous_shell_mutations: z.number().int().nonnegative(),
+    recent_broad_mutation_actions: z.number().int().nonnegative(),
+    recent_review_or_blocked_mutations: z.number().int().nonnegative(),
+    recent_failed_mutations: z.number().int().nonnegative(),
     explicit_branch_point: z.boolean(),
     explicit_hard_checkpoint: z.boolean(),
   })
@@ -2394,6 +2482,35 @@ export const SubmitActionAttemptResponsePayloadSchema = z
   })
   .strict();
 export type SubmitActionAttemptResponsePayload = z.infer<typeof SubmitActionAttemptResponsePayloadSchema>;
+
+export const RunCheckpointKindSchema = z.enum(["branch_point", "hard_checkpoint"]);
+export type RunCheckpointKind = z.infer<typeof RunCheckpointKindSchema>;
+
+export const CreateRunCheckpointRequestPayloadSchema = z
+  .object({
+    run_id: z.string().min(1),
+    checkpoint_kind: RunCheckpointKindSchema.optional(),
+    workspace_root: z.string().min(1).optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+export type CreateRunCheckpointRequestPayload = z.infer<typeof CreateRunCheckpointRequestPayloadSchema>;
+
+export const CreateRunCheckpointResponsePayloadSchema = z
+  .object({
+    run_checkpoint: z.string().min(1),
+    branch_point: z
+      .object({
+        run_id: z.string().min(1),
+        sequence: z.number().int().positive(),
+      })
+      .strict(),
+    checkpoint_kind: RunCheckpointKindSchema,
+    snapshot_record: SnapshotRecordSchema,
+    snapshot_selection: SnapshotSelectionResultSchema,
+  })
+  .strict();
+export type CreateRunCheckpointResponsePayload = z.infer<typeof CreateRunCheckpointResponsePayloadSchema>;
 
 export const ExplainPolicyActionRequestPayloadSchema = z
   .object({

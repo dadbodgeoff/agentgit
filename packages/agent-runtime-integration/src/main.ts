@@ -5,21 +5,25 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
 
-import { AgentGitError } from "@agentgit/schemas";
+import { AgentGitError, type RunCheckpointKind } from "@agentgit/schemas";
 
 import { AgentRuntimeIntegrationService, type ProductRunResult, type ProductSetupOptions } from "./service.js";
 import { isSupportedDirectCredentialEnvKey } from "./containment.js";
+import { createRuntimeCredentialBindingId } from "./state.js";
 import type {
   AssuranceLevel,
-  ContainedSecretFileBinding,
-  ContainedSecretEnvBinding,
+  CheckpointIntent,
   ContainedCredentialMode,
+  ContainedEgressMode,
   ContainmentBackend,
   ContainerNetworkPolicy,
+  DefaultCheckpointPolicy,
   DockerCapabilitySnapshot,
   GovernanceGuarantee,
   GovernanceMode,
   PolicyStrictness,
+  RuntimeCredentialBindingDocument,
+  RuntimeCredentialBindingKind,
   SetupExperience,
   SetupPreferences,
 } from "./types.js";
@@ -32,11 +36,11 @@ const USAGE = [
   "  --workspace-root <path>",
   "",
   "Commands:",
-  "  setup [--command <agent command>] [--remove] [--repair] [--yes] [--advanced] [--recommended] [--contained] [--image <container-image>] [--policy <balanced|strict>] [--network <inherit|none>] [--credentials <none|direct-env|brokered-secret-refs>] [--credential-env <ENV_KEY>] [--secret-env <ENV_KEY=secret-id>] [--secret-file <relative/path=secret-id>] [--egress-host <host[:port]>] [--assurance <observed|attached|contained|integrated>] [--scope <workspace>]",
-  "  run",
+  "  setup [--command <agent command>] [--remove] [--repair] [--yes] [--advanced] [--recommended] [--contained] [--image <container-image>] [--policy <balanced|strict>] [--checkpoint-default <never|risky-runs|always-before-run>] [--checkpoint-intent <operator-requested|broad-risk-default|high-value-workspace>] [--checkpoint-reason-template <text>] [--network <inherit|none>] [--egress <inherit|none|proxy-http-https|backend-enforced-allowlist>] [--credentials <none|direct-env|brokered-bindings>] [--credential-env <ENV_KEY>] [--secret-env <ENV_KEY=secret-id>] [--secret-file <relative/path=secret-id>] [--runtime-binding <kind:surface:target=secret-id[?metadata]>] [--egress-host <host[:port]>] [--assurance <observed|attached|contained|integrated>] [--scope <workspace>]",
+  "  run [--checkpoint] [--hard-checkpoint] [--checkpoint-kind <branch_point|hard_checkpoint>] [--checkpoint-reason <text>]",
   "  demo",
   "  inspect",
-  "  restore [--preview] [--force] [--path <file-or-dir>] [--action-id <id>] [--snapshot-id <id>] [--contained-run-id <id>]",
+  "  restore [--preview] [--force] [--path <file-or-dir>] [--action-id <id>] [--snapshot-id <id>] [--checkpoint <run_id#sequence>] [--branch-point <run_id#sequence>] [--contained-run-id <id>]",
 ].join("\n");
 
 interface GlobalFlags {
@@ -158,6 +162,61 @@ function formatGuarantees(guarantees: GovernanceGuarantee[]): string {
   return guarantees.length > 0 ? guarantees.map((entry) => formatGuarantee(entry)).join(", ") : "none";
 }
 
+function formatCheckpointPolicy(policy: DefaultCheckpointPolicy | null | undefined): string {
+  if (!policy) {
+    return "none";
+  }
+  return policy.replaceAll("_", "-");
+}
+
+function checkpointPolicyStatement(policy: DefaultCheckpointPolicy | null | undefined): string {
+  switch (policy) {
+    case "always_before_run":
+      return "AgentGit will capture a pre-run checkpoint before every launch.";
+    case "risky_runs":
+      return "AgentGit will capture a pre-run checkpoint only for runs that match the risky-run profile conditions.";
+    case "never":
+      return "AgentGit will only capture a checkpoint when you ask for one explicitly.";
+    default:
+      return "No checkpoint default is configured.";
+  }
+}
+
+function formatCheckpointIntent(intent: CheckpointIntent | null | undefined): string {
+  return intent ? intent.replaceAll("_", "-") : "none";
+}
+
+function formatContainedEgressMode(mode: ContainedEgressMode | null | undefined): string {
+  return mode ? mode.replaceAll("_", "-") : "unknown";
+}
+
+function formatContainedEgressAssurance(assurance: DockerCapabilitySnapshot["egress_assurance"] | null | undefined): string {
+  return assurance ? assurance.replaceAll("_", "-") : "unknown";
+}
+
+function formatCheckpointSummary(
+  checkpoint: {
+    run_checkpoint: string;
+    checkpoint_kind: RunCheckpointKind;
+    trigger?: "explicit_run_flag" | "default_policy";
+    reason?: string;
+  } | null,
+): string {
+  if (!checkpoint) {
+    return "none";
+  }
+
+  const triggerPrefix =
+    checkpoint.trigger === "default_policy"
+      ? "automatic"
+      : checkpoint.trigger === "explicit_run_flag"
+        ? "explicit"
+        : "checkpoint";
+  return `${checkpoint.run_checkpoint} (${triggerPrefix}, ${checkpoint.checkpoint_kind}${
+    checkpoint.reason ? `, ${checkpoint.reason}` : ""
+  })`;
+}
+
 function containedCredentialStatement(details: {
   credential_mode: ContainedCredentialMode;
   credential_env_keys: string[];
@@ -168,7 +227,7 @@ function containedCredentialStatement(details: {
       return details.credential_env_keys.length > 0
         ? `direct host env allowlist (${details.credential_env_keys.join(", ")})`
         : "direct host env allowlist (no keys selected)";
-    case "brokered_secret_refs":
+    case "brokered_bindings":
       return details.credential_env_keys.length > 0 || details.credential_file_paths.length > 0
         ? [
             details.credential_env_keys.length > 0
@@ -180,9 +239,9 @@ function containedCredentialStatement(details: {
           ]
             .filter((value): value is string => value !== null)
             .join("; ")
-            .replace(/^/, "brokered secret refs (")
+            .replace(/^/, "brokered runtime bindings (")
             .concat(")")
-        : "brokered secret refs (no bindings configured)";
+        : "brokered runtime bindings (no bindings configured)";
     default:
       return "none injected";
   }
@@ -197,10 +256,16 @@ function formatContainedCapabilities(snapshot?: DockerCapabilitySnapshot): strin
     snapshot.projection_enforced ? "projected workspace enforced" : "projection not enforced",
     snapshot.read_only_rootfs_enabled ? "read-only rootfs" : "writable rootfs",
     snapshot.network_restricted ? "network restricted" : "network inherited",
+    `egress mode ${formatContainedEgressMode(snapshot.egress_mode)}`,
+    `egress assurance ${formatContainedEgressAssurance(snapshot.egress_assurance)}`,
     snapshot.credential_brokering_enabled ? "credential brokering enabled" : "credential brokering not enabled",
     snapshot.proxy_egress_allowlist_applied
       ? `proxy allowlist (${(snapshot.egress_allowlist_hosts ?? []).join(", ") || "configured"})`
       : "no proxy allowlist",
+    snapshot.backend_enforced_allowlist_supported
+      ? "backend-enforced allowlists supported"
+      : "backend-enforced allowlists unsupported",
+    snapshot.raw_socket_egress_blocked ? "raw socket egress blocked" : "raw socket egress not blocked",
     snapshot.rootless_docker
       ? "rootless Docker"
       : snapshot.docker_desktop_vm
@@ -227,22 +292,95 @@ interface SetupCliOptions {
   policy_strictness?: PolicyStrictness;
   assurance_target?: AssuranceLevel;
   install_scope?: "workspace";
+  default_checkpoint_policy?: DefaultCheckpointPolicy;
+  checkpoint_intent?: CheckpointIntent;
+  checkpoint_reason_template?: string;
   containment_backend?: ContainmentBackend;
   container_image?: string;
   container_network_policy?: ContainerNetworkPolicy;
+  contained_egress_mode?: ContainedEgressMode;
   contained_credential_mode?: ContainedCredentialMode;
+  runtime_credential_bindings?: RuntimeCredentialBindingDocument[];
   credential_passthrough_env_keys?: string[];
-  contained_secret_env_bindings?: ContainedSecretEnvBinding[];
-  contained_secret_file_bindings?: ContainedSecretFileBinding[];
   contained_proxy_allowlist_hosts?: string[];
+}
+
+interface RunCliOptions {
+  checkpoint: boolean;
+  checkpoint_kind?: RunCheckpointKind;
+  checkpoint_reason?: string;
 }
 
 const POLICY_STRICTNESS_VALUES = ["balanced", "strict"] as const;
 const ASSURANCE_LEVEL_VALUES = ["observed", "attached", "contained", "integrated"] as const;
 const CONTAINER_NETWORK_POLICY_VALUES = ["inherit", "none"] as const;
-const CONTAINED_CREDENTIAL_MODE_VALUES = ["none", "direct_env", "brokered_secret_refs"] as const;
+const DEFAULT_CHECKPOINT_POLICY_VALUES = ["never", "risky_runs", "always_before_run"] as const;
+const CHECKPOINT_INTENT_VALUES = ["operator_requested", "broad_risk_default", "high_value_workspace"] as const;
+const CONTAINED_EGRESS_MODE_VALUES = ["inherit", "none", "proxy_http_https", "backend_enforced_allowlist"] as const;
+const CONTAINED_CREDENTIAL_MODE_VALUES = ["none", "direct_env", "brokered_bindings"] as const;
+const RUNTIME_CREDENTIAL_BINDING_KIND_VALUES = [
+  "env",
+  "file",
+  "header_template",
+  "runtime_ticket",
+  "tool_scoped_ref",
+] as const;
 
-function parseSecretEnvBinding(input: string): ContainedSecretEnvBinding {
+function createRuntimeCredentialBinding(
+  kind: RuntimeCredentialBindingKind,
+  target: RuntimeCredentialBindingDocument["target"],
+  brokerSourceRef: string,
+  options: {
+    redacted_delivery_metadata?: Record<string, unknown>;
+    expires_at?: string;
+    rotates?: boolean;
+  } = {},
+): RuntimeCredentialBindingDocument {
+  const targetLabel = target.surface === "env" ? `env:${target.env_key}` : `file:${target.relative_path}`;
+  return {
+    binding_id: createRuntimeCredentialBindingId({
+      kind,
+      target: targetLabel,
+      broker_source_ref: brokerSourceRef,
+    }),
+    kind,
+    target,
+    broker_source_ref: brokerSourceRef,
+    redacted_delivery_metadata: options.redacted_delivery_metadata ?? {},
+    expires_at: options.expires_at,
+    rotates: options.rotates ?? true,
+  };
+}
+
+function parseBrokeredEnvKey(envKey: string, flag: string, input: string): string {
+  const normalized = envKey.trim().toUpperCase();
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized)) {
+    throw new AgentGitError(`Invalid contained secret env key: ${envKey}`, "BAD_REQUEST", {
+      flag,
+      value: input,
+      env_key: envKey,
+    });
+  }
+  return normalized;
+}
+
+function parseBrokeredRelativePath(relativePath: string, flag: string, input: string): string {
+  const normalized = relativePath.trim();
+  if (
+    normalized.length === 0 ||
+    path.isAbsolute(normalized) ||
+    normalized.split("/").some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    throw new AgentGitError(`Invalid contained secret file path: ${normalized || input}`, "BAD_REQUEST", {
+      flag,
+      value: input,
+      relative_path: normalized,
+    });
+  }
+  return normalized;
+}
+
+function parseSecretEnvBinding(input: string): RuntimeCredentialBindingDocument {
   const separatorIndex = input.indexOf("=");
   if (separatorIndex <= 0 || separatorIndex === input.length - 1) {
     throw new AgentGitError(`Invalid --secret-env binding: ${input}`, "BAD_REQUEST", {
@@ -252,15 +390,8 @@ function parseSecretEnvBinding(input: string): ContainedSecretEnvBinding {
     });
   }
 
-  const envKey = input.slice(0, separatorIndex).trim();
+  const envKey = parseBrokeredEnvKey(input.slice(0, separatorIndex), "--secret-env", input);
   const secretId = input.slice(separatorIndex + 1).trim();
-  if (!/^[A-Z_][A-Z0-9_]*$/.test(envKey)) {
-    throw new AgentGitError(`Invalid contained secret env key: ${envKey}`, "BAD_REQUEST", {
-      flag: "--secret-env",
-      env_key: envKey,
-    });
-  }
-
   if (secretId.length === 0) {
     throw new AgentGitError(`Invalid contained secret id in --secret-env: ${input}`, "BAD_REQUEST", {
       flag: "--secret-env",
@@ -268,13 +399,17 @@ function parseSecretEnvBinding(input: string): ContainedSecretEnvBinding {
     });
   }
 
-  return {
-    env_key: envKey,
-    secret_id: secretId,
-  };
+  return createRuntimeCredentialBinding(
+    "env",
+    {
+      surface: "env",
+      env_key: envKey,
+    },
+    secretId,
+  );
 }
 
-function parseSecretFileBinding(input: string): ContainedSecretFileBinding {
+function parseSecretFileBinding(input: string): RuntimeCredentialBindingDocument {
   const separatorIndex = input.indexOf("=");
   if (separatorIndex <= 0 || separatorIndex === input.length - 1) {
     throw new AgentGitError(`Invalid --secret-file binding: ${input}`, "BAD_REQUEST", {
@@ -284,20 +419,8 @@ function parseSecretFileBinding(input: string): ContainedSecretFileBinding {
     });
   }
 
-  const rawPath = input.slice(0, separatorIndex).trim();
-  const relativePath = rawPath;
+  const relativePath = parseBrokeredRelativePath(input.slice(0, separatorIndex), "--secret-file", input);
   const secretId = input.slice(separatorIndex + 1).trim();
-  if (
-    relativePath.length === 0 ||
-    path.isAbsolute(relativePath) ||
-    relativePath.split("/").some((segment) => segment.length === 0 || segment === "." || segment === "..")
-  ) {
-    throw new AgentGitError(`Invalid contained secret file path: ${relativePath || input}`, "BAD_REQUEST", {
-      flag: "--secret-file",
-      relative_path: relativePath,
-    });
-  }
-
   if (secretId.length === 0) {
     throw new AgentGitError(`Invalid contained secret id in --secret-file: ${input}`, "BAD_REQUEST", {
       flag: "--secret-file",
@@ -305,10 +428,14 @@ function parseSecretFileBinding(input: string): ContainedSecretFileBinding {
     });
   }
 
-  return {
-    relative_path: relativePath,
-    secret_id: secretId,
-  };
+  return createRuntimeCredentialBinding(
+    "file",
+    {
+      surface: "file",
+      relative_path: relativePath,
+    },
+    secretId,
+  );
 }
 
 function parseContainedEgressHost(input: string): string {
@@ -339,19 +466,118 @@ function parseCredentialEnvKey(input: string): string {
   return value;
 }
 
+function parseBooleanMetadata(value: string, flag: string, input: string): boolean {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new AgentGitError(`Invalid boolean metadata in ${flag}: ${input}`, "BAD_REQUEST", {
+    flag,
+    value: input,
+  });
+}
+
+function parseRuntimeBindingSpec(input: string): RuntimeCredentialBindingDocument {
+  const [bindingSpec, metadataSpec] = input.split("?", 2);
+  const separatorIndex = bindingSpec.indexOf("=");
+  if (separatorIndex <= 0 || separatorIndex === bindingSpec.length - 1) {
+    throw new AgentGitError(`Invalid --runtime-binding value: ${input}`, "BAD_REQUEST", {
+      flag: "--runtime-binding",
+      value: input,
+      expected_format: "kind:surface:target=secret-id[?metadata]",
+    });
+  }
+
+  const lhs = bindingSpec.slice(0, separatorIndex).trim();
+  const brokerSourceRef = bindingSpec.slice(separatorIndex + 1).trim();
+  const [kindToken, surfaceToken, ...targetParts] = lhs.split(":");
+  const normalizedKind = kindToken?.trim().replaceAll("-", "_");
+  const normalizedSurface = surfaceToken?.trim();
+  const targetValue = targetParts.join(":").trim();
+  if (
+    !normalizedKind ||
+    !containsValue(normalizedKind, RUNTIME_CREDENTIAL_BINDING_KIND_VALUES) ||
+    (normalizedSurface !== "env" && normalizedSurface !== "file") ||
+    targetValue.length === 0 ||
+    brokerSourceRef.length === 0
+  ) {
+    throw new AgentGitError(`Invalid --runtime-binding value: ${input}`, "BAD_REQUEST", {
+      flag: "--runtime-binding",
+      value: input,
+      expected_format: "kind:surface:target=secret-id[?metadata]",
+    });
+  }
+
+  const target =
+    normalizedSurface === "env"
+      ? {
+          surface: "env" as const,
+          env_key: parseBrokeredEnvKey(targetValue, "--runtime-binding", input),
+        }
+      : {
+          surface: "file" as const,
+          relative_path: parseBrokeredRelativePath(targetValue, "--runtime-binding", input),
+        };
+
+  const metadata = new URLSearchParams(metadataSpec ?? "");
+  const redactedDeliveryMetadata: Record<string, unknown> = {};
+  let rotates = true;
+  let expiresAt: string | undefined;
+  for (const [key, value] of metadata.entries()) {
+    if (key === "rotates") {
+      rotates = parseBooleanMetadata(value, "--runtime-binding", input);
+      continue;
+    }
+    if (key === "expires_at") {
+      expiresAt = value;
+      continue;
+    }
+    if (key === "ticket_ttl_seconds") {
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new AgentGitError(`Invalid ticket_ttl_seconds in --runtime-binding: ${input}`, "BAD_REQUEST", {
+          flag: "--runtime-binding",
+          value: input,
+        });
+      }
+      redactedDeliveryMetadata[key] = parsed;
+      continue;
+    }
+    redactedDeliveryMetadata[key] = value;
+  }
+
+  if (normalizedKind === "tool_scoped_ref" && typeof redactedDeliveryMetadata.tool_name !== "string") {
+    throw new AgentGitError("tool_scoped_ref runtime bindings require metadata key tool_name.", "BAD_REQUEST", {
+      flag: "--runtime-binding",
+      value: input,
+    });
+  }
+
+  return createRuntimeCredentialBinding(normalizedKind, target, brokerSourceRef, {
+    redacted_delivery_metadata: redactedDeliveryMetadata,
+    expires_at: expiresAt,
+    rotates,
+  });
+}
+
 function buildSetupPreferences(options: SetupCliOptions): SetupPreferences {
   return {
     experience: options.experience ?? "recommended",
     policy_strictness: options.policy_strictness ?? "balanced",
     install_scope: options.install_scope ?? "workspace",
     assurance_target: options.assurance_target,
+    default_checkpoint_policy: options.default_checkpoint_policy,
+    checkpoint_intent: options.checkpoint_intent,
+    checkpoint_reason_template: options.checkpoint_reason_template,
     containment_backend: options.containment_backend,
     container_image: options.container_image,
     container_network_policy: options.container_network_policy,
+    contained_egress_mode: options.contained_egress_mode,
     contained_credential_mode: options.contained_credential_mode,
+    runtime_credential_bindings: options.runtime_credential_bindings,
     credential_passthrough_env_keys: options.credential_passthrough_env_keys,
-    contained_secret_env_bindings: options.contained_secret_env_bindings,
-    contained_secret_file_bindings: options.contained_secret_file_bindings,
     contained_proxy_allowlist_hosts: options.contained_proxy_allowlist_hosts,
   };
 }
@@ -385,19 +611,52 @@ async function promptAdvancedSetupPreferences(existing: SetupCliOptions): Promis
     }
   }
 
+  if (!next.default_checkpoint_policy) {
+    const checkpointAnswer = (
+      await promptText("Checkpoint default [Enter=never, r=risky-runs, a=always-before-run]: ")
+    ).toLowerCase();
+    next.default_checkpoint_policy =
+      checkpointAnswer === "a" || checkpointAnswer === "always-before-run"
+        ? "always_before_run"
+        : checkpointAnswer === "r" || checkpointAnswer === "risky-runs"
+          ? "risky_runs"
+          : "never";
+  }
+
+  if (next.default_checkpoint_policy !== "never" && !next.checkpoint_reason_template) {
+    const checkpointReasonAnswer = await promptText("Checkpoint reason template [Enter=auto default wording]: ");
+    next.checkpoint_reason_template =
+      checkpointReasonAnswer.trim().length > 0 ? checkpointReasonAnswer.trim() : undefined;
+  }
+
   if (next.containment_backend === "docker" && !next.container_image) {
     const imageAnswer = await promptText("Container image [Enter=auto-detect]: ");
     next.container_image = imageAnswer.trim().length > 0 ? imageAnswer.trim() : undefined;
   }
 
+  if (next.containment_backend === "docker" && !next.contained_egress_mode) {
+    const egressAnswer = (
+      await promptText(
+        "Contained egress mode [Enter=inherit, n=none, p=proxy-http-https, b=backend-enforced-allowlist]: ",
+      )
+    ).toLowerCase();
+    next.contained_egress_mode =
+      egressAnswer === "n" || egressAnswer === "none"
+        ? "none"
+        : egressAnswer === "p" || egressAnswer === "proxy-http-https"
+          ? "proxy_http_https"
+          : egressAnswer === "b" || egressAnswer === "backend-enforced-allowlist"
+            ? "backend_enforced_allowlist"
+            : "inherit";
+  }
+
   if (next.containment_backend === "docker" && !next.container_network_policy) {
-    const networkAnswer = (await promptText("Contained network policy [Enter=inherit, n=none]: ")).toLowerCase();
-    next.container_network_policy = networkAnswer === "n" || networkAnswer === "none" ? "none" : "inherit";
+    next.container_network_policy = next.contained_egress_mode === "none" ? "none" : "inherit";
   }
 
   if (
     next.containment_backend === "docker" &&
-    next.container_network_policy !== "none" &&
+    next.contained_egress_mode === "proxy_http_https" &&
     (!next.contained_proxy_allowlist_hosts || next.contained_proxy_allowlist_hosts.length === 0)
   ) {
     const egressAnswer = await promptText(
@@ -413,13 +672,13 @@ async function promptAdvancedSetupPreferences(existing: SetupCliOptions): Promis
 
   if (next.containment_backend === "docker" && !next.contained_credential_mode) {
     const credentialAnswer = (
-      await promptText("Contained credentials [Enter=direct-env, n=none, b=brokered-secret-refs]: ")
+      await promptText("Contained credentials [Enter=direct-env, n=none, b=brokered-bindings]: ")
     ).toLowerCase();
     next.contained_credential_mode =
       credentialAnswer === "n" || credentialAnswer === "none"
         ? "none"
-        : credentialAnswer === "b" || credentialAnswer === "brokered-secret-refs"
-          ? "brokered_secret_refs"
+        : credentialAnswer === "b" || credentialAnswer === "brokered-bindings"
+          ? "brokered_bindings"
           : "direct_env";
   }
 
@@ -445,28 +704,31 @@ async function promptAdvancedSetupPreferences(existing: SetupCliOptions): Promis
 
   if (
     next.containment_backend === "docker" &&
-    next.contained_credential_mode === "brokered_secret_refs" &&
-    (!next.contained_secret_env_bindings || next.contained_secret_env_bindings.length === 0) &&
-    (!next.contained_secret_file_bindings || next.contained_secret_file_bindings.length === 0)
+    next.contained_credential_mode === "brokered_bindings" &&
+    (!next.runtime_credential_bindings || next.runtime_credential_bindings.length === 0)
   ) {
     const envBindingsAnswer = await promptText(
       "Contained secret bindings [Enter=none, format OPENAI_API_KEY=secret-id, comma-separated]: ",
     );
-    next.contained_secret_env_bindings =
+    const envBindings =
       envBindingsAnswer.trim().length === 0
         ? []
-        : envBindingsAnswer
-            .split(",")
-            .map((entry) => parseSecretEnvBinding(entry.trim()));
+        : envBindingsAnswer.split(",").map((entry) => parseSecretEnvBinding(entry.trim()));
     const fileBindingsAnswer = await promptText(
       "Contained secret files [Enter=none, format openai.key=secret-id, comma-separated]: ",
     );
-    next.contained_secret_file_bindings =
+    const fileBindings =
       fileBindingsAnswer.trim().length === 0
         ? []
-        : fileBindingsAnswer
-            .split(",")
-            .map((entry) => parseSecretFileBinding(entry.trim()));
+        : fileBindingsAnswer.split(",").map((entry) => parseSecretFileBinding(entry.trim()));
+    const advancedBindingAnswer = await promptText(
+      "Additional runtime bindings [Enter=none, format header_template:env:OPENAI_AUTH_HEADER=secret-id?template=Bearer%20{{token}}]: ",
+    );
+    const advancedBindings =
+      advancedBindingAnswer.trim().length === 0
+        ? []
+        : advancedBindingAnswer.split(",").map((entry) => parseRuntimeBindingSpec(entry.trim()));
+    next.runtime_credential_bindings = [...envBindings, ...fileBindings, ...advancedBindings];
   }
 
   next.install_scope ??= "workspace";
@@ -482,9 +744,17 @@ export function formatSetupResult(result: Awaited<ReturnType<AgentRuntimeIntegra
     `Assurance: ${assuranceStatement(result.assurance_level)}`,
     `Governance mode: ${formatGovernanceMode(result.governance_mode)}`,
     `Guarantees: ${formatGuarantees(result.guarantees)}`,
+    `Checkpoint default: ${formatCheckpointPolicy(result.default_checkpoint_policy)}`,
+    `Checkpoint policy: ${checkpointPolicyStatement(result.default_checkpoint_policy)}`,
+    `Checkpoint intent: ${formatCheckpointIntent(result.checkpoint_intent)}`,
+    result.checkpoint_reason_template ? `Checkpoint reason template: ${result.checkpoint_reason_template}` : null,
     `Governed surfaces: ${result.governed_surfaces.length > 0 ? result.governed_surfaces.join(", ") : "none"}`,
     result.contained_details ? `Contained backend: ${result.contained_details.backend}` : null,
     result.contained_details ? `Contained network policy: ${result.contained_details.network_policy}` : null,
+    result.contained_details ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}` : null,
+    result.contained_details
+      ? `Contained egress assurance: ${formatContainedEgressAssurance(result.contained_details.egress_assurance)}`
+      : null,
     result.contained_details ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}` : null,
     result.contained_details && result.contained_details.egress_allowlist_hosts.length > 0
       ? `Contained egress allowlist: ${result.contained_details.egress_allowlist_hosts.join(", ")}`
@@ -531,9 +801,20 @@ export function formatInspectResult(result: Awaited<ReturnType<AgentRuntimeInteg
       `Assurance: ${assuranceStatement(result.assurance_level)}`,
       `Governance mode: ${formatGovernanceMode(result.governance_mode)}`,
       `Guarantees: ${formatGuarantees(result.guarantees)}`,
+      `Checkpoint default: ${formatCheckpointPolicy(result.default_checkpoint_policy)}`,
+      `Checkpoint policy: ${checkpointPolicyStatement(result.default_checkpoint_policy)}`,
+      `Checkpoint intent: ${formatCheckpointIntent(result.checkpoint_intent)}`,
+      result.checkpoint_reason_template ? `Checkpoint reason template: ${result.checkpoint_reason_template}` : null,
+      `Latest explicit checkpoint: ${formatCheckpointSummary(result.latest_explicit_checkpoint)}`,
+      `Latest automatic checkpoint: ${formatCheckpointSummary(result.latest_automatic_checkpoint)}`,
+      result.restore_vs_checkpoint ? `Restore vs checkpoint: ${result.restore_vs_checkpoint}` : null,
       result.degraded_reasons.length === 0 ? null : `Degraded reasons: ${result.degraded_reasons.join("; ")}`,
       result.contained_details ? `Contained backend: ${result.contained_details.backend}` : null,
       result.contained_details ? `Contained network policy: ${result.contained_details.network_policy}` : null,
+      result.contained_details ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}` : null,
+      result.contained_details
+        ? `Contained egress assurance: ${formatContainedEgressAssurance(result.contained_details.egress_assurance)}`
+        : null,
       result.contained_details ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}` : null,
       result.contained_details && result.contained_details.egress_allowlist_hosts.length > 0
         ? `Contained egress allowlist: ${result.contained_details.egress_allowlist_hosts.join(", ")}`
@@ -541,6 +822,8 @@ export function formatInspectResult(result: Awaited<ReturnType<AgentRuntimeInteg
       result.contained_details && result.contained_details.capability_snapshot
         ? `Contained capabilities: ${formatContainedCapabilities(result.contained_details.capability_snapshot)}`
         : null,
+      result.restore_boundary ? `Restore boundary: ${result.restore_boundary}` : null,
+      result.restore_guidance ? `Restore guidance: ${result.restore_guidance}` : null,
     ]
       .filter((value): value is string => value !== null)
       .join("\n");
@@ -555,14 +838,27 @@ export function formatInspectResult(result: Awaited<ReturnType<AgentRuntimeInteg
     `Assurance: ${assuranceStatement(result.assurance_level)}`,
     `Governance mode: ${formatGovernanceMode(result.governance_mode)}`,
     `Guarantees: ${formatGuarantees(result.guarantees)}`,
+    `Checkpoint default: ${formatCheckpointPolicy(result.default_checkpoint_policy)}`,
+    `Checkpoint policy: ${checkpointPolicyStatement(result.default_checkpoint_policy)}`,
+    `Checkpoint intent: ${formatCheckpointIntent(result.checkpoint_intent)}`,
+    result.checkpoint_reason_template ? `Checkpoint reason template: ${result.checkpoint_reason_template}` : null,
+    `Latest explicit checkpoint: ${formatCheckpointSummary(result.latest_explicit_checkpoint)}`,
+    `Latest automatic checkpoint: ${formatCheckpointSummary(result.latest_automatic_checkpoint)}`,
+    result.restore_vs_checkpoint ? `Restore vs checkpoint: ${result.restore_vs_checkpoint}` : null,
     `What happened: ${result.summary}`,
     `Action: ${result.action_title ?? "unknown"}`,
     `Status: ${result.action_status ?? "unknown"}`,
     `Changed paths: ${result.changed_paths.length > 0 ? result.changed_paths.join(", ") : "unknown"}`,
     `Restore available: ${result.restore_available ? "yes" : "no"}`,
+    result.restore_boundary ? `Restore boundary: ${result.restore_boundary}` : null,
+    result.restore_guidance ? `Restore guidance: ${result.restore_guidance}` : null,
     `Next restore command: ${result.restore_command ?? "none"}`,
     result.contained_details ? `Contained backend: ${result.contained_details.backend}` : null,
     result.contained_details ? `Contained network policy: ${result.contained_details.network_policy}` : null,
+    result.contained_details ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}` : null,
+    result.contained_details
+      ? `Contained egress assurance: ${formatContainedEgressAssurance(result.contained_details.egress_assurance)}`
+      : null,
     result.contained_details ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}` : null,
     result.contained_details && result.contained_details.egress_allowlist_hosts.length > 0
       ? `Contained egress allowlist: ${result.contained_details.egress_allowlist_hosts.join(", ")}`
@@ -583,9 +879,12 @@ export function formatRestoreResult(result: Awaited<ReturnType<AgentRuntimeInteg
     `Governed workspace: ${result.governed_workspace_root}`,
     `Target: ${result.target_summary}`,
     `Source of truth: ${result.restore_source}`,
+    `Restore boundary: ${result.restore_boundary}`,
+    `Boundary guidance: ${result.restore_guidance}`,
     `Recovery class: ${result.recovery_class}`,
     `Restore mode: ${result.exactness}`,
     `Preview only: ${result.preview_only ? "yes" : "no"}`,
+    result.preview_reason ? `Why preview only: ${result.preview_reason}` : null,
     `Conflicts detected: ${result.conflict_detected ? "yes" : "no"}`,
     `Files affected: ${result.changed_path_count ?? "unknown"}`,
     `Files deleted by restore: ${result.deletes_files === null ? "unknown" : result.deletes_files ? "yes" : "no"}`,
@@ -602,10 +901,17 @@ export function formatRunResult(result: ProductRunResult): string {
     `Runtime: ${result.runtime}`,
     `Workspace: ${result.workspace_root}`,
     `Run: ${result.run_id}`,
+    result.run_checkpoint ? `Checkpoint: ${result.run_checkpoint}` : null,
+    result.checkpoint_kind ? `Checkpoint kind: ${result.checkpoint_kind}` : null,
+    result.checkpoint_trigger ? `Checkpoint trigger: ${result.checkpoint_trigger}` : null,
+    result.checkpoint_reason ? `Checkpoint reason: ${result.checkpoint_reason}` : null,
+    result.checkpoint_restore_command ? `Checkpoint restore command: ${result.checkpoint_restore_command}` : null,
     `Exit code: ${result.exit_code}`,
     `Signal: ${result.signal ?? "none"}`,
     `Daemon started by AgentGit: ${result.daemon_started ? "yes" : "no"}`,
-  ].join("\n");
+  ]
+    .filter((value): value is string => value !== null)
+    .join("\n");
 }
 
 function parseSetupOptions(args: string[]): SetupCliOptions {
@@ -618,13 +924,16 @@ function parseSetupOptions(args: string[]): SetupCliOptions {
     policy_strictness: undefined,
     assurance_target: undefined,
     install_scope: undefined,
+    default_checkpoint_policy: undefined,
+    checkpoint_intent: undefined,
+    checkpoint_reason_template: undefined,
     containment_backend: undefined,
     container_image: undefined,
     container_network_policy: undefined,
+    contained_egress_mode: undefined,
     contained_credential_mode: undefined,
+    runtime_credential_bindings: undefined,
     credential_passthrough_env_keys: undefined,
-    contained_secret_env_bindings: undefined,
-    contained_secret_file_bindings: undefined,
     contained_proxy_allowlist_hosts: undefined,
   };
   const rest = [...args];
@@ -656,6 +965,39 @@ function parseSetupOptions(args: string[]): SetupCliOptions {
       case "--image":
         options.container_image = shiftValue(rest, "--image");
         break;
+      case "--checkpoint-default": {
+        const value = shiftValue(rest, "--checkpoint-default").replaceAll("-", "_");
+        if (!containsValue(value, DEFAULT_CHECKPOINT_POLICY_VALUES)) {
+          throw new AgentGitError(`Unsupported checkpoint default: ${value}`, "BAD_REQUEST", {
+            flag: "--checkpoint-default",
+            value,
+          });
+        }
+        options.default_checkpoint_policy = value;
+        if (!options.checkpoint_intent) {
+          options.checkpoint_intent =
+            value === "always_before_run"
+              ? "operator_requested"
+              : value === "risky_runs"
+                ? "broad_risk_default"
+                : undefined;
+        }
+        break;
+      }
+      case "--checkpoint-intent": {
+        const value = shiftValue(rest, "--checkpoint-intent").replaceAll("-", "_");
+        if (!containsValue(value, CHECKPOINT_INTENT_VALUES)) {
+          throw new AgentGitError(`Unsupported checkpoint intent: ${value}`, "BAD_REQUEST", {
+            flag: "--checkpoint-intent",
+            value,
+          });
+        }
+        options.checkpoint_intent = value;
+        break;
+      }
+      case "--checkpoint-reason-template":
+        options.checkpoint_reason_template = shiftValue(rest, "--checkpoint-reason-template");
+        break;
       case "--network": {
         const value = shiftValue(rest, "--network");
         if (!containsValue(value, CONTAINER_NETWORK_POLICY_VALUES)) {
@@ -667,12 +1009,27 @@ function parseSetupOptions(args: string[]): SetupCliOptions {
         options.container_network_policy = value;
         break;
       }
+      case "--egress": {
+        const value = shiftValue(rest, "--egress").replaceAll("-", "_");
+        if (!containsValue(value, CONTAINED_EGRESS_MODE_VALUES)) {
+          throw new AgentGitError(`Unsupported contained egress mode: ${value}`, "BAD_REQUEST", {
+            flag: "--egress",
+            value,
+          });
+        }
+        options.contained_egress_mode = value;
+        options.container_network_policy = value === "none" ? "none" : (options.container_network_policy ?? "inherit");
+        break;
+      }
       case "--credentials": {
-        const value = shiftValue(rest, "--credentials").replaceAll("-", "_");
+        const rawValue = shiftValue(rest, "--credentials");
+        const value = rawValue.replaceAll("-", "_") === "brokered_secret_refs"
+          ? "brokered_bindings"
+          : rawValue.replaceAll("-", "_");
         if (!containsValue(value, CONTAINED_CREDENTIAL_MODE_VALUES)) {
           throw new AgentGitError(`Unsupported contained credential mode: ${value}`, "BAD_REQUEST", {
             flag: "--credentials",
-            value,
+            value: rawValue,
           });
         }
         options.contained_credential_mode = value;
@@ -684,18 +1041,25 @@ function parseSetupOptions(args: string[]): SetupCliOptions {
         options.contained_credential_mode ??= "direct_env";
         break;
       case "--secret-env":
-        options.contained_secret_env_bindings ??= [];
-        options.contained_secret_env_bindings.push(parseSecretEnvBinding(shiftValue(rest, "--secret-env")));
-        options.contained_credential_mode ??= "brokered_secret_refs";
+        options.runtime_credential_bindings ??= [];
+        options.runtime_credential_bindings.push(parseSecretEnvBinding(shiftValue(rest, "--secret-env")));
+        options.contained_credential_mode ??= "brokered_bindings";
         break;
       case "--secret-file":
-        options.contained_secret_file_bindings ??= [];
-        options.contained_secret_file_bindings.push(parseSecretFileBinding(shiftValue(rest, "--secret-file")));
-        options.contained_credential_mode ??= "brokered_secret_refs";
+        options.runtime_credential_bindings ??= [];
+        options.runtime_credential_bindings.push(parseSecretFileBinding(shiftValue(rest, "--secret-file")));
+        options.contained_credential_mode ??= "brokered_bindings";
+        break;
+      case "--runtime-binding":
+        options.runtime_credential_bindings ??= [];
+        options.runtime_credential_bindings.push(parseRuntimeBindingSpec(shiftValue(rest, "--runtime-binding")));
+        options.contained_credential_mode ??= "brokered_bindings";
         break;
       case "--egress-host":
         options.contained_proxy_allowlist_hosts ??= [];
         options.contained_proxy_allowlist_hosts.push(parseContainedEgressHost(shiftValue(rest, "--egress-host")));
+        options.contained_egress_mode ??= "proxy_http_https";
+        options.container_network_policy ??= "inherit";
         break;
       case "--policy": {
         const value = shiftValue(rest, "--policy");
@@ -745,6 +1109,8 @@ function parseRestoreOptions(args: string[]): {
   path?: string;
   action_id?: string;
   snapshot_id?: string;
+  run_checkpoint?: string;
+  branch_point?: string;
   contained_run_id?: string;
 } {
   const options = {
@@ -753,6 +1119,8 @@ function parseRestoreOptions(args: string[]): {
     path: undefined as string | undefined,
     action_id: undefined as string | undefined,
     snapshot_id: undefined as string | undefined,
+    run_checkpoint: undefined as string | undefined,
+    branch_point: undefined as string | undefined,
     contained_run_id: undefined as string | undefined,
   };
   const rest = [...args];
@@ -774,11 +1142,59 @@ function parseRestoreOptions(args: string[]): {
       case "--snapshot-id":
         options.snapshot_id = shiftValue(rest, "--snapshot-id");
         break;
+      case "--checkpoint":
+        options.run_checkpoint = shiftValue(rest, "--checkpoint");
+        break;
+      case "--branch-point":
+        options.branch_point = shiftValue(rest, "--branch-point");
+        break;
       case "--contained-run-id":
         options.contained_run_id = shiftValue(rest, "--contained-run-id");
         break;
       default:
         throw new AgentGitError(`Unknown restore flag: ${current}`, "BAD_REQUEST", {
+          flag: current,
+        });
+    }
+  }
+  return options;
+}
+
+function parseRunOptions(args: string[]): RunCliOptions {
+  const options: RunCliOptions = {
+    checkpoint: false,
+    checkpoint_kind: undefined,
+    checkpoint_reason: undefined,
+  };
+  const rest = [...args];
+  while (rest.length > 0) {
+    const current = rest.shift()!;
+    switch (current) {
+      case "--checkpoint":
+        options.checkpoint = true;
+        break;
+      case "--hard-checkpoint":
+        options.checkpoint = true;
+        options.checkpoint_kind = "hard_checkpoint";
+        break;
+      case "--checkpoint-kind": {
+        const value = shiftValue(rest, "--checkpoint-kind");
+        if (value !== "branch_point" && value !== "hard_checkpoint") {
+          throw new AgentGitError(`Unsupported checkpoint kind: ${value}`, "BAD_REQUEST", {
+            flag: "--checkpoint-kind",
+            value,
+          });
+        }
+        options.checkpoint = true;
+        options.checkpoint_kind = value;
+        break;
+      }
+      case "--checkpoint-reason":
+        options.checkpoint = true;
+        options.checkpoint_reason = shiftValue(rest, "--checkpoint-reason");
+        break;
+      default:
+        throw new AgentGitError(`Unknown run flag: ${current}`, "BAD_REQUEST", {
           flag: current,
         });
     }
@@ -900,7 +1316,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<Pr
         return null;
       }
       case "run": {
-        const result = await service.run(workspaceRoot);
+        const options = parseRunOptions(rest);
+        const result = await service.run(workspaceRoot, options);
         if (flags.json) {
           console.log(JSON.stringify(result, null, 2));
         }

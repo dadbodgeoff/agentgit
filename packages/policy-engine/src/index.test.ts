@@ -277,6 +277,115 @@ function makeOwnedNoteAction(confidence = 0.45): ActionRecord {
   });
 }
 
+function makeUntrustedFunctionAction(confidence = 0.45): ActionRecord {
+  return makeAction({
+    actor: {
+      type: "agent",
+      agent_name: "test-agent",
+      agent_framework: "test-framework",
+      tool_name: "crm_update",
+      tool_kind: "function",
+    },
+    operation: {
+      domain: "function",
+      kind: "invoke",
+      name: "function.invoke",
+      display_name: "Invoke untrusted integration",
+    },
+    execution_path: {
+      surface: "sdk_function",
+      mode: "pre_execution",
+      credential_mode: "brokered",
+    },
+    target: {
+      primary: {
+        type: "external_object",
+        locator: "crm://record/123",
+        label: "CRM record",
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    risk_hints: {
+      side_effect_level: "mutating",
+      external_effects: "network",
+      reversibility_hint: "unknown",
+      sensitivity_hint: "moderate",
+      batch: false,
+    },
+    facets: {
+      function: {
+        integration: "crm",
+        operation: "update_record",
+      },
+    },
+    normalization: {
+      mapper: "test",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: confidence,
+    },
+  });
+}
+
+function makeRecoverableFunctionAction(confidence = 0.45): ActionRecord {
+  return makeAction({
+    actor: {
+      type: "agent",
+      agent_name: "test-agent",
+      agent_framework: "test-framework",
+      tool_name: "crm_update",
+      tool_kind: "function",
+    },
+    operation: {
+      domain: "function",
+      kind: "invoke",
+      name: "function.invoke",
+      display_name: "Invoke recoverable integration",
+    },
+    execution_path: {
+      surface: "sdk_function",
+      mode: "pre_execution",
+      credential_mode: "brokered",
+    },
+    target: {
+      primary: {
+        type: "external_object",
+        locator: "crm://record/123",
+        label: "CRM record",
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    risk_hints: {
+      side_effect_level: "mutating",
+      external_effects: "network",
+      reversibility_hint: "compensatable",
+      sensitivity_hint: "moderate",
+      batch: false,
+    },
+    facets: {
+      function: {
+        integration: "crm",
+        operation: "update_record",
+        trusted_compensator: "crm.restore_record",
+      },
+    },
+    normalization: {
+      mapper: "test",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: confidence,
+    },
+  });
+}
+
 function makeCapabilityContext(
   overrides: Partial<NonNullable<PolicyEvaluationContext["cached_capability_state"]>> = {},
 ): PolicyEvaluationContext {
@@ -1134,7 +1243,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.decision).toBe("deny");
   });
 
-  it("should ask when normalization confidence is below 0.3", () => {
+  it("should auto-snapshot filesystem actions when normalization confidence is below 0.3", () => {
     const outcome = evaluatePolicy(
       makeAction({
         normalization: {
@@ -1146,11 +1255,13 @@ describe("evaluatePolicy", () => {
       }),
     );
 
-    expect(outcome.decision).toBe("ask");
-    expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.preconditions.snapshot_required).toBe(true);
+    expect(outcome.preconditions.approval_required).toBe(false);
+    expect(outcome.reasons[0]?.code).toBe("LOW_NORMALIZATION_CONFIDENCE");
   });
 
-  it("should let explicit low-confidence thresholds strengthen read-only shell actions", () => {
+  it("should let explicit low-confidence thresholds strengthen read-only shell actions into auto-snapshot execution", () => {
     const customPolicy: PolicyConfig = {
       profile_name: "custom-thresholds",
       policy_version: "1",
@@ -1169,11 +1280,12 @@ describe("evaluatePolicy", () => {
       compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
     });
 
-    expect(outcome.decision).toBe("ask");
-    expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.preconditions.snapshot_required).toBe(true);
+    expect(outcome.preconditions.approval_required).toBe(false);
   });
 
-  it("should prefer exact action-family thresholds over wildcard thresholds", () => {
+  it("should prefer exact action-family thresholds over wildcard thresholds for auto-snapshot low-confidence shell handling", () => {
     const customPolicy: PolicyConfig = {
       profile_name: "custom-thresholds",
       policy_version: "1",
@@ -1196,21 +1308,40 @@ describe("evaluatePolicy", () => {
       compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
     });
 
-    expect(outcome.decision).toBe("ask");
-    expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.preconditions.snapshot_required).toBe(true);
+    expect(outcome.preconditions.approval_required).toBe(false);
   });
 
-  it("should only relax low-confidence gating when explicit policy config lowers the threshold", () => {
-    const defaultOutcome = evaluatePolicy(makeOwnedNoteAction(0.45));
-    expect(defaultOutcome.decision).toBe("ask");
-
-    const customPolicy: PolicyConfig = {
-      profile_name: "custom-thresholds",
+  it("should only relax low-confidence snapshot gating when explicit policy config lowers the threshold", () => {
+    const strictPolicy: PolicyConfig = {
+      profile_name: "strict-thresholds",
       policy_version: "1",
       thresholds: {
         low_confidence: [
           {
-            action_family: "function/*",
+            action_family: "shell/*",
+            ask_below: 0.45,
+          },
+        ],
+      },
+      rules: [],
+    };
+
+    const strictOutcome = evaluatePolicy(makeShellReadOnlyAction(0.42), {
+      compiled_policy: compilePolicyPack([strictPolicy, DEFAULT_POLICY_PACK]),
+    });
+
+    expect(strictOutcome.decision).toBe("allow_with_snapshot");
+    expect(strictOutcome.preconditions.snapshot_required).toBe(true);
+
+    const relaxedPolicy: PolicyConfig = {
+      profile_name: "relaxed-thresholds",
+      policy_version: "1",
+      thresholds: {
+        low_confidence: [
+          {
+            action_family: "shell/*",
             ask_below: 0.4,
           },
         ],
@@ -1218,12 +1349,12 @@ describe("evaluatePolicy", () => {
       rules: [],
     };
 
-    const relaxedOutcome = evaluatePolicy(makeOwnedNoteAction(0.45), {
-      compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
+    const relaxedOutcome = evaluatePolicy(makeShellReadOnlyAction(0.42), {
+      compiled_policy: compilePolicyPack([relaxedPolicy, DEFAULT_POLICY_PACK]),
     });
 
-    expect(relaxedOutcome.decision).toBe("allow_with_snapshot");
-    expect(relaxedOutcome.preconditions.snapshot_required).toBe(true);
+    expect(relaxedOutcome.decision).toBe("allow");
+    expect(relaxedOutcome.preconditions.snapshot_required).toBe(false);
   });
 
   it("should recommend tightening thresholds when denied approvals appear above the current threshold", () => {
@@ -1515,14 +1646,14 @@ describe("evaluatePolicy", () => {
     );
 
     expect(replay.summary.changed_decisions).toBe(1);
-    expect(replay.summary.approvals_increased).toBe(1);
-    expect(replay.summary.historically_allowed_newly_gated).toBe(1);
+    expect(replay.summary.approvals_increased).toBe(0);
+    expect(replay.summary.historically_allowed_newly_gated).toBe(0);
     expect(replay.changed_samples).toEqual([
       expect.objectContaining({
         action_id: "act_replay",
         current_decision: "allow",
-        candidate_decision: "ask",
-        change_kind: "historical_allow_now_gated",
+        candidate_decision: "allow_with_snapshot",
+        change_kind: "decision_changed",
         candidate_confidence_triggered: true,
       }),
     ]);
@@ -1544,18 +1675,56 @@ describe("evaluatePolicy", () => {
   });
 
   it("should set approval_required true when decision is ask", () => {
-    const outcome = evaluatePolicy(
-      makeAction({
-        normalization: {
-          mapper: "test",
-          inferred_fields: [],
-          warnings: ["opaque_execution"],
-          normalization_confidence: 0.2,
-        },
-      }),
-    );
+    const outcome = evaluatePolicy(makeUntrustedFunctionAction());
 
     expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.decision).toBe("ask");
+  });
+
+  it("should allow trusted compensatable generic functions with snapshot protection", () => {
+    const outcome = evaluatePolicy(makeRecoverableFunctionAction());
+
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.preconditions.snapshot_required).toBe(true);
+    expect(outcome.preconditions.approval_required).toBe(false);
+    expect(outcome.reasons[0]?.code).toBe("FUNCTION_TRUSTED_COMPENSATABLE");
+    expect(outcome.policy_context).toMatchObject({
+      recoverability_class: "recoverable_external_compensated",
+      recovery_proof_kind: "trusted_compensator",
+      recovery_proof_source: "crm.restore_record",
+      recovery_proof_scope: "external_object",
+    });
+  });
+
+  it("should still require approval for compensatable generic functions when direct credentials are used", () => {
+    const recoverableAction = makeRecoverableFunctionAction(0.95);
+    const outcome = evaluatePolicy(recoverableAction);
+    const directOutcome = evaluatePolicy({
+      ...recoverableAction,
+      execution_path: {
+        ...recoverableAction.execution_path,
+        credential_mode: "direct",
+      },
+    });
+
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(directOutcome.decision).toBe("ask");
+    expect(directOutcome.reasons[0]?.code).toBe("FUNCTION_REQUIRES_APPROVAL");
+    expect(directOutcome.policy_context.recoverability_class).toBe("unrecoverable_or_degraded");
+  });
+
+  it("records local snapshot recovery proof for low-confidence shell reads", () => {
+    const outcome = evaluatePolicy(makeShellReadOnlyAction(0.42), {
+      policy_mode: "balanced",
+    });
+
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.policy_context).toMatchObject({
+      recoverability_class: "recoverable_local",
+      recovery_proof_kind: "snapshot_preimage",
+      recovery_proof_source: "snapshot-engine.preimage",
+      recovery_proof_scope: "path",
+    });
   });
 
   it("should mark a soft limit when a mutating action consumes the final budget slot", () => {
@@ -1609,7 +1778,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.budget_effects.budget_check).toBe("hard_limit");
   });
 
-  it("should ask with a package manager specific reason", () => {
+  it("should auto-snapshot package manager commands with a package-manager-specific reason", () => {
     const outcome = evaluatePolicy(
       makeAction({
         operation: {
@@ -1652,8 +1821,51 @@ describe("evaluatePolicy", () => {
       }),
     );
 
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.preconditions.snapshot_required).toBe(true);
+    expect(outcome.reasons[0]?.code).toBe("PACKAGE_MANAGER_REQUIRES_SNAPSHOT");
+  });
+
+  it("should keep communication-boundary shell commands approval-gated", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        operation: {
+          domain: "shell",
+          kind: "exec",
+          name: "shell.exec",
+          display_name: "Run shell command",
+        },
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        execution_path: {
+          surface: "governed_shell",
+          mode: "pre_execution",
+          credential_mode: "none",
+        },
+        risk_hints: {
+          side_effect_level: "mutating",
+          external_effects: "communication",
+          reversibility_hint: "irreversible",
+          sensitivity_hint: "high",
+          batch: false,
+        },
+        facets: {
+          shell: {
+            argv: ["mail", "team@example.com"],
+            command_family: "unclassified",
+          },
+        },
+      }),
+    );
+
     expect(outcome.decision).toBe("ask");
-    expect(outcome.reasons[0]?.code).toBe("PACKAGE_MANAGER_REQUIRES_APPROVAL");
+    expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.reasons[0]?.code).toBe("EXTERNAL_CONSENT_BOUNDARY_REQUIRES_APPROVAL");
   });
 
   it("should allow trusted compensatable draft functions with snapshot protection", () => {

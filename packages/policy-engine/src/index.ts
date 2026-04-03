@@ -117,6 +117,7 @@ function makeOutcome(
   reasons: PolicyReason[],
   matchedRules: string[],
   trustRequirements?: Partial<PolicyOutcomeRecord["trust_requirements"]>,
+  policyContext?: Partial<PolicyOutcomeRecord["policy_context"]>,
 ): PolicyOutcomeRecord {
   return {
     schema_version: "policy-outcome.v1",
@@ -144,9 +145,19 @@ function makeOutcome(
     policy_context: {
       matched_rules: matchedRules,
       sticky_decision_applied: false,
+      ...policyContext,
     },
     evaluated_at: new Date().toISOString(),
   };
+}
+
+function makeRecoveryProofContext(
+  policyContext: Pick<
+    PolicyOutcomeRecord["policy_context"],
+    "recoverability_class" | "recovery_proof_kind" | "recovery_proof_source" | "recovery_proof_scope"
+  >,
+): Partial<PolicyOutcomeRecord["policy_context"]> {
+  return policyContext;
 }
 
 function makeCapabilityApprovalOutcome(
@@ -156,7 +167,16 @@ function makeCapabilityApprovalOutcome(
   snapshotRequired = false,
   trustRequirements?: Partial<PolicyOutcomeRecord["trust_requirements"]>,
 ): PolicyOutcomeRecord {
-  const outcome = makeOutcome(action, "ask", [reason], [matchedRule], trustRequirements);
+  const outcome = makeOutcome(
+    action,
+    "ask",
+    [reason],
+    [matchedRule],
+    trustRequirements,
+    makeRecoveryProofContext({
+      recoverability_class: "unrecoverable_or_degraded",
+    }),
+  );
   if (snapshotRequired) {
     outcome.preconditions.snapshot_required = true;
   }
@@ -182,7 +202,20 @@ function makeDirectCredentialDenyOutcome(
     {
       direct_credentials_forbidden: true,
     },
+    makeRecoveryProofContext({
+      recoverability_class: "unrecoverable_or_degraded",
+    }),
   );
+}
+
+function makeAutomaticSnapshotOutcome(
+  action: ActionRecord,
+  reason: PolicyReason,
+  matchedRule: string,
+  trustRequirements?: Partial<PolicyOutcomeRecord["trust_requirements"]>,
+  policyContext?: Partial<PolicyOutcomeRecord["policy_context"]>,
+): PolicyOutcomeRecord {
+  return makeOutcome(action, "allow_with_snapshot", [reason], [matchedRule], trustRequirements, policyContext);
 }
 
 function getFieldValue(record: unknown, fieldPath: string): unknown {
@@ -983,6 +1016,31 @@ function evaluateShellCapabilityState(
   return null;
 }
 
+function hasUnrecoverableExternalRisk(action: ActionRecord): boolean {
+  const externalEffects = action.risk_hints.external_effects;
+  const reversibilityHint = action.risk_hints.reversibility_hint;
+
+  return (
+    externalEffects === "communication" ||
+    externalEffects === "financial" ||
+    reversibilityHint === "irreversible" ||
+    (externalEffects === "unknown" && reversibilityHint === "unknown")
+  );
+}
+
+function recoveryProofScopeForAction(action: ActionRecord): PolicyOutcomeRecord["policy_context"]["recovery_proof_scope"] {
+  return action.target.scope.breadth === "single" || action.target.scope.breadth === "set" ? "path" : "workspace";
+}
+
+function localSnapshotRecoveryContext(action: ActionRecord): Partial<PolicyOutcomeRecord["policy_context"]> {
+  return makeRecoveryProofContext({
+    recoverability_class: "recoverable_local",
+    recovery_proof_kind: "snapshot_preimage",
+    recovery_proof_source: "snapshot-engine.preimage",
+    recovery_proof_scope: recoveryProofScopeForAction(action),
+  });
+}
+
 function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
   const locator = action.target.primary.locator;
   const confidenceScore = actionConfidenceScore(action);
@@ -993,21 +1051,6 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
   const fsFacet = action.facets.filesystem as { operation?: string; byte_length?: number } | undefined;
   const operation = fsFacet?.operation ?? action.operation.kind;
   const byteLength = fsFacet?.byte_length ?? 0;
-
-  if (lowConfidenceThreshold !== null && confidenceScore < lowConfidenceThreshold) {
-    return makeOutcome(
-      action,
-      "ask",
-      [
-        {
-          code: "LOW_NORMALIZATION_CONFIDENCE",
-          severity: "high",
-          message: "Filesystem action confidence is below the configured automation threshold and requires approval.",
-        },
-      ],
-      ["normalization.low_confidence.ask"],
-    );
-  }
 
   if (!locator || action.target.scope.unknowns.includes("scope")) {
     return makeOutcome(
@@ -1021,6 +1064,24 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
         },
       ],
       ["filesystem.outside_workspace.deny"],
+    );
+  }
+
+  if (lowConfidenceThreshold !== null && confidenceScore < lowConfidenceThreshold) {
+    return (
+      evaluateFilesystemCapabilityState(action, context, true) ??
+      makeAutomaticSnapshotOutcome(
+        action,
+        {
+          code: "LOW_NORMALIZATION_CONFIDENCE",
+          severity: "moderate",
+          message:
+            "Filesystem action confidence is below the configured automation threshold, so AgentGit will create a recovery boundary before continuing.",
+        },
+        "normalization.low_confidence.snapshot",
+        undefined,
+        localSnapshotRecoveryContext(action),
+      )
     );
   }
 
@@ -1038,6 +1099,8 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
           },
         ],
         ["filesystem.delete.requires_snapshot"],
+        undefined,
+        localSnapshotRecoveryContext(action),
       )
     );
   }
@@ -1073,6 +1136,8 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
         },
       ],
       ["filesystem.large_write.requires_snapshot"],
+      undefined,
+      localSnapshotRecoveryContext(action),
     )
   );
 }
@@ -1084,23 +1149,27 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
     context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
     action,
   );
-
-  if (lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold) {
-    return makeOutcome(
-      action,
-      "ask",
-      [
-        {
-          code: "UNKNOWN_SCOPE_REQUIRES_APPROVAL",
-          severity: "high",
-          message: "Shell command confidence is below the configured automation threshold and requires approval.",
-        },
-      ],
-      ["shell.unknown_scope.ask"],
-    );
-  }
+  const confidenceTriggered = lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold;
 
   if (action.risk_hints.side_effect_level === "read_only") {
+    if (confidenceTriggered) {
+      return (
+        evaluateShellCapabilityState(action, context) ??
+        makeAutomaticSnapshotOutcome(
+          action,
+          {
+            code: "LOW_NORMALIZATION_CONFIDENCE",
+            severity: "moderate",
+            message:
+              "Shell command confidence is below the configured automation threshold, so AgentGit will create a recovery boundary before continuing.",
+          },
+          "shell.low_confidence.snapshot",
+          undefined,
+          localSnapshotRecoveryContext(action),
+        )
+      );
+    }
+
     return makeOutcome(
       action,
       "allow",
@@ -1112,6 +1181,44 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         },
       ],
       ["shell.safe.read_only"],
+    );
+  }
+
+  if (hasUnrecoverableExternalRisk(action)) {
+    return makeOutcome(
+      action,
+      "ask",
+      [
+        {
+          code: "EXTERNAL_CONSENT_BOUNDARY_REQUIRES_APPROVAL",
+          severity: "high",
+          message:
+            "Shell command crosses a consent or irreversibility boundary that AgentGit cannot automatically recover today.",
+        },
+      ],
+      ["shell.external_consent.ask"],
+      undefined,
+      makeRecoveryProofContext({
+        recoverability_class: "unrecoverable_or_degraded",
+      }),
+    );
+  }
+
+  if (confidenceTriggered) {
+    return (
+      evaluateShellCapabilityState(action, context) ??
+      makeAutomaticSnapshotOutcome(
+        action,
+        {
+          code: "LOW_NORMALIZATION_CONFIDENCE",
+          severity: "moderate",
+          message:
+            "Shell command confidence is below the configured automation threshold, so AgentGit will create a recovery boundary before continuing.",
+        },
+        "shell.low_confidence.snapshot",
+        undefined,
+        localSnapshotRecoveryContext(action),
+      )
     );
   }
 
@@ -1133,66 +1240,78 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
           },
         ],
         ["shell.mutating.requires_snapshot"],
+        undefined,
+        localSnapshotRecoveryContext(action),
       )
     );
   }
 
   if (commandFamily === "package_manager") {
-    return makeOutcome(
-      action,
-      "ask",
-      [
+    return (
+      evaluateShellCapabilityState(action, context) ??
+      makeAutomaticSnapshotOutcome(
+        action,
         {
-          code: "PACKAGE_MANAGER_REQUIRES_APPROVAL",
-          severity: "high",
-          message: "Package manager commands may change dependencies or fetch remote artifacts and require approval.",
+          code: "PACKAGE_MANAGER_REQUIRES_SNAPSHOT",
+          severity: "moderate",
+          message: "Package manager commands are allowed automatically when AgentGit can create a recovery boundary first.",
         },
-      ],
-      ["shell.package_manager.ask"],
+        "shell.package_manager.snapshot",
+        undefined,
+        localSnapshotRecoveryContext(action),
+      )
     );
   }
 
   if (commandFamily === "build_tool") {
-    return makeOutcome(
-      action,
-      "ask",
-      [
+    return (
+      evaluateShellCapabilityState(action, context) ??
+      makeAutomaticSnapshotOutcome(
+        action,
         {
-          code: "BUILD_TOOL_REQUIRES_APPROVAL",
+          code: "BUILD_TOOL_REQUIRES_SNAPSHOT",
           severity: "moderate",
-          message: "Build tool commands may mutate workspace outputs and require approval.",
+          message: "Build tool commands are allowed automatically when AgentGit can create a recovery boundary first.",
         },
-      ],
-      ["shell.build_tool.ask"],
+        "shell.build_tool.snapshot",
+        undefined,
+        localSnapshotRecoveryContext(action),
+      )
     );
   }
 
   if (commandFamily === "interpreter") {
-    return makeOutcome(
-      action,
-      "ask",
-      [
+    return (
+      evaluateShellCapabilityState(action, context) ??
+      makeAutomaticSnapshotOutcome(
+        action,
         {
-          code: "INTERPRETER_EXECUTION_REQUIRES_APPROVAL",
+          code: "INTERPRETER_EXECUTION_REQUIRES_SNAPSHOT",
           severity: "high",
-          message: "Interpreter-launched scripts remain opaque and require approval.",
+          message:
+            "Interpreter-launched scripts remain opaque, so AgentGit will create a recovery boundary before continuing automatically.",
         },
-      ],
-      ["shell.interpreter.ask"],
+        "shell.interpreter.snapshot",
+        undefined,
+        localSnapshotRecoveryContext(action),
+      )
     );
   }
 
-  return makeOutcome(
-    action,
-    "ask",
-    [
+  return (
+    evaluateShellCapabilityState(action, context) ??
+    makeAutomaticSnapshotOutcome(
+      action,
       {
-        code: "UNKNOWN_SCOPE_REQUIRES_APPROVAL",
+        code: "OPAQUE_SHELL_REQUIRES_SNAPSHOT",
         severity: "high",
-        message: "Unclassified shell command requires approval.",
+        message:
+          "Opaque shell commands are allowed automatically only after AgentGit creates a recovery boundary first.",
       },
-    ],
-    ["shell.unclassified.ask"],
+      "shell.unclassified.snapshot",
+      undefined,
+      localSnapshotRecoveryContext(action),
+    )
   );
 }
 
@@ -1210,21 +1329,11 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
     context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
     action,
   );
-
-  if (lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold) {
-    return makeOutcome(
-      action,
-      "ask",
-      [
-        {
-          code: "FUNCTION_LOW_CONFIDENCE_REQUIRES_APPROVAL",
-          severity: "high",
-          message: "Function action confidence is below the configured automation threshold and requires approval.",
-        },
-      ],
-      ["function.low_confidence.ask"],
-    );
-  }
+  const hasTrustedCompensator = typeof functionFacet?.trusted_compensator === "string" && functionFacet.trusted_compensator.length > 0;
+  const hasRecoverableFunctionBoundary =
+    hasTrustedCompensator &&
+    action.execution_path.credential_mode !== "direct" &&
+    (action.risk_hints.reversibility_hint === "reversible" || action.risk_hints.reversibility_hint === "compensatable");
 
   if (
     integration === "drafts" &&
@@ -1246,9 +1355,9 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
       );
     }
 
-    return makeOutcome(
-      action,
-      "allow_with_snapshot",
+      return makeOutcome(
+        action,
+        "allow_with_snapshot",
       [
         {
           code: "OWNED_FUNCTION_COMPENSATABLE",
@@ -1257,6 +1366,13 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
         },
       ],
       ["function.drafts.compensatable.requires_snapshot"],
+      undefined,
+      makeRecoveryProofContext({
+        recoverability_class: "recoverable_external_compensated",
+        recovery_proof_kind: "trusted_compensator",
+        recovery_proof_source: functionFacet.trusted_compensator,
+        recovery_proof_scope: "external_object",
+      }),
     );
   }
 
@@ -1289,6 +1405,13 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
         },
       ],
       ["function.notes.compensatable.requires_snapshot"],
+      undefined,
+      makeRecoveryProofContext({
+        recoverability_class: "recoverable_external_compensated",
+        recovery_proof_kind: "trusted_compensator",
+        recovery_proof_source: functionFacet.trusted_compensator,
+        recovery_proof_scope: "external_object",
+      }),
     );
   }
 
@@ -1410,6 +1533,50 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
         brokered_credentials_required: true,
         direct_credentials_forbidden: true,
       },
+      makeRecoveryProofContext({
+        recoverability_class: "recoverable_external_compensated",
+        recovery_proof_kind: "trusted_compensator",
+        recovery_proof_source: functionFacet.trusted_compensator,
+        recovery_proof_scope: "external_object",
+      }),
+    );
+  }
+
+  if (hasRecoverableFunctionBoundary) {
+    return makeOutcome(
+      action,
+      "allow_with_snapshot",
+      [
+        {
+          code: "FUNCTION_TRUSTED_COMPENSATABLE",
+          severity: "moderate",
+          message:
+            "This function integration declared a trusted compensator, so AgentGit will create a recovery boundary and continue automatically.",
+        },
+      ],
+      ["function.compensatable.requires_snapshot"],
+      undefined,
+      makeRecoveryProofContext({
+        recoverability_class: "recoverable_external_compensated",
+        recovery_proof_kind: "trusted_compensator",
+        recovery_proof_source: functionFacet?.trusted_compensator ?? "declared_compensator",
+        recovery_proof_scope: "external_object",
+      }),
+    );
+  }
+
+  if (lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold) {
+    return makeOutcome(
+      action,
+      "ask",
+      [
+        {
+          code: "FUNCTION_LOW_CONFIDENCE_REQUIRES_APPROVAL",
+          severity: "high",
+          message: "Function action confidence is below the configured automation threshold and requires approval.",
+        },
+      ],
+      ["function.low_confidence.ask"],
     );
   }
 
@@ -1424,6 +1591,10 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
       },
     ],
     ["function.untrusted.ask"],
+    undefined,
+    makeRecoveryProofContext({
+      recoverability_class: "unrecoverable_or_degraded",
+    }),
   );
 }
 

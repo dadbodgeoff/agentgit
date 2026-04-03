@@ -8,8 +8,13 @@ import { AgentGitError } from "@agentgit/schemas";
 
 import type {
   AssuranceLevel,
+  CheckpointIntent,
+  ContainedEgressAssurance,
+  ContainedEgressMode,
   ContainedRunDocument,
   ContainedSecretFileBinding,
+  DefaultCheckpointPolicy,
+  RuntimeCredentialBindingDocument,
   ConfigBackupDocument,
   DockerCapabilitySnapshot,
   DemoRunDocument,
@@ -17,12 +22,13 @@ import type {
   GovernanceMode,
   ProductStateCollections,
   ProductStateDocument,
+  RunCheckpointDocument,
   RestoreShortcutDocument,
   RuntimeInstallDocument,
   RuntimeProfileDocument,
 } from "./types.js";
 
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 11;
 const PRODUCT_STATE_DIR = "runtime-integration";
 const PRODUCT_STATE_DB_NAME = "state.db";
 const DEFAULT_ASSURANCE_LEVEL: AssuranceLevel = "attached";
@@ -30,6 +36,7 @@ const DEFAULT_EXECUTION_MODE = "host_attached";
 const DEFAULT_GOVERNANCE_MODE: GovernanceMode = "attached_live";
 const DEFAULT_CONTAINER_NETWORK_POLICY = "inherit";
 const DEFAULT_CONTAINED_CREDENTIAL_MODE = "none";
+const DEFAULT_CHECKPOINT_POLICY: DefaultCheckpointPolicy = "never";
 
 function deriveGovernanceModeFromRecord(record: Record<string, unknown>): GovernanceMode {
   const runtimeId = typeof record.runtime_id === "string" ? record.runtime_id : undefined;
@@ -44,6 +51,66 @@ function deriveGovernanceModeFromRecord(record: Record<string, unknown>): Govern
   return DEFAULT_GOVERNANCE_MODE;
 }
 
+function normalizeContainedCredentialMode(value: unknown): RuntimeProfileDocument["contained_credential_mode"] {
+  if (value === "brokered_secret_refs") {
+    return "brokered_bindings";
+  }
+  return typeof value === "string" ? (value as RuntimeProfileDocument["contained_credential_mode"]) : undefined;
+}
+
+function deriveContainedEgressModeFromRecord(record: Record<string, unknown>): ContainedEgressMode {
+  if (typeof record.contained_egress_mode === "string") {
+    return record.contained_egress_mode as ContainedEgressMode;
+  }
+
+  const networkPolicy =
+    typeof record.container_network_policy === "string"
+      ? record.container_network_policy
+      : DEFAULT_CONTAINER_NETWORK_POLICY;
+  const allowlistHosts =
+    Array.isArray(record.contained_proxy_allowlist_hosts)
+      ? record.contained_proxy_allowlist_hosts.filter((entry): entry is string => typeof entry === "string")
+      : [];
+
+  if (networkPolicy === "none") {
+    return "none";
+  }
+
+  if (allowlistHosts.length > 0) {
+    return "proxy_http_https";
+  }
+
+  return "inherit";
+}
+
+function deriveContainedEgressAssuranceFromRecord(record: Record<string, unknown>): ContainedEgressAssurance {
+  if (typeof record.contained_egress_assurance === "string") {
+    return record.contained_egress_assurance as ContainedEgressAssurance;
+  }
+
+  const egressMode = deriveContainedEgressModeFromRecord(record);
+  if (egressMode === "none") {
+    return "boundary_enforced";
+  }
+
+  if (egressMode === "backend_enforced_allowlist") {
+    return "degraded";
+  }
+
+  return "degraded";
+}
+
+function deriveCheckpointPolicyFromRecord(record: Record<string, unknown>): DefaultCheckpointPolicy {
+  if (typeof record.default_checkpoint_policy === "string") {
+    return record.default_checkpoint_policy as DefaultCheckpointPolicy;
+  }
+  return DEFAULT_CHECKPOINT_POLICY;
+}
+
+function deriveCheckpointIntentFromRecord(record: Record<string, unknown>): CheckpointIntent | undefined {
+  return typeof record.checkpoint_intent === "string" ? (record.checkpoint_intent as CheckpointIntent) : undefined;
+}
+
 function deriveGuaranteesFromRecord(record: Record<string, unknown>): GovernanceGuarantee[] {
   const governanceMode = deriveGovernanceModeFromRecord(record);
   if (governanceMode === "native_integrated") {
@@ -56,23 +123,13 @@ function deriveGuaranteesFromRecord(record: Record<string, unknown>): Governance
 
   if (governanceMode === "contained_projection") {
     const guarantees: GovernanceGuarantee[] = ["real_workspace_protected", "publish_path_governed"];
-    const networkPolicy =
-      typeof record.container_network_policy === "string"
-        ? record.container_network_policy
-        : DEFAULT_CONTAINER_NETWORK_POLICY;
-    const credentialMode =
-      typeof record.contained_credential_mode === "string"
-        ? record.contained_credential_mode
-        : DEFAULT_CONTAINED_CREDENTIAL_MODE;
+    const egressMode = deriveContainedEgressModeFromRecord(record);
+    const credentialMode = normalizeContainedCredentialMode(record.contained_credential_mode) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE;
     const selectedDirectEnvKeys =
       Array.isArray(record.credential_passthrough_env_keys)
         ? record.credential_passthrough_env_keys.filter((entry): entry is string => typeof entry === "string")
         : [];
-    const allowlistHosts =
-      Array.isArray(record.contained_proxy_allowlist_hosts)
-        ? record.contained_proxy_allowlist_hosts.filter((entry): entry is string => typeof entry === "string")
-        : [];
-    if (networkPolicy === "none" || allowlistHosts.length > 0) {
+    if (egressMode !== "inherit") {
       guarantees.push("egress_policy_applied");
     }
     if (credentialMode !== "direct_env" || selectedDirectEnvKeys.length === 0) {
@@ -114,14 +171,9 @@ function deriveCapabilitySnapshotFromRecord(
       : typeof adapterMetadata.docker_server_arch === "string"
         ? adapterMetadata.docker_server_arch
         : undefined;
-  const networkPolicy =
-    typeof record.container_network_policy === "string"
-      ? record.container_network_policy
-      : DEFAULT_CONTAINER_NETWORK_POLICY;
-  const credentialMode =
-    typeof record.contained_credential_mode === "string"
-      ? record.contained_credential_mode
-      : DEFAULT_CONTAINED_CREDENTIAL_MODE;
+  const egressMode = deriveContainedEgressModeFromRecord(record);
+  const egressAssurance = deriveContainedEgressAssuranceFromRecord(record);
+  const credentialMode = normalizeContainedCredentialMode(record.contained_credential_mode) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE;
   const dockerDesktopVm =
     typeof record.docker_desktop_vm === "boolean"
       ? record.docker_desktop_vm
@@ -151,14 +203,18 @@ function deriveCapabilitySnapshotFromRecord(
     rootless_docker: rootlessDocker,
     projection_enforced: true,
     read_only_rootfs_enabled: true,
-    network_restricted: networkPolicy === "none",
-    credential_brokering_enabled: credentialMode === "brokered_secret_refs",
+    network_restricted: egressMode === "none",
+    credential_brokering_enabled: credentialMode === "brokered_bindings",
+    egress_mode: egressMode,
+    egress_assurance: egressAssurance,
+    backend_enforced_allowlist_supported: false,
+    raw_socket_egress_blocked: egressMode === "none",
     proxy_egress_allowlist_applied:
-      networkPolicy !== "none" &&
+      egressMode === "proxy_http_https" &&
       Array.isArray(record.contained_proxy_allowlist_hosts) &&
       record.contained_proxy_allowlist_hosts.length > 0,
     egress_allowlist_hosts:
-      networkPolicy !== "none" && Array.isArray(record.contained_proxy_allowlist_hosts)
+      egressMode !== "none" && Array.isArray(record.contained_proxy_allowlist_hosts)
         ? record.contained_proxy_allowlist_hosts.filter((entry): entry is string => typeof entry === "string")
         : [],
     server_platform: serverPlatform,
@@ -219,6 +275,126 @@ function parseContainedSecretFileBindings(
       secret_id: expectString(binding, "secret_id", collection, `${key}:${field}:${index}`)!,
     };
   });
+}
+
+function parseRuntimeCredentialBindings(
+  record: Record<string, unknown>,
+  field: string,
+  collection: string,
+  key: string,
+): RuntimeCredentialBindingDocument[] | undefined {
+  const value = record[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new AgentGitError(`Stored ${collection} document ${key} has invalid ${field}.`, "PRECONDITION_FAILED", {
+      collection,
+      key,
+      field,
+    });
+  }
+
+  return value.map((entry, index) => {
+    const binding = expectObject(entry, collection, `${key}:${field}:${index}`);
+    const target = expectObject(binding.target, collection, `${key}:${field}:${index}:target`);
+    const surface = expectString(target, "surface", collection, `${key}:${field}:${index}:target`)!;
+    if (surface === "env") {
+      return {
+        binding_id: expectString(binding, "binding_id", collection, `${key}:${field}:${index}`)!,
+        kind: expectString(binding, "kind", collection, `${key}:${field}:${index}`)! as RuntimeCredentialBindingDocument["kind"],
+        target: {
+          surface: "env",
+          env_key: expectString(target, "env_key", collection, `${key}:${field}:${index}:target`)!,
+        },
+        broker_source_ref: expectString(binding, "broker_source_ref", collection, `${key}:${field}:${index}`)!,
+        redacted_delivery_metadata:
+          binding.redacted_delivery_metadata &&
+          typeof binding.redacted_delivery_metadata === "object" &&
+          !Array.isArray(binding.redacted_delivery_metadata)
+            ? (binding.redacted_delivery_metadata as Record<string, unknown>)
+            : {},
+        expires_at: expectString(binding, "expires_at", collection, `${key}:${field}:${index}`, { optional: true }),
+        rotates: typeof binding.rotates === "boolean" ? binding.rotates : false,
+      };
+    }
+
+    if (surface === "file") {
+      return {
+        binding_id: expectString(binding, "binding_id", collection, `${key}:${field}:${index}`)!,
+        kind: expectString(binding, "kind", collection, `${key}:${field}:${index}`)! as RuntimeCredentialBindingDocument["kind"],
+        target: {
+          surface: "file",
+          relative_path: expectString(target, "relative_path", collection, `${key}:${field}:${index}:target`)!,
+        },
+        broker_source_ref: expectString(binding, "broker_source_ref", collection, `${key}:${field}:${index}`)!,
+        redacted_delivery_metadata:
+          binding.redacted_delivery_metadata &&
+          typeof binding.redacted_delivery_metadata === "object" &&
+          !Array.isArray(binding.redacted_delivery_metadata)
+            ? (binding.redacted_delivery_metadata as Record<string, unknown>)
+            : {},
+        expires_at: expectString(binding, "expires_at", collection, `${key}:${field}:${index}`, { optional: true }),
+        rotates: typeof binding.rotates === "boolean" ? binding.rotates : false,
+      };
+    }
+
+    throw new AgentGitError(`Stored ${collection} document ${key} has unsupported runtime binding target ${surface}.`, "PRECONDITION_FAILED", {
+      collection,
+      key,
+      field,
+      surface,
+    });
+  });
+}
+
+export function createRuntimeCredentialBindingId(input: { kind: string; target: string; broker_source_ref: string }): string {
+  return `rcb_${createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 12)}`;
+}
+
+function deriveRuntimeCredentialBindingsFromLegacyRecord(
+  record: Record<string, unknown>,
+): RuntimeCredentialBindingDocument[] | undefined {
+  const envBindings = parseContainedSecretEnvBindings(record, "contained_secret_env_bindings", "runtime_profiles", "legacy") ?? [];
+  const fileBindings = parseContainedSecretFileBindings(record, "contained_secret_file_bindings", "runtime_profiles", "legacy") ?? [];
+  const migrated = [
+    ...envBindings.map((binding) => ({
+      binding_id: createRuntimeCredentialBindingId({
+        kind: "env",
+        target: `env:${binding.env_key}`,
+        broker_source_ref: binding.secret_id,
+      }),
+      kind: "env" as const,
+      target: {
+        surface: "env" as const,
+        env_key: binding.env_key,
+      },
+      broker_source_ref: binding.secret_id,
+      redacted_delivery_metadata: {
+        legacy_migrated_from: "contained_secret_env_bindings",
+      },
+      rotates: true,
+    })),
+    ...fileBindings.map((binding) => ({
+      binding_id: createRuntimeCredentialBindingId({
+        kind: "file",
+        target: `file:${binding.relative_path}`,
+        broker_source_ref: binding.secret_id,
+      }),
+      kind: "file" as const,
+      target: {
+        surface: "file" as const,
+        relative_path: binding.relative_path,
+      },
+      broker_source_ref: binding.secret_id,
+      redacted_delivery_metadata: {
+        legacy_migrated_from: "contained_secret_file_bindings",
+      },
+      rotates: true,
+    })),
+  ];
+
+  return migrated.length > 0 ? migrated : undefined;
 }
 
 interface ProductStatePaths {
@@ -381,6 +557,9 @@ function parseRuntimeProfile(key: string, value: unknown): RuntimeProfileDocumen
     base.credential_passthrough_env_keys === undefined
       ? undefined
       : expectStringArray(base, "credential_passthrough_env_keys", "runtime_profiles", key);
+  const runtimeCredentialBindings =
+    parseRuntimeCredentialBindings(base, "runtime_credential_bindings", "runtime_profiles", key) ??
+    deriveRuntimeCredentialBindingsFromLegacyRecord(base);
   return {
     profile_id: expectString(base, "profile_id", "runtime_profiles", key)!,
     workspace_root: expectString(base, "workspace_root", "runtime_profiles", key)!,
@@ -401,6 +580,11 @@ function parseRuntimeProfile(key: string, value: unknown): RuntimeProfileDocumen
     }) ?? DEFAULT_EXECUTION_MODE) as RuntimeProfileDocument["execution_mode"],
     governed_surfaces: expectStringArray(base, "governed_surfaces", "runtime_profiles", key),
     degraded_reasons: degradedReasons,
+    default_checkpoint_policy: deriveCheckpointPolicyFromRecord(base),
+    checkpoint_intent: deriveCheckpointIntentFromRecord(base),
+    checkpoint_reason_template: expectString(base, "checkpoint_reason_template", "runtime_profiles", key, {
+      optional: true,
+    }),
     containment_backend: expectString(base, "containment_backend", "runtime_profiles", key, { optional: true }) as
       | RuntimeProfileDocument["containment_backend"]
       | undefined,
@@ -408,9 +592,15 @@ function parseRuntimeProfile(key: string, value: unknown): RuntimeProfileDocumen
     container_network_policy: (expectString(base, "container_network_policy", "runtime_profiles", key, {
       optional: true,
     }) ?? DEFAULT_CONTAINER_NETWORK_POLICY) as RuntimeProfileDocument["container_network_policy"],
-    contained_credential_mode: (expectString(base, "contained_credential_mode", "runtime_profiles", key, {
-      optional: true,
-    }) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE) as RuntimeProfileDocument["contained_credential_mode"],
+    contained_egress_mode: deriveContainedEgressModeFromRecord(base),
+    contained_egress_assurance: deriveContainedEgressAssuranceFromRecord(base),
+    contained_credential_mode:
+      normalizeContainedCredentialMode(
+        expectString(base, "contained_credential_mode", "runtime_profiles", key, {
+          optional: true,
+        }),
+      ) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE,
+    runtime_credential_bindings: runtimeCredentialBindings,
     credential_passthrough_env_keys: credentialPassthroughEnvKeys,
     contained_secret_env_bindings: parseContainedSecretEnvBindings(
       base,
@@ -468,6 +658,9 @@ function parseRuntimeInstall(key: string, value: unknown): RuntimeInstallDocumen
     : [];
   const assuranceLevel = expectString(base, "assurance_level", "runtime_installs", key, { optional: true });
   const governanceMode = expectString(base, "governance_mode", "runtime_installs", key, { optional: true });
+  const runtimeCredentialBindings =
+    parseRuntimeCredentialBindings(base, "runtime_credential_bindings", "runtime_installs", key) ??
+    deriveRuntimeCredentialBindingsFromLegacyRecord(base);
   const guarantees =
     base.guarantees === undefined
       ? deriveGuaranteesFromRecord(base)
@@ -493,15 +686,26 @@ function parseRuntimeInstall(key: string, value: unknown): RuntimeInstallDocumen
     execution_mode: (expectString(base, "execution_mode", "runtime_installs", key, {
       optional: true,
     }) ?? DEFAULT_EXECUTION_MODE) as RuntimeInstallDocument["execution_mode"],
+    default_checkpoint_policy: deriveCheckpointPolicyFromRecord(base),
+    checkpoint_intent: deriveCheckpointIntentFromRecord(base),
+    checkpoint_reason_template: expectString(base, "checkpoint_reason_template", "runtime_installs", key, {
+      optional: true,
+    }),
     containment_backend: expectString(base, "containment_backend", "runtime_installs", key, { optional: true }) as
       | RuntimeInstallDocument["containment_backend"]
       | undefined,
     container_network_policy: (expectString(base, "container_network_policy", "runtime_installs", key, {
       optional: true,
     }) ?? DEFAULT_CONTAINER_NETWORK_POLICY) as RuntimeInstallDocument["container_network_policy"],
-    contained_credential_mode: (expectString(base, "contained_credential_mode", "runtime_installs", key, {
-      optional: true,
-    }) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE) as RuntimeInstallDocument["contained_credential_mode"],
+    contained_egress_mode: deriveContainedEgressModeFromRecord(base),
+    contained_egress_assurance: deriveContainedEgressAssuranceFromRecord(base),
+    contained_credential_mode:
+      normalizeContainedCredentialMode(
+        expectString(base, "contained_credential_mode", "runtime_installs", key, {
+          optional: true,
+        }),
+      ) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE,
+    runtime_credential_bindings: runtimeCredentialBindings,
     contained_secret_env_bindings: parseContainedSecretEnvBindings(
       base,
       "contained_secret_env_bindings",
@@ -613,8 +817,41 @@ function parseRestoreShortcut(key: string, value: unknown): RestoreShortcutDocum
   };
 }
 
+function parseRunCheckpoint(key: string, value: unknown): RunCheckpointDocument {
+  const base = normalizeDocumentBase("run_checkpoints", key, expectObject(value, "run_checkpoints", key));
+  return {
+    checkpoint_id: expectString(base, "checkpoint_id", "run_checkpoints", key)!,
+    workspace_root: expectString(base, "workspace_root", "run_checkpoints", key)!,
+    governed_workspace_root: expectString(base, "governed_workspace_root", "run_checkpoints", key)!,
+    run_id: expectString(base, "run_id", "run_checkpoints", key)!,
+    run_checkpoint: expectString(base, "run_checkpoint", "run_checkpoints", key)!,
+    snapshot_id: expectString(base, "snapshot_id", "run_checkpoints", key)!,
+    sequence: expectNumber(base, "sequence", "run_checkpoints", key),
+    checkpoint_kind: expectString(base, "checkpoint_kind", "run_checkpoints", key)! as RunCheckpointDocument["checkpoint_kind"],
+    trigger:
+      expectString(base, "trigger", "run_checkpoints", key, { optional: true }) === "default_policy"
+        ? "default_policy"
+        : "explicit_run_flag",
+    checkpoint_policy:
+      expectString(base, "checkpoint_policy", "run_checkpoints", key, { optional: true }) as
+        | RunCheckpointDocument["checkpoint_policy"]
+        | undefined,
+    checkpoint_intent:
+      expectString(base, "checkpoint_intent", "run_checkpoints", key, { optional: true }) as
+        | RunCheckpointDocument["checkpoint_intent"]
+        | undefined,
+    reason: expectString(base, "reason", "run_checkpoints", key, { optional: true }),
+    schema_version: CURRENT_SCHEMA_VERSION,
+    created_at: base.created_at,
+    updated_at: base.updated_at,
+  };
+}
+
 function parseContainedRun(key: string, value: unknown): ContainedRunDocument {
   const base = normalizeDocumentBase("contained_runs", key, expectObject(value, "contained_runs", key));
+  const runtimeCredentialBindings =
+    parseRuntimeCredentialBindings(base, "runtime_credential_bindings", "contained_runs", key) ??
+    deriveRuntimeCredentialBindingsFromLegacyRecord(base);
   return {
     contained_run_id: expectString(base, "contained_run_id", "contained_runs", key)!,
     workspace_root: expectString(base, "workspace_root", "contained_runs", key)!,
@@ -627,9 +864,15 @@ function parseContainedRun(key: string, value: unknown): ContainedRunDocument {
     container_network_policy: (expectString(base, "container_network_policy", "contained_runs", key, {
       optional: true,
     }) ?? DEFAULT_CONTAINER_NETWORK_POLICY) as ContainedRunDocument["container_network_policy"],
-    contained_credential_mode: (expectString(base, "contained_credential_mode", "contained_runs", key, {
-      optional: true,
-    }) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE) as ContainedRunDocument["contained_credential_mode"],
+    contained_egress_mode: deriveContainedEgressModeFromRecord(base),
+    contained_egress_assurance: deriveContainedEgressAssuranceFromRecord(base),
+    contained_credential_mode:
+      normalizeContainedCredentialMode(
+        expectString(base, "contained_credential_mode", "contained_runs", key, {
+          optional: true,
+        }),
+      ) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE,
+    runtime_credential_bindings: runtimeCredentialBindings,
     credential_passthrough_env_keys:
       base.credential_passthrough_env_keys === undefined
         ? undefined
@@ -690,6 +933,7 @@ export class ProductStateStore {
         config_backups: { parse: parseConfigBackup },
         demo_runs: { parse: parseDemoRun },
         restore_shortcuts: { parse: parseRestoreShortcut },
+        run_checkpoints: { parse: parseRunCheckpoint },
         contained_runs: { parse: parseContainedRun },
       },
     });
@@ -791,6 +1035,23 @@ export class ProductStateStore {
     return this.state.delete("restore_shortcuts", shortcutId);
   }
 
+  saveRunCheckpoint(document: Omit<RunCheckpointDocument, keyof ProductStateDocument>): RunCheckpointDocument {
+    const existing = this.state.get("run_checkpoints", document.checkpoint_id);
+    return this.state.put("run_checkpoints", document.checkpoint_id, stampDocument(document, existing));
+  }
+
+  listRunCheckpoints(workspaceRoot: string): RunCheckpointDocument[] {
+    return this.state.list("run_checkpoints", { workspace_root: workspaceRoot });
+  }
+
+  latestRunCheckpoint(workspaceRoot: string): RunCheckpointDocument | null {
+    return latestByUpdatedAt(this.state.list("run_checkpoints", { workspace_root: workspaceRoot }));
+  }
+
+  deleteRunCheckpoint(checkpointId: string): boolean {
+    return this.state.delete("run_checkpoints", checkpointId);
+  }
+
   saveContainedRun(document: Omit<ContainedRunDocument, keyof ProductStateDocument>): ContainedRunDocument {
     const existing = this.state.get("contained_runs", document.contained_run_id);
     return this.state.put("contained_runs", document.contained_run_id, stampDocument(document, existing));
@@ -831,6 +1092,10 @@ export function createDemoRunId(workspaceRoot: string): string {
 
 export function createRestoreShortcutId(actionId: string): string {
   return `shortcut_${actionId}`;
+}
+
+export function createRunCheckpointId(runCheckpoint: string): string {
+  return `checkpoint_${createHash("sha256").update(runCheckpoint).digest("hex").slice(0, 12)}`;
 }
 
 export function createContainedRunId(runId: string): string {

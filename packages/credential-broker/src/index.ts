@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 
 import { IntegrationState } from "@agentgit/integration-state";
-import { AgentGitError } from "@agentgit/schemas";
+import { AgentGitError, type RuntimeCredentialBindingRecord } from "@agentgit/schemas";
 import { v7 as uuidv7 } from "uuid";
 
 export interface BearerCredentialProfile {
@@ -78,6 +78,12 @@ export interface ResolvedMcpBearerSecretAccess {
   secret: McpBearerSecretMetadata;
   token: string;
   authorization_header: string;
+}
+
+export interface ResolvedRuntimeCredentialBinding {
+  binding: RuntimeCredentialBindingRecord;
+  resolved_value: string;
+  expires_at: string | null;
 }
 
 export interface LocalEncryptedSecretStoreOptions {
@@ -482,6 +488,16 @@ function normalizeStoredSecretDocument(key: string, value: unknown): StoredMcpBe
   };
 }
 
+function bindingMetadataString(metadata: Record<string, unknown>, field: string): string | null {
+  const value = metadata[field];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function bindingMetadataNumber(metadata: Record<string, unknown>, field: string): number | null {
+  const value = metadata[field];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export class LocalEncryptedSecretStore {
   private readonly state: IntegrationState<{ mcp_bearer_secrets: StoredMcpBearerSecretDocument }>;
   private readonly encryptionKey: Buffer;
@@ -653,6 +669,82 @@ export class LocalEncryptedSecretStore {
     };
   }
 
+  resolveRuntimeCredentialBinding(binding: RuntimeCredentialBindingRecord): ResolvedRuntimeCredentialBinding {
+    const metadata = binding.redacted_delivery_metadata ?? {};
+    const now = new Date();
+    const resolvedSecret = this.resolveMcpBearerSecret(binding.broker_source_ref);
+    const expiresAtCandidates = [binding.expires_at ?? null, resolvedSecret.secret.expires_at]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .sort()[0] ?? null;
+    if (expiresAtCandidates !== null && Date.parse(expiresAtCandidates) <= now.getTime()) {
+      throw new AgentGitError("Runtime credential binding is expired and must be rotated before execution.", "BROKER_UNAVAILABLE", {
+        binding_id: binding.binding_id,
+        kind: binding.kind,
+        expires_at: expiresAtCandidates,
+      });
+    }
+
+    if (binding.kind === "env" || binding.kind === "file") {
+      return {
+        binding,
+        resolved_value: resolvedSecret.token,
+        expires_at: expiresAtCandidates,
+      };
+    }
+
+    if (binding.kind === "header_template") {
+      const template = bindingMetadataString(metadata, "template") ?? "Bearer {{token}}";
+      return {
+        binding,
+        resolved_value: template.replaceAll("{{token}}", resolvedSecret.token),
+        expires_at: expiresAtCandidates,
+      };
+    }
+
+    if (binding.kind === "runtime_ticket") {
+      const ttlSeconds = Math.max(60, Math.min(bindingMetadataNumber(metadata, "ticket_ttl_seconds") ?? 900, 86_400));
+      const ticketExpiresAt = new Date(Math.min(
+        now.getTime() + ttlSeconds * 1_000,
+        expiresAtCandidates ? Date.parse(expiresAtCandidates) : Number.POSITIVE_INFINITY,
+      ));
+      const payload = JSON.stringify({
+        binding_id: binding.binding_id,
+        kind: binding.kind,
+        audience: bindingMetadataString(metadata, "audience"),
+        broker_source_ref: binding.broker_source_ref,
+        exp: ticketExpiresAt.toISOString(),
+      });
+      const encodedPayload = Buffer.from(payload, "utf8").toString("base64url");
+      const signature = createHmac("sha256", this.encryptionKey).update(`${encodedPayload}.${resolvedSecret.token}`).digest("base64url");
+      return {
+        binding,
+        resolved_value: `agtkt.${encodedPayload}.${signature}`,
+        expires_at: ticketExpiresAt.toISOString(),
+      };
+    }
+
+    if (binding.kind === "tool_scoped_ref") {
+      const toolName = bindingMetadataString(metadata, "tool_name");
+      if (!toolName) {
+        throw new AgentGitError("Tool-scoped runtime credential bindings require a redacted tool_name hint.", "BROKER_UNAVAILABLE", {
+          binding_id: binding.binding_id,
+          kind: binding.kind,
+        });
+      }
+
+      return {
+        binding,
+        resolved_value: `agentgit+tool-ref://${encodeURIComponent(toolName)}?binding=${encodeURIComponent(binding.binding_id)}&source=${encodeURIComponent(binding.broker_source_ref)}`,
+        expires_at: expiresAtCandidates,
+      };
+    }
+
+    throw new AgentGitError("Unsupported runtime credential binding kind.", "BROKER_UNAVAILABLE", {
+      binding_id: binding.binding_id,
+      kind: binding.kind,
+    });
+  }
+
   close(): void {
     this.state.close();
   }
@@ -790,6 +882,14 @@ export class SessionCredentialBroker {
     }
 
     return this.mcpSecretStore.resolveMcpBearerSecret(secretId);
+  }
+
+  resolveRuntimeCredentialBinding(binding: RuntimeCredentialBindingRecord): ResolvedRuntimeCredentialBinding {
+    if (!this.mcpSecretStore) {
+      throw new AgentGitError("Durable MCP secret storage is not available on this host.", "BROKER_UNAVAILABLE");
+    }
+
+    return this.mcpSecretStore.resolveRuntimeCredentialBinding(binding);
   }
 
   checkpointMcpSecretStore() {

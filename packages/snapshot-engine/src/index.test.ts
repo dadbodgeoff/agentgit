@@ -341,6 +341,34 @@ describe("LocalSnapshotEngine", () => {
     expect(selection.basis.confidence_score).toBe(0.32);
   });
 
+  it("widens to exact_anchor after repeated ambiguous shell history in the same run", () => {
+    const selection = selectSnapshotClass({
+      action: makeAction("/tmp/workspace/file.txt"),
+      policy_decision: "allow_with_snapshot",
+      capability_state: "healthy",
+      journal_chain_depth: 6,
+      recent_ambiguous_shell_mutations: 2,
+    });
+
+    expect(selection.snapshot_class).toBe("exact_anchor");
+    expect(selection.reason_codes).toContain("snapshot.repeated_ambiguous_shell_history");
+    expect(selection.basis.recent_ambiguous_shell_mutations).toBe(2);
+  });
+
+  it("strengthens journal_only to journal_plus_anchor after repeated reviewed mutations", () => {
+    const selection = selectSnapshotClass({
+      action: makeAction("/tmp/workspace/file.txt"),
+      policy_decision: "allow_with_snapshot",
+      capability_state: "healthy",
+      journal_chain_depth: 4,
+      recent_review_or_blocked_mutations: 2,
+    });
+
+    expect(selection.snapshot_class).toBe("journal_plus_anchor");
+    expect(selection.reason_codes).toContain("snapshot.repeated_reviewed_mutation_history");
+    expect(selection.basis.recent_review_or_blocked_mutations).toBe(2);
+  });
+
   it("captures and restores a preexisting file", async () => {
     tempDir = tempDirs.make("agentgit-snapshot-");
     const targetPath = path.join(tempDir, "file.txt");

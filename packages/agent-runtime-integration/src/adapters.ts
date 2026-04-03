@@ -17,6 +17,7 @@ import {
   buildWorkspaceProfileId,
   createBackupFilePath,
   createBackupId,
+  createRuntimeCredentialBindingId,
   createInstallId,
   fileDigest,
 } from "./state.js";
@@ -24,17 +25,21 @@ import {
   containedCredentialModeForStrictness,
   containerNetworkPolicyForStrictness,
   credentialPassthroughEnvKeys,
+  deriveContainedEgressAssurance,
+  deriveContainedEgressMode,
   inferContainerImage,
   resolveContainedBackendRuntime,
 } from "./containment.js";
 import type {
   ApplyResult,
   AssuranceLevel,
+  DefaultCheckpointPolicy,
   ConfigBackupDocument,
   DetectionResult,
   GovernanceGuarantee,
   GovernanceMode,
   InstallPlan,
+  RuntimeCredentialBindingDocument,
   RollbackResult,
   RuntimeInstallDocument,
   RuntimeProfileDocument,
@@ -109,10 +114,16 @@ function saveProfileAndInstall(
     execution_mode: plan.execution_mode,
     governed_surfaces: plan.governed_surfaces,
     degraded_reasons: plan.degraded_reasons,
+    default_checkpoint_policy: plan.default_checkpoint_policy,
+    checkpoint_intent: plan.checkpoint_intent,
+    checkpoint_reason_template: plan.checkpoint_reason_template,
     containment_backend: plan.containment_backend,
     container_image: plan.container_image,
     container_network_policy: plan.container_network_policy,
+    contained_egress_mode: plan.contained_egress_mode,
+    contained_egress_assurance: plan.contained_egress_assurance,
     contained_credential_mode: plan.contained_credential_mode,
+    runtime_credential_bindings: plan.runtime_credential_bindings,
     credential_passthrough_env_keys: plan.credential_passthrough_env_keys,
     contained_secret_env_bindings: plan.contained_secret_env_bindings,
     contained_secret_file_bindings: plan.contained_secret_file_bindings,
@@ -137,9 +148,15 @@ function saveProfileAndInstall(
     governance_mode: plan.governance_mode,
     guarantees: plan.guarantees,
     execution_mode: plan.execution_mode,
+    default_checkpoint_policy: plan.default_checkpoint_policy,
+    checkpoint_intent: plan.checkpoint_intent,
+    checkpoint_reason_template: plan.checkpoint_reason_template,
     containment_backend: plan.containment_backend,
     container_network_policy: plan.container_network_policy,
+    contained_egress_mode: plan.contained_egress_mode,
+    contained_egress_assurance: plan.contained_egress_assurance,
     contained_credential_mode: plan.contained_credential_mode,
+    runtime_credential_bindings: plan.runtime_credential_bindings,
     contained_secret_env_bindings: plan.contained_secret_env_bindings,
     contained_secret_file_bindings: plan.contained_secret_file_bindings,
     contained_proxy_allowlist_hosts: plan.contained_proxy_allowlist_hosts,
@@ -180,19 +197,63 @@ function attachedGuarantees(): GovernanceGuarantee[] {
 }
 
 function containedGuarantees(params: {
-  network_policy?: InstallPlan["container_network_policy"];
+  egress_mode?: InstallPlan["contained_egress_mode"];
   credential_mode?: InstallPlan["contained_credential_mode"];
   credential_passthrough_env_keys?: InstallPlan["credential_passthrough_env_keys"];
-  egress_allowlist_hosts?: InstallPlan["contained_proxy_allowlist_hosts"];
 }): GovernanceGuarantee[] {
   const guarantees: GovernanceGuarantee[] = ["real_workspace_protected", "publish_path_governed"];
-  if (params.network_policy === "none" || (params.egress_allowlist_hosts?.length ?? 0) > 0) {
+  if (params.egress_mode && params.egress_mode !== "inherit") {
     guarantees.push("egress_policy_applied");
   }
   if (params.credential_mode !== "direct_env" || (params.credential_passthrough_env_keys?.length ?? 0) === 0) {
     guarantees.push("brokered_credentials_only");
   }
   return guarantees;
+}
+
+function runtimeBindingsFromSetupPreferences(setupPreferences?: SetupPreferences): RuntimeCredentialBindingDocument[] {
+  if (setupPreferences?.runtime_credential_bindings && setupPreferences.runtime_credential_bindings.length > 0) {
+    return setupPreferences.runtime_credential_bindings;
+  }
+
+  const envBindings = setupPreferences?.contained_secret_env_bindings ?? [];
+  const fileBindings = setupPreferences?.contained_secret_file_bindings ?? [];
+  return [
+    ...envBindings.map((binding) => ({
+      binding_id: createRuntimeCredentialBindingId({
+        kind: "env",
+        target: `env:${binding.env_key}`,
+        broker_source_ref: binding.secret_id,
+      }),
+      kind: "env" as const,
+      target: {
+        surface: "env" as const,
+        env_key: binding.env_key,
+      },
+      broker_source_ref: binding.secret_id,
+      redacted_delivery_metadata: {
+        source_kind: "bearer_secret_ref",
+      },
+      rotates: true,
+    })),
+    ...fileBindings.map((binding) => ({
+      binding_id: createRuntimeCredentialBindingId({
+        kind: "file",
+        target: `file:${binding.relative_path}`,
+        broker_source_ref: binding.secret_id,
+      }),
+      kind: "file" as const,
+      target: {
+        surface: "file" as const,
+        relative_path: binding.relative_path,
+      },
+      broker_source_ref: binding.secret_id,
+      redacted_delivery_metadata: {
+        source_kind: "bearer_secret_ref",
+      },
+      rotates: true,
+    })),
+  ];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -804,14 +865,26 @@ export class GenericCommandAdapter implements RuntimeAdapter {
       context.setup_preferences?.containment_backend === "docker" && detection.assurance_ceiling === "contained";
     const containedBackend = useDockerContainment ? resolveContainedBackendRuntime("docker") : null;
     const effectiveStrictness = context.setup_preferences?.policy_strictness ?? "balanced";
+    const defaultCheckpointPolicy = context.setup_preferences?.default_checkpoint_policy ?? "never";
+    const checkpointIntent =
+      context.setup_preferences?.checkpoint_intent ??
+      (defaultCheckpointPolicy === "always_before_run"
+        ? "operator_requested"
+        : defaultCheckpointPolicy === "risky_runs"
+          ? "broad_risk_default"
+          : undefined);
+    const checkpointReasonTemplate = context.setup_preferences?.checkpoint_reason_template;
     const containerImage = useDockerContainment
       ? context.setup_preferences?.container_image?.trim() || inferContainerImage(launchCommand)
       : undefined;
     const containerNetworkPolicy = useDockerContainment
       ? context.setup_preferences?.container_network_policy ?? containerNetworkPolicyForStrictness(effectiveStrictness)
       : undefined;
+    const runtimeCredentialBindings = useDockerContainment ? runtimeBindingsFromSetupPreferences(context.setup_preferences) : [];
     const containedCredentialMode = useDockerContainment
-      ? context.setup_preferences?.contained_credential_mode ?? containedCredentialModeForStrictness(effectiveStrictness)
+      ? runtimeCredentialBindings.length > 0
+        ? "brokered_bindings"
+        : context.setup_preferences?.contained_credential_mode ?? containedCredentialModeForStrictness(effectiveStrictness)
       : undefined;
     const containedSecretEnvBindings = useDockerContainment
       ? context.setup_preferences?.contained_secret_env_bindings ?? []
@@ -822,6 +895,13 @@ export class GenericCommandAdapter implements RuntimeAdapter {
     const containedProxyAllowlistHosts = useDockerContainment
       ? context.setup_preferences?.contained_proxy_allowlist_hosts ?? []
       : [];
+    const containedEgressMode = useDockerContainment
+      ? context.setup_preferences?.contained_egress_mode ??
+        deriveContainedEgressMode({
+          network_policy: containerNetworkPolicy,
+          egress_allowlist_hosts: containedProxyAllowlistHosts,
+        })
+      : undefined;
     const passthroughEnvKeys = useDockerContainment
       ? credentialPassthroughEnvKeys(
           containedCredentialMode ?? "none",
@@ -832,34 +912,48 @@ export class GenericCommandAdapter implements RuntimeAdapter {
       containedBackend?.detect_capability(context, {
         network_policy: containerNetworkPolicy,
         credential_mode: containedCredentialMode,
+        egress_mode: containedEgressMode,
         egress_allowlist_hosts: containedProxyAllowlistHosts,
       }) ?? null;
     const degradedReasons = [...assurance.degraded_reasons];
     const governanceMode = useDockerContainment ? containedGovernanceMode() : attachedGovernanceMode();
     const guarantees = useDockerContainment
       ? containedGuarantees({
-        network_policy: containerNetworkPolicy,
+        egress_mode: containedEgressMode,
         credential_mode: containedCredentialMode,
         credential_passthrough_env_keys: passthroughEnvKeys,
-        egress_allowlist_hosts: containedProxyAllowlistHosts,
       })
       : attachedGuarantees();
     const capabilitySnapshot = backendCapability?.capability_snapshot;
-    if (useDockerContainment && containerNetworkPolicy !== "none" && containedProxyAllowlistHosts.length === 0) {
+    const containedEgressAssurance =
+      useDockerContainment && containedEgressMode
+        ? deriveContainedEgressAssurance({
+            egress_mode: containedEgressMode,
+            backend_supports_enforced_allowlist: capabilitySnapshot?.backend_enforced_allowlist_supported ?? false,
+          })
+        : undefined;
+    if (useDockerContainment && containedEgressMode === "inherit") {
       degradedReasons.push("Container network egress is not restricted.");
     }
-    if (useDockerContainment && containerNetworkPolicy === "none" && containedProxyAllowlistHosts.length > 0) {
+    if (useDockerContainment && containedEgressMode === "none" && containedProxyAllowlistHosts.length > 0) {
       degradedReasons.push("Contained egress allowlist entries are ignored because container networking is disabled.");
     }
-    if (useDockerContainment && containerNetworkPolicy !== "none" && containedProxyAllowlistHosts.length > 0) {
+    if (useDockerContainment && containedEgressMode === "proxy_http_https") {
       degradedReasons.push("Contained egress allowlist is proxy-based and only applies to proxy-aware HTTP(S) clients.");
+    }
+    if (
+      useDockerContainment &&
+      containedEgressMode === "backend_enforced_allowlist" &&
+      !(capabilitySnapshot?.backend_enforced_allowlist_supported ?? false)
+    ) {
+      degradedReasons.push("This contained backend cannot enforce backend-scoped host allowlists.");
     }
     if (useDockerContainment && containedCredentialMode === "direct_env") {
       if (passthroughEnvKeys.length > 0) {
         degradedReasons.push(`Container receives direct host credential passthrough for ${passthroughEnvKeys.join(", ")}.`);
       }
     }
-    if (useDockerContainment && containedCredentialMode === "brokered_secret_refs" && containedSecretEnvBindings.length === 0) {
+    if (useDockerContainment && containedCredentialMode === "brokered_bindings" && runtimeCredentialBindings.length === 0) {
       if (containedSecretFileBindings.length === 0) {
         degradedReasons.push("Brokered secret refs are enabled, but no contained secret bindings were provided.");
       }
@@ -886,10 +980,16 @@ export class GenericCommandAdapter implements RuntimeAdapter {
         ? ["contained runtime boundary", "governed publication boundary"]
         : ["governed shell launch boundary"],
       degraded_reasons: degradedReasons,
+      default_checkpoint_policy: defaultCheckpointPolicy,
+      checkpoint_intent: checkpointIntent,
+      checkpoint_reason_template: checkpointReasonTemplate,
       containment_backend: useDockerContainment ? "docker" : undefined,
       container_image: containerImage,
       container_network_policy: containerNetworkPolicy,
+      contained_egress_mode: containedEgressMode,
+      contained_egress_assurance: containedEgressAssurance,
       contained_credential_mode: containedCredentialMode,
+      runtime_credential_bindings: runtimeCredentialBindings,
       credential_passthrough_env_keys: passthroughEnvKeys,
       contained_secret_env_bindings: containedSecretEnvBindings,
       contained_secret_file_bindings: containedSecretFileBindings,
@@ -902,7 +1002,13 @@ export class GenericCommandAdapter implements RuntimeAdapter {
         containment_backend: useDockerContainment ? "docker" : undefined,
         container_image: containerImage,
         container_network_policy: containerNetworkPolicy,
+        default_checkpoint_policy: defaultCheckpointPolicy,
+        checkpoint_intent: checkpointIntent,
+        checkpoint_reason_template: checkpointReasonTemplate,
+        contained_egress_mode: containedEgressMode,
+        contained_egress_assurance: containedEgressAssurance,
         contained_credential_mode: containedCredentialMode,
+        runtime_credential_bindings: runtimeCredentialBindings,
         credential_passthrough_env_keys: passthroughEnvKeys,
         contained_secret_env_bindings: containedSecretEnvBindings,
         contained_secret_file_bindings: containedSecretFileBindings,
@@ -934,9 +1040,16 @@ export class GenericCommandAdapter implements RuntimeAdapter {
       existingProfile.governance_mode === plan.governance_mode &&
       JSON.stringify(existingProfile.guarantees) === JSON.stringify(plan.guarantees) &&
       existingProfile.execution_mode === plan.execution_mode &&
+      existingProfile.default_checkpoint_policy === plan.default_checkpoint_policy &&
+      existingProfile.checkpoint_intent === plan.checkpoint_intent &&
+      existingProfile.checkpoint_reason_template === plan.checkpoint_reason_template &&
       existingProfile.container_image === plan.container_image &&
       existingProfile.container_network_policy === plan.container_network_policy &&
+      existingProfile.contained_egress_mode === plan.contained_egress_mode &&
+      existingProfile.contained_egress_assurance === plan.contained_egress_assurance &&
       existingProfile.contained_credential_mode === plan.contained_credential_mode &&
+      JSON.stringify(existingProfile.runtime_credential_bindings ?? []) ===
+        JSON.stringify(plan.runtime_credential_bindings ?? []) &&
       JSON.stringify(existingProfile.contained_secret_env_bindings ?? []) ===
         JSON.stringify(plan.contained_secret_env_bindings ?? []) &&
       JSON.stringify(existingProfile.contained_secret_file_bindings ?? []) ===
@@ -972,6 +1085,7 @@ export class GenericCommandAdapter implements RuntimeAdapter {
         ? resolveContainedBackendRuntime(plan.containment_backend).detect_capability(context, {
             network_policy: plan.container_network_policy,
             credential_mode: plan.contained_credential_mode,
+            egress_mode: plan.contained_egress_mode,
             egress_allowlist_hosts: plan.contained_proxy_allowlist_hosts,
           })
         : null;
@@ -989,9 +1103,15 @@ export class GenericCommandAdapter implements RuntimeAdapter {
     if (missingDirectEnvKeys.length > 0) {
       degradedReasons.push(`Selected direct host credential env keys are currently not set: ${missingDirectEnvKeys.join(", ")}.`);
     }
+    const egressExpectationSatisfied =
+      plan.execution_mode !== "docker_contained" ||
+      plan.contained_egress_mode !== "backend_enforced_allowlist" ||
+      Boolean(liveCapabilitySnapshot?.backend_enforced_allowlist_supported);
+    const runtimeBindingsConfigured =
+      plan.contained_credential_mode !== "brokered_bindings" || (plan.runtime_credential_bindings?.length ?? 0) > 0;
     const ready =
       plan.execution_mode === "docker_contained"
-        ? Boolean(plan.container_image) && dockerAvailable
+        ? Boolean(plan.container_image) && dockerAvailable && egressExpectationSatisfied && runtimeBindingsConfigured
         : governedLaunchAssetsExist(assetMetadata);
     return {
       ready,
@@ -1033,9 +1153,13 @@ export class GenericCommandAdapter implements RuntimeAdapter {
               },
               {
                 label: "container network policy",
-                ok: true,
+                ok: egressExpectationSatisfied,
                 detail:
-                  plan.container_network_policy === "none"
+                  plan.contained_egress_mode === "backend_enforced_allowlist"
+                    ? egressExpectationSatisfied
+                      ? `Contained runtime enforces a backend-scoped allowlist for: ${(plan.contained_proxy_allowlist_hosts ?? []).join(", ") || "configured hosts"}.`
+                      : "Contained runtime expects backend-enforced host allowlists, but this backend only supports inherited networking or proxy-aware HTTP(S) controls."
+                    : plan.container_network_policy === "none"
                     ? "Contained runtime network egress is blocked."
                     : plan.contained_proxy_allowlist_hosts && plan.contained_proxy_allowlist_hosts.length > 0
                       ? `Contained runtime routes proxy-aware HTTP(S) egress through an allowlist for: ${plan.contained_proxy_allowlist_hosts.join(", ")}.`
@@ -1043,32 +1167,58 @@ export class GenericCommandAdapter implements RuntimeAdapter {
               },
               {
                 label: "contained credential policy",
-                ok: true,
+                ok: runtimeBindingsConfigured,
                 detail:
                   plan.contained_credential_mode === "direct_env"
                     ? plan.credential_passthrough_env_keys && plan.credential_passthrough_env_keys.length > 0
                       ? `Contained runtime is allowlisted to receive only these host env credentials when present: ${plan.credential_passthrough_env_keys.join(", ")}.`
                       : "Contained runtime is configured for direct env credentials, but no host env keys are currently allowlisted."
-                    : plan.contained_credential_mode === "brokered_secret_refs"
-                      ? (plan.contained_secret_env_bindings && plan.contained_secret_env_bindings.length > 0) ||
-                        (plan.contained_secret_file_bindings && plan.contained_secret_file_bindings.length > 0)
-                        ? `Contained runtime will receive brokered secret refs through ${[
-                            plan.contained_secret_env_bindings && plan.contained_secret_env_bindings.length > 0
-                              ? `env refs: ${plan.contained_secret_env_bindings.map((binding) => binding.env_key).join(", ")}`
-                              : null,
-                            plan.contained_secret_file_bindings && plan.contained_secret_file_bindings.length > 0
-                              ? `file refs: ${plan.contained_secret_file_bindings.map((binding) => binding.relative_path).join(", ")}`
-                              : null,
+                    : plan.contained_credential_mode === "brokered_bindings"
+                      ? plan.runtime_credential_bindings && plan.runtime_credential_bindings.length > 0
+                        ? `Contained runtime will receive brokered runtime bindings through ${[
+                            plan.runtime_credential_bindings
+                              .filter(
+                                (
+                                  binding,
+                                ): binding is (typeof plan.runtime_credential_bindings)[number] & {
+                                  target: { surface: "env"; env_key: string };
+                                } => binding.target.surface === "env",
+                              )
+                              .map((binding) => `${binding.kind}:${binding.target.env_key}`)
+                              .join(", ") || null,
+                            plan.runtime_credential_bindings
+                              .filter(
+                                (
+                                  binding,
+                                ): binding is (typeof plan.runtime_credential_bindings)[number] & {
+                                  target: { surface: "file"; relative_path: string };
+                                } => binding.target.surface === "file",
+                              )
+                              .map((binding) => `${binding.kind}:${binding.target.relative_path}`)
+                              .join(", ") || null,
                           ]
                             .filter((value): value is string => value !== null)
                             .join("; ")}.`
-                        : "Contained runtime is configured for brokered secret refs, but no bindings are currently configured."
+                        : "Contained runtime is configured for brokered runtime bindings, but no bindings are currently configured."
                     : "Contained runtime will not receive host credential env vars.",
+              },
+              {
+                label: "checkpoint defaults",
+                ok: true,
+                detail:
+                  plan.default_checkpoint_policy === "always_before_run"
+                    ? `AgentGit will create a checkpoint before every run${plan.checkpoint_reason_template ? ` using "${plan.checkpoint_reason_template}" as the default reason.` : "."}`
+                    : plan.default_checkpoint_policy === "risky_runs"
+                      ? `AgentGit will create a checkpoint before risky runs${plan.checkpoint_reason_template ? ` using "${plan.checkpoint_reason_template}" as the default reason.` : "."}`
+                      : "AgentGit will not create pre-run checkpoints by default.",
               },
             ]
           : []),
       ],
-      recommended_next_command: dockerAvailable ? "agentgit run" : "agentgit setup --repair --contained",
+      recommended_next_command:
+        dockerAvailable && egressExpectationSatisfied && runtimeBindingsConfigured
+          ? "agentgit run"
+          : "agentgit setup --repair --contained",
       assurance_ceiling: plan.execution_mode === "docker_contained" ? "contained" : "attached",
       degraded_reasons: degradedReasons,
     };
