@@ -1,0 +1,24 @@
+# CODEOWNERS — auto-request reviews for changes in these paths.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not matched below
+* @dadbodgeoff
+
+# Core runtime
+/packages/authority-daemon/       @dadbodgeoff
+/packages/authority-sdk-ts/       @dadbodgeoff
+/packages/authority-sdk-py/       @dadbodgeoff
+/packages/policy-engine/          @dadbodgeoff
+/packages/snapshot-engine/        @dadbodgeoff
+/packages/recovery-engine/        @dadbodgeoff
+/packages/run-journal/            @dadbodgeoff
+/packages/action-normalizer/      @dadbodgeoff
+/packages/execution-adapters/     @dadbodgeoff
+
+# Public surface
+/packages/authority-cli/          @dadbodgeoff
+/packages/schemas/                @dadbodgeoff
+
+# Documentation
+/wiki/                            @dadbodgeoff
+*.md                              @dadbodgeoff

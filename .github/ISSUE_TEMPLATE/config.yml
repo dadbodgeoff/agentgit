@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/dadbodgeoff/agentgit/wiki
+    about: Browse the full wiki for guides, API references, and configuration docs
+  - name: Discussion / Questions
+    url: https://github.com/dadbodgeoff/agentgit/discussions
+    about: Ask questions, share use-cases, or get help from the community

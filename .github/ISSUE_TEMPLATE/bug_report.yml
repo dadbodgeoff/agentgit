@@ -1,0 +1,71 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please fill out as much as you can — it helps us reproduce and fix it faster.
+
+  - type: input
+    id: version
+    attributes:
+      label: agentgit version
+      description: Run `agentgit-authority --version`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Affected package
+      options:
+        - "@agentgit/authority-cli"
+        - "@agentgit/authority-daemon"
+        - "@agentgit/authority-sdk (TypeScript)"
+        - "@agentgit/authority-sdk-py (Python)"
+        - "@agentgit/schemas"
+        - "Inspector UI"
+        - "Other / unsure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you expect? What did you get?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug
+      placeholder: |
+        1. Start the daemon with `agentgit-authority daemon start`
+        2. Run `agentgit-authority submit-shell <run-id> ls`
+        3. See error …
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Paste any relevant CLI output, daemon logs, or error messages
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, shell
+      placeholder: |
+        - OS: macOS 14.5
+        - Node: 24.14.0
+        - Shell: zsh
+    validations:
+      required: true
