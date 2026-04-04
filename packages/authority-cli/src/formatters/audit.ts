@@ -7,7 +7,7 @@ import type {
   RunAuditReportResult,
   RunAuditShareResult,
   RunAuditVerifyResult,
-} from "../audit/bundles.js";
+} from "../audit/common.js";
 import { bulletList, lines, maybeLine } from "./core.js";
 
 type ArtifactResult = Awaited<ReturnType<AuthorityClient["queryArtifact"]>>;
