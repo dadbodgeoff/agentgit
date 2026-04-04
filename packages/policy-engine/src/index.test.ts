@@ -1714,8 +1714,21 @@ describe("evaluatePolicy", () => {
   });
 
   it("records local snapshot recovery proof for low-confidence shell reads", () => {
+    const customPolicy: PolicyConfig = {
+      profile_name: "custom-thresholds",
+      policy_version: "1",
+      thresholds: {
+        low_confidence: [
+          {
+            action_family: "shell/*",
+            ask_below: 0.45,
+          },
+        ],
+      },
+      rules: [],
+    };
     const outcome = evaluatePolicy(makeShellReadOnlyAction(0.42), {
-      policy_mode: "balanced",
+      compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
     });
 
     expect(outcome.decision).toBe("allow_with_snapshot");

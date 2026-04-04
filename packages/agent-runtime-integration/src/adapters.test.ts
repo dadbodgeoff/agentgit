@@ -378,6 +378,47 @@ describe("adapter planning", () => {
     store.close();
   });
 
+  it("fails closed when Docker is asked for backend-enforced host allowlists", () => {
+    const root = makeTempDir();
+    const workspaceRoot = path.join(root, "workspace");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    const store = new ProductStateStore(process.env);
+    const context = createAdapterContext({
+      workspace_root: workspaceRoot,
+      state: store,
+      user_command: "my-agent --start",
+      cwd: workspaceRoot,
+      runner: new FakeDockerRunner(),
+      env: { ...process.env },
+      setup_preferences: {
+        experience: "advanced",
+        policy_strictness: "strict",
+        install_scope: "workspace",
+        containment_backend: "docker",
+        contained_egress_mode: "backend_enforced_allowlist",
+        contained_proxy_allowlist_hosts: ["api.example.com:443"],
+      },
+    });
+
+    const planned = planSetup(context);
+    const verifyResult = planned.adapter.verify(context, planned.plan);
+
+    expect(planned.plan.contained_egress_mode).toBe("backend_enforced_allowlist");
+    expect(planned.plan.contained_egress_assurance).toBe("degraded");
+    expect(planned.plan.degraded_reasons).toContain("This contained backend cannot enforce backend-scoped host allowlists.");
+    expect(verifyResult.ready).toBe(false);
+    expect(verifyResult.health_checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "container network policy",
+          ok: false,
+        }),
+      ]),
+    );
+    store.close();
+  });
+
   it("re-verifies contained profiles against live Docker availability", () => {
     const root = makeTempDir();
     const workspaceRoot = path.join(root, "workspace");

@@ -179,7 +179,9 @@ This subsystem is successful when all of the following are true:
 - a supported OpenClaw install can be connected in one command
 - an unknown agent can be governed by providing only its launch command
 - an unknown agent can optionally run in a contained Docker workspace with governed publish-back
-- that contained Docker path can use brokered secret refs from AgentGit-managed encrypted storage instead of only host env passthrough
+- that contained Docker path can use runtime-contained brokered bindings from AgentGit-managed encrypted storage instead of only host env passthrough
+- that contained runtime profiles can persist checkpoint defaults and surface latest explicit vs automatic checkpoint boundaries honestly
+- that contained egress claims stay explicit about mode and assurance, including Docker's current inability to satisfy backend-enforced host allowlists
 - setup and inspect can state the active governance mode and concrete guarantees, not only the assurance tier
 - the user reaches a governed action in under 60 seconds on the happy path
 - the user can run a safe built-in demo without trusting AgentGit with a real repo first

@@ -4,6 +4,8 @@ Status date: 2026-04-03 (America/New_York)
 
 Owner: AgentGit core
 
+Implementation status: complete in repo. This document now describes the repo-native implementation path that shipped in this pass.
+
 ## 1. Purpose
 
 Define the concrete design and execution plan required to make AgentGit production-ready in the remaining high-value areas that are still intentionally incomplete:
@@ -85,14 +87,14 @@ Already real in the repo:
 - credential brokerage in [/Users/geoffreyfernald/Documents/agentgit/packages/credential-broker/src/index.ts](/Users/geoffreyfernald/Documents/agentgit/packages/credential-broker/src/index.ts)
 - action schemas in [/Users/geoffreyfernald/Documents/agentgit/packages/schemas/src/index.ts](/Users/geoffreyfernald/Documents/agentgit/packages/schemas/src/index.ts)
 
-### 5.2 Known gaps
+### 5.2 Delivered in this pass
 
-Still incomplete:
+Now implemented in the repo:
 
-- approval-light automation is broader for local and some trusted function paths, but not yet generalized across all recoverable external/tool lanes
-- checkpoints exist through `agentgit run`, but not yet as a persistent product policy/default beyond launch time
-- contained egress truth is honest but still limited to `inherit`, `none`, and proxy-aware HTTP(S) allowlists
-- contained brokered credentials are strong for env refs and read-only files, but not yet modeled as a first-class binding system across all downstream auth shapes
+- approval-light automation records recovery proof in policy context for local snapshot-backed lanes and trusted compensator lanes, while intentionally keeping mutating MCP trust conservative
+- checkpoints are persisted as runtime-profile defaults and surfaced through setup, inspect, restore guidance, and `run`
+- contained egress truth is explicit through `contained_egress_mode` and `contained_egress_assurance`, with Docker failing closed when a profile expects backend-enforced host allowlists
+- runtime-contained credential bindings are a distinct model from MCP registry bindings and support `env`, `file`, `header_template`, `runtime_ticket`, and `tool_scoped_ref`
 
 ## 6. Design Principles
 
@@ -335,7 +337,9 @@ Add to runtime profile and install persistence:
 - `checkpoint_reason_template?: string`
 - `contained_egress_mode?: "inherit" | "none" | "proxy_http_https" | "backend_enforced_allowlist"`
 - `contained_egress_assurance?: "degraded" | "scoped" | "boundary_enforced"`
-- `credential_bindings?: CredentialBindingDocument[]`
+- `runtime_credential_bindings?: RuntimeCredentialBindingDocument[]`
+
+This runtime-contained binding model is intentionally distinct from MCP registry credential bindings.
 
 Primary files:
 

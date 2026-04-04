@@ -351,6 +351,51 @@ describe.sequential("agentgit product CLI", () => {
     service.close();
   }, 20_000);
 
+  it("creates an automatic checkpoint from the saved profile default and surfaces it in inspect", async () => {
+    const harness = setupWorkspace();
+    tempDir = harness.root;
+    const targetPath = path.join(harness.workspaceRoot, "automatic-checkpoint-note.txt");
+    fs.writeFileSync(targetPath, "before automatic checkpoint\n", "utf8");
+
+    await runCli([
+      "setup",
+      "--command",
+      `node -e ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(targetPath)}, 'after automatic checkpoint\\n', 'utf8')`)}`,
+      "--checkpoint-default",
+      "always-before-run",
+      "--checkpoint-intent",
+      "high-value-workspace",
+      "--checkpoint-reason-template",
+      "Checkpoint before every protected run.",
+    ]);
+
+    const runResult = await runCli(["run"]);
+    expect(runResult?.exit_code).toBe(0);
+    expect(runResult?.checkpoint_trigger).toBe("default_policy");
+    expect(runResult?.checkpoint_reason).toBe("Checkpoint before every protected run.");
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("after automatic checkpoint\n");
+
+    const service = new AgentRuntimeIntegrationService({
+      cwd: harness.workspaceRoot,
+      env: process.env,
+    });
+    const inspectResult = await service.inspect(harness.workspaceRoot);
+    expect(inspectResult.found).toBe(true);
+    expect(inspectResult.default_checkpoint_policy).toBe("always_before_run");
+    expect(inspectResult.checkpoint_intent).toBe("high_value_workspace");
+    expect(inspectResult.checkpoint_reason_template).toBe("Checkpoint before every protected run.");
+    expect(inspectResult.latest_automatic_checkpoint?.trigger).toBe("default_policy");
+    expect(inspectResult.latest_automatic_checkpoint?.reason).toBe("Checkpoint before every protected run.");
+    expect(inspectResult.summary).toContain("automatic checkpoint");
+    expect(inspectResult.restore_boundary).toBe("checkpoint restore");
+
+    const restored = await service.restore(harness.workspaceRoot);
+    expect(restored.restored).toBe(true);
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("before automatic checkpoint\n");
+
+    service.close();
+  }, 20_000);
+
   it("stores advanced setup preferences and degrades assurance honestly when the target exceeds the adapter ceiling", async () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
@@ -736,12 +781,7 @@ describe.sequential("agentgit product CLI", () => {
         broker_source_ref: "contained_openai",
       }),
     ]);
-    expect(profile?.contained_secret_env_bindings).toEqual([
-      {
-        env_key: "OPENAI_API_KEY",
-        secret_id: "contained_openai",
-      },
-    ]);
+    expect(profile?.contained_secret_env_bindings ?? []).toEqual([]);
     expect(profile?.capability_snapshot).toMatchObject({
       docker_available: true,
       projection_enforced: true,
@@ -762,7 +802,7 @@ describe.sequential("agentgit product CLI", () => {
     });
     const inspectResult = await service.inspect(harness.workspaceRoot);
     expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
-    expect(inspectResult.contained_details?.credential_env_keys).toEqual(["OPENAI_API_KEY"]);
+    expect(inspectResult.contained_details?.credential_env_keys).toEqual(["env:OPENAI_API_KEY"]);
     expect(inspectResult.contained_details?.capability_snapshot).toMatchObject({
       docker_available: true,
       network_restricted: true,
@@ -817,12 +857,7 @@ describe.sequential("agentgit product CLI", () => {
         broker_source_ref: "contained_file_secret",
       }),
     ]);
-    expect(profile?.contained_secret_file_bindings).toEqual([
-      {
-        relative_path: "openai.key",
-        secret_id: "contained_file_secret",
-      },
-    ]);
+    expect(profile?.contained_secret_file_bindings ?? []).toEqual([]);
 
     const runResult = await runCli(["run"]);
     expect(runResult?.exit_code).toBe(0);
@@ -837,12 +872,69 @@ describe.sequential("agentgit product CLI", () => {
     const inspectResult = await service.inspect(harness.workspaceRoot);
     expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
     expect(inspectResult.contained_details?.credential_file_paths).toEqual([
-      "/run/agentgit-secrets/openai.key",
+      "file:/run/agentgit-secrets/openai.key",
     ]);
     expect(inspectResult.contained_details?.capability_snapshot).toMatchObject({
       credential_brokering_enabled: true,
       network_restricted: true,
     });
+    service.close();
+    store.close();
+  }, 40_000);
+
+  it("resolves richer brokered runtime binding kinds through the contained runtime", async () => {
+    const harness = setupWorkspace();
+    tempDir = harness.root;
+
+    const secretStore = secretStoreForWorkspace(harness.workspaceRoot);
+    secretStore.upsertMcpBearerSecret({
+      secret_id: "contained_header_secret",
+      bearer_token: "header-brokered-secret",
+      display_name: "Contained header secret",
+    });
+    secretStore.close();
+
+    await runCli([
+      "setup",
+      "--command",
+      'printf "%s\\n" "${OPENAI_AUTH_HEADER:-missing}" > proof-header.txt',
+      "--contained",
+      "--image",
+      "alpine:3.20",
+      "--network",
+      "none",
+      "--runtime-binding",
+      "header_template:env:OPENAI_AUTH_HEADER=contained_header_secret?template=Bearer%20{{token}}",
+      "--yes",
+    ]);
+
+    const store = new ProductStateStore(process.env);
+    const profile = store.getProfileForWorkspace(harness.workspaceRoot);
+    expect(profile?.contained_credential_mode).toBe("brokered_bindings");
+    expect(profile?.runtime_credential_bindings).toEqual([
+      expect.objectContaining({
+        kind: "header_template",
+        target: {
+          surface: "env",
+          env_key: "OPENAI_AUTH_HEADER",
+        },
+        broker_source_ref: "contained_header_secret",
+      }),
+    ]);
+
+    const runResult = await runCli(["run"]);
+    expect(runResult?.exit_code).toBe(0);
+
+    const proofPath = path.join(harness.workspaceRoot, "proof-header.txt");
+    expect(fs.readFileSync(proofPath, "utf8")).toBe("Bearer header-brokered-secret\n");
+
+    const service = new AgentRuntimeIntegrationService({
+      cwd: harness.workspaceRoot,
+      env: process.env,
+    });
+    const inspectResult = await service.inspect(harness.workspaceRoot);
+    expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
+    expect(inspectResult.contained_details?.credential_env_keys).toEqual(["header_template:OPENAI_AUTH_HEADER"]);
     service.close();
     store.close();
   }, 40_000);

@@ -4,6 +4,8 @@ Status date: 2026-04-03 (America/New_York)
 
 Owner: AgentGit core
 
+Implementation status: Docker-contained GA work from this plan is complete in repo. This document remains as the execution plan record and now reads as a shipped design reference.
+
 ## Purpose
 
 Define the concrete implementation and release program required to take the contained runtime path from "real and honest" to "fully production-ready and signed off."
@@ -30,11 +32,11 @@ Contained GA is achieved only when all three are true:
 
 ## Current Gaps
 
-The remaining known gaps are:
+The remaining known gaps after this pass are intentionally narrow:
 
-1. contained egress is proxy-aware HTTP(S) allowlist control, not universal socket-level governance
-2. Docker is the only contained backend
-3. brokered credentials cover env refs and read-only secret files, but not every downstream auth shape
+1. Docker is still the only shipped contained backend
+2. backend-enforced host allowlists are modeled and fail closed honestly, but Docker still cannot satisfy that stronger guarantee
+3. runtime-contained brokered bindings now cover `env`, `file`, `header_template`, `runtime_ticket`, and `tool_scoped_ref`, but future backends may add additional delivery mechanisms
 
 These are not equal-priority gaps.
 
