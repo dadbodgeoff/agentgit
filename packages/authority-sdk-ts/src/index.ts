@@ -117,6 +117,7 @@ export interface AuthorityClientOptions {
   socketPath?: string;
   clientType?: ClientType;
   clientVersion?: string;
+  defaultWorkspaceRoots?: string[];
   connectTimeoutMs?: number;
   responseTimeoutMs?: number;
   maxConnectRetries?: number;
@@ -170,6 +171,7 @@ export class AuthorityClient {
   private readonly socketPath: string;
   private readonly clientType: ClientType;
   private readonly clientVersion: string;
+  private readonly defaultWorkspaceRoots: string[];
   private readonly transport: TransportOptions;
   private sessionId: string | undefined;
 
@@ -181,6 +183,7 @@ export class AuthorityClient {
       path.resolve(projectRoot, ".agentgit", "authority.sock");
     this.clientType = options.clientType ?? "sdk_ts";
     this.clientVersion = options.clientVersion ?? "0.1.0";
+    this.defaultWorkspaceRoots = options.defaultWorkspaceRoots ?? [];
     this.transport = {
       connectTimeoutMs: options.connectTimeoutMs ?? 1_000,
       responseTimeoutMs: options.responseTimeoutMs ?? 5_000,
@@ -189,7 +192,7 @@ export class AuthorityClient {
     };
   }
 
-  async hello(workspaceRoots: string[] = []): Promise<HelloResponsePayload> {
+  async hello(workspaceRoots: string[] = this.defaultWorkspaceRoots): Promise<HelloResponsePayload> {
     const payload: HelloRequestPayload = {
       client_type: this.clientType,
       client_version: this.clientVersion,

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 
 import {
@@ -28,11 +29,59 @@ function normalizePath(targetPath: string, cwd: string | undefined): string {
   return path.resolve(cwd ?? process.cwd(), targetPath);
 }
 
+function resolveExistingPathSync(
+  targetPath: string,
+): { status: "resolved"; path: string } | { status: "missing" | "error" } {
+  try {
+    return {
+      status: "resolved",
+      path: fs.realpathSync(path.resolve(targetPath)),
+    };
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+    return {
+      status: code === "ENOENT" ? "missing" : "error",
+    };
+  }
+}
+
+function canonicalizePathForContainmentSync(targetPath: string): string | null {
+  const missingSegments: string[] = [];
+  let currentPath = path.resolve(targetPath);
+
+  while (true) {
+    const resolved = resolveExistingPathSync(currentPath);
+    if (resolved.status === "resolved") {
+      return missingSegments.length === 0 ? resolved.path : path.join(resolved.path, ...missingSegments.reverse());
+    }
+
+    if (resolved.status === "error") {
+      return null;
+    }
+
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      return path.resolve(targetPath);
+    }
+
+    missingSegments.push(path.basename(currentPath));
+    currentPath = parentPath;
+  }
+}
+
+function isNormalizedPathInsideRoot(targetPath: string, rootPath: string): boolean {
+  return targetPath === rootPath || targetPath.startsWith(`${rootPath}${path.sep}`);
+}
+
 function isPathInsideWorkspace(targetPath: string, workspaceRoots: string[]): boolean {
   return workspaceRoots.some((root) => {
-    const normalizedRoot = path.resolve(root);
-    const normalizedTarget = path.resolve(targetPath);
-    return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`);
+    const normalizedRoot = canonicalizePathForContainmentSync(root);
+    const normalizedTarget = canonicalizePathForContainmentSync(targetPath);
+    return (
+      normalizedRoot !== null &&
+      normalizedTarget !== null &&
+      isNormalizedPathInsideRoot(normalizedTarget, normalizedRoot)
+    );
   });
 }
 

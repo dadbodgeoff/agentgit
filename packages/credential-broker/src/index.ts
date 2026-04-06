@@ -673,15 +673,20 @@ export class LocalEncryptedSecretStore {
     const metadata = binding.redacted_delivery_metadata ?? {};
     const now = new Date();
     const resolvedSecret = this.resolveMcpBearerSecret(binding.broker_source_ref);
-    const expiresAtCandidates = [binding.expires_at ?? null, resolvedSecret.secret.expires_at]
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-      .sort()[0] ?? null;
+    const expiresAtCandidates =
+      [binding.expires_at ?? null, resolvedSecret.secret.expires_at]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .sort()[0] ?? null;
     if (expiresAtCandidates !== null && Date.parse(expiresAtCandidates) <= now.getTime()) {
-      throw new AgentGitError("Runtime credential binding is expired and must be rotated before execution.", "BROKER_UNAVAILABLE", {
-        binding_id: binding.binding_id,
-        kind: binding.kind,
-        expires_at: expiresAtCandidates,
-      });
+      throw new AgentGitError(
+        "Runtime credential binding is expired and must be rotated before execution.",
+        "BROKER_UNAVAILABLE",
+        {
+          binding_id: binding.binding_id,
+          kind: binding.kind,
+          expires_at: expiresAtCandidates,
+        },
+      );
     }
 
     if (binding.kind === "env" || binding.kind === "file") {
@@ -703,10 +708,12 @@ export class LocalEncryptedSecretStore {
 
     if (binding.kind === "runtime_ticket") {
       const ttlSeconds = Math.max(60, Math.min(bindingMetadataNumber(metadata, "ticket_ttl_seconds") ?? 900, 86_400));
-      const ticketExpiresAt = new Date(Math.min(
-        now.getTime() + ttlSeconds * 1_000,
-        expiresAtCandidates ? Date.parse(expiresAtCandidates) : Number.POSITIVE_INFINITY,
-      ));
+      const ticketExpiresAt = new Date(
+        Math.min(
+          now.getTime() + ttlSeconds * 1_000,
+          expiresAtCandidates ? Date.parse(expiresAtCandidates) : Number.POSITIVE_INFINITY,
+        ),
+      );
       const payload = JSON.stringify({
         binding_id: binding.binding_id,
         kind: binding.kind,
@@ -715,7 +722,9 @@ export class LocalEncryptedSecretStore {
         exp: ticketExpiresAt.toISOString(),
       });
       const encodedPayload = Buffer.from(payload, "utf8").toString("base64url");
-      const signature = createHmac("sha256", this.encryptionKey).update(`${encodedPayload}.${resolvedSecret.token}`).digest("base64url");
+      const signature = createHmac("sha256", this.encryptionKey)
+        .update(`${encodedPayload}.${resolvedSecret.token}`)
+        .digest("base64url");
       return {
         binding,
         resolved_value: `agtkt.${encodedPayload}.${signature}`,
@@ -726,10 +735,14 @@ export class LocalEncryptedSecretStore {
     if (binding.kind === "tool_scoped_ref") {
       const toolName = bindingMetadataString(metadata, "tool_name");
       if (!toolName) {
-        throw new AgentGitError("Tool-scoped runtime credential bindings require a redacted tool_name hint.", "BROKER_UNAVAILABLE", {
-          binding_id: binding.binding_id,
-          kind: binding.kind,
-        });
+        throw new AgentGitError(
+          "Tool-scoped runtime credential bindings require a redacted tool_name hint.",
+          "BROKER_UNAVAILABLE",
+          {
+            binding_id: binding.binding_id,
+            kind: binding.kind,
+          },
+        );
       }
 
       return {

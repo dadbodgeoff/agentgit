@@ -190,7 +190,9 @@ function formatContainedEgressMode(mode: ContainedEgressMode | null | undefined)
   return mode ? mode.replaceAll("_", "-") : "unknown";
 }
 
-function formatContainedEgressAssurance(assurance: DockerCapabilitySnapshot["egress_assurance"] | null | undefined): string {
+function formatContainedEgressAssurance(
+  assurance: DockerCapabilitySnapshot["egress_assurance"] | null | undefined,
+): string {
   return assurance ? assurance.replaceAll("_", "-") : "unknown";
 }
 
@@ -230,12 +232,8 @@ function containedCredentialStatement(details: {
     case "brokered_bindings":
       return details.credential_env_keys.length > 0 || details.credential_file_paths.length > 0
         ? [
-            details.credential_env_keys.length > 0
-              ? `env ${details.credential_env_keys.join(", ")}`
-              : null,
-            details.credential_file_paths.length > 0
-              ? `files ${details.credential_file_paths.join(", ")}`
-              : null,
+            details.credential_env_keys.length > 0 ? `env ${details.credential_env_keys.join(", ")}` : null,
+            details.credential_file_paths.length > 0 ? `files ${details.credential_file_paths.join(", ")}` : null,
           ]
             .filter((value): value is string => value !== null)
             .join("; ")
@@ -665,9 +663,7 @@ async function promptAdvancedSetupPreferences(existing: SetupCliOptions): Promis
     next.contained_proxy_allowlist_hosts =
       egressAnswer.trim().length === 0
         ? []
-        : egressAnswer
-            .split(",")
-            .map((entry) => parseContainedEgressHost(entry.trim()));
+        : egressAnswer.split(",").map((entry) => parseContainedEgressHost(entry.trim()));
   }
 
   if (next.containment_backend === "docker" && !next.contained_credential_mode) {
@@ -693,13 +689,7 @@ async function promptAdvancedSetupPreferences(existing: SetupCliOptions): Promis
     next.credential_passthrough_env_keys =
       credentialEnvAnswer.trim().length === 0
         ? []
-        : Array.from(
-            new Set(
-              credentialEnvAnswer
-                .split(",")
-                .map((entry) => parseCredentialEnvKey(entry.trim())),
-            ),
-          );
+        : Array.from(new Set(credentialEnvAnswer.split(",").map((entry) => parseCredentialEnvKey(entry.trim()))));
   }
 
   if (
@@ -751,11 +741,15 @@ export function formatSetupResult(result: Awaited<ReturnType<AgentRuntimeIntegra
     `Governed surfaces: ${result.governed_surfaces.length > 0 ? result.governed_surfaces.join(", ") : "none"}`,
     result.contained_details ? `Contained backend: ${result.contained_details.backend}` : null,
     result.contained_details ? `Contained network policy: ${result.contained_details.network_policy}` : null,
-    result.contained_details ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}` : null,
+    result.contained_details
+      ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}`
+      : null,
     result.contained_details
       ? `Contained egress assurance: ${formatContainedEgressAssurance(result.contained_details.egress_assurance)}`
       : null,
-    result.contained_details ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}` : null,
+    result.contained_details
+      ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}`
+      : null,
     result.contained_details && result.contained_details.egress_allowlist_hosts.length > 0
       ? `Contained egress allowlist: ${result.contained_details.egress_allowlist_hosts.join(", ")}`
       : null,
@@ -811,11 +805,15 @@ export function formatInspectResult(result: Awaited<ReturnType<AgentRuntimeInteg
       result.degraded_reasons.length === 0 ? null : `Degraded reasons: ${result.degraded_reasons.join("; ")}`,
       result.contained_details ? `Contained backend: ${result.contained_details.backend}` : null,
       result.contained_details ? `Contained network policy: ${result.contained_details.network_policy}` : null,
-      result.contained_details ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}` : null,
+      result.contained_details
+        ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}`
+        : null,
       result.contained_details
         ? `Contained egress assurance: ${formatContainedEgressAssurance(result.contained_details.egress_assurance)}`
         : null,
-      result.contained_details ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}` : null,
+      result.contained_details
+        ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}`
+        : null,
       result.contained_details && result.contained_details.egress_allowlist_hosts.length > 0
         ? `Contained egress allowlist: ${result.contained_details.egress_allowlist_hosts.join(", ")}`
         : null,
@@ -855,11 +853,15 @@ export function formatInspectResult(result: Awaited<ReturnType<AgentRuntimeInteg
     `Next restore command: ${result.restore_command ?? "none"}`,
     result.contained_details ? `Contained backend: ${result.contained_details.backend}` : null,
     result.contained_details ? `Contained network policy: ${result.contained_details.network_policy}` : null,
-    result.contained_details ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}` : null,
+    result.contained_details
+      ? `Contained egress mode: ${formatContainedEgressMode(result.contained_details.egress_mode)}`
+      : null,
     result.contained_details
       ? `Contained egress assurance: ${formatContainedEgressAssurance(result.contained_details.egress_assurance)}`
       : null,
-    result.contained_details ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}` : null,
+    result.contained_details
+      ? `Contained credentials: ${containedCredentialStatement(result.contained_details)}`
+      : null,
     result.contained_details && result.contained_details.egress_allowlist_hosts.length > 0
       ? `Contained egress allowlist: ${result.contained_details.egress_allowlist_hosts.join(", ")}`
       : null,
@@ -1023,9 +1025,10 @@ function parseSetupOptions(args: string[]): SetupCliOptions {
       }
       case "--credentials": {
         const rawValue = shiftValue(rest, "--credentials");
-        const value = rawValue.replaceAll("-", "_") === "brokered_secret_refs"
-          ? "brokered_bindings"
-          : rawValue.replaceAll("-", "_");
+        const value =
+          rawValue.replaceAll("-", "_") === "brokered_secret_refs"
+            ? "brokered_bindings"
+            : rawValue.replaceAll("-", "_");
         if (!containsValue(value, CONTAINED_CREDENTIAL_MODE_VALUES)) {
           throw new AgentGitError(`Unsupported contained credential mode: ${value}`, "BAD_REQUEST", {
             flag: "--credentials",
@@ -1230,12 +1233,16 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<Pr
         let options = parseSetupOptions(rest);
         if (options.remove) {
           const result = service.remove(workspaceRoot);
-          printValue(result, flags.json, (value) => formatSetupResult(value as Awaited<ReturnType<typeof service.remove>>));
+          printValue(result, flags.json, (value) =>
+            formatSetupResult(value as Awaited<ReturnType<typeof service.remove>>),
+          );
           return null;
         }
         if (options.repair) {
           const result = service.repair(workspaceRoot, options.command, buildSetupPreferences(options));
-          printValue(result, flags.json, (value) => formatSetupResult(value as Awaited<ReturnType<typeof service.repair>>));
+          printValue(result, flags.json, (value) =>
+            formatSetupResult(value as Awaited<ReturnType<typeof service.repair>>),
+          );
           return null;
         }
 

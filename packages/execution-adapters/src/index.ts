@@ -1573,11 +1573,81 @@ export class McpExecutionAdapter implements ExecutionAdapter {
   }
 }
 
-function isPathInsideRoot(targetPath: string, rootPath: string): boolean {
-  const normalizedRoot = path.resolve(rootPath);
-  const normalizedTarget = path.resolve(targetPath);
+function isNormalizedPathInsideRoot(targetPath: string, rootPath: string): boolean {
+  return targetPath === rootPath || targetPath.startsWith(`${rootPath}${path.sep}`);
+}
 
-  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}${path.sep}`);
+async function resolveExistingPath(
+  targetPath: string,
+): Promise<{ status: "resolved"; path: string } | { status: "missing" | "error" }> {
+  try {
+    return {
+      status: "resolved",
+      path: await fs.realpath(path.resolve(targetPath)),
+    };
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+    return {
+      status: code === "ENOENT" ? "missing" : "error",
+    };
+  }
+}
+
+async function canonicalizeTargetPath(targetPath: string): Promise<string | null> {
+  const missingSegments: string[] = [];
+  let currentPath = path.resolve(targetPath);
+
+  while (true) {
+    const resolved = await resolveExistingPath(currentPath);
+    if (resolved.status === "resolved") {
+      return missingSegments.length === 0 ? resolved.path : path.join(resolved.path, ...missingSegments.reverse());
+    }
+
+    if (resolved.status === "error") {
+      return null;
+    }
+
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      return path.resolve(targetPath);
+    }
+
+    missingSegments.push(path.basename(currentPath));
+    currentPath = parentPath;
+  }
+}
+
+async function isPathInsideRoot(targetPath: string, rootPath: string): Promise<boolean> {
+  const [normalizedRoot, normalizedTarget] = await Promise.all([
+    resolveExistingPath(rootPath),
+    canonicalizeTargetPath(targetPath),
+  ]);
+
+  if (normalizedRoot.status !== "resolved" || normalizedTarget === null) {
+    return false;
+  }
+
+  return isNormalizedPathInsideRoot(normalizedTarget, normalizedRoot.path);
+}
+
+async function resolvePathInsideRoot(targetPath: string, rootPath: string): Promise<string> {
+  const [normalizedRoot, normalizedTarget] = await Promise.all([
+    resolveExistingPath(rootPath),
+    canonicalizeTargetPath(targetPath),
+  ]);
+
+  if (
+    normalizedRoot.status !== "resolved" ||
+    normalizedTarget === null ||
+    !isNormalizedPathInsideRoot(normalizedTarget, normalizedRoot.path)
+  ) {
+    throw new PreconditionError("Resolved path is outside the governed workspace root.", {
+      target: targetPath,
+      workspace_root: rootPath,
+    });
+  }
+
+  return normalizedTarget;
 }
 
 function fileContentArtifact(targetPath: string, byteSize: number): ExecutionArtifact {
@@ -3404,7 +3474,7 @@ export class FilesystemExecutionAdapter implements ExecutionAdapter {
   }
 
   async verifyPreconditions(context: ExecutionContext): Promise<void> {
-    if (!isPathInsideRoot(context.action.target.primary.locator, context.workspace_root)) {
+    if (!(await isPathInsideRoot(context.action.target.primary.locator, context.workspace_root))) {
       throw new PreconditionError("Filesystem action target is outside the governed workspace root.", {
         target: context.action.target.primary.locator,
         workspace_root: context.workspace_root,
@@ -3420,7 +3490,7 @@ export class FilesystemExecutionAdapter implements ExecutionAdapter {
 
   async execute(context: ExecutionContext): Promise<ExecutionResult> {
     const startedAt = new Date().toISOString();
-    const targetPath = context.action.target.primary.locator;
+    const targetPath = await resolvePathInsideRoot(context.action.target.primary.locator, context.workspace_root);
     const filesystemFacet = context.action.facets.filesystem as FilesystemFacet | undefined;
     const operation = filesystemFacet?.operation ?? context.action.operation.kind;
     const rawInput = context.action.input.raw as FilesystemRawInput;
@@ -3520,7 +3590,7 @@ export class ShellExecutionAdapter implements ExecutionAdapter {
       });
     }
 
-    if (!isPathInsideRoot(cwd, context.workspace_root)) {
+    if (!(await isPathInsideRoot(cwd, context.workspace_root))) {
       throw new PreconditionError("Shell action cwd is outside the governed workspace root.", {
         action_id: context.action.action_id,
         cwd,
@@ -3538,7 +3608,10 @@ export class ShellExecutionAdapter implements ExecutionAdapter {
   async execute(context: ExecutionContext): Promise<ExecutionResult> {
     const shellFacet = context.action.facets.shell as ShellFacet | undefined;
     const argv = Array.isArray(shellFacet?.argv) ? shellFacet.argv.filter((value) => typeof value === "string") : [];
-    const cwd = shellFacet?.cwd ?? context.action.target.primary.locator;
+    const cwd = await resolvePathInsideRoot(
+      shellFacet?.cwd ?? context.action.target.primary.locator,
+      context.workspace_root,
+    );
     const executionId = `exec_sh_${Date.now()}`;
     const startedAt = new Date().toISOString();
 

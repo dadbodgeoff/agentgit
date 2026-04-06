@@ -611,19 +611,10 @@ export type CredentialMode = z.infer<typeof CredentialModeSchema>;
 export const DefaultCheckpointPolicySchema = z.enum(["never", "risky_runs", "always_before_run"]);
 export type DefaultCheckpointPolicy = z.infer<typeof DefaultCheckpointPolicySchema>;
 
-export const CheckpointIntentSchema = z.enum([
-  "operator_requested",
-  "broad_risk_default",
-  "high_value_workspace",
-]);
+export const CheckpointIntentSchema = z.enum(["operator_requested", "broad_risk_default", "high_value_workspace"]);
 export type CheckpointIntent = z.infer<typeof CheckpointIntentSchema>;
 
-export const ContainedEgressModeSchema = z.enum([
-  "inherit",
-  "none",
-  "proxy_http_https",
-  "backend_enforced_allowlist",
-]);
+export const ContainedEgressModeSchema = z.enum(["inherit", "none", "proxy_http_https", "backend_enforced_allowlist"]);
 export type ContainedEgressMode = z.infer<typeof ContainedEgressModeSchema>;
 
 export const ContainedEgressAssuranceSchema = z.enum(["degraded", "scoped", "boundary_enforced"]);

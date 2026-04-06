@@ -33,7 +33,11 @@ import {
   McpServerRegistry,
   validateMcpServerDefinitions,
 } from "@agentgit/mcp-registry";
-import { replayPolicyThresholds, recommendPolicyThresholds, validatePolicyConfigDocument } from "@agentgit/policy-engine";
+import {
+  replayPolicyThresholds,
+  recommendPolicyThresholds,
+  validatePolicyConfigDocument,
+} from "@agentgit/policy-engine";
 import {
   type CachedCapabilityState,
   StaticCompensationRegistry,
@@ -181,7 +185,7 @@ import {
   type VisibilityScope,
 } from "@agentgit/schemas";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
-import { selectSnapshotClass, type SnapshotSelectionResult } from "@agentgit/snapshot-engine";
+import { selectSnapshotClass } from "@agentgit/snapshot-engine";
 
 import { createPrefixedId } from "./ids.js";
 import {
@@ -2173,10 +2177,15 @@ function handleValidatePolicyConfig(
 }
 
 function handleGetPolicyCalibrationReport(
+  state: AuthorityState,
   journal: RunJournal,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<GetPolicyCalibrationReportResponsePayload> {
+  const sessionId = requireValidSession(state, "get_policy_calibration_report", request.session_id);
   const payload = validate(GetPolicyCalibrationReportRequestPayloadSchema, request.payload);
+  if (payload.run_id) {
+    requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
+  }
 
   return makeSuccessResponse(
     request.request_id,
@@ -2190,12 +2199,15 @@ function handleGetPolicyCalibrationReport(
 }
 
 function handleExplainPolicyAction(
+  state: AuthorityState,
   journal: RunJournal,
   policyRuntime: PolicyRuntimeState,
   runtimeOptions: Pick<StartServerOptions, "capabilityRefreshStaleMs">,
   mcpRegistry: McpServerRegistry,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<ExplainPolicyActionResponsePayload> {
+  const sessionId = requireValidSession(state, "explain_policy_action", request.session_id);
+  const session = state.getSession(sessionId);
   const payload = validate(ExplainPolicyActionRequestPayloadSchema, request.payload);
   const prepared = prepareActionAttemptEvaluation({
     journal,
@@ -2203,6 +2215,8 @@ function handleExplainPolicyAction(
     policyRuntime,
     runtimeOptions,
     buildCachedCapabilityState,
+    sessionId,
+    sessionWorkspaceRoots: session?.workspace_roots ?? [],
     attempt: payload.attempt,
   });
   const confidenceScore = prepared.action.confidence_assessment.score;
@@ -2220,11 +2234,16 @@ function handleExplainPolicyAction(
 }
 
 function handleGetPolicyThresholdRecommendations(
+  state: AuthorityState,
   journal: RunJournal,
   policyRuntime: PolicyRuntimeState,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<GetPolicyThresholdRecommendationsResponsePayload> {
+  const sessionId = requireValidSession(state, "get_policy_threshold_recommendations", request.session_id);
   const payload = validate(GetPolicyThresholdRecommendationsRequestPayloadSchema, request.payload);
+  if (payload.run_id) {
+    requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
+  }
   const minSamples = payload.min_samples ?? 5;
   const calibrationReport = journal.getPolicyCalibrationReport({
     run_id: payload.run_id,
@@ -2246,11 +2265,16 @@ function handleGetPolicyThresholdRecommendations(
 }
 
 function handleReplayPolicyThresholds(
+  state: AuthorityState,
   journal: RunJournal,
   policyRuntime: PolicyRuntimeState,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<GetPolicyThresholdReplayResponsePayload> {
+  const sessionId = requireValidSession(state, "replay_policy_thresholds", request.session_id);
   const payload = validate(GetPolicyThresholdReplayRequestPayloadSchema, request.payload);
+  if (payload.run_id) {
+    requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
+  }
   const replay = replayPolicyThresholds(
     journal.getPolicyThresholdReplayRecords({
       run_id: payload.run_id,
@@ -2311,17 +2335,13 @@ function buildCalibrationThresholdUpdates(recommendations: ReturnType<typeof rec
 }
 
 function handleGetRunSummary(
+  state: AuthorityState,
   journal: RunJournal,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<GetRunSummaryResponsePayload> {
+  const sessionId = requireValidSession(state, "get_run_summary", request.session_id);
   const payload = validate(GetRunSummaryRequestPayloadSchema, request.payload);
-  const runSummary = journal.getRunSummary(payload.run_id);
-
-  if (!runSummary) {
-    throw new NotFoundError(`No run found for ${payload.run_id}.`, {
-      run_id: payload.run_id,
-    });
-  }
+  const runSummary = requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
 
   return makeSuccessResponse(request.request_id, request.session_id, {
     run: runSummary,
@@ -2336,19 +2356,8 @@ async function handleCreateRunCheckpoint(
   request: RequestEnvelope<unknown>,
 ): Promise<ResponseEnvelope<CreateRunCheckpointResponsePayload>> {
   const payload = validate(CreateRunCheckpointRequestPayloadSchema, request.payload);
-  const session = state.getSession(request.session_id);
-  if (!session) {
-    throw new PreconditionError("A valid session_id is required before create_run_checkpoint.", {
-      session_id: request.session_id,
-    });
-  }
-
-  const runSummary = journal.getRunSummary(payload.run_id);
-  if (!runSummary) {
-    throw new NotFoundError(`No run found for ${payload.run_id}.`, {
-      run_id: payload.run_id,
-    });
-  }
+  const sessionId = requireValidSession(state, "create_run_checkpoint", request.session_id);
+  const runSummary = requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
 
   const workspaceRoot = payload.workspace_root ?? runSummary.workspace_roots[0];
   if (!workspaceRoot || !runSummary.workspace_roots.includes(workspaceRoot)) {
@@ -2362,7 +2371,7 @@ async function handleCreateRunCheckpoint(
   const checkpointKind = payload.checkpoint_kind ?? "branch_point";
   const action = buildSyntheticCheckpointAction({
     run_id: payload.run_id,
-    session_id: session.session_id,
+    session_id: sessionId,
     workspace_root: workspaceRoot,
     checkpoint_kind: checkpointKind,
     reason: payload.reason,
@@ -3999,27 +4008,7 @@ function syncDerivedProfileServer(mcpRegistry: McpServerRegistry, profile: McpSe
   mcpRegistry.upsertServer(derivedServer, "remote_profile");
 }
 
-function requireValidSession(
-  state: AuthorityState,
-  method:
-    | "submit_mcp_server_candidate"
-    | "resolve_mcp_server_candidate"
-    | "approve_mcp_server_profile"
-    | "bind_mcp_server_credentials"
-    | "revoke_mcp_server_credentials"
-    | "activate_mcp_server_profile"
-    | "quarantine_mcp_server_profile"
-    | "revoke_mcp_server_profile"
-    | "upsert_mcp_server"
-    | "remove_mcp_server"
-    | "upsert_mcp_secret"
-    | "remove_mcp_secret"
-    | "upsert_mcp_host_policy"
-    | "remove_mcp_host_policy"
-    | "requeue_hosted_mcp_job"
-    | "cancel_hosted_mcp_job",
-  sessionId: string | undefined,
-): string {
+function requireValidSession(state: AuthorityState, method: string, sessionId: string | undefined): string {
   const session = state.getSession(sessionId);
   if (!session) {
     throw new PreconditionError(`A valid session_id is required before ${method}.`, {
@@ -4030,6 +4019,50 @@ function requireValidSession(
   return session.session_id;
 }
 
+type RunSummaryRecord = NonNullable<ReturnType<RunJournal["getRunSummary"]>>;
+
+function canonicalizeWorkspaceRootForAuthorization(rootPath: string): string {
+  try {
+    return fs.realpathSync(rootPath);
+  } catch {
+    return path.resolve(rootPath);
+  }
+}
+
+function sessionCanAccessRun(
+  state: AuthorityState,
+  sessionId: string,
+  runSummary: { workspace_roots: string[] },
+): boolean {
+  const session = state.getSession(sessionId);
+  if (!session) {
+    return false;
+  }
+
+  const sessionRoots = new Set(session.workspace_roots.map((root) => canonicalizeWorkspaceRootForAuthorization(root)));
+  return runSummary.workspace_roots
+    .map((root) => canonicalizeWorkspaceRootForAuthorization(root))
+    .some((root) => sessionRoots.has(root));
+}
+
+function requireAuthorizedRunSummary(
+  state: AuthorityState,
+  journal: RunJournal,
+  sessionId: string,
+  runId: string,
+  referenceField = "run_id",
+): RunSummaryRecord {
+  const runSummary = journal.getRunSummary(runId);
+
+  if (!runSummary || !sessionCanAccessRun(state, sessionId, runSummary)) {
+    throw new NotFoundError(`No run found for ${runId}.`, {
+      [referenceField]: runId,
+    });
+  }
+
+  return runSummary;
+}
+
 function handleSubmitMcpServerCandidate(
   state: AuthorityState,
   mcpRegistry: McpServerRegistry,
@@ -4037,10 +4070,13 @@ function handleSubmitMcpServerCandidate(
 ): ResponseEnvelope<SubmitMcpServerCandidateResponsePayload> {
   const payload = validate(SubmitMcpServerCandidateRequestPayloadSchema, request.payload);
   const sessionId = requireValidSession(state, "submit_mcp_server_candidate", request.session_id);
-  if (payload.candidate.submitted_by_run_id && !state.getRun(payload.candidate.submitted_by_run_id)) {
-    throw new NotFoundError(`No run found for ${payload.candidate.submitted_by_run_id}.`, {
-      run_id: payload.candidate.submitted_by_run_id,
-    });
+  if (payload.candidate.submitted_by_run_id) {
+    const run = state.getRun(payload.candidate.submitted_by_run_id);
+    if (!run || !sessionCanAccessRun(state, sessionId, run)) {
+      throw new NotFoundError(`No run found for ${payload.candidate.submitted_by_run_id}.`, {
+        run_id: payload.candidate.submitted_by_run_id,
+      });
+    }
   }
 
   const now = new Date().toISOString();
@@ -5665,17 +5701,13 @@ function buildHelperResponseFromContext(
 }
 
 function handleQueryTimeline(
+  state: AuthorityState,
   journal: RunJournal,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<QueryTimelineResponsePayload> {
+  const sessionId = requireValidSession(state, "query_timeline", request.session_id);
   const payload = validate(QueryTimelineRequestPayloadSchema, request.payload);
-  const runSummary = journal.getRunSummary(payload.run_id);
-
-  if (!runSummary) {
-    throw new NotFoundError(`No run found for ${payload.run_id}.`, {
-      run_id: payload.run_id,
-    });
-  }
+  const runSummary = requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
 
   journal.enforceArtifactRetention();
   const events = journal.listRunEvents(payload.run_id);
@@ -5693,17 +5725,13 @@ function handleQueryTimeline(
 }
 
 function handleQueryHelper(
+  state: AuthorityState,
   journal: RunJournal,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<QueryHelperResponsePayload> {
+  const sessionId = requireValidSession(state, "query_helper", request.session_id);
   const payload = validate(QueryHelperRequestPayloadSchema, request.payload);
-  const runSummary = journal.getRunSummary(payload.run_id);
-
-  if (!runSummary) {
-    throw new NotFoundError(`No run found for ${payload.run_id}.`, {
-      run_id: payload.run_id,
-    });
-  }
+  const runSummary = requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
 
   journal.enforceArtifactRetention();
   const visibilityScope = payload.visibility_scope ?? "user";
@@ -5751,13 +5779,16 @@ function handleQueryHelper(
 }
 
 function handleQueryArtifact(
+  state: AuthorityState,
   journal: RunJournal,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<QueryArtifactResponsePayload> {
+  const sessionId = requireValidSession(state, "query_artifact", request.session_id);
   const payload = validate(QueryArtifactRequestPayloadSchema, request.payload);
   const visibilityScope = payload.visibility_scope ?? "user";
   journal.enforceArtifactRetention();
   const artifact = journal.getArtifact(payload.artifact_id);
+  requireAuthorizedRunSummary(state, journal, sessionId, artifact.run_id);
 
   const visibilityRank = (scope: QueryArtifactResponsePayload["visibility_scope"]): number => {
     switch (scope) {
@@ -5822,14 +5853,24 @@ function handleQueryArtifact(
 }
 
 function handleListApprovals(
+  state: AuthorityState,
   journal: RunJournal,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<ListApprovalsResponsePayload> {
+  const sessionId = requireValidSession(state, "list_approvals", request.session_id);
   const payload = validate(ListApprovalsRequestPayloadSchema, request.payload);
-  const approvals = journal.listApprovals({
-    run_id: payload.run_id,
-    status: payload.status,
-  });
+  if (payload.run_id) {
+    requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
+  }
+  const approvals = journal
+    .listApprovals({
+      run_id: payload.run_id,
+      status: payload.status,
+    })
+    .filter((approval) => {
+      const runSummary = journal.getRunSummary(approval.run_id);
+      return runSummary !== null && sessionCanAccessRun(state, sessionId, runSummary);
+    });
 
   return makeSuccessResponse(request.request_id, request.session_id, {
     approvals,
@@ -5837,14 +5878,24 @@ function handleListApprovals(
 }
 
 function handleQueryApprovalInbox(
+  state: AuthorityState,
   journal: RunJournal,
   request: RequestEnvelope<unknown>,
 ): ResponseEnvelope<QueryApprovalInboxResponsePayload> {
+  const sessionId = requireValidSession(state, "query_approval_inbox", request.session_id);
   const payload = validate(QueryApprovalInboxRequestPayloadSchema, request.payload);
-  const approvals = journal.listApprovals({
-    run_id: payload.run_id,
-    status: payload.status,
-  });
+  if (payload.run_id) {
+    requireAuthorizedRunSummary(state, journal, sessionId, payload.run_id);
+  }
+  const approvals = journal
+    .listApprovals({
+      run_id: payload.run_id,
+      status: payload.status,
+    })
+    .filter((approval) => {
+      const runSummary = journal.getRunSummary(approval.run_id);
+      return runSummary !== null && sessionCanAccessRun(state, sessionId, runSummary);
+    });
 
   const items: ApprovalInboxItem[] = [];
   for (const approval of approvals) {
@@ -5913,6 +5964,7 @@ function handleQueryApprovalInbox(
 }
 
 async function handleResolveApproval(
+  state: AuthorityState,
   journal: RunJournal,
   adapterRegistry: AdapterRegistry,
   snapshotEngine: LocalSnapshotEngine,
@@ -5921,8 +5973,10 @@ async function handleResolveApproval(
   ticketStore: OwnedTicketStore,
   mcpRegistry: McpServerRegistry,
   hostedExecutionQueue: HostedExecutionQueue,
+  runtimeOptions: Pick<StartServerOptions, "capabilityRefreshStaleMs">,
   request: RequestEnvelope<unknown>,
 ): Promise<ResponseEnvelope<ResolveApprovalResponsePayload>> {
+  const sessionId = requireValidSession(state, "resolve_approval", request.session_id);
   const payload = validate(ResolveApprovalRequestPayloadSchema, request.payload);
   const storedApproval = journal.getStoredApproval(payload.approval_id);
 
@@ -5931,6 +5985,7 @@ async function handleResolveApproval(
       approval_id: payload.approval_id,
     });
   }
+  requireAuthorizedRunSummary(state, journal, sessionId, storedApproval.run_id);
 
   const approvalRequest = journal.resolveApproval(payload.approval_id, payload.resolution, payload.note);
   const resolvedAt = approvalRequest.resolved_at ?? new Date().toISOString();
@@ -5971,11 +6026,12 @@ async function handleResolveApproval(
       approval_required: false,
     },
   };
+  const cachedCapabilityState = buildCachedCapabilityState(journal, runtimeOptions);
   const approvalSnapshotSelection = approvedPolicyOutcome.preconditions.snapshot_required
     ? selectSnapshotClass({
         action: storedApproval.action,
         policy_decision: approvedPolicyOutcome.decision,
-        capability_state: "healthy",
+        capability_state: deriveSnapshotCapabilityStateService(cachedCapabilityState),
         low_disk_pressure_observed: runSummary.maintenance_status.low_disk_pressure_signals > 0,
         journal_chain_depth: runSummary.event_count,
         ...deriveSnapshotRunRiskContextService(journal, storedApproval.run_id, {
@@ -6012,12 +6068,14 @@ async function handleResolveApproval(
 }
 
 async function handlePlanRecovery(
+  state: AuthorityState,
   journal: RunJournal,
   snapshotEngine: LocalSnapshotEngine,
   compensationRegistry: StaticCompensationRegistry,
   runtimeOptions: Pick<StartServerOptions, "capabilityRefreshStaleMs">,
   request: RequestEnvelope<unknown>,
 ): Promise<ResponseEnvelope<PlanRecoveryResponsePayload>> {
+  const sessionId = requireValidSession(state, "plan_recovery", request.session_id);
   const payload = validate(PlanRecoveryRequestPayloadSchema, request.payload);
   const target = normalizeRecoveryTarget(payload);
   const cachedCapabilityState = buildCachedCapabilityState(journal, runtimeOptions);
@@ -6031,24 +6089,27 @@ async function handlePlanRecovery(
   let subsetPathsForJournal: string[] | null = null;
 
   if (target.type === "snapshot_id") {
+    const manifest = await loadRecoverySnapshotManifest(snapshotEngine, target.snapshot_id);
+    requireAuthorizedRunSummary(state, journal, sessionId, manifest.run_id);
     recoveryPlan = await planSnapshotRecovery(snapshotEngine, target.snapshot_id, {
       compensation_registry: compensationRegistry,
       cached_capability_state: cachedCapabilityState,
     });
-    const manifest = await loadRecoverySnapshotManifest(snapshotEngine, target.snapshot_id);
     runId = manifest.run_id;
     snapshotIdForJournal = target.snapshot_id;
   } else if (target.type === "path_subset") {
+    const manifest = await loadRecoverySnapshotManifest(snapshotEngine, target.snapshot_id);
+    requireAuthorizedRunSummary(state, journal, sessionId, manifest.run_id);
     recoveryPlan = await planPathSubsetRecovery(snapshotEngine, target, {
       cached_capability_state: cachedCapabilityState,
     });
-    const manifest = await loadRecoverySnapshotManifest(snapshotEngine, target.snapshot_id);
     runId = manifest.run_id;
     snapshotIdForJournal = target.snapshot_id;
     actionIdForJournal = manifest.action_id;
     subsetPathsForJournal = [...target.paths];
   } else if (target.type === "branch_point") {
     const branchPointContext = findBranchPointContext(journal, target);
+    requireAuthorizedRunSummary(state, journal, sessionId, branchPointContext.runId);
     recoveryPlan = retargetRecoveryPlan(
       await planSnapshotRecovery(snapshotEngine, branchPointContext.snapshotId, {
         compensation_registry: compensationRegistry,
@@ -6063,6 +6124,7 @@ async function handlePlanRecovery(
     branchPointSequenceForJournal = target.sequence;
   } else if (target.type === "run_checkpoint") {
     const checkpointContext = findRunCheckpointContext(journal, target.run_checkpoint);
+    requireAuthorizedRunSummary(state, journal, sessionId, checkpointContext.runId);
     recoveryPlan = retargetRecoveryPlan(
       await planSnapshotRecovery(snapshotEngine, checkpointContext.snapshotId, {
         compensation_registry: compensationRegistry,
@@ -6079,6 +6141,7 @@ async function handlePlanRecovery(
       target.type === "action_boundary"
         ? findActionBoundaryContext(journal, target.action_id)
         : findExternalObjectBoundaryContext(journal, target.external_object_id);
+    requireAuthorizedRunSummary(state, journal, sessionId, actionContext.runId);
     actionIdForJournal = actionContext.actionId;
 
     if (actionContext.snapshotId) {
@@ -6130,12 +6193,14 @@ async function handlePlanRecovery(
 }
 
 async function handleExecuteRecovery(
+  state: AuthorityState,
   journal: RunJournal,
   snapshotEngine: LocalSnapshotEngine,
   compensationRegistry: StaticCompensationRegistry,
   runtimeOptions: Pick<StartServerOptions, "capabilityRefreshStaleMs">,
   request: RequestEnvelope<unknown>,
 ): Promise<ResponseEnvelope<ExecuteRecoveryResponsePayload>> {
+  const sessionId = requireValidSession(state, "execute_recovery", request.session_id);
   const payload = validate(ExecuteRecoveryRequestPayloadSchema, request.payload);
   const target = normalizeRecoveryTarget(payload);
   const cachedCapabilityState = buildCachedCapabilityState(journal, runtimeOptions);
@@ -6153,6 +6218,7 @@ async function handleExecuteRecovery(
 
   if (target.type === "snapshot_id") {
     const manifest = await loadRecoverySnapshotManifest(snapshotEngine, target.snapshot_id);
+    requireAuthorizedRunSummary(state, journal, sessionId, manifest.run_id);
     result = await executeSnapshotRecovery(snapshotEngine, target.snapshot_id, {
       compensation_registry: compensationRegistry,
       cached_capability_state: cachedCapabilityState,
@@ -6164,6 +6230,7 @@ async function handleExecuteRecovery(
     snapshotIdForJournal = target.snapshot_id;
   } else if (target.type === "path_subset") {
     const manifest = await loadRecoverySnapshotManifest(snapshotEngine, target.snapshot_id);
+    requireAuthorizedRunSummary(state, journal, sessionId, manifest.run_id);
     result = await executePathSubsetRecovery(snapshotEngine, target, {
       cached_capability_state: cachedCapabilityState,
     });
@@ -6176,6 +6243,7 @@ async function handleExecuteRecovery(
     subsetPathsForJournal = [...target.paths];
   } else if (target.type === "branch_point") {
     const branchPointContext = findBranchPointContext(journal, target);
+    requireAuthorizedRunSummary(state, journal, sessionId, branchPointContext.runId);
     const manifest = await loadRecoverySnapshotManifest(snapshotEngine, branchPointContext.snapshotId);
     const branchPointResult = await executeSnapshotRecovery(snapshotEngine, branchPointContext.snapshotId, {
       compensation_registry: compensationRegistry,
@@ -6195,6 +6263,7 @@ async function handleExecuteRecovery(
     branchPointSequenceForJournal = target.sequence;
   } else if (target.type === "run_checkpoint") {
     const checkpointContext = findRunCheckpointContext(journal, target.run_checkpoint);
+    requireAuthorizedRunSummary(state, journal, sessionId, checkpointContext.runId);
     const manifest = await loadRecoverySnapshotManifest(snapshotEngine, checkpointContext.snapshotId);
     const checkpointResult = await executeSnapshotRecovery(snapshotEngine, checkpointContext.snapshotId, {
       compensation_registry: compensationRegistry,
@@ -6216,6 +6285,7 @@ async function handleExecuteRecovery(
       target.type === "action_boundary"
         ? findActionBoundaryContext(journal, target.action_id)
         : findExternalObjectBoundaryContext(journal, target.external_object_id);
+    requireAuthorizedRunSummary(state, journal, sessionId, actionContext.runId);
     runId = actionContext.runId;
     actionIdForJournal = actionContext.actionId;
 
@@ -6420,7 +6490,7 @@ async function handleRequest(
           response = handleRegisterRun(state, journal, policyRuntime, request);
           break;
         case "get_run_summary":
-          response = handleGetRunSummary(journal, request);
+          response = handleGetRunSummary(state, journal, request);
           break;
         case "get_capabilities":
           response = handleGetCapabilities(
@@ -6439,16 +6509,16 @@ async function handleRequest(
           response = handleValidatePolicyConfig(request);
           break;
         case "get_policy_calibration_report":
-          response = handleGetPolicyCalibrationReport(journal, request);
+          response = handleGetPolicyCalibrationReport(state, journal, request);
           break;
         case "explain_policy_action":
-          response = handleExplainPolicyAction(journal, policyRuntime, runtimeOptions, mcpRegistry, request);
+          response = handleExplainPolicyAction(state, journal, policyRuntime, runtimeOptions, mcpRegistry, request);
           break;
         case "get_policy_threshold_recommendations":
-          response = handleGetPolicyThresholdRecommendations(journal, policyRuntime, request);
+          response = handleGetPolicyThresholdRecommendations(state, journal, policyRuntime, request);
           break;
         case "replay_policy_thresholds":
-          response = handleReplayPolicyThresholds(journal, policyRuntime, request);
+          response = handleReplayPolicyThresholds(state, journal, policyRuntime, request);
           break;
         case "list_mcp_servers":
           response = handleListMcpServers(mcpRegistry, request);
@@ -6560,13 +6630,14 @@ async function handleRequest(
           );
           break;
         case "list_approvals":
-          response = handleListApprovals(journal, request);
+          response = handleListApprovals(state, journal, request);
           break;
         case "query_approval_inbox":
-          response = handleQueryApprovalInbox(journal, request);
+          response = handleQueryApprovalInbox(state, journal, request);
           break;
         case "resolve_approval":
           response = await handleResolveApproval(
+            state,
             journal,
             adapterRegistry,
             snapshotEngine,
@@ -6575,17 +6646,18 @@ async function handleRequest(
             ticketStore,
             mcpRegistry,
             hostedExecutionQueue,
+            runtimeOptions,
             request,
           );
           break;
         case "query_timeline":
-          response = handleQueryTimeline(journal, request);
+          response = handleQueryTimeline(state, journal, request);
           break;
         case "query_helper":
-          response = handleQueryHelper(journal, request);
+          response = handleQueryHelper(state, journal, request);
           break;
         case "query_artifact":
-          response = handleQueryArtifact(journal, request);
+          response = handleQueryArtifact(state, journal, request);
           break;
         case "submit_action_attempt":
           response = await handleSubmitActionAttemptFlow({
@@ -6606,13 +6678,21 @@ async function handleRequest(
           });
           break;
         case "plan_recovery":
-          response = await handlePlanRecovery(journal, snapshotEngine, compensationRegistry, runtimeOptions, request);
+          response = await handlePlanRecovery(
+            state,
+            journal,
+            snapshotEngine,
+            compensationRegistry,
+            runtimeOptions,
+            request,
+          );
           break;
         case "create_run_checkpoint":
           response = await handleCreateRunCheckpoint(state, journal, snapshotEngine, runtimeOptions, request);
           break;
         case "execute_recovery":
           response = await handleExecuteRecovery(
+            state,
             journal,
             snapshotEngine,
             compensationRegistry,

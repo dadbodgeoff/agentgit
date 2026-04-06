@@ -13,9 +13,41 @@ import { runCli } from "./main.js";
 import { AgentRuntimeIntegrationService } from "./service.js";
 import { ProductStateStore } from "./state.js";
 
+interface OpenClawConfig {
+  agents: {
+    defaults: {
+      workspace: string;
+    };
+  };
+  gateway: {
+    port: number;
+  };
+  plugins: {
+    entries: {
+      demo: {
+        enabled: boolean;
+      };
+      agentgit: {
+        enabled: boolean;
+      };
+    };
+    load: {
+      paths: string[];
+    };
+    allow: string[];
+  };
+  tools: {
+    deny: string[];
+  };
+}
+
 let tempDir: string | null = null;
 let originalCwd = process.cwd();
 const originalEnv = { ...process.env };
+
+function readOpenClawConfig(configPath: string): OpenClawConfig {
+  return JSON.parse(fs.readFileSync(configPath, "utf8")) as OpenClawConfig;
+}
 
 function makeTempDir(): string {
   const root = path.join(os.tmpdir(), `agent-runtime-it-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -135,10 +167,7 @@ function setupWorkspace(): {
   const configRoot = path.join(root, "config");
   const openclawConfigPath = path.join(root, "openclaw.json");
   fs.mkdirSync(workspaceRoot, { recursive: true });
-  fs.copyFileSync(
-    new URL("./test-fixtures/openclaw/default-config.json", import.meta.url),
-    openclawConfigPath,
-  );
+  fs.copyFileSync(new URL("./test-fixtures/openclaw/default-config.json", import.meta.url), openclawConfigPath);
   writeFakeOpenClaw(root);
   process.chdir(workspaceRoot);
   process.env.PATH = `${path.join(root, "bin")}${path.delimiter}${originalEnv.PATH ?? ""}`;
@@ -215,31 +244,37 @@ describe.sequential("agentgit product CLI", () => {
 
     await runCli(["setup", "--yes"]);
 
-    const updatedConfig = JSON.parse(fs.readFileSync(harness.openclawConfigPath, "utf8")) as Record<string, any>;
+    const updatedConfig = readOpenClawConfig(harness.openclawConfigPath);
     expect(updatedConfig.agents.defaults.workspace).toBe(harness.workspaceRoot);
     expect(updatedConfig.gateway.port).toBe(19001);
     expect(updatedConfig.plugins.entries.demo.enabled).toBe(true);
     expect(updatedConfig.plugins.entries.agentgit.enabled).toBe(true);
     expect(updatedConfig.plugins.load.paths).toContain(pluginRoot);
     expect(updatedConfig.plugins.allow).toContain("agentgit");
-    expect(updatedConfig.tools.deny).toEqual(expect.arrayContaining(["exec", "process", "write", "edit", "apply_patch"]));
+    expect(updatedConfig.tools.deny).toEqual(
+      expect.arrayContaining(["exec", "process", "write", "edit", "apply_patch"]),
+    );
     expect(fs.existsSync(path.join(pluginRoot, "index.mjs"))).toBe(true);
     expect(fs.existsSync(skillPath)).toBe(true);
     const postSetupStore = new ProductStateStore(process.env);
     expect(postSetupStore.getProfileForWorkspace(harness.workspaceRoot)?.assurance_level).toBe("integrated");
     expect(postSetupStore.getProfileForWorkspace(harness.workspaceRoot)?.governance_mode).toBe("native_integrated");
     expect(postSetupStore.getProfileForWorkspace(harness.workspaceRoot)?.guarantees).toEqual(
-      expect.arrayContaining(["native_runtime_integration", "known_plugin_surfaces_governed", "known_shell_entrypoints_governed"]),
+      expect.arrayContaining([
+        "native_runtime_integration",
+        "known_plugin_surfaces_governed",
+        "known_shell_entrypoints_governed",
+      ]),
     );
     postSetupStore.close();
 
     await runCli(["setup", "--yes"]);
-    const twiceConfig = JSON.parse(fs.readFileSync(harness.openclawConfigPath, "utf8")) as Record<string, any>;
+    const twiceConfig = readOpenClawConfig(harness.openclawConfigPath);
     expect(twiceConfig.agents.defaults.workspace).toBe(harness.workspaceRoot);
 
     await runCli(["setup", "--remove"]);
     const restoredConfigText = fs.readFileSync(harness.openclawConfigPath, "utf8");
-    const restoredConfig = JSON.parse(restoredConfigText) as Record<string, any>;
+    const restoredConfig = JSON.parse(restoredConfigText) as OpenClawConfig;
     expect(restoredConfig.agents.defaults.workspace).toBe("/tmp/original-openclaw-workspace");
     expect(restoredConfigText).toBe(originalConfigText);
     expect(fs.existsSync(assetRoot)).toBe(false);
@@ -253,7 +288,7 @@ describe.sequential("agentgit product CLI", () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
 
-    await runCli(["setup", "--command", "node -e \"process.exit(0)\""]);
+    await runCli(["setup", "--command", 'node -e "process.exit(0)"']);
     await runCli(["run"]);
 
     const service = new AgentRuntimeIntegrationService({
@@ -320,12 +355,7 @@ describe.sequential("agentgit product CLI", () => {
       "--command",
       `node -e ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(targetPath)}, 'after hard checkpoint\\n', 'utf8')`)}`,
     ]);
-    const runResult = await runCli([
-      "run",
-      "--hard-checkpoint",
-      "--checkpoint-reason",
-      "Before a large refactor.",
-    ]);
+    const runResult = await runCli(["run", "--hard-checkpoint", "--checkpoint-reason", "Before a large refactor."]);
 
     expect(runResult?.exit_code).toBe(0);
     expect(runResult?.checkpoint_kind).toBe("hard_checkpoint");
@@ -403,7 +433,7 @@ describe.sequential("agentgit product CLI", () => {
     await runCli([
       "setup",
       "--command",
-      "node -e \"process.exit(0)\"",
+      'node -e "process.exit(0)"',
       "--advanced",
       "--policy",
       "strict",
@@ -430,7 +460,7 @@ describe.sequential("agentgit product CLI", () => {
     await runCli([
       "setup",
       "--command",
-      'node -e "const cp=require(\'node:child_process\'); const result=cp.spawnSync(\'ls\',[\'.\'],{encoding:\'utf8\'}); process.stdout.write(result.stdout); process.exit(result.status ?? 0)"',
+      "node -e \"const cp=require('node:child_process'); const result=cp.spawnSync('ls',['.'],{encoding:'utf8'}); process.stdout.write(result.stdout); process.exit(result.status ?? 0)\"",
     ]);
     const runResult = await runCli(["run"]);
     expect(runResult?.exit_code).toBe(0);
@@ -450,7 +480,7 @@ describe.sequential("agentgit product CLI", () => {
     tempDir = harness.root;
     const assetRoot = path.join(harness.workspaceRoot, ".agentgit", "runtime-integration");
 
-    await runCli(["setup", "--command", "node -e \"process.exit(7)\""]);
+    await runCli(["setup", "--command", 'node -e "process.exit(7)"']);
     expect(fs.existsSync(path.join(assetRoot, "governed-runner.mjs"))).toBe(true);
     expect(fs.existsSync(path.join(assetRoot, "bin", "sh"))).toBe(true);
     const runResult = await runCli(["run"]);
@@ -500,23 +530,13 @@ describe.sequential("agentgit product CLI", () => {
     const targetPath = path.join(harness.workspaceRoot, "important-plan.md");
     fs.writeFileSync(targetPath, "keep me\n", "utf8");
 
-    await runCli([
-      "setup",
-      "--command",
-      "rm important-plan.md",
-      "--contained",
-      "--image",
-      "alpine:3.20",
-      "--yes",
-    ]);
+    await runCli(["setup", "--command", "rm important-plan.md", "--contained", "--image", "alpine:3.20", "--yes"]);
 
     const store = new ProductStateStore(process.env);
     const profile = store.getProfileForWorkspace(harness.workspaceRoot);
     expect(profile?.assurance_level).toBe("contained");
     expect(profile?.governance_mode).toBe("contained_projection");
-    expect(profile?.guarantees).toEqual(
-      expect.arrayContaining(["real_workspace_protected", "publish_path_governed"]),
-    );
+    expect(profile?.guarantees).toEqual(expect.arrayContaining(["real_workspace_protected", "publish_path_governed"]));
     expect(profile?.capability_snapshot).toMatchObject({
       docker_available: true,
       projection_enforced: true,
@@ -571,7 +591,7 @@ describe.sequential("agentgit product CLI", () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
 
-    await runCli(["setup", "--command", "node -e \"process.exit(0)\""]);
+    await runCli(["setup", "--command", 'node -e "process.exit(0)"']);
 
     const service = new AgentRuntimeIntegrationService({
       cwd: harness.workspaceRoot,
@@ -592,12 +612,7 @@ describe.sequential("agentgit product CLI", () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
 
-    await runCli([
-      "setup",
-      "--contained",
-      "--command",
-      "node -e \"process.exit(0)\"",
-    ]);
+    await runCli(["setup", "--contained", "--command", 'node -e "process.exit(0)"']);
 
     const service = new AgentRuntimeIntegrationService({
       cwd: harness.workspaceRoot,
@@ -677,7 +692,9 @@ describe.sequential("agentgit product CLI", () => {
     const inspectResult = await inspectService.inspect(harness.workspaceRoot);
     expect(inspectResult.contained_details?.credential_mode).toBe("direct_env");
     expect(inspectResult.contained_details?.credential_env_keys).toEqual(["OPENAI_API_KEY"]);
-    expect(inspectResult.degraded_reasons).toContain("Container receives direct host credential passthrough for OPENAI_API_KEY.");
+    expect(inspectResult.degraded_reasons).toContain(
+      "Container receives direct host credential passthrough for OPENAI_API_KEY.",
+    );
     inspectService.close();
   }, 40_000);
 
@@ -768,7 +785,12 @@ describe.sequential("agentgit product CLI", () => {
     expect(profile?.contained_credential_mode).toBe("brokered_bindings");
     expect(profile?.governance_mode).toBe("contained_projection");
     expect(profile?.guarantees).toEqual(
-      expect.arrayContaining(["real_workspace_protected", "publish_path_governed", "brokered_credentials_only", "egress_policy_applied"]),
+      expect.arrayContaining([
+        "real_workspace_protected",
+        "publish_path_governed",
+        "brokered_credentials_only",
+        "egress_policy_applied",
+      ]),
     );
     expect(profile?.credential_passthrough_env_keys ?? []).toEqual([]);
     expect(profile?.runtime_credential_bindings).toEqual([
@@ -810,7 +832,12 @@ describe.sequential("agentgit product CLI", () => {
     });
     expect(inspectResult.governance_mode).toBe("contained_projection");
     expect(inspectResult.guarantees).toEqual(
-      expect.arrayContaining(["real_workspace_protected", "publish_path_governed", "brokered_credentials_only", "egress_policy_applied"]),
+      expect.arrayContaining([
+        "real_workspace_protected",
+        "publish_path_governed",
+        "brokered_credentials_only",
+        "egress_policy_applied",
+      ]),
     );
     service.close();
     store.close();
@@ -871,9 +898,7 @@ describe.sequential("agentgit product CLI", () => {
     });
     const inspectResult = await service.inspect(harness.workspaceRoot);
     expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
-    expect(inspectResult.contained_details?.credential_file_paths).toEqual([
-      "file:/run/agentgit-secrets/openai.key",
-    ]);
+    expect(inspectResult.contained_details?.credential_file_paths).toEqual(["file:/run/agentgit-secrets/openai.key"]);
     expect(inspectResult.contained_details?.capability_snapshot).toMatchObject({
       credential_brokering_enabled: true,
       network_restricted: true,
@@ -1169,9 +1194,9 @@ describe.sequential("agentgit product CLI", () => {
     });
     const inspectResult = await service.inspect(harness.workspaceRoot);
     expect(inspectResult.assurance_level).toBe("contained");
-    expect(inspectResult.degraded_reasons.some((reason) => reason.includes("Governed MCP secret is not configured."))).toBe(
-      true,
-    );
+    expect(
+      inspectResult.degraded_reasons.some((reason) => reason.includes("Governed MCP secret is not configured.")),
+    ).toBe(true);
     expect(inspectResult.contained_details?.credential_mode).toBe("brokered_bindings");
     service.close();
   }, 40_000);
@@ -1182,7 +1207,7 @@ describe.sequential("agentgit product CLI", () => {
 
     await runCli(["setup", "--yes"]);
 
-    const config = JSON.parse(fs.readFileSync(harness.openclawConfigPath, "utf8")) as Record<string, any>;
+    const config = readOpenClawConfig(harness.openclawConfigPath);
     config.gateway.port = 19009;
     fs.writeFileSync(harness.openclawConfigPath, JSON.stringify(config, null, 2));
 
@@ -1198,7 +1223,7 @@ describe.sequential("agentgit product CLI", () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
 
-    await runCli(["setup", "--command", "node -e \"process.exit(0)\""]);
+    await runCli(["setup", "--command", 'node -e "process.exit(0)"']);
     await runCli(["demo"]);
 
     const store = new ProductStateStore(process.env);
@@ -1232,14 +1257,14 @@ describe.sequential("agentgit product CLI", () => {
 
     await runCli(["setup", "--yes"]);
 
-    const config = JSON.parse(fs.readFileSync(harness.openclawConfigPath, "utf8")) as Record<string, any>;
+    const config = readOpenClawConfig(harness.openclawConfigPath);
     config.gateway.port = 19009;
     fs.writeFileSync(harness.openclawConfigPath, JSON.stringify(config, null, 2));
 
     await expect(runCli(["setup", "--yes"])).rejects.toThrow(/setup --repair/);
 
     await runCli(["setup", "--repair"]);
-    const repaired = JSON.parse(fs.readFileSync(harness.openclawConfigPath, "utf8")) as Record<string, any>;
+    const repaired = readOpenClawConfig(harness.openclawConfigPath);
     expect(repaired.agents.defaults.workspace).toBe(harness.workspaceRoot);
     expect(repaired.gateway.port).toBe(19009);
   }, 20_000);
@@ -1250,7 +1275,7 @@ describe.sequential("agentgit product CLI", () => {
 
     await runCli(["setup", "--yes"]);
 
-    const config = JSON.parse(fs.readFileSync(harness.openclawConfigPath, "utf8")) as Record<string, any>;
+    const config = readOpenClawConfig(harness.openclawConfigPath);
     config.agents.defaults.workspace = "/tmp/user-changed-workspace";
     config.gateway.port = 19077;
     fs.writeFileSync(harness.openclawConfigPath, JSON.stringify(config, null, 2));
@@ -1262,7 +1287,7 @@ describe.sequential("agentgit product CLI", () => {
     const result = service.remove(harness.workspaceRoot);
     expect(result.preserved_user_changes).toHaveLength(1);
 
-    const postRemove = JSON.parse(fs.readFileSync(harness.openclawConfigPath, "utf8")) as Record<string, any>;
+    const postRemove = readOpenClawConfig(harness.openclawConfigPath);
     expect(postRemove.agents.defaults.workspace).toBe("/tmp/user-changed-workspace");
     expect(postRemove.gateway.port).toBe(19077);
 
@@ -1276,7 +1301,7 @@ describe.sequential("agentgit product CLI", () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
 
-    await runCli(["setup", "--command", "node -e \"process.exit(0)\""]);
+    await runCli(["setup", "--command", 'node -e "process.exit(0)"']);
     await runCli(["demo"]);
 
     const firstService = new AgentRuntimeIntegrationService({

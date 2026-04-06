@@ -29,6 +29,7 @@ The result: agents can operate with real autonomy while operators keep control, 
 [Wiki →](https://github.com/dadbodgeoff/agentgit/wiki)
 
 ---
+
 ## Why agentgit?
 
 Autonomous agents need to act. But "just let the agent do it" breaks down fast:
@@ -37,7 +38,7 @@ Autonomous agents need to act. But "just let the agent do it" breaks down fast:
 - **No reversibility.** When an agent goes wrong mid-run, how do you roll back?
 - **No operator control.** How do you enforce "always ask before deleting" or "never write outside this workspace"?
 - **No trust model for external tools.** How do you let an agent call an MCP server without giving it unchecked credential access?
-agentgit solves all of this with a single local daemon that agents call through instead of calling the OS directly.
+  agentgit solves all of this with a single local daemon that agents call through instead of calling the OS directly.
 
 ---
 
@@ -86,6 +87,16 @@ agentgit inspect
 ```
 
 > **Python agent?** See the [Python SDK quickstart](#python-sdk) below.
+
+### Live MVP Harness
+
+For a local end-to-end MVP walkthrough without OpenClaw, run:
+
+```bash
+pnpm live:mvp
+```
+
+This builds the product surfaces, seeds a demo workspace, runs a governed task, starts a persistent local authority daemon, starts the inspector UI, and leaves an audit bundle plus JSON evidence behind for review. Use `pnpm live:mvp -- --mode contained` to exercise the Docker-contained path, and `pnpm live:mvp:stop` when you want to shut the background daemon and inspector down.
 
 ---
 
@@ -151,13 +162,13 @@ Everything is **local-first** — your data never leaves your machine unless you
 
 ## Governed Execution Domains
 
-| Surface | What it covers |
-|---------|---------------|
-| **Filesystem** | Read/write with workspace path validation and scope enforcement |
-| **Shell** | Command execution with arg/env inspection |
-| **MCP (stdio)** | Sandboxed local tool servers in digest-pinned OCI containers |
+| Surface                   | What it covers                                                                     |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| **Filesystem**            | Read/write with workspace path validation and scope enforcement                    |
+| **Shell**                 | Command execution with arg/env inspection                                          |
+| **MCP (stdio)**           | Sandboxed local tool servers in digest-pinned OCI containers                       |
 | **MCP (streamable_http)** | Remote tool endpoints with explicit host allowlists and OS-backed secret injection |
-| **Owned Functions** | Drafts, notes, tickets — create/update/close with compensation support |
+| **Owned Functions**       | Drafts, notes, tickets — create/update/close with compensation support             |
 
 Unsupported surfaces (browser/computer control, generic HTTP, arbitrary remote MCP) **fail closed** — they return an explicit `PRECONDITION_FAILED` error rather than silently proceeding or simulating.
 
@@ -166,19 +177,24 @@ Unsupported surfaces (browser/computer control, generic HTTP, arbitrary remote M
 ## Key Features
 
 ### Deterministic Policy
+
 Rules are explicit, layered, and operator-controlled. Outcomes are one of: `allow`, `deny`, `ask` (requires human approval), `simulate` (dry-run), or `allow_with_snapshot` (execute with a rollback boundary). No opaque ML scoring.
 
 ### Recovery-Ready
+
 Every recoverable action gets a recovery plan pre-computed at execution time:
+
 - **Reversible**: restore from snapshot (e.g., a file write)
 - **Compensatable**: inverse operation (e.g., delete a created ticket)
 - **Review-only**: explain the outcome, no automatic action
 - **Irreversible**: document and prevent escalation
 
 ### Durable Audit Journal
+
 SQLite append-only history ties every action to its policy outcome, snapshot, execution result, and approvals. Export a full evidence bundle with `run-audit-export`, verify its integrity with `run-audit-verify`, and share a redacted version with `run-audit-share`.
 
 ### MCP with Real Trust Controls
+
 - OS-backed secret storage (macOS Keychain / Linux Secret Service)
 - Digest-pinned OCI container isolation for stdio servers
 - Cosign-based signature verification with SLSA provenance enforcement
@@ -186,6 +202,7 @@ SQLite append-only history ties every action to its policy outcome, snapshot, ex
 - Per-server tool allowlists with approval-mode overrides
 
 ### Policy Calibration Loop
+
 After a run, use `policy calibration-report` to see approval patterns and confidence quality, `policy recommend-thresholds` to get data-driven threshold guidance, and `policy replay-thresholds` to test candidate thresholds against real journaled actions before rolling them out. Threshold changes are always operator-reviewed — nothing mutates live policy automatically.
 
 ---
@@ -398,22 +415,22 @@ Releases are driven by [Changesets](https://github.com/changesets/changesets). A
 
 ## Documentation
 
-| Resource | Description |
-|----------|-------------|
-| [Wiki: Getting Started](wiki/Getting-Started.md) | Install, first run, beginner walkthrough |
-| [Wiki: Architecture](wiki/Architecture.md) | System design, subsystem responsibilities, data flow |
-| [Wiki: Core Concepts](wiki/Core-Concepts.md) | Actions, policy, snapshots, recovery, journal explained |
-| [Wiki: CLI Reference](wiki/CLI-Reference.md) | Every command with examples |
-| [Wiki: TypeScript SDK](wiki/TypeScript-SDK.md) | Full SDK API reference |
-| [Wiki: Python SDK](wiki/Python-SDK.md) | Python SDK reference |
-| [Wiki: Policy Engine](wiki/Policy-Engine.md) | Writing policies, calibration loop |
-| [Wiki: Recovery & Snapshots](wiki/Recovery-and-Snapshots.md) | Recovery types, execution, drills |
-| [Wiki: MCP Integration](wiki/MCP-Integration.md) | Onboarding MCP servers, secrets, trust review |
-| [Wiki: Audit & Evidence](wiki/Audit-and-Evidence.md) | Audit bundles, export, verify, share |
-| [Wiki: Configuration](wiki/Configuration.md) | Environment variables, profiles, policy files |
-| [Wiki: Contributing](wiki/Contributing.md) | Development setup, conventions, PR process |
-| [Wiki: FAQ](wiki/FAQ.md) | Common questions |
-| [engineering-docs/](engineering-docs/) | Architecture specs, subsystem design docs, runbooks |
+| Resource                                                     | Description                                             |
+| ------------------------------------------------------------ | ------------------------------------------------------- |
+| [Wiki: Getting Started](wiki/Getting-Started.md)             | Install, first run, beginner walkthrough                |
+| [Wiki: Architecture](wiki/Architecture.md)                   | System design, subsystem responsibilities, data flow    |
+| [Wiki: Core Concepts](wiki/Core-Concepts.md)                 | Actions, policy, snapshots, recovery, journal explained |
+| [Wiki: CLI Reference](wiki/CLI-Reference.md)                 | Every command with examples                             |
+| [Wiki: TypeScript SDK](wiki/TypeScript-SDK.md)               | Full SDK API reference                                  |
+| [Wiki: Python SDK](wiki/Python-SDK.md)                       | Python SDK reference                                    |
+| [Wiki: Policy Engine](wiki/Policy-Engine.md)                 | Writing policies, calibration loop                      |
+| [Wiki: Recovery & Snapshots](wiki/Recovery-and-Snapshots.md) | Recovery types, execution, drills                       |
+| [Wiki: MCP Integration](wiki/MCP-Integration.md)             | Onboarding MCP servers, secrets, trust review           |
+| [Wiki: Audit & Evidence](wiki/Audit-and-Evidence.md)         | Audit bundles, export, verify, share                    |
+| [Wiki: Configuration](wiki/Configuration.md)                 | Environment variables, profiles, policy files           |
+| [Wiki: Contributing](wiki/Contributing.md)                   | Development setup, conventions, PR process              |
+| [Wiki: FAQ](wiki/FAQ.md)                                     | Common questions                                        |
+| [engineering-docs/](engineering-docs/)                       | Architecture specs, subsystem design docs, runbooks     |
 
 ---
 

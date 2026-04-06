@@ -42,7 +42,14 @@ export const AUDIT_SHARE_REPORT_FILES = [
   "diagnostics.txt",
 ] as const;
 
-export type { ApprovalInboxResult, ArtifactResult, DiagnosticsResult, ListApprovalsResult, RunSummaryResult, TimelineResult };
+export type {
+  ApprovalInboxResult,
+  ArtifactResult,
+  DiagnosticsResult,
+  ListApprovalsResult,
+  RunSummaryResult,
+  TimelineResult,
+};
 
 export interface ArtifactExportResult {
   artifact_id: string;

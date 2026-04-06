@@ -199,6 +199,93 @@ describe("AuthorityClient transport", () => {
     });
   });
 
+  it("uses default workspace roots when bootstrapping a session for runtime reads", async () => {
+    const harness = createHarness();
+    const seenRequests: Array<Record<string, unknown>> = [];
+
+    await startJsonServer(harness, (request, socket) => {
+      seenRequests.push(request);
+      const result =
+        request.method === "hello"
+          ? {
+              session_id: "sess_workspace_default",
+              accepted_api_version: API_VERSION,
+              runtime_version: "0.1.0",
+              schema_pack_version: "schema-pack.v1",
+              capabilities: {
+                local_only: true,
+                methods: ["hello", "get_run_summary"],
+              },
+            }
+          : {
+              run: {
+                run_id: "run_workspace_default",
+                session_id: "sess_workspace_default",
+                workflow_name: "cli-run",
+                agent_framework: "cli",
+                agent_name: "agentgit-cli",
+                workspace_roots: ["/tmp/workspace"],
+                event_count: 0,
+                latest_event: null,
+                budget_config: {
+                  max_mutating_actions: null,
+                  max_destructive_actions: null,
+                },
+                budget_usage: {
+                  mutating_actions: 0,
+                  destructive_actions: 0,
+                },
+                maintenance_status: {
+                  projection_status: "fresh",
+                  projection_lag_events: 0,
+                  degraded_artifact_capture_actions: 0,
+                  low_disk_pressure_signals: 0,
+                  artifact_health: {
+                    total: 0,
+                    available: 0,
+                    missing: 0,
+                    expired: 0,
+                    corrupted: 0,
+                    tampered: 0,
+                  },
+                },
+                created_at: "2026-03-31T00:00:00.000Z",
+                started_at: "2026-03-31T00:00:00.000Z",
+              },
+            };
+
+      socket.write(
+        `${JSON.stringify({
+          api_version: API_VERSION,
+          request_id: request.request_id,
+          session_id: request.session_id ?? "sess_workspace_default",
+          ok: true,
+          result,
+          error: null,
+        })}\n`,
+      );
+      socket.end();
+    });
+
+    const client = new AuthorityClient({
+      socketPath: harness.socketPath,
+      defaultWorkspaceRoots: ["/tmp/workspace"],
+      connectTimeoutMs: 50,
+      responseTimeoutMs: 50,
+      maxConnectRetries: 0,
+    });
+
+    const result = await client.getRunSummary("run_workspace_default");
+
+    expect(result.run.run_id).toBe("run_workspace_default");
+    expect(seenRequests[0]).toMatchObject({
+      method: "hello",
+      payload: {
+        workspace_roots: ["/tmp/workspace"],
+      },
+    });
+  });
+
   it("forwards idempotency keys on mutating requests", async () => {
     const harness = createHarness();
     const seenRequests: Array<Record<string, unknown>> = [];

@@ -688,7 +688,9 @@ export function ensureOpenClawGovernedLaunchAssets(workspaceRoot: string): Gover
   return metadata;
 }
 
-export function removeGeneratedGovernedLaunchAssets(metadata: Partial<GovernedLaunchAssetMetadata> | null | undefined): void {
+export function removeGeneratedGovernedLaunchAssets(
+  metadata: Partial<GovernedLaunchAssetMetadata> | null | undefined,
+): void {
   if (!metadata) {
     return;
   }

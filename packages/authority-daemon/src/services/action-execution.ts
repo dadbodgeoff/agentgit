@@ -161,12 +161,12 @@ export interface ExecuteGovernedActionParams {
   draftStore: OwnedDraftStore;
   noteStore: OwnedNoteStore;
   ticketStore: OwnedTicketStore;
-  executeHostedDelegatedAction: (action: ActionRecord) => Promise<SubmitActionAttemptResponsePayload["execution_result"]>;
+  executeHostedDelegatedAction: (
+    action: ActionRecord,
+  ) => Promise<SubmitActionAttemptResponsePayload["execution_result"]>;
 }
 
-export async function executeGovernedAction(
-  params: ExecuteGovernedActionParams,
-): Promise<{
+export async function executeGovernedAction(params: ExecuteGovernedActionParams): Promise<{
   executionResult: SubmitActionAttemptResponsePayload["execution_result"];
   snapshotRecord: SubmitActionAttemptResponsePayload["snapshot_record"];
 }> {

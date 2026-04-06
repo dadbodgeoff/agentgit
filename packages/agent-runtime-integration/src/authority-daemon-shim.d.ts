@@ -12,7 +12,5 @@ declare module "@agentgit/authority-daemon" {
     workspaceRoot: string,
   ): AuthorityDaemonRuntimeConfig;
 
-  export function runAuthorityDaemon(
-    config: AuthorityDaemonRuntimeConfig,
-  ): Promise<StartedAuthorityDaemon>;
+  export function runAuthorityDaemon(config: AuthorityDaemonRuntimeConfig): Promise<StartedAuthorityDaemon>;
 }

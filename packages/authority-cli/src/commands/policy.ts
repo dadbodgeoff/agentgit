@@ -67,11 +67,7 @@ export function tryRunStandalonePolicyCommand(rest: string[], jsonOutput: boolea
   return true;
 }
 
-export async function runPolicyCommand(
-  client: AuthorityClient,
-  rest: string[],
-  jsonOutput: boolean,
-): Promise<void> {
+export async function runPolicyCommand(client: AuthorityClient, rest: string[], jsonOutput: boolean): Promise<void> {
   const subcommand = rest[0];
 
   if (subcommand === "show") {

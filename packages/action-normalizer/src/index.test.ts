@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -113,6 +115,102 @@ describe("normalizeActionAttempt", () => {
     );
 
     expect(action.provenance.confidence).toBeLessThan(0.99);
+  });
+
+  it("should not treat symlink escapes as in-workspace provenance", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-normalize-"));
+    const workspaceRoot = path.join(tempRoot, "workspace");
+    const outsideRoot = path.join(tempRoot, "outside");
+    const symlinkPath = path.join(workspaceRoot, "linked-outside");
+
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+    fs.mkdirSync(outsideRoot, { recursive: true });
+    fs.symlinkSync(outsideRoot, symlinkPath, "dir");
+
+    try {
+      const action = normalizeActionAttempt(
+        makeAttempt({
+          raw_call: {
+            operation: "write",
+            path: path.join(symlinkPath, "escape.txt"),
+            content: "nope",
+          },
+          environment_context: {
+            workspace_roots: [workspaceRoot],
+            cwd: workspaceRoot,
+            credential_mode: "none",
+          },
+        }),
+        "sess_test",
+      );
+
+      expect(action.provenance.confidence).toBeLessThan(0.99);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("should keep high provenance for missing nested paths inside an existing workspace root", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-normalize-"));
+    const workspaceRoot = path.join(tempRoot, "workspace");
+
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    try {
+      const targetPath = path.join(workspaceRoot, "nested", "new-file.ts");
+      const action = normalizeActionAttempt(
+        makeAttempt({
+          raw_call: {
+            operation: "write",
+            path: targetPath,
+            content: "export const ok = true;",
+          },
+          environment_context: {
+            workspace_roots: [workspaceRoot],
+            cwd: workspaceRoot,
+            credential_mode: "none",
+          },
+        }),
+        "sess_test",
+      );
+
+      expect(action.provenance.confidence).toBe(0.99);
+      expect(action.normalization.warnings).not.toContain("unknown_scope");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("should lower provenance when the workspace root cannot be canonicalized", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-normalize-"));
+    const blockingPath = path.join(tempRoot, "blocking-file");
+    const invalidWorkspaceRoot = path.join(blockingPath, "workspace");
+
+    fs.writeFileSync(blockingPath, "not a directory", "utf8");
+
+    try {
+      const targetPath = path.join(invalidWorkspaceRoot, "nested", "new-file.ts");
+      const action = normalizeActionAttempt(
+        makeAttempt({
+          raw_call: {
+            operation: "write",
+            path: targetPath,
+            content: "export const nope = false;",
+          },
+          environment_context: {
+            workspace_roots: [invalidWorkspaceRoot],
+            cwd: tempRoot,
+            credential_mode: "none",
+          },
+        }),
+        "sess_test",
+      );
+
+      expect(action.provenance.confidence).toBeLessThan(0.99);
+      expect(action.normalization.warnings).toContain("unknown_scope");
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("should attach a first-class confidence assessment with factor breakdown", () => {
@@ -1752,6 +1850,46 @@ describe("normalizeActionAttempt", () => {
       candidate_source_kind: "agent_discovered",
       allowed_execution_modes: ["hosted_delegated"],
     });
+  });
+
+  it("applies MCP confidence factors for operator-owned drifted profiles pending approval", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "mcp_call_tool",
+          tool_kind: "mcp",
+        },
+        environment_context: {
+          workspace_roots: ["/workspace/project"],
+          cwd: "/workspace/project",
+          credential_mode: "none",
+        },
+        raw_call: {
+          server_id: "mcpprof_pending",
+          server_profile_id: "mcpprof_pending",
+          tool_name: "echo_note",
+          arguments: {
+            note: "launch blocker",
+          },
+          execution_mode_requested: "hosted_delegated",
+          trust_tier_at_submit: "operator_owned",
+          drift_state_at_submit: "drifted",
+          credential_binding_mode: "hosted_token_exchange",
+          profile_status: "pending_approval",
+          candidate_source_kind: "operator_api",
+          allowed_execution_modes: ["hosted_delegated"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.confidence_assessment.factors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ factor_id: "mcp_operator_owned" }),
+        expect.objectContaining({ factor_id: "mcp_drifted" }),
+        expect.objectContaining({ factor_id: "mcp_pending_profile" }),
+      ]),
+    );
   });
 
   it("rejects MCP tool calls without a server_id", () => {

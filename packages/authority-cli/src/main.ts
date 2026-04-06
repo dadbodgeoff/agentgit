@@ -43,7 +43,11 @@ import {
   runInitProductionCommand,
   runSetupCommand,
 } from "./lifecycle.js";
-import { isConnectedGeneralCommand, runConnectedGeneralCommand, tryRunStandaloneGeneralCommand } from "./commands/general.js";
+import {
+  isConnectedGeneralCommand,
+  runConnectedGeneralCommand,
+  tryRunStandaloneGeneralCommand,
+} from "./commands/general.js";
 import { isMcpCommand, runMcpCommand } from "./commands/mcp.js";
 import { runPolicyCommand, tryRunStandalonePolicyCommand } from "./commands/policy.js";
 import { runProfileCommand } from "./commands/profile.js";
@@ -253,6 +257,7 @@ export async function runCli(argv: string[] = process.argv.slice(2), providedCli
       clientType: "cli",
       clientVersion: CLI_VERSION,
       socketPath: resolvedConfig.socket_path.value,
+      defaultWorkspaceRoots: [workspaceRoot],
       connectTimeoutMs: resolvedConfig.connect_timeout_ms.value,
       responseTimeoutMs: resolvedConfig.response_timeout_ms.value,
       maxConnectRetries: resolvedConfig.max_connect_retries.value,

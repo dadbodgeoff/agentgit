@@ -63,7 +63,5 @@ declare module "@agentgit/authority-daemon" {
     options?: RunAuthorityDaemonOptions,
   ): Promise<StartedAuthorityDaemon>;
 
-  export function runAuthorityDaemonFromEnv(
-    options?: RunAuthorityDaemonOptions,
-  ): Promise<StartedAuthorityDaemon>;
+  export function runAuthorityDaemonFromEnv(options?: RunAuthorityDaemonOptions): Promise<StartedAuthorityDaemon>;
 }

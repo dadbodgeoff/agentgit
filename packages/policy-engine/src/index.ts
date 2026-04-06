@@ -1028,7 +1028,9 @@ function hasUnrecoverableExternalRisk(action: ActionRecord): boolean {
   );
 }
 
-function recoveryProofScopeForAction(action: ActionRecord): PolicyOutcomeRecord["policy_context"]["recovery_proof_scope"] {
+function recoveryProofScopeForAction(
+  action: ActionRecord,
+): PolicyOutcomeRecord["policy_context"]["recovery_proof_scope"] {
   return action.target.scope.breadth === "single" || action.target.scope.breadth === "set" ? "path" : "workspace";
 }
 
@@ -1254,7 +1256,8 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         {
           code: "PACKAGE_MANAGER_REQUIRES_SNAPSHOT",
           severity: "moderate",
-          message: "Package manager commands are allowed automatically when AgentGit can create a recovery boundary first.",
+          message:
+            "Package manager commands are allowed automatically when AgentGit can create a recovery boundary first.",
         },
         "shell.package_manager.snapshot",
         undefined,
@@ -1329,7 +1332,8 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
     context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
     action,
   );
-  const hasTrustedCompensator = typeof functionFacet?.trusted_compensator === "string" && functionFacet.trusted_compensator.length > 0;
+  const hasTrustedCompensator =
+    typeof functionFacet?.trusted_compensator === "string" && functionFacet.trusted_compensator.length > 0;
   const hasRecoverableFunctionBoundary =
     hasTrustedCompensator &&
     action.execution_path.credential_mode !== "direct" &&
@@ -1355,9 +1359,9 @@ function evaluateFunction(action: ActionRecord, context: PolicyEvaluationContext
       );
     }
 
-      return makeOutcome(
-        action,
-        "allow_with_snapshot",
+    return makeOutcome(
+      action,
+      "allow_with_snapshot",
       [
         {
           code: "OWNED_FUNCTION_COMPENSATABLE",

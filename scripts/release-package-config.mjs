@@ -35,6 +35,4 @@ export const authorityCliCompatibilityPackages = releaseNpmPackages.filter(
   (pkg) => pkg.name !== "@agentgit/agent-runtime-integration",
 );
 
-export const authorityCliCompatibilityPackageNames = new Set(
-  authorityCliCompatibilityPackages.map((pkg) => pkg.name),
-);
+export const authorityCliCompatibilityPackageNames = new Set(authorityCliCompatibilityPackages.map((pkg) => pkg.name));

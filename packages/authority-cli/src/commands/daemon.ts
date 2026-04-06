@@ -77,7 +77,9 @@ export function buildDaemonRuntimeEnvironment(
   };
 }
 
-export async function runDaemonStartCommand(resolvedConfig: CliResolvedConfig): Promise<AuthorityDaemonListeningSummary> {
+export async function runDaemonStartCommand(
+  resolvedConfig: CliResolvedConfig,
+): Promise<AuthorityDaemonListeningSummary> {
   const { runAuthorityDaemonFromEnv } = await loadAuthorityDaemonModule();
   Object.assign(process.env, buildDaemonRuntimeEnvironment(resolvedConfig));
   const daemon = await runAuthorityDaemonFromEnv({

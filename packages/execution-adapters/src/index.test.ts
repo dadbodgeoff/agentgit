@@ -2217,6 +2217,48 @@ describe("FilesystemExecutionAdapter", () => {
     expect(result.artifacts.some((artifact) => artifact.type === "diff")).toBe(true);
   });
 
+  it("rejects filesystem writes that escape the workspace through a symlinked directory", async () => {
+    tempDir = tempDirs.make("agentgit-exec-");
+    const outsideDir = tempDirs.make("agentgit-exec-outside-");
+    const symlinkPath = path.join(tempDir, "linked-outside");
+    const targetPath = path.join(symlinkPath, "escape.txt");
+    fs.symlinkSync(outsideDir, symlinkPath, "dir");
+    const adapter = new FilesystemExecutionAdapter();
+
+    await expect(
+      adapter.verifyPreconditions({
+        action: makeAction(targetPath, "write"),
+        policy_outcome: makePolicyOutcome(false),
+        workspace_root: tempDir,
+        snapshot_record: null,
+      }),
+    ).rejects.toThrow("Filesystem action target is outside the governed workspace root.");
+  });
+
+  it("rechecks filesystem targets at execution time to block symlink swaps after preflight", async () => {
+    tempDir = tempDirs.make("agentgit-exec-");
+    const insideDir = path.join(tempDir, "safe-target");
+    const outsideDir = tempDirs.make("agentgit-exec-outside-");
+    const symlinkPath = path.join(tempDir, "linked-target");
+    const targetPath = path.join(symlinkPath, "escape.txt");
+    fs.mkdirSync(insideDir, { recursive: true });
+    fs.symlinkSync(insideDir, symlinkPath, "dir");
+    const adapter = new FilesystemExecutionAdapter();
+    const context = {
+      action: makeAction(targetPath, "write"),
+      policy_outcome: makePolicyOutcome(false),
+      workspace_root: tempDir,
+      snapshot_record: null,
+    } as const;
+
+    await adapter.verifyPreconditions(context);
+    fs.rmSync(symlinkPath, { recursive: true, force: true });
+    fs.symlinkSync(outsideDir, symlinkPath, "dir");
+
+    await expect(adapter.execute(context)).rejects.toThrow("Resolved path is outside the governed workspace root.");
+    expect(fs.existsSync(path.join(outsideDir, "escape.txt"))).toBe(false);
+  });
+
   it("captures a before/after diff preview when overwriting an existing file", async () => {
     tempDir = tempDirs.make("agentgit-exec-");
     const targetPath = path.join(tempDir, "nested", "file.txt");
@@ -2404,6 +2446,107 @@ describe("ShellExecutionAdapter", () => {
     ).rejects.toThrow("Shell action cwd is outside the governed workspace root.");
 
     fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it("rejects shell execution when cwd escapes through a symlinked workspace path", async () => {
+    tempDir = tempDirs.make("agentgit-shell-");
+    const outsideDir = tempDirs.make("agentgit-shell-outside-");
+    const symlinkPath = path.join(tempDir, "linked-outside");
+    fs.symlinkSync(outsideDir, symlinkPath, "dir");
+    const adapter = new ShellExecutionAdapter();
+    const shellAction: ActionRecord = {
+      ...makeAction(path.join(tempDir, "ignored.txt"), "write"),
+      operation: {
+        domain: "shell",
+        kind: "exec",
+        name: "shell.exec",
+        display_name: "Inspect escaped workspace",
+      },
+      target: {
+        primary: {
+          type: "workspace",
+          locator: symlinkPath,
+          label: path.basename(symlinkPath),
+        },
+        scope: {
+          breadth: "workspace",
+          unknowns: [],
+        },
+      },
+      facets: {
+        shell: {
+          argv: ["pwd"],
+          cwd: symlinkPath,
+          interpreter: "pwd",
+          command_family: "read_only_shell",
+          classifier_rule: "test.shell.symlink_escape",
+          declared_env_keys: [],
+          stdin_kind: "none",
+        },
+      },
+    };
+
+    await expect(
+      adapter.verifyPreconditions({
+        action: shellAction,
+        policy_outcome: makePolicyOutcome(false),
+        workspace_root: tempDir,
+        snapshot_record: null,
+      }),
+    ).rejects.toThrow("Shell action cwd is outside the governed workspace root.");
+  });
+
+  it("rechecks shell cwd at execution time to block symlink swaps after preflight", async () => {
+    tempDir = tempDirs.make("agentgit-shell-");
+    const insideDir = path.join(tempDir, "safe-cwd");
+    const outsideDir = tempDirs.make("agentgit-shell-outside-");
+    const symlinkPath = path.join(tempDir, "linked-cwd");
+    fs.mkdirSync(insideDir, { recursive: true });
+    fs.symlinkSync(insideDir, symlinkPath, "dir");
+    const adapter = new ShellExecutionAdapter();
+    const shellAction: ActionRecord = {
+      ...makeAction(path.join(tempDir, "ignored.txt"), "write"),
+      operation: {
+        domain: "shell",
+        kind: "exec",
+        name: "shell.exec",
+        display_name: "Inspect swapped workspace",
+      },
+      target: {
+        primary: {
+          type: "workspace",
+          locator: symlinkPath,
+          label: path.basename(symlinkPath),
+        },
+        scope: {
+          breadth: "workspace",
+          unknowns: [],
+        },
+      },
+      facets: {
+        shell: {
+          argv: ["pwd"],
+          cwd: symlinkPath,
+          interpreter: "pwd",
+          command_family: "read_only_shell",
+          classifier_rule: "test.shell.symlink_swap",
+          declared_env_keys: [],
+          stdin_kind: "none",
+        },
+      },
+    };
+    const context = {
+      action: shellAction,
+      policy_outcome: makePolicyOutcome(false),
+      workspace_root: tempDir,
+      snapshot_record: null,
+    } as const;
+
+    await adapter.verifyPreconditions(context);
+    fs.rmSync(symlinkPath, { recursive: true, force: true });
+    fs.symlinkSync(outsideDir, symlinkPath, "dir");
+
+    await expect(adapter.execute(context)).rejects.toThrow("Resolved path is outside the governed workspace root.");
   });
 });
 

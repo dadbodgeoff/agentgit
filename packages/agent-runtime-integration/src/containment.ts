@@ -62,12 +62,15 @@ export interface PreparedContainedLaunch {
 
 export interface ContainedBackendRuntime {
   backend: ContainmentBackend;
-  detect_capability(context: AdapterContext, params?: {
-    network_policy?: ContainerNetworkPolicy;
-    credential_mode?: ContainedCredentialMode;
-    egress_mode?: ContainedEgressMode;
-    egress_allowlist_hosts?: string[];
-  }): ContainedBackendCapability;
+  detect_capability(
+    context: AdapterContext,
+    params?: {
+      network_policy?: ContainerNetworkPolicy;
+      credential_mode?: ContainedCredentialMode;
+      egress_mode?: ContainedEgressMode;
+      egress_allowlist_hosts?: string[];
+    },
+  ): ContainedBackendCapability;
   prepare_launch(params: PrepareContainedLaunchParams): PreparedContainedLaunch;
 }
 
@@ -179,9 +182,7 @@ export function containerNetworkPolicyForStrictness(strictness: "balanced" | "st
   return strictness === "strict" ? "none" : "inherit";
 }
 
-export function containedCredentialModeForStrictness(
-  strictness: "balanced" | "strict",
-): ContainedCredentialMode {
+export function containedCredentialModeForStrictness(strictness: "balanced" | "strict"): ContainedCredentialMode {
   return strictness === "strict" ? "none" : "direct_env";
 }
 
@@ -236,7 +237,8 @@ export function buildDockerCapabilitySnapshot(params: {
   egress_allowlist_hosts?: string[];
 }): DockerCapabilitySnapshot {
   const egressMode =
-    params.egress_mode ?? deriveContainedEgressMode({
+    params.egress_mode ??
+    deriveContainedEgressMode({
       network_policy: params.network_policy,
       egress_allowlist_hosts: params.egress_allowlist_hosts,
     });
@@ -257,7 +259,8 @@ export function buildDockerCapabilitySnapshot(params: {
     }),
     backend_enforced_allowlist_supported: false,
     raw_socket_egress_blocked: egressMode === "none",
-    proxy_egress_allowlist_applied: egressMode === "proxy_http_https" && (params.egress_allowlist_hosts?.length ?? 0) > 0,
+    proxy_egress_allowlist_applied:
+      egressMode === "proxy_http_https" && (params.egress_allowlist_hosts?.length ?? 0) > 0,
     egress_allowlist_hosts: egressMode !== "none" ? (params.egress_allowlist_hosts ?? []) : [],
     server_platform: params.capability.server_platform,
     server_os: params.capability.server_os,
@@ -405,10 +408,7 @@ function createHashFromBuffer(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-export function createWorkspaceProjection(
-  workspaceRoot: string,
-  projectionRoot: string,
-): WorkspaceProjectionHandle {
+export function createWorkspaceProjection(workspaceRoot: string, projectionRoot: string): WorkspaceProjectionHandle {
   fs.rmSync(projectionRoot, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(projectionRoot), { recursive: true });
   fs.cpSync(workspaceRoot, projectionRoot, {
@@ -422,11 +422,7 @@ export function createWorkspaceProjection(
     },
   });
   const baselineManifestPath = path.join(path.dirname(projectionRoot), "baseline-manifest.json");
-  fs.writeFileSync(
-    baselineManifestPath,
-    JSON.stringify(Object.fromEntries(walkFiles(workspaceRoot)), null, 2),
-    "utf8",
-  );
+  fs.writeFileSync(baselineManifestPath, JSON.stringify(Object.fromEntries(walkFiles(workspaceRoot)), null, 2), "utf8");
   return {
     projection_root: projectionRoot,
     baseline_manifest_path: baselineManifestPath,

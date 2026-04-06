@@ -7,6 +7,10 @@
   "types": "dist/server.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "predev": "pnpm run build",
+    "dev": "pnpm exec tsx watch src/server.ts",
+    "prestart": "pnpm run build",
+    "start": "node dist/server.js",
     "test": "vitest run --dir src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo"

@@ -8,6 +8,53 @@ import { OpenClawAdapter, createAdapterContext, detectBestRuntime, planSetup } f
 import { ProductStateStore } from "./state.js";
 import type { CommandRunOptions, CommandRunResult, CommandRunner } from "./utils.js";
 
+type JsonRecord = Record<string, unknown>;
+
+interface OpenClawConfig extends JsonRecord {
+  agents: {
+    defaults: {
+      workspace: string;
+    };
+  };
+  gateway: {
+    port: number;
+  };
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readJsonRecord(filePath: string): JsonRecord {
+  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown;
+  return isJsonRecord(parsed) ? parsed : {};
+}
+
+function getPathValue(source: JsonRecord, pathParts: string[]): unknown {
+  let current: unknown = source;
+  for (const key of pathParts) {
+    if (!isJsonRecord(current)) {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return current;
+}
+
+function ensurePathRecord(source: JsonRecord, pathParts: string[]): JsonRecord {
+  let current = source;
+  for (const key of pathParts) {
+    const next = current[key];
+    if (isJsonRecord(next)) {
+      current = next;
+      continue;
+    }
+    current[key] = {};
+    current = current[key] as JsonRecord;
+  }
+  return current;
+}
+
 class FakeOpenClawRunner implements CommandRunner {
   constructor(private readonly configPath: string) {}
 
@@ -30,32 +77,35 @@ class FakeOpenClawRunner implements CommandRunner {
     }
 
     if (args[1] === "get") {
-      const config = JSON.parse(fs.readFileSync(this.configPath, "utf8")) as Record<string, any>;
-      const value = args[2]!.split(".").reduce<any>((current, key) => current?.[key], config);
-      return value === undefined ? this.failure("") : this.success(typeof value === "string" ? value : JSON.stringify(value));
+      const config = readJsonRecord(this.configPath);
+      const value = getPathValue(config, args[2]!.split("."));
+      return value === undefined
+        ? this.failure("")
+        : this.success(typeof value === "string" ? value : JSON.stringify(value));
     }
 
     if (args[1] === "set") {
-      const config = JSON.parse(fs.readFileSync(this.configPath, "utf8")) as Record<string, any>;
+      const config = readJsonRecord(this.configPath);
       const pathParts = args[2]!.split(".");
-      let current: Record<string, any> = config;
-      for (const key of pathParts.slice(0, -1)) {
-        current[key] ??= {};
-        current = current[key] as Record<string, any>;
-      }
+      const current = ensurePathRecord(config, pathParts.slice(0, -1));
       current[pathParts[pathParts.length - 1]!] = args.includes("--strict-json") ? JSON.parse(args[3]!) : args[3];
       fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
       return this.success("");
     }
 
     if (args[1] === "unset") {
-      const config = JSON.parse(fs.readFileSync(this.configPath, "utf8")) as Record<string, any>;
+      const config = readJsonRecord(this.configPath);
       const pathParts = args[2]!.split(".");
-      let current: Record<string, any> = config;
+      let current: unknown = config;
       for (const key of pathParts.slice(0, -1)) {
-        current = (current[key] ?? {}) as Record<string, any>;
+        if (!isJsonRecord(current)) {
+          return this.success("");
+        }
+        current = current[key];
       }
-      delete current[pathParts[pathParts.length - 1]!];
+      if (isJsonRecord(current)) {
+        delete current[pathParts[pathParts.length - 1]!];
+      }
       fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
       return this.success("");
     }
@@ -200,7 +250,7 @@ describe("adapter planning", () => {
     const firstPlan = planSetup(baseContext);
     adapter.apply(baseContext, firstPlan.plan);
 
-    const drifted = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, any>;
+    const drifted = JSON.parse(fs.readFileSync(configPath, "utf8")) as OpenClawConfig;
     drifted.gateway.port = 19009;
     fs.writeFileSync(configPath, JSON.stringify(drifted, null, 2));
 
@@ -288,7 +338,9 @@ describe("adapter planning", () => {
       proxy_egress_allowlist_applied: true,
       egress_allowlist_hosts: ["api.example.com:443"],
     });
-    expect(planned.plan.degraded_reasons).toContain("Container receives direct host credential passthrough for OPENAI_API_KEY.");
+    expect(planned.plan.degraded_reasons).toContain(
+      "Container receives direct host credential passthrough for OPENAI_API_KEY.",
+    );
     store.close();
   });
 
@@ -332,7 +384,12 @@ describe("adapter planning", () => {
     expect(planned.plan.contained_credential_mode).toBe("brokered_bindings");
     expect(planned.plan.governance_mode).toBe("contained_projection");
     expect(planned.plan.guarantees).toEqual(
-      expect.arrayContaining(["real_workspace_protected", "publish_path_governed", "brokered_credentials_only", "egress_policy_applied"]),
+      expect.arrayContaining([
+        "real_workspace_protected",
+        "publish_path_governed",
+        "brokered_credentials_only",
+        "egress_policy_applied",
+      ]),
     );
     expect(planned.plan.capability_snapshot).toMatchObject({
       docker_available: true,
@@ -406,7 +463,9 @@ describe("adapter planning", () => {
 
     expect(planned.plan.contained_egress_mode).toBe("backend_enforced_allowlist");
     expect(planned.plan.contained_egress_assurance).toBe("degraded");
-    expect(planned.plan.degraded_reasons).toContain("This contained backend cannot enforce backend-scoped host allowlists.");
+    expect(planned.plan.degraded_reasons).toContain(
+      "This contained backend cannot enforce backend-scoped host allowlists.",
+    );
     expect(verifyResult.ready).toBe(false);
     expect(verifyResult.health_checks).toEqual(
       expect.arrayContaining([

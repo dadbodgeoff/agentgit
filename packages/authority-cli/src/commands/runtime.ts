@@ -140,9 +140,7 @@ function parseObjectJsonArgument(
     }
     return parsed as Record<string, unknown>;
   } catch (error) {
-    throw inputError(
-      `${errorMessage}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw inputError(`${errorMessage}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

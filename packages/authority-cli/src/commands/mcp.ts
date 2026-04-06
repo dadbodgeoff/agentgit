@@ -30,9 +30,7 @@ import { parseIntegerFlag, parseJsonArgOrFile, shiftCommandValue } from "../pars
 
 type ListHostedMcpJobsResult = Awaited<ReturnType<AuthorityClient["listHostedMcpJobs"]>>;
 type HostedMcpJobStatus = ListHostedMcpJobsResult["jobs"][number]["status"];
-type HostedMcpJobLifecycleState = Awaited<
-  ReturnType<AuthorityClient["getHostedMcpJob"]>
->["lifecycle"]["state"];
+type HostedMcpJobLifecycleState = Awaited<ReturnType<AuthorityClient["getHostedMcpJob"]>>["lifecycle"]["state"];
 
 const MCP_COMMANDS = new Set([
   "onboard-mcp",

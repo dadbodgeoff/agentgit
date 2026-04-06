@@ -10,7 +10,11 @@ let tempDir: string | null = null;
 let previousConfigRoot: string | undefined;
 
 function makeTempDir(): string {
-  const root = path.join(process.cwd(), ".dt", `agent-runtime-state-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const root = path.join(
+    process.cwd(),
+    ".dt",
+    `agent-runtime-state-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
   fs.mkdirSync(root, { recursive: true });
   return root;
 }
@@ -43,18 +47,17 @@ describe("ProductStateStore", () => {
       "runtime_profiles",
       buildWorkspaceProfileId(workspaceRoot),
     );
-    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run(
-        "runtime_profiles",
-        buildWorkspaceProfileId(workspaceRoot),
-        JSON.stringify({
-          ...profileFixture,
-          profile_id: buildWorkspaceProfileId(workspaceRoot),
-          workspace_root: workspaceRoot,
-        }),
-        "2026-04-02T00:00:00.000Z",
-        "2026-04-02T00:00:00.000Z",
-      );
+    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
+      "runtime_profiles",
+      buildWorkspaceProfileId(workspaceRoot),
+      JSON.stringify({
+        ...profileFixture,
+        profile_id: buildWorkspaceProfileId(workspaceRoot),
+        workspace_root: workspaceRoot,
+      }),
+      "2026-04-02T00:00:00.000Z",
+      "2026-04-02T00:00:00.000Z",
+    );
 
     const profile = store.getProfileForWorkspace(workspaceRoot);
     expect(profile).toMatchObject({
@@ -90,43 +93,42 @@ describe("ProductStateStore", () => {
       "runtime_profiles",
       buildWorkspaceProfileId(workspaceRoot),
     );
-    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run(
-        "runtime_profiles",
-        buildWorkspaceProfileId(workspaceRoot),
-        JSON.stringify({
-          schema_version: 7,
-          profile_id: buildWorkspaceProfileId(workspaceRoot),
-          workspace_root: workspaceRoot,
-          runtime_id: "generic-command",
-          launch_command: "rm important-plan.md",
-          integration_method: "docker_contained_launch",
-          install_scope: "workspace",
-          assurance_level: "contained",
-          governance_mode: "contained_projection",
-          guarantees: ["real_workspace_protected", "publish_path_governed", "egress_policy_applied"],
-          execution_mode: "docker_contained",
-          governed_surfaces: ["contained runtime boundary", "governed publication boundary"],
-          degraded_reasons: [],
-          containment_backend: "docker",
-          container_image: "alpine:3.20",
-          container_network_policy: "none",
-          contained_credential_mode: "brokered_secret_refs",
-          contained_secret_env_bindings: [{ env_key: "OPENAI_API_KEY", secret_id: "contained_openai" }],
-          adapter_metadata: {
-            docker_available: true,
-            docker_desktop_vm: true,
-            rootless_docker: false,
-            docker_server_platform: "Docker Desktop 4.63.0 (177762)",
-            docker_server_os: "linux",
-            docker_server_arch: "aarch64",
-          },
-          created_at: "2026-04-02T00:00:00.000Z",
-          updated_at: "2026-04-02T00:00:00.000Z",
-        }),
-        "2026-04-02T00:00:00.000Z",
-        "2026-04-02T00:00:00.000Z",
-      );
+    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
+      "runtime_profiles",
+      buildWorkspaceProfileId(workspaceRoot),
+      JSON.stringify({
+        schema_version: 7,
+        profile_id: buildWorkspaceProfileId(workspaceRoot),
+        workspace_root: workspaceRoot,
+        runtime_id: "generic-command",
+        launch_command: "rm important-plan.md",
+        integration_method: "docker_contained_launch",
+        install_scope: "workspace",
+        assurance_level: "contained",
+        governance_mode: "contained_projection",
+        guarantees: ["real_workspace_protected", "publish_path_governed", "egress_policy_applied"],
+        execution_mode: "docker_contained",
+        governed_surfaces: ["contained runtime boundary", "governed publication boundary"],
+        degraded_reasons: [],
+        containment_backend: "docker",
+        container_image: "alpine:3.20",
+        container_network_policy: "none",
+        contained_credential_mode: "brokered_secret_refs",
+        contained_secret_env_bindings: [{ env_key: "OPENAI_API_KEY", secret_id: "contained_openai" }],
+        adapter_metadata: {
+          docker_available: true,
+          docker_desktop_vm: true,
+          rootless_docker: false,
+          docker_server_platform: "Docker Desktop 4.63.0 (177762)",
+          docker_server_os: "linux",
+          docker_server_arch: "aarch64",
+        },
+        created_at: "2026-04-02T00:00:00.000Z",
+        updated_at: "2026-04-02T00:00:00.000Z",
+      }),
+      "2026-04-02T00:00:00.000Z",
+      "2026-04-02T00:00:00.000Z",
+    );
 
     const profile = store.getProfileForWorkspace(workspaceRoot);
     expect(profile?.capability_snapshot).toMatchObject({
@@ -170,25 +172,24 @@ describe("ProductStateStore", () => {
       "runtime_profiles",
       buildWorkspaceProfileId(workspaceRoot),
     );
-    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run(
-        "runtime_profiles",
-        buildWorkspaceProfileId(workspaceRoot),
-        JSON.stringify({
-          schema_version: 99,
-          profile_id: buildWorkspaceProfileId(workspaceRoot),
-          workspace_root: workspaceRoot,
-          runtime_id: "generic-command",
-          launch_command: "my-agent",
-          integration_method: "launch_wrapper",
-          install_scope: "workspace",
-          governed_surfaces: ["launch boundary"],
-          created_at: "2026-04-02T00:00:00.000Z",
-          updated_at: "2026-04-02T00:00:00.000Z",
-        }),
-        "2026-04-02T00:00:00.000Z",
-        "2026-04-02T00:00:00.000Z",
-      );
+    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
+      "runtime_profiles",
+      buildWorkspaceProfileId(workspaceRoot),
+      JSON.stringify({
+        schema_version: 99,
+        profile_id: buildWorkspaceProfileId(workspaceRoot),
+        workspace_root: workspaceRoot,
+        runtime_id: "generic-command",
+        launch_command: "my-agent",
+        integration_method: "launch_wrapper",
+        install_scope: "workspace",
+        governed_surfaces: ["launch boundary"],
+        created_at: "2026-04-02T00:00:00.000Z",
+        updated_at: "2026-04-02T00:00:00.000Z",
+      }),
+      "2026-04-02T00:00:00.000Z",
+      "2026-04-02T00:00:00.000Z",
+    );
 
     expect(() => store.getProfileForWorkspace(workspaceRoot)).toThrow(/future schema version 99/);
     db.close();

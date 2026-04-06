@@ -42,7 +42,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "prepack": "pnpm run build",
-    "test": "pnpm --filter @agentgit/authority-daemon build && vitest run --dir src",
+    "test": "pnpm --filter @agentgit/authority-daemon build && mkdir -p coverage/.tmp && vitest run --dir src",
     "start": "node dist/main.js"
   },
   "devDependencies": {

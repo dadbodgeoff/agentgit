@@ -7,9 +7,7 @@ type ListMcpServerCandidatesResult = Awaited<ReturnType<AuthorityClient["listMcp
 type ListMcpServerProfilesResult = Awaited<ReturnType<AuthorityClient["listMcpServerProfiles"]>>;
 type GetMcpServerReviewResult = Awaited<ReturnType<AuthorityClient["getMcpServerReview"]>>;
 type ListMcpServerTrustDecisionsResult = Awaited<ReturnType<AuthorityClient["listMcpServerTrustDecisions"]>>;
-type ListMcpServerCredentialBindingsResult = Awaited<
-  ReturnType<AuthorityClient["listMcpServerCredentialBindings"]>
->;
+type ListMcpServerCredentialBindingsResult = Awaited<ReturnType<AuthorityClient["listMcpServerCredentialBindings"]>>;
 type ListMcpSecretsResult = Awaited<ReturnType<AuthorityClient["listMcpSecrets"]>>;
 type ListMcpHostPoliciesResult = Awaited<ReturnType<AuthorityClient["listMcpHostPolicies"]>>;
 type ListHostedMcpJobsResult = Awaited<ReturnType<AuthorityClient["listHostedMcpJobs"]>>;

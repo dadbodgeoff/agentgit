@@ -142,9 +142,7 @@ async function main() {
     const demoRestore = await runAgentGit(demoRoot, ["restore"]);
     requireIncludes(demoRestore.stdout, "Restore complete", "installed agentgit restore");
 
-    const restoredPathLine = demoRestore.stdout
-      .split("\n")
-      .find((line) => line.startsWith("Target: "));
+    const restoredPathLine = demoRestore.stdout.split("\n").find((line) => line.startsWith("Target: "));
     if (!restoredPathLine) {
       throw new Error(`Unable to determine installed demo restore target.\n${demoRestore.stdout}`);
     }
@@ -153,12 +151,7 @@ async function main() {
       throw new Error(`Installed demo restore reported success, but restored file is missing: ${restoredPath}`);
     }
 
-    const genericSetup = await runAgentGit(genericRoot, [
-      "setup",
-      "--yes",
-      "--command",
-      'node -e "process.exit(7)"',
-    ]);
+    const genericSetup = await runAgentGit(genericRoot, ["setup", "--yes", "--command", 'node -e "process.exit(7)"']);
     requireIncludes(genericSetup.stdout, "Assurance level: attached", "installed agentgit setup attached");
 
     const genericRun = await runAgentGit(genericRoot, ["run"], { acceptExitCodes: [7] });
@@ -225,7 +218,9 @@ async function main() {
         throw new Error(`Installed contained run did not publish the delete back to the real workspace: ${oldFile}`);
       }
       if (!noteExists) {
-        throw new Error(`Installed contained run did not publish the created file back to the real workspace: ${noteFile}`);
+        throw new Error(
+          `Installed contained run did not publish the created file back to the real workspace: ${noteFile}`,
+        );
       }
       if (noteContents.trim() !== "contained") {
         throw new Error(`Installed contained run wrote unexpected note.txt contents: ${noteContents}`);

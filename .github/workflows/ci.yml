@@ -37,6 +37,9 @@ jobs:
       - name: Run formatting checks
         run: pnpm format:check
 
+      - name: Run TypeScript typecheck
+        run: pnpm typecheck
+
       - name: Verify release-scope claims
         run: pnpm release:verify:claims
 

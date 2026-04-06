@@ -48,32 +48,27 @@ describe("authority session hardening", () => {
     const buildCalls: string[] = [];
     let sleepCalls = 0;
 
-    const result = await __testables.ensureAuthoritySession(
-      tempDir,
-      process.env,
-      path.join(tempDir, "runtime"),
-      {
-        build_client: () => {
-          buildCalls.push("build");
-          if (buildCalls.length === 1) {
-            return fakeClient(async () => {
-              throw connectFailure();
-            });
-          }
-          return fakeClient(async () => ({ ok: true }));
-        },
-        start_daemon: async () => {
-          const error = new Error("listen EADDRINUSE: address already in use /tmp/test.sock") as Error & {
-            code?: string;
-          };
-          error.code = "EADDRINUSE";
-          throw error;
-        },
-        sleep: async () => {
-          sleepCalls += 1;
-        },
+    const result = await __testables.ensureAuthoritySession(tempDir, process.env, path.join(tempDir, "runtime"), {
+      build_client: () => {
+        buildCalls.push("build");
+        if (buildCalls.length === 1) {
+          return fakeClient(async () => {
+            throw connectFailure();
+          });
+        }
+        return fakeClient(async () => ({ ok: true }));
       },
-    );
+      start_daemon: async () => {
+        const error = new Error("listen EADDRINUSE: address already in use /tmp/test.sock") as Error & {
+          code?: string;
+        };
+        error.code = "EADDRINUSE";
+        throw error;
+      },
+      sleep: async () => {
+        sleepCalls += 1;
+      },
+    });
 
     expect(result.daemon_started).toBe(false);
     expect(buildCalls.length).toBe(2);
@@ -87,31 +82,26 @@ describe("authority session hardening", () => {
     let shutdownCalls = 0;
     let sleepCalls = 0;
 
-    const result = await __testables.ensureAuthoritySession(
-      tempDir,
-      process.env,
-      path.join(tempDir, "runtime"),
-      {
-        build_client: () => {
-          buildCalls += 1;
-          if (buildCalls <= 2) {
-            return fakeClient(async () => {
-              throw connectFailure();
-            });
-          }
-          return fakeClient(async () => ({ ok: true }));
-        },
-        start_daemon: async () => {
-          startCalls += 1;
-          return fakeDaemon(() => {
-            shutdownCalls += 1;
+    const result = await __testables.ensureAuthoritySession(tempDir, process.env, path.join(tempDir, "runtime"), {
+      build_client: () => {
+        buildCalls += 1;
+        if (buildCalls <= 2) {
+          return fakeClient(async () => {
+            throw connectFailure();
           });
-        },
-        sleep: async () => {
-          sleepCalls += 1;
-        },
+        }
+        return fakeClient(async () => ({ ok: true }));
       },
-    );
+      start_daemon: async () => {
+        startCalls += 1;
+        return fakeDaemon(() => {
+          shutdownCalls += 1;
+        });
+      },
+      sleep: async () => {
+        sleepCalls += 1;
+      },
+    });
 
     expect(result.daemon_started).toBe(false);
     expect(startCalls).toBe(1);

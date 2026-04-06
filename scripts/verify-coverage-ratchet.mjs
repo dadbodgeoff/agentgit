@@ -223,9 +223,7 @@ async function main() {
         ok: true,
         baseline_path: baselinePath,
         thresholds: current,
-        aggregate: Object.fromEntries(
-          thresholdKeys.map((metric) => [metric, measuredCoverage.aggregate[metric].pct]),
-        ),
+        aggregate: Object.fromEntries(thresholdKeys.map((metric) => [metric, measuredCoverage.aggregate[metric].pct])),
         files_verified: currentFilePaths,
       },
       null,

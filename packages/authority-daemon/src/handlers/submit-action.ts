@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { normalizeActionAttempt } from "@agentgit/action-normalizer";
 import { type CachedCapabilityState } from "@agentgit/recovery-engine";
 import { evaluatePolicy, resolvePolicyLowConfidenceThreshold } from "@agentgit/policy-engine";
@@ -167,6 +170,32 @@ function assertLaunchSupportedToolKind(toolRegistration: { tool_kind: string; to
 
 type RunSummary = NonNullable<ReturnType<RunJournal["getRunSummary"]>>;
 
+function canonicalizeWorkspaceRootForAuthorization(rootPath: string): string {
+  try {
+    return fs.realpathSync(rootPath);
+  } catch {
+    return path.resolve(rootPath);
+  }
+}
+
+function requireAuthorizedRunSummary(journal: RunJournal, sessionWorkspaceRoots: string[], runId: string): RunSummary {
+  const runSummary = journal.getRunSummary(runId);
+  const authorizedRoots = new Set(sessionWorkspaceRoots.map((root) => canonicalizeWorkspaceRootForAuthorization(root)));
+
+  if (
+    !runSummary ||
+    !runSummary.workspace_roots
+      .map((root) => canonicalizeWorkspaceRootForAuthorization(root))
+      .some((root) => authorizedRoots.has(root))
+  ) {
+    throw new NotFoundError(`No run found for ${runId}.`, {
+      run_id: runId,
+    });
+  }
+
+  return runSummary;
+}
+
 export interface SubmitActionRuntimeOptions {
   capabilityRefreshStaleMs?: number | null;
 }
@@ -180,6 +209,8 @@ export interface PrepareActionAttemptEvaluationParams {
     journal: RunJournal,
     runtimeOptions: SubmitActionRuntimeOptions,
   ) => CachedCapabilityState | null;
+  sessionId: string;
+  sessionWorkspaceRoots: string[];
   attempt: SubmitActionAttemptRequestPayload["attempt"];
 }
 
@@ -195,18 +226,12 @@ export interface PreparedActionAttemptEvaluation {
 export function prepareActionAttemptEvaluation(
   params: PrepareActionAttemptEvaluationParams,
 ): PreparedActionAttemptEvaluation {
-  const runSummary = params.journal.getRunSummary(params.attempt.run_id);
-
-  if (!runSummary) {
-    throw new NotFoundError(`No run found for ${params.attempt.run_id}.`, {
-      run_id: params.attempt.run_id,
-    });
-  }
+  const runSummary = requireAuthorizedRunSummary(params.journal, params.sessionWorkspaceRoots, params.attempt.run_id);
 
   assertLaunchSupportedToolKind(params.attempt.tool_registration);
 
   const hydratedAttempt = hydrateMcpAttempt(params.attempt, params.mcpRegistry);
-  const action = validateActionRecord(normalizeActionAttempt(hydratedAttempt, runSummary.session_id));
+  const action = validateActionRecord(normalizeActionAttempt(hydratedAttempt, params.sessionId));
   const cachedCapabilityState = params.buildCachedCapabilityState(params.journal, params.runtimeOptions);
   const runRiskContext = deriveSnapshotRunRiskContext(params.journal, params.attempt.run_id);
   const policyOutcome = validatePolicyOutcomeRecord(
@@ -289,6 +314,8 @@ export async function handleSubmitActionAttempt(
     policyRuntime: params.policyRuntime,
     runtimeOptions: params.runtimeOptions,
     buildCachedCapabilityState: params.buildCachedCapabilityState,
+    sessionId: session.session_id,
+    sessionWorkspaceRoots: session.workspace_roots,
     attempt: payload.attempt,
   });
 

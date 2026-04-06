@@ -10,7 +10,7 @@ The inspector UI is a local web server that connects to the agentgit authority d
 
 - **Run browser** — see all registered runs, their status, and at-a-glance summaries
 - **Timeline viewer** — step through every governed action in a run, with policy outcomes, approval status, and execution results
-- **Helper Q&A** — ask natural-language questions about a run ("what files did the agent write?", "were any actions denied?")
+- **Helper lenses** — browse a small set of guided questions about a run ("what files did the agent write?", "were any actions denied?")
 - **Recovery planner** — inspect a recovery plan before executing it, with confidence scores and impact preview
 - **Artifact inspector** — view captured artifact bodies with visibility controls
 
@@ -29,7 +29,7 @@ pnpm --filter @agentgit/inspector-ui build
 pnpm --filter @agentgit/inspector-ui start
 ```
 
-Then open `http://localhost:4000` (or whichever port is configured).
+Then open `http://127.0.0.1:4317` by default, or set `AGENTGIT_INSPECTOR_PORT` and `AGENTGIT_INSPECTOR_HOST` to override the bind address.
 
 ---
 
@@ -39,7 +39,8 @@ The UI connects to the daemon via the same Unix socket as the CLI and SDK:
 
 ```bash
 AGENTGIT_SOCKET_PATH=/path/to/.agentgit/authority.sock  # default: ~/.agentgit/authority.sock
-INSPECTOR_PORT=4000
+AGENTGIT_INSPECTOR_PORT=4317
+AGENTGIT_INSPECTOR_HOST=127.0.0.1
 ```
 
 ---

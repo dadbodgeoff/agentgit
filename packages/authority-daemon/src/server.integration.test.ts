@@ -5917,6 +5917,144 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(summaryResponse.result?.run.budget_usage.destructive_actions).toBe(0);
   });
 
+  it("scopes approvals and action submission to the owning session", async () => {
+    const harness = await createHarness();
+    writeShellApprovalPolicy(harness.workspaceRoot);
+    await restartHarness(harness);
+    const owner = await createSessionAndRun(harness, "approval-owner");
+    const intruderWorkspaceRoot = `${harness.workspaceRoot}-intruder`;
+    fs.mkdirSync(intruderWorkspaceRoot, { recursive: true });
+    const intruder = await createSessionAndRunForWorkspaceRoot(harness, intruderWorkspaceRoot, "approval-intruder");
+    const targetPath = path.join(harness.workspaceRoot, "cross-session-blocked.txt");
+
+    const submitResponse = await sendRequest<{
+      approval_request: { approval_id: string; status: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeShellAttempt(owner.runId, harness.workspaceRoot, [
+          process.execPath,
+          "-e",
+          "process.stdout.write('pending')",
+        ]),
+      },
+      owner.sessionId,
+    );
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.approval_request?.status).toBe("pending");
+
+    const hiddenList = await sendRequest<{ approvals: unknown[] }>(harness, "list_approvals", {}, intruder.sessionId);
+    expect(hiddenList.ok).toBe(true);
+    expect(hiddenList.result?.approvals).toHaveLength(0);
+
+    const hiddenInbox = await sendRequest<{
+      items: unknown[];
+      counts: { pending: number; approved: number; denied: number };
+    }>(harness, "query_approval_inbox", {}, intruder.sessionId);
+    expect(hiddenInbox.ok).toBe(true);
+    expect(hiddenInbox.result?.items).toHaveLength(0);
+    expect(hiddenInbox.result?.counts.pending).toBe(0);
+
+    const foreignList = await sendRequest<unknown>(
+      harness,
+      "list_approvals",
+      { run_id: owner.runId },
+      intruder.sessionId,
+    );
+    expect(foreignList.ok).toBe(false);
+    expect(foreignList.error?.code).toBe("NOT_FOUND");
+
+    const foreignResolve = await sendRequest<unknown>(
+      harness,
+      "resolve_approval",
+      {
+        approval_id: submitResponse.result?.approval_request?.approval_id as string,
+        resolution: "approved",
+      },
+      intruder.sessionId,
+    );
+    expect(foreignResolve.ok).toBe(false);
+    expect(foreignResolve.error?.code).toBe("NOT_FOUND");
+
+    const foreignSubmit = await sendRequest<unknown>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemWriteAttempt(owner.runId, harness.workspaceRoot, targetPath, "blocked"),
+      },
+      intruder.sessionId,
+    );
+    expect(foreignSubmit.ok).toBe(false);
+    expect(foreignSubmit.error?.code).toBe("NOT_FOUND");
+    expect(fs.existsSync(targetPath)).toBe(false);
+  });
+
+  it("scopes policy analytics and MCP candidate attribution to accessible workspace roots", async () => {
+    const harness = await createHarness();
+    const owner = await createSessionAndRun(harness, "analytics-owner");
+    const intruderWorkspaceRoot = `${harness.workspaceRoot}-intruder`;
+    fs.mkdirSync(intruderWorkspaceRoot, { recursive: true });
+    const intruder = await createSessionAndRunForWorkspaceRoot(harness, intruderWorkspaceRoot, "analytics-intruder");
+    const targetPath = path.join(harness.workspaceRoot, "analytics.txt");
+
+    const submitResponse = await sendRequest<{
+      execution_result: { mode: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemWriteAttempt(owner.runId, harness.workspaceRoot, targetPath, "analytics seed"),
+      },
+      owner.sessionId,
+    );
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.execution_result?.mode).toBe("executed");
+
+    const reportResponse = await sendRequest<unknown>(
+      harness,
+      "get_policy_calibration_report",
+      { run_id: owner.runId, include_samples: true },
+      intruder.sessionId,
+    );
+    expect(reportResponse.ok).toBe(false);
+    expect(reportResponse.error?.code).toBe("NOT_FOUND");
+
+    const recommendationsResponse = await sendRequest<unknown>(
+      harness,
+      "get_policy_threshold_recommendations",
+      { run_id: owner.runId },
+      intruder.sessionId,
+    );
+    expect(recommendationsResponse.ok).toBe(false);
+    expect(recommendationsResponse.error?.code).toBe("NOT_FOUND");
+
+    const replayResponse = await sendRequest<unknown>(
+      harness,
+      "replay_policy_thresholds",
+      { run_id: owner.runId, candidate_thresholds: [] },
+      intruder.sessionId,
+    );
+    expect(replayResponse.ok).toBe(false);
+    expect(replayResponse.error?.code).toBe("NOT_FOUND");
+
+    const candidateResponse = await sendRequest<unknown>(
+      harness,
+      "submit_mcp_server_candidate",
+      {
+        candidate: {
+          source_kind: "user_input",
+          raw_endpoint: "https://api.example.com/mcp",
+          transport_hint: "streamable_http",
+          submitted_by_run_id: owner.runId,
+        },
+      },
+      intruder.sessionId,
+    );
+    expect(candidateResponse.ok).toBe(false);
+    expect(candidateResponse.error?.code).toBe("NOT_FOUND");
+  });
+
   it("creates a snapshot for delete and restores it through recovery", async () => {
     const harness = await createHarness();
     const { sessionId, runId } = await createSessionAndRun(harness, "snapshot-recovery");
@@ -5964,6 +6102,129 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(executeResponse.ok).toBe(true);
     expect(executeResponse.result?.restored).toBe(true);
     expect(fs.readFileSync(targetPath, "utf8")).toBe("restore this content");
+  });
+
+  it("scopes run inspection, artifacts, checkpoints, and recovery to the owning session", async () => {
+    const harness = await createHarness();
+    const owner = await createSessionAndRun(harness, "inspection-owner");
+    const intruderWorkspaceRoot = `${harness.workspaceRoot}-intruder`;
+    fs.mkdirSync(intruderWorkspaceRoot, { recursive: true });
+    const intruder = await createSessionAndRunForWorkspaceRoot(harness, intruderWorkspaceRoot, "inspection-intruder");
+    const targetPath = path.join(harness.workspaceRoot, "owned-file.txt");
+
+    const submitResponse = await sendRequest<{
+      execution_result: { mode: string } | null;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemWriteAttempt(owner.runId, harness.workspaceRoot, targetPath, "owner content"),
+      },
+      owner.sessionId,
+    );
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.execution_result?.mode).toBe("executed");
+
+    const ownerTimeline = await sendRequest<{
+      steps: Array<{ primary_artifacts: Array<{ type: string; artifact_id?: string }> }>;
+    }>(harness, "query_timeline", { run_id: owner.runId }, owner.sessionId);
+    expect(ownerTimeline.ok).toBe(true);
+    const artifactId = ownerTimeline.result?.steps
+      .flatMap((step) => step.primary_artifacts)
+      .find((artifact) => artifact.type === "file_content" && typeof artifact.artifact_id === "string")?.artifact_id;
+    expect(typeof artifactId).toBe("string");
+
+    const checkpointResponse = await sendRequest<{
+      run_checkpoint: string;
+    }>(
+      harness,
+      "create_run_checkpoint",
+      {
+        run_id: owner.runId,
+        checkpoint_kind: "branch_point",
+        workspace_root: harness.workspaceRoot,
+        reason: "ownership regression checkpoint",
+      },
+      owner.sessionId,
+    );
+    expect(checkpointResponse.ok).toBe(true);
+
+    const summaryResponse = await sendRequest<unknown>(
+      harness,
+      "get_run_summary",
+      { run_id: owner.runId },
+      intruder.sessionId,
+    );
+    expect(summaryResponse.ok).toBe(false);
+    expect(summaryResponse.error?.code).toBe("NOT_FOUND");
+
+    const timelineResponse = await sendRequest<unknown>(
+      harness,
+      "query_timeline",
+      { run_id: owner.runId },
+      intruder.sessionId,
+    );
+    expect(timelineResponse.ok).toBe(false);
+    expect(timelineResponse.error?.code).toBe("NOT_FOUND");
+
+    const helperResponse = await sendRequest<unknown>(
+      harness,
+      "query_helper",
+      { run_id: owner.runId, question_type: "what_happened" },
+      intruder.sessionId,
+    );
+    expect(helperResponse.ok).toBe(false);
+    expect(helperResponse.error?.code).toBe("NOT_FOUND");
+
+    const artifactResponse = await sendRequest<unknown>(
+      harness,
+      "query_artifact",
+      { artifact_id: artifactId },
+      intruder.sessionId,
+    );
+    expect(artifactResponse.ok).toBe(false);
+    expect(artifactResponse.error?.code).toBe("NOT_FOUND");
+
+    const checkpointAttempt = await sendRequest<unknown>(
+      harness,
+      "create_run_checkpoint",
+      {
+        run_id: owner.runId,
+        checkpoint_kind: "branch_point",
+        workspace_root: harness.workspaceRoot,
+      },
+      intruder.sessionId,
+    );
+    expect(checkpointAttempt.ok).toBe(false);
+    expect(checkpointAttempt.error?.code).toBe("NOT_FOUND");
+
+    const recoveryPlan = await sendRequest<unknown>(
+      harness,
+      "plan_recovery",
+      {
+        target: {
+          type: "run_checkpoint",
+          run_checkpoint: checkpointResponse.result?.run_checkpoint as string,
+        },
+      },
+      intruder.sessionId,
+    );
+    expect(recoveryPlan.ok).toBe(false);
+    expect(recoveryPlan.error?.code).toBe("NOT_FOUND");
+
+    const recoveryExecution = await sendRequest<unknown>(
+      harness,
+      "execute_recovery",
+      {
+        target: {
+          type: "run_checkpoint",
+          run_checkpoint: checkpointResponse.result?.run_checkpoint as string,
+        },
+      },
+      intruder.sessionId,
+    );
+    expect(recoveryExecution.ok).toBe(false);
+    expect(recoveryExecution.error?.code).toBe("NOT_FOUND");
   });
 
   it("selects the correct workspace root when multiple roots share a prefix", async () => {
@@ -6824,7 +7085,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     const restartedHarness = await createHarness(tempRoot);
     const summaryAfterRestart = await sendRequest<{
       run: { run_id: string; event_count: number };
-    }>(restartedHarness, "get_run_summary", { run_id: runId });
+    }>(restartedHarness, "get_run_summary", { run_id: runId }, sessionId);
 
     expect(summaryAfterRestart.ok).toBe(true);
     expect(summaryAfterRestart.result?.run.run_id).toBe(runId);
@@ -7012,7 +7273,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
 
     const timelineResponse = await sendRequest<{
       steps: Array<{ status: string; summary: string }>;
-    }>(harness, "query_timeline", { run_id: "run_seeded" });
+    }>(harness, "query_timeline", { run_id: "run_seeded" }, "sess_seeded");
     expect(timelineResponse.ok).toBe(true);
     const partialActionStep = timelineResponse.result?.steps.find((step) => step.status === "partial");
     expect(partialActionStep?.status).toBe("partial");
@@ -7021,7 +7282,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     const helperResponse = await sendRequest<{
       answer: string;
       uncertainty: string[];
-    }>(harness, "query_helper", { run_id: "run_seeded", question_type: "likely_cause" });
+    }>(harness, "query_helper", { run_id: "run_seeded", question_type: "likely_cause" }, "sess_seeded");
     expect(helperResponse.ok).toBe(true);
     expect(helperResponse.result?.answer).toContain("unknown execution outcome");
     expect(helperResponse.result?.uncertainty[0]).toContain("unknown execution outcome");
@@ -7075,7 +7336,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
 
     const timelineResponse = await sendRequest<{
       steps: Array<{ step_type: string; provenance: string; summary: string }>;
-    }>(harness, "query_timeline", { run_id: "run_imported" });
+    }>(harness, "query_timeline", { run_id: "run_imported" }, "sess_imported");
     expect(timelineResponse.ok).toBe(true);
     const importedStep = timelineResponse.result?.steps.find((step) => step.provenance === "imported");
     expect(importedStep?.step_type).toBe("analysis_step");
@@ -7084,7 +7345,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     const helperResponse = await sendRequest<{
       answer: string;
       uncertainty: string[];
-    }>(harness, "query_helper", { run_id: "run_imported", question_type: "suggest_likely_cause" });
+    }>(harness, "query_helper", { run_id: "run_imported", question_type: "suggest_likely_cause" }, "sess_imported");
     expect(helperResponse.ok).toBe(true);
     expect(helperResponse.result?.answer).toContain("imported rather than governed");
     expect(helperResponse.result?.uncertainty[0]).toContain("weak trust provenance");
@@ -7092,7 +7353,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     const summaryResponse = await sendRequest<{
       answer: string;
       uncertainty: string[];
-    }>(harness, "query_helper", { run_id: "run_imported", question_type: "run_summary" });
+    }>(harness, "query_helper", { run_id: "run_imported", question_type: "run_summary" }, "sess_imported");
     expect(summaryResponse.ok).toBe(true);
     expect(summaryResponse.result?.answer).toContain("analysis step(s)");
     expect(summaryResponse.result?.answer).toContain(
@@ -7158,7 +7419,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       visibility_scope: string;
       redactions_applied: number;
       steps: Array<{ artifact_previews: Array<{ preview: string }> }>;
-    }>(harness, "query_timeline", { run_id: "run_visibility" });
+    }>(harness, "query_timeline", { run_id: "run_visibility" }, "sess_visibility");
     expect(userTimeline.ok).toBe(true);
     expect(userTimeline.result?.visibility_scope).toBe("user");
     expect(userTimeline.result?.redactions_applied).toBe(2);
@@ -7168,7 +7429,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       visibility_scope: string;
       redactions_applied: number;
       steps: Array<{ artifact_previews: Array<{ preview: string }> }>;
-    }>(harness, "query_timeline", { run_id: "run_visibility", visibility_scope: "internal" });
+    }>(harness, "query_timeline", { run_id: "run_visibility", visibility_scope: "internal" }, "sess_visibility");
     expect(internalTimeline.ok).toBe(true);
     expect(internalTimeline.result?.redactions_applied).toBe(1);
     expect(
@@ -7186,7 +7447,12 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       visibility_scope: string;
       redactions_applied: number;
       steps: Array<{ artifact_previews: Array<{ preview: string }> }>;
-    }>(harness, "query_timeline", { run_id: "run_visibility", visibility_scope: "sensitive_internal" });
+    }>(
+      harness,
+      "query_timeline",
+      { run_id: "run_visibility", visibility_scope: "sensitive_internal" },
+      "sess_visibility",
+    );
     expect(sensitiveTimeline.ok).toBe(true);
     expect(sensitiveTimeline.result?.redactions_applied).toBe(0);
     expect(
@@ -7200,11 +7466,16 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       uncertainty: string[];
       visibility_scope: string;
       redactions_applied: number;
-    }>(harness, "query_helper", {
-      run_id: "run_visibility",
-      question_type: "step_details",
-      focus_step_id: "step_run_visibility_action_act_visibility",
-    });
+    }>(
+      harness,
+      "query_helper",
+      {
+        run_id: "run_visibility",
+        question_type: "step_details",
+        focus_step_id: "step_run_visibility_action_act_visibility",
+      },
+      "sess_visibility",
+    );
     expect(helperResponse.ok).toBe(true);
     expect(helperResponse.result?.visibility_scope).toBe("user");
     expect(helperResponse.result?.redactions_applied).toBe(2);
@@ -8520,6 +8791,65 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(submitResponse.result?.approval_request?.primary_reason?.code).toBe("CAPABILITY_STATE_STALE");
     expect(submitResponse.result?.execution_result).toBeNull();
     expect(fs.existsSync(targetPath)).toBe(false);
+  });
+
+  it("resolves an approval-gated filesystem write after capability drift", async () => {
+    const harness = await createHarness(undefined, null, 0);
+    const { sessionId, runId } = await createSessionAndRun(harness, "filesystem-capability-stale-resolution");
+    const targetPath = path.join(harness.workspaceRoot, "stale-capability-resolved.txt");
+
+    const maintenanceResponse = await sendRequest<{
+      jobs: Array<{
+        job_type: string;
+        status: string;
+      }>;
+    }>(
+      harness,
+      "run_maintenance",
+      {
+        job_types: ["capability_refresh"],
+        scope: {
+          workspace_root: harness.workspaceRoot,
+        },
+      },
+      sessionId,
+    );
+    expect(maintenanceResponse.ok).toBe(true);
+    expect(maintenanceResponse.result?.jobs[0]?.job_type).toBe("capability_refresh");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const submitResponse = await sendRequest<{
+      approval_request?: { approval_id: string; status: string } | null;
+      execution_result?: unknown;
+    }>(
+      harness,
+      "submit_action_attempt",
+      {
+        attempt: makeFilesystemWriteAttempt(runId, harness.workspaceRoot, targetPath, "write after stale approval"),
+      },
+      sessionId,
+    );
+    expect(submitResponse.ok).toBe(true);
+    expect(submitResponse.result?.approval_request?.status).toBe("pending");
+    expect(submitResponse.result?.execution_result).toBeNull();
+
+    const resolveResponse = await sendRequest<{
+      execution_result: { mode: string } | null;
+      snapshot_record: { snapshot_id: string; snapshot_class: string } | null;
+    }>(
+      harness,
+      "resolve_approval",
+      {
+        approval_id: submitResponse.result?.approval_request?.approval_id as string,
+        resolution: "approved",
+        note: "stale capability resolution",
+      },
+      sessionId,
+    );
+    expect(resolveResponse.ok).toBe(true);
+    expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
+    expect(resolveResponse.result?.snapshot_record).toBeNull();
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("write after stale approval");
   });
 
   it("captures a snapshot before executing an approval-gated delete after capability drift", async () => {

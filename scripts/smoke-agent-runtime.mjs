@@ -70,10 +70,7 @@ async function runAgentGitRequired(workspaceRoot, args, options = {}) {
     if (result.code === 0) {
       return result;
     }
-    if (
-      attempt < maxAttempts &&
-      `${result.stdout}\n${result.stderr}`.includes("EADDRINUSE")
-    ) {
+    if (attempt < maxAttempts && `${result.stdout}\n${result.stderr}`.includes("EADDRINUSE")) {
       lastError = new Error(
         `Transient socket collision while running agentgit ${args.join(" ")}.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       );
@@ -167,9 +164,7 @@ async function main() {
     const governedWorkspaceLine = demoRestore.stdout
       .split("\n")
       .find((line) => line.startsWith("Governed workspace: "));
-    const restoredPathLine = demoRestore.stdout
-      .split("\n")
-      .find((line) => line.startsWith("Target: "));
+    const restoredPathLine = demoRestore.stdout.split("\n").find((line) => line.startsWith("Target: "));
     if (!governedWorkspaceLine || !restoredPathLine) {
       throw new Error(`Unable to determine restored demo path.\n${demoRestore.stdout}`);
     }

@@ -40,8 +40,7 @@ const DEFAULT_CHECKPOINT_POLICY: DefaultCheckpointPolicy = "never";
 
 function deriveGovernanceModeFromRecord(record: Record<string, unknown>): GovernanceMode {
   const runtimeId = typeof record.runtime_id === "string" ? record.runtime_id : undefined;
-  const executionMode =
-    typeof record.execution_mode === "string" ? record.execution_mode : DEFAULT_EXECUTION_MODE;
+  const executionMode = typeof record.execution_mode === "string" ? record.execution_mode : DEFAULT_EXECUTION_MODE;
   if (runtimeId === "openclaw") {
     return "native_integrated";
   }
@@ -67,10 +66,9 @@ function deriveContainedEgressModeFromRecord(record: Record<string, unknown>): C
     typeof record.container_network_policy === "string"
       ? record.container_network_policy
       : DEFAULT_CONTAINER_NETWORK_POLICY;
-  const allowlistHosts =
-    Array.isArray(record.contained_proxy_allowlist_hosts)
-      ? record.contained_proxy_allowlist_hosts.filter((entry): entry is string => typeof entry === "string")
-      : [];
+  const allowlistHosts = Array.isArray(record.contained_proxy_allowlist_hosts)
+    ? record.contained_proxy_allowlist_hosts.filter((entry): entry is string => typeof entry === "string")
+    : [];
 
   if (networkPolicy === "none") {
     return "none";
@@ -114,21 +112,17 @@ function deriveCheckpointIntentFromRecord(record: Record<string, unknown>): Chec
 function deriveGuaranteesFromRecord(record: Record<string, unknown>): GovernanceGuarantee[] {
   const governanceMode = deriveGovernanceModeFromRecord(record);
   if (governanceMode === "native_integrated") {
-    return [
-      "native_runtime_integration",
-      "known_plugin_surfaces_governed",
-      "known_shell_entrypoints_governed",
-    ];
+    return ["native_runtime_integration", "known_plugin_surfaces_governed", "known_shell_entrypoints_governed"];
   }
 
   if (governanceMode === "contained_projection") {
     const guarantees: GovernanceGuarantee[] = ["real_workspace_protected", "publish_path_governed"];
     const egressMode = deriveContainedEgressModeFromRecord(record);
-    const credentialMode = normalizeContainedCredentialMode(record.contained_credential_mode) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE;
-    const selectedDirectEnvKeys =
-      Array.isArray(record.credential_passthrough_env_keys)
-        ? record.credential_passthrough_env_keys.filter((entry): entry is string => typeof entry === "string")
-        : [];
+    const credentialMode =
+      normalizeContainedCredentialMode(record.contained_credential_mode) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE;
+    const selectedDirectEnvKeys = Array.isArray(record.credential_passthrough_env_keys)
+      ? record.credential_passthrough_env_keys.filter((entry): entry is string => typeof entry === "string")
+      : [];
     if (egressMode !== "inherit") {
       guarantees.push("egress_policy_applied");
     }
@@ -141,9 +135,7 @@ function deriveGuaranteesFromRecord(record: Record<string, unknown>): Governance
   return ["known_shell_entrypoints_governed"];
 }
 
-function deriveCapabilitySnapshotFromRecord(
-  record: Record<string, unknown>,
-): DockerCapabilitySnapshot | undefined {
+function deriveCapabilitySnapshotFromRecord(record: Record<string, unknown>): DockerCapabilitySnapshot | undefined {
   const governanceMode = deriveGovernanceModeFromRecord(record);
   if (governanceMode !== "contained_projection") {
     return undefined;
@@ -173,7 +165,8 @@ function deriveCapabilitySnapshotFromRecord(
         : undefined;
   const egressMode = deriveContainedEgressModeFromRecord(record);
   const egressAssurance = deriveContainedEgressAssuranceFromRecord(record);
-  const credentialMode = normalizeContainedCredentialMode(record.contained_credential_mode) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE;
+  const credentialMode =
+    normalizeContainedCredentialMode(record.contained_credential_mode) ?? DEFAULT_CONTAINED_CREDENTIAL_MODE;
   const dockerDesktopVm =
     typeof record.docker_desktop_vm === "boolean"
       ? record.docker_desktop_vm
@@ -302,7 +295,12 @@ function parseRuntimeCredentialBindings(
     if (surface === "env") {
       return {
         binding_id: expectString(binding, "binding_id", collection, `${key}:${field}:${index}`)!,
-        kind: expectString(binding, "kind", collection, `${key}:${field}:${index}`)! as RuntimeCredentialBindingDocument["kind"],
+        kind: expectString(
+          binding,
+          "kind",
+          collection,
+          `${key}:${field}:${index}`,
+        )! as RuntimeCredentialBindingDocument["kind"],
         target: {
           surface: "env",
           env_key: expectString(target, "env_key", collection, `${key}:${field}:${index}:target`)!,
@@ -322,7 +320,12 @@ function parseRuntimeCredentialBindings(
     if (surface === "file") {
       return {
         binding_id: expectString(binding, "binding_id", collection, `${key}:${field}:${index}`)!,
-        kind: expectString(binding, "kind", collection, `${key}:${field}:${index}`)! as RuntimeCredentialBindingDocument["kind"],
+        kind: expectString(
+          binding,
+          "kind",
+          collection,
+          `${key}:${field}:${index}`,
+        )! as RuntimeCredentialBindingDocument["kind"],
         target: {
           surface: "file",
           relative_path: expectString(target, "relative_path", collection, `${key}:${field}:${index}:target`)!,
@@ -339,24 +342,34 @@ function parseRuntimeCredentialBindings(
       };
     }
 
-    throw new AgentGitError(`Stored ${collection} document ${key} has unsupported runtime binding target ${surface}.`, "PRECONDITION_FAILED", {
-      collection,
-      key,
-      field,
-      surface,
-    });
+    throw new AgentGitError(
+      `Stored ${collection} document ${key} has unsupported runtime binding target ${surface}.`,
+      "PRECONDITION_FAILED",
+      {
+        collection,
+        key,
+        field,
+        surface,
+      },
+    );
   });
 }
 
-export function createRuntimeCredentialBindingId(input: { kind: string; target: string; broker_source_ref: string }): string {
+export function createRuntimeCredentialBindingId(input: {
+  kind: string;
+  target: string;
+  broker_source_ref: string;
+}): string {
   return `rcb_${createHash("sha256").update(JSON.stringify(input)).digest("hex").slice(0, 12)}`;
 }
 
 function deriveRuntimeCredentialBindingsFromLegacyRecord(
   record: Record<string, unknown>,
 ): RuntimeCredentialBindingDocument[] | undefined {
-  const envBindings = parseContainedSecretEnvBindings(record, "contained_secret_env_bindings", "runtime_profiles", "legacy") ?? [];
-  const fileBindings = parseContainedSecretFileBindings(record, "contained_secret_file_bindings", "runtime_profiles", "legacy") ?? [];
+  const envBindings =
+    parseContainedSecretEnvBindings(record, "contained_secret_env_bindings", "runtime_profiles", "legacy") ?? [];
+  const fileBindings =
+    parseContainedSecretFileBindings(record, "contained_secret_file_bindings", "runtime_profiles", "legacy") ?? [];
   const migrated = [
     ...envBindings.map((binding) => ({
       binding_id: createRuntimeCredentialBindingId({
@@ -521,7 +534,8 @@ function normalizeDocumentBase(
   key: string,
   record: Record<string, unknown>,
 ): ProductStateDocument & Record<string, unknown> {
-  const schemaVersion = record.schema_version === undefined ? 0 : expectNumber(record, "schema_version", collection, key);
+  const schemaVersion =
+    record.schema_version === undefined ? 0 : expectNumber(record, "schema_version", collection, key);
   if (schemaVersion > CURRENT_SCHEMA_VERSION) {
     failClosedFutureVersion(collection, key, schemaVersion);
   }
@@ -550,9 +564,7 @@ function parseRuntimeProfile(key: string, value: unknown): RuntimeProfileDocumen
       ? deriveGuaranteesFromRecord(base)
       : (expectStringArray(base, "guarantees", "runtime_profiles", key) as GovernanceGuarantee[]);
   const degradedReasons =
-    base.degraded_reasons === undefined
-      ? []
-      : expectStringArray(base, "degraded_reasons", "runtime_profiles", key);
+    base.degraded_reasons === undefined ? [] : expectStringArray(base, "degraded_reasons", "runtime_profiles", key);
   const credentialPassthroughEnvKeys =
     base.credential_passthrough_env_keys === undefined
       ? undefined
@@ -571,7 +583,12 @@ function parseRuntimeProfile(key: string, value: unknown): RuntimeProfileDocumen
       "runtime_profiles",
       key,
     )! as RuntimeProfileDocument["integration_method"],
-    install_scope: expectString(base, "install_scope", "runtime_profiles", key)! as RuntimeProfileDocument["install_scope"],
+    install_scope: expectString(
+      base,
+      "install_scope",
+      "runtime_profiles",
+      key,
+    )! as RuntimeProfileDocument["install_scope"],
     assurance_level: (assuranceLevel ?? DEFAULT_ASSURANCE_LEVEL) as AssuranceLevel,
     governance_mode: (governanceMode ?? deriveGovernanceModeFromRecord(base)) as GovernanceMode,
     guarantees,
@@ -619,7 +636,9 @@ function parseRuntimeProfile(key: string, value: unknown): RuntimeProfileDocumen
         ? undefined
         : expectStringArray(base, "contained_proxy_allowlist_hosts", "runtime_profiles", key),
     capability_snapshot:
-      base.capability_snapshot && typeof base.capability_snapshot === "object" && !Array.isArray(base.capability_snapshot)
+      base.capability_snapshot &&
+      typeof base.capability_snapshot === "object" &&
+      !Array.isArray(base.capability_snapshot)
         ? (base.capability_snapshot as DockerCapabilitySnapshot)
         : deriveCapabilitySnapshotFromRecord(base),
     schema_version: CURRENT_SCHEMA_VERSION,
@@ -670,7 +689,12 @@ function parseRuntimeInstall(key: string, value: unknown): RuntimeInstallDocumen
     profile_id: expectString(base, "profile_id", "runtime_installs", key)!,
     runtime_id: expectString(base, "runtime_id", "runtime_installs", key)! as RuntimeInstallDocument["runtime_id"],
     workspace_root: expectString(base, "workspace_root", "runtime_installs", key)!,
-    install_scope: expectString(base, "install_scope", "runtime_installs", key)! as RuntimeInstallDocument["install_scope"],
+    install_scope: expectString(
+      base,
+      "install_scope",
+      "runtime_installs",
+      key,
+    )! as RuntimeInstallDocument["install_scope"],
     plan_digest: expectString(base, "plan_digest", "runtime_installs", key)!,
     applied_mutations: appliedMutations,
     status: expectString(base, "status", "runtime_installs", key)! as RuntimeInstallDocument["status"],
@@ -724,7 +748,9 @@ function parseRuntimeInstall(key: string, value: unknown): RuntimeInstallDocumen
         : expectStringArray(base, "contained_proxy_allowlist_hosts", "runtime_installs", key),
     config_path: expectString(base, "config_path", "runtime_installs", key, { optional: true }),
     capability_snapshot:
-      base.capability_snapshot && typeof base.capability_snapshot === "object" && !Array.isArray(base.capability_snapshot)
+      base.capability_snapshot &&
+      typeof base.capability_snapshot === "object" &&
+      !Array.isArray(base.capability_snapshot)
         ? (base.capability_snapshot as DockerCapabilitySnapshot)
         : deriveCapabilitySnapshotFromRecord(base),
     schema_version: CURRENT_SCHEMA_VERSION,
@@ -764,7 +790,11 @@ function parseDemoRun(key: string, value: unknown): DemoRunDocument {
   };
 }
 
-function parseRestoreTarget(collection: string, key: string, value: unknown): RestoreShortcutDocument["preferred_restore_target"] {
+function parseRestoreTarget(
+  collection: string,
+  key: string,
+  value: unknown,
+): RestoreShortcutDocument["preferred_restore_target"] {
   const record = expectObject(value, collection, key);
   const type = expectString(record, "type", collection, key)!;
   if (type === "path_subset") {
@@ -789,11 +819,15 @@ function parseRestoreTarget(collection: string, key: string, value: unknown): Re
     };
   }
 
-  throw new AgentGitError(`Stored ${collection} document ${key} has unsupported restore target ${type}.`, "PRECONDITION_FAILED", {
-    collection,
-    key,
-    type,
-  });
+  throw new AgentGitError(
+    `Stored ${collection} document ${key} has unsupported restore target ${type}.`,
+    "PRECONDITION_FAILED",
+    {
+      collection,
+      key,
+      type,
+    },
+  );
 }
 
 function parseRestoreShortcut(key: string, value: unknown): RestoreShortcutDocument {
@@ -804,11 +838,7 @@ function parseRestoreShortcut(key: string, value: unknown): RestoreShortcutDocum
     governed_workspace_root: expectString(base, "governed_workspace_root", "restore_shortcuts", key)!,
     run_id: expectString(base, "run_id", "restore_shortcuts", key)!,
     action_id: expectString(base, "action_id", "restore_shortcuts", key)!,
-    preferred_restore_target: parseRestoreTarget(
-      "restore_shortcuts",
-      key,
-      base.preferred_restore_target,
-    ),
+    preferred_restore_target: parseRestoreTarget("restore_shortcuts", key, base.preferred_restore_target),
     restore_boundary_id: expectString(base, "restore_boundary_id", "restore_shortcuts", key)!,
     display_path: expectString(base, "display_path", "restore_shortcuts", key, { optional: true }),
     schema_version: CURRENT_SCHEMA_VERSION,
@@ -827,19 +857,22 @@ function parseRunCheckpoint(key: string, value: unknown): RunCheckpointDocument 
     run_checkpoint: expectString(base, "run_checkpoint", "run_checkpoints", key)!,
     snapshot_id: expectString(base, "snapshot_id", "run_checkpoints", key)!,
     sequence: expectNumber(base, "sequence", "run_checkpoints", key),
-    checkpoint_kind: expectString(base, "checkpoint_kind", "run_checkpoints", key)! as RunCheckpointDocument["checkpoint_kind"],
+    checkpoint_kind: expectString(
+      base,
+      "checkpoint_kind",
+      "run_checkpoints",
+      key,
+    )! as RunCheckpointDocument["checkpoint_kind"],
     trigger:
       expectString(base, "trigger", "run_checkpoints", key, { optional: true }) === "default_policy"
         ? "default_policy"
         : "explicit_run_flag",
-    checkpoint_policy:
-      expectString(base, "checkpoint_policy", "run_checkpoints", key, { optional: true }) as
-        | RunCheckpointDocument["checkpoint_policy"]
-        | undefined,
-    checkpoint_intent:
-      expectString(base, "checkpoint_intent", "run_checkpoints", key, { optional: true }) as
-        | RunCheckpointDocument["checkpoint_intent"]
-        | undefined,
+    checkpoint_policy: expectString(base, "checkpoint_policy", "run_checkpoints", key, { optional: true }) as
+      | RunCheckpointDocument["checkpoint_policy"]
+      | undefined,
+    checkpoint_intent: expectString(base, "checkpoint_intent", "run_checkpoints", key, { optional: true }) as
+      | RunCheckpointDocument["checkpoint_intent"]
+      | undefined,
     reason: expectString(base, "reason", "run_checkpoints", key, { optional: true }),
     schema_version: CURRENT_SCHEMA_VERSION,
     created_at: base.created_at,
@@ -952,9 +985,7 @@ export class ProductStateStore {
     return this.state.get("runtime_profiles", profileId);
   }
 
-  saveRuntimeProfile(
-    document: Omit<RuntimeProfileDocument, keyof ProductStateDocument>,
-  ): RuntimeProfileDocument {
+  saveRuntimeProfile(document: Omit<RuntimeProfileDocument, keyof ProductStateDocument>): RuntimeProfileDocument {
     const existing = this.state.get("runtime_profiles", document.profile_id);
     return this.state.put("runtime_profiles", document.profile_id, stampDocument(document, existing));
   }
@@ -967,9 +998,7 @@ export class ProductStateStore {
     return latestByUpdatedAt(this.listRuntimeInstalls(workspaceRoot));
   }
 
-  saveRuntimeInstall(
-    document: Omit<RuntimeInstallDocument, keyof ProductStateDocument>,
-  ): RuntimeInstallDocument {
+  saveRuntimeInstall(document: Omit<RuntimeInstallDocument, keyof ProductStateDocument>): RuntimeInstallDocument {
     const existing = this.state.get("runtime_installs", document.install_id);
     return this.state.put("runtime_installs", document.install_id, stampDocument(document, existing));
   }
@@ -1016,9 +1045,7 @@ export class ProductStateStore {
     return this.state.delete("demo_runs", demoRunId);
   }
 
-  saveRestoreShortcut(
-    document: Omit<RestoreShortcutDocument, keyof ProductStateDocument>,
-  ): RestoreShortcutDocument {
+  saveRestoreShortcut(document: Omit<RestoreShortcutDocument, keyof ProductStateDocument>): RestoreShortcutDocument {
     const existing = this.state.get("restore_shortcuts", document.shortcut_id);
     return this.state.put("restore_shortcuts", document.shortcut_id, stampDocument(document, existing));
   }

@@ -222,61 +222,6 @@ function makeShellReadOnlyAction(confidence = 0.42): ActionRecord {
   });
 }
 
-function makeOwnedNoteAction(confidence = 0.45): ActionRecord {
-  return makeAction({
-    actor: {
-      type: "agent",
-      agent_name: "test-agent",
-      agent_framework: "test-framework",
-      tool_name: "notes_update",
-      tool_kind: "function",
-    },
-    operation: {
-      domain: "function",
-      kind: "invoke",
-      name: "function.invoke",
-      display_name: "Update note",
-    },
-    execution_path: {
-      surface: "owned_integration",
-      mode: "pre_execution",
-      credential_mode: "none",
-    },
-    target: {
-      primary: {
-        type: "resource",
-        locator: "note:123",
-        label: "note",
-      },
-      scope: {
-        breadth: "single",
-        estimated_count: 1,
-        unknowns: [],
-      },
-    },
-    risk_hints: {
-      side_effect_level: "mutating",
-      external_effects: "none",
-      reversibility_hint: "reversible",
-      sensitivity_hint: "low",
-      batch: false,
-    },
-    facets: {
-      function: {
-        integration: "notes",
-        operation: "update_note",
-        trusted_compensator: "restore_note",
-      },
-    },
-    normalization: {
-      mapper: "test",
-      inferred_fields: [],
-      warnings: [],
-      normalization_confidence: confidence,
-    },
-  });
-}
-
 function makeUntrustedFunctionAction(confidence = 0.45): ActionRecord {
   return makeAction({
     actor: {

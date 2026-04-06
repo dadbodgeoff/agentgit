@@ -214,10 +214,16 @@ describe("product CLI formatting", () => {
     expect(output).toContain(
       "Contained credentials: brokered runtime bindings (env OPENAI_API_KEY; files /run/agentgit-secrets/openai.key)",
     );
-    expect(output).toContain("Latest automatic checkpoint: run_123#3 (automatic, branch_point, Checkpoint before every contained run.)");
-    expect(output).toContain("Restore vs checkpoint: Recommended restore target is narrower than the latest checkpoint boundary.");
+    expect(output).toContain(
+      "Latest automatic checkpoint: run_123#3 (automatic, branch_point, Checkpoint before every contained run.)",
+    );
+    expect(output).toContain(
+      "Restore vs checkpoint: Recommended restore target is narrower than the latest checkpoint boundary.",
+    );
     expect(output).toContain("Governance mode: contained projection");
-    expect(output).toContain("Guarantees: real workspace protected, publish-back path governed, no direct host credential passthrough, contained egress policy applied");
+    expect(output).toContain(
+      "Guarantees: real workspace protected, publish-back path governed, no direct host credential passthrough, contained egress policy applied",
+    );
     expect(output).toContain(
       "Contained capabilities: projected workspace enforced, read-only rootfs, network restricted, egress mode none, egress assurance boundary-enforced, credential brokering enabled, no proxy allowlist, backend-enforced allowlists unsupported, raw socket egress blocked, rootless Docker [Docker Engine - Community / linux / x86_64]",
     );
