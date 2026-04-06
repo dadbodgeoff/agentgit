@@ -65,6 +65,7 @@ For a real local smoke run across the product surface, use:
 
 ```bash
 pnpm smoke:agent-runtime
+pnpm smoke:agent-runtime-install
 ```
 
-That script builds the product CLI, runs the deterministic demo flow, verifies attached generic setup/run/inspect behavior, and exercises the Docker-contained lane when Docker is available locally.
+`pnpm smoke:agent-runtime` exercises the repo-built product CLI. `pnpm smoke:agent-runtime-install` goes one step further by packing the release tarballs, installing the shipped `agentgit` binary into a temp project, and running the same MVP flows against the installed artifact.

@@ -21,6 +21,11 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
+[project.urls]
+Homepage = "https://github.com/dadbodgeoff/agentgit"
+Repository = "https://github.com/dadbodgeoff/agentgit"
+Issues = "https://github.com/dadbodgeoff/agentgit/issues"
+
 [project.scripts]
 agentgit-authority-demo = "agentgit_authority.demo:main"
 

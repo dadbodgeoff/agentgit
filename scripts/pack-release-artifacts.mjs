@@ -7,28 +7,11 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { releaseNpmPackages } from "./release-package-config.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutDir = path.join(repoRoot, ".release-artifacts", "packed");
 const signingModes = new Set(["if-key", "required", "none"]);
-
-const publishablePackages = [
-  {
-    name: "@agentgit/authority-daemon",
-    dir: path.join(repoRoot, "packages", "authority-daemon"),
-  },
-  {
-    name: "@agentgit/schemas",
-    dir: path.join(repoRoot, "packages", "schemas"),
-  },
-  {
-    name: "@agentgit/authority-sdk",
-    dir: path.join(repoRoot, "packages", "authority-sdk-ts"),
-  },
-  {
-    name: "@agentgit/authority-cli",
-    dir: path.join(repoRoot, "packages", "authority-cli"),
-  },
-];
 
 function parseArgs(argv) {
   const parsed = {
@@ -192,8 +175,16 @@ async function main() {
   await fsp.mkdir(outDir, { recursive: true });
 
   const packages = [];
-  for (const pkg of publishablePackages) {
-    packages.push(await packPackage(pkg, outDir));
+  for (const pkg of releaseNpmPackages) {
+    packages.push(
+      await packPackage(
+        {
+          ...pkg,
+          dir: path.join(repoRoot, pkg.relativeDir),
+        },
+        outDir,
+      ),
+    );
   }
 
   const manifest = {

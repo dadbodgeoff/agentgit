@@ -7,19 +7,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import {
+  authorityCliCompatibilityPackageNames as publishablePackageNames,
+  authorityCliCompatibilityPackages,
+} from "./release-package-config.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const publishablePackageNames = new Set([
-  "@agentgit/authority-daemon",
-  "@agentgit/schemas",
-  "@agentgit/authority-sdk",
-  "@agentgit/authority-cli",
-]);
-const publishablePackages = [
-  { name: "@agentgit/authority-daemon", relativeDir: path.join("packages", "authority-daemon") },
-  { name: "@agentgit/schemas", relativeDir: path.join("packages", "schemas") },
-  { name: "@agentgit/authority-sdk", relativeDir: path.join("packages", "authority-sdk-ts") },
-  { name: "@agentgit/authority-cli", relativeDir: path.join("packages", "authority-cli") },
-];
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -155,7 +148,7 @@ async function packRepoArtifacts(targetRepoRoot, outDir) {
   await fsp.mkdir(outDir, { recursive: true });
 
   const packages = [];
-  for (const pkg of publishablePackages) {
+  for (const pkg of authorityCliCompatibilityPackages) {
     const packageDir = path.join(targetRepoRoot, pkg.relativeDir);
     const before = new Set(await fsp.readdir(outDir));
     await runCommand("pnpm", ["pack", "--pack-destination", outDir], {
@@ -194,7 +187,7 @@ async function packPublishedArtifacts(outDir) {
   await fsp.mkdir(outDir, { recursive: true });
 
   const packages = [];
-  for (const pkg of publishablePackages) {
+  for (const pkg of authorityCliCompatibilityPackages) {
     const before = new Set(await fsp.readdir(outDir));
     try {
       await runCommand("npm", ["pack", `${pkg.name}@latest`, "--pack-destination", outDir], {

@@ -1,3 +1,0 @@
-{"total": {"lines":{"total":266,"covered":163,"skipped":0,"pct":61.27},"statements":{"total":278,"covered":171,"skipped":0,"pct":61.51},"functions":{"total":51,"covered":35,"skipped":0,"pct":68.62},"branches":{"total":241,"covered":97,"skipped":0,"pct":40.24},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
-,"/Users/geoffreyfernald/Documents/agentgit/packages/hosted-mcp-worker/src/index.ts": {"lines":{"total":266,"covered":163,"skipped":0,"pct":61.27},"functions":{"total":51,"covered":35,"skipped":0,"pct":68.62},"statements":{"total":278,"covered":171,"skipped":0,"pct":61.51},"branches":{"total":241,"covered":97,"skipped":0,"pct":40.24}}
-}

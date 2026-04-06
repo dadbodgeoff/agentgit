@@ -1,8 +1,9 @@
 # MVP Production Readiness Audit
 
-Status date: 2026-04-02 (America/New_York)
+Status date: 2026-04-03 (America/New_York)
 
 This is a repository-grounded audit of MVP production readiness for the local-first launch contract.
+It summarizes automation evidence and code-state verification; it is not a substitute for the human signoff record in the contained-GA checklist.
 
 ## Verification Snapshot
 
@@ -13,11 +14,13 @@ Commands executed against the current workspace:
 | `pnpm lint` | Pass | ESLint gate is active and clean. |
 | `pnpm format:check` | Pass | Prettier gate is active and clean. |
 | `pnpm release:verify:claims` | Pass | Changeset release-note scope assertion is active and green. |
-| `pnpm release:verify:coverage-ratchet` | Pass | Coverage thresholds are at/above baseline and ratchet-protected. |
+| `pnpm release:verify:coverage-ratchet` | Pass | Configured thresholds plus measured aggregate/per-package coverage are ratchet-protected. |
 | `pnpm security:audit` | Pass | Node and Python dependency vulnerability scanning gate is active and green. |
 | `pnpm test:coverage` | Pass | TypeScript tests + coverage thresholds pass. |
 | `pnpm py:test` | Pass | Python SDK tests pass. |
+| `pnpm py:build` | Pass | Python SDK wheel/sdist build and install smoke pass. |
 | `pnpm smoke:cli-install` | Pass | Public tarballs install and execute outside monorepo. |
+| `pnpm smoke:agent-runtime-install` | Pass | Public `agentgit` tarball installs and executes outside monorepo. |
 | `pnpm smoke:cli-compat` | Pass | Compatibility/upgrade/rollback and legacy audit-bundle checks pass. |
 | `pnpm release:verify` | Pass | End-to-end release verification is green. |
 | `pnpm release:pack --signing-mode required` + `verify-release-artifacts` | Pass | Signed artifact pack + verification rehearsal passes with real cryptographic keys. |
@@ -38,9 +41,10 @@ Legend:
 | G5 Release pipeline + rollback + signed artifacts | `Green` | Release workflow now requires signed artifacts and signature verification before publish. |
 | G6 Security baseline complete | `Green` | Node+Python dependency vulnerability scanning gate is active; security workflow toolchain is baseline-aligned. |
 | G7 Operator runbooks for failure modes | `Green` | Failure-mode matrix, SEV escalation, tamper response, and tabletop evidence/signoff are documented. |
-| G8 Lint/format + coverage threshold in CI | `Green` | Enforced in CI; coverage ratchet guard prevents threshold regressions. |
+| G8 Lint/format + coverage threshold in CI | `Green` | Enforced in CI; configured thresholds and measured coverage baselines are ratchet-protected. |
 
-Readiness score: `100%`.
+Automation readiness: `Green`.
+Final contained-GA launch approval: `Pending human signoff record`.
 
 ## Area Closure Summary
 
@@ -122,7 +126,7 @@ Evidence:
 
 Current setup:
 - Lint/format/coverage are enforced and green.
-- Coverage ratchet policy is documented and enforced by script.
+- Coverage ratchet policy now covers both threshold configuration and measured coverage output.
 
 Evidence:
 - [verify-coverage-ratchet.mjs](/Users/geoffreyfernald/Documents/agentgit/scripts/verify-coverage-ratchet.mjs)

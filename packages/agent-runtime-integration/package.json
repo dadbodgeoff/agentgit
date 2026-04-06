@@ -4,6 +4,25 @@
   "private": false,
   "description": "Productized runtime integration layer and product CLI for AgentGit.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/agent-runtime-integration"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/agent-runtime-integration",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "authority",
+    "cli",
+    "runtime",
+    "governance"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

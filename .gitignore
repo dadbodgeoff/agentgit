@@ -7,6 +7,12 @@ dist
 *.tgz
 __pycache__
 *.pyc
+coverage
+packages/*/coverage
+apps/*/coverage
+packages/authority-sdk-py/build
+packages/authority-sdk-py/dist
+packages/authority-sdk-py/*.egg-info
 packages/authority-daemon/.dt
 packages/authority-daemon/.tmp-daemon-tests
 .release-artifacts

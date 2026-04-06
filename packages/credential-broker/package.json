@@ -1,15 +1,45 @@
 {
   "name": "@agentgit/credential-broker",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Encrypted credential broker and secure secret storage helpers for AgentGit.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/credential-broker"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/credential-broker",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "credentials",
+    "secrets",
+    "keychain",
+    "governance"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "vitest run --dir src"
+    "test": "vitest run --dir src",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@agentgit/integration-state": "workspace:*",

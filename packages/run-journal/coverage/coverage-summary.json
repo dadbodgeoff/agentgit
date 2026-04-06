@@ -1,3 +1,0 @@
-{"total": {"lines":{"total":626,"covered":477,"skipped":0,"pct":76.19},"statements":{"total":635,"covered":485,"skipped":0,"pct":76.37},"functions":{"total":95,"covered":87,"skipped":0,"pct":91.57},"branches":{"total":553,"covered":295,"skipped":0,"pct":53.34},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
-,"/Users/geoffreyfernald/Documents/agentgit/packages/run-journal/src/index.ts": {"lines":{"total":626,"covered":477,"skipped":0,"pct":76.19},"functions":{"total":95,"covered":87,"skipped":0,"pct":91.57},"statements":{"total":635,"covered":485,"skipped":0,"pct":76.37},"branches":{"total":553,"covered":295,"skipped":0,"pct":53.34}}
-}

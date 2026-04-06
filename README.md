@@ -9,6 +9,7 @@ The result: agents can operate with real autonomy while operators keep control, 
 ---
 
 [![npm](https://img.shields.io/npm/v/@agentgit/authority-cli?label=%40agentgit%2Fauthority-cli)](https://www.npmjs.com/package/@agentgit/authority-cli)
+[![npm](https://img.shields.io/npm/v/@agentgit/agent-runtime-integration?label=%40agentgit%2Fagent-runtime-integration)](https://www.npmjs.com/package/@agentgit/agent-runtime-integration)
 [![npm](https://img.shields.io/npm/v/@agentgit/authority-sdk?label=%40agentgit%2Fauthority-sdk)](https://www.npmjs.com/package/@agentgit/authority-sdk)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.14.0-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -42,6 +43,8 @@ agentgit solves all of this with a single local daemon that agents call through 
 
 ## Quickstart
 
+### Operator CLI + daemon
+
 ```bash
 # Run from your project directory — data lives in ./.agentgit/
 cd /your/project
@@ -69,6 +72,17 @@ agentgit-authority submit-shell <run-id> echo "hello"
 agentgit-authority timeline <run-id>
 agentgit-authority helper <run-id> what_happened
 agentgit-authority run-summary <run-id>
+```
+
+### Product CLI
+
+```bash
+cd /your/project
+npm install -g @agentgit/agent-runtime-integration
+
+agentgit setup --yes --command 'node -e "console.log(\"hello from agentgit\")"'
+agentgit run
+agentgit inspect
 ```
 
 > **Python agent?** See the [Python SDK quickstart](#python-sdk) below.
@@ -184,6 +198,9 @@ After a run, use `policy calibration-report` to see approval patterns and confid
 # Operator CLI + daemon (recommended)
 npm install -g @agentgit/authority-cli
 
+# Product CLI
+npm install -g @agentgit/agent-runtime-integration
+
 # SDK only (embed in your agent)
 npm install @agentgit/authority-sdk @agentgit/schemas
 ```
@@ -191,9 +208,12 @@ npm install @agentgit/authority-sdk @agentgit/schemas
 ### Python SDK
 
 ```bash
-pip install agentgit-authority  # coming soon
-# or from source:
+# Source-only alpha for the MVP launch contract; PyPI publishing is not wired yet.
+# Install from source:
 PYTHONPATH=packages/authority-sdk-py python3 your_agent.py
+
+# Optional packaging check:
+pnpm py:build
 ```
 
 ---

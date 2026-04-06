@@ -37,14 +37,26 @@ jobs:
       - name: Run formatting checks
         run: pnpm format:check
 
+      - name: Verify release-scope claims
+        run: pnpm release:verify:claims
+
       - name: Run TypeScript coverage gate
         run: pnpm test:coverage
+
+      - name: Verify measured coverage ratchet
+        run: pnpm release:verify:coverage-ratchet
 
       - name: Run Python SDK tests
         run: pnpm py:test
 
+      - name: Build and install-smoke the Python SDK package
+        run: pnpm py:build
+
       - name: Verify installed CLI release smoke path
         run: pnpm smoke:cli-install
+
+      - name: Verify installed product CLI smoke path
+        run: pnpm smoke:agent-runtime-install
 
       - name: Verify installed CLI compatibility, upgrade, and rollback paths
         run: pnpm smoke:cli-compat

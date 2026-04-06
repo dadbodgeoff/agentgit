@@ -22,6 +22,7 @@
     "daemon:start": "pnpm --filter @agentgit/authority-daemon start",
     "cli": "pnpm --filter @agentgit/authority-cli exec -- node dist/main.js",
     "py:test": "PYTHONPATH=packages/authority-sdk-py python3 -m unittest discover -s packages/authority-sdk-py/tests -v",
+    "py:build": "node scripts/build-python-sdk.mjs",
     "py:demo": "PYTHONPATH=packages/authority-sdk-py python3 packages/authority-sdk-py/examples/governed_run.py",
     "smoke:py": "PYTHONPATH=packages/authority-sdk-py python3 packages/authority-sdk-py/examples/governed_run.py --workspace-root \"$PWD\"",
     "security:audit:node": "pnpm audit --audit-level=high --prod",
@@ -33,8 +34,9 @@
     "release:verify:artifacts": "node scripts/verify-release-artifacts.mjs --artifacts-dir .release-artifacts/packed --signature-mode allow-unsigned",
     "smoke:cli-install": "node scripts/smoke-installed-cli.mjs",
     "smoke:agent-runtime": "node scripts/smoke-agent-runtime.mjs",
+    "smoke:agent-runtime-install": "node scripts/smoke-installed-agent-runtime.mjs",
     "smoke:cli-compat": "node scripts/verify-cli-compatibility.mjs",
-    "release:verify": "pnpm lint && pnpm format:check && pnpm release:verify:claims && pnpm release:verify:coverage-ratchet && pnpm security:audit && pnpm test:coverage && pnpm py:test && pnpm smoke:cli-install && pnpm smoke:cli-compat",
+    "release:verify": "pnpm lint && pnpm format:check && pnpm release:verify:claims && pnpm security:audit && pnpm test:coverage && pnpm release:verify:coverage-ratchet && pnpm py:test && pnpm py:build && pnpm smoke:cli-install && pnpm smoke:agent-runtime-install && pnpm smoke:cli-compat",
     "release:publish": "pnpm changeset publish --access public"
   },
   "devDependencies": {

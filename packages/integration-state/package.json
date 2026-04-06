@@ -1,15 +1,45 @@
 {
   "name": "@agentgit/integration-state",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Runtime integration state storage primitives for AgentGit.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/integration-state"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/integration-state",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "state",
+    "sqlite",
+    "runtime",
+    "governance"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "vitest run --dir src"
+    "test": "vitest run --dir src",
+    "prepack": "pnpm run build"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13"

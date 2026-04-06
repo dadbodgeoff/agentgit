@@ -1,14 +1,17 @@
 # MVP Production Readiness Plan
 
-Status date: 2026-04-02 (America/New_York)
+Status date: 2026-04-03 (America/New_York)
 
-This plan tracks execution to a 100% local-first MVP production-readiness bar.
+This plan tracks execution toward the local-first MVP production-readiness bar.
+Automation evidence can go green before the final contained-GA signoff record is complete.
 
 ## Current Baseline
 
 Verified now:
 
 - `pnpm release:verify` pass
+- `pnpm py:build` pass
+- installed `agentgit` smoke pass
 - signed artifact pack + signature verification rehearsal pass
 - recovery drill evidence archived
 - operator tamper/triage tabletop evidence archived
@@ -115,6 +118,7 @@ Deferred and explicitly excluded from MVP claim:
 - browser/computer governance
 - generic governed HTTP adapter
 
-## Definition Of 100% MVP Ready
+## Definition Of MVP Ready
 
-All requirements are now satisfied for MVP production readiness when using the local-first launch contract and configured release signing secrets.
+Automation requirements are satisfied for the local-first launch contract when release verification, Python packaging, and installed-artifact smokes are green.
+Final launch approval still requires a completed contained-GA signoff record.

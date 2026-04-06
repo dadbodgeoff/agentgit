@@ -1,3 +1,0 @@
-{"total": {"lines":{"total":721,"covered":577,"skipped":0,"pct":80.02},"statements":{"total":775,"covered":631,"skipped":0,"pct":81.41},"functions":{"total":148,"covered":146,"skipped":0,"pct":98.64},"branches":{"total":1036,"covered":661,"skipped":0,"pct":63.8},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
-,"/Users/geoffreyfernald/Documents/agentgit/packages/timeline-helper/src/index.ts": {"lines":{"total":721,"covered":577,"skipped":0,"pct":80.02},"functions":{"total":148,"covered":146,"skipped":0,"pct":98.64},"statements":{"total":775,"covered":631,"skipped":0,"pct":81.41},"branches":{"total":1036,"covered":661,"skipped":0,"pct":63.8}}
-}

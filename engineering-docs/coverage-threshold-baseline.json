@@ -1,9 +1,119 @@
 {
-  "status_date": "2026-04-02",
+  "status_date": "2026-04-03",
   "thresholds": {
     "lines": 50,
     "functions": 50,
     "statements": 50,
     "branches": 40
+  },
+  "aggregate": {
+    "lines": 73.99,
+    "functions": 82.79,
+    "statements": 74.07,
+    "branches": 61.12
+  },
+  "files": {
+    "apps/inspector-ui/coverage/coverage-summary.json": {
+      "lines": 71,
+      "functions": 74.41,
+      "statements": 70.95,
+      "branches": 58.67
+    },
+    "packages/action-normalizer/coverage/coverage-summary.json": {
+      "lines": 82.42,
+      "functions": 100,
+      "statements": 81.81,
+      "branches": 84.51
+    },
+    "packages/agent-runtime-integration/coverage/coverage-summary.json": {
+      "lines": 76.3,
+      "functions": 87.27,
+      "statements": 76.44,
+      "branches": 63.88
+    },
+    "packages/authority-cli/coverage/coverage-summary.json": {
+      "lines": 62.51,
+      "functions": 73.83,
+      "statements": 62.47,
+      "branches": 49.03
+    },
+    "packages/authority-daemon/coverage/coverage-summary.json": {
+      "lines": 82.84,
+      "functions": 89.22,
+      "statements": 82.73,
+      "branches": 65.93
+    },
+    "packages/authority-sdk-ts/coverage/coverage-summary.json": {
+      "lines": 76.53,
+      "functions": 90.14,
+      "statements": 76.61,
+      "branches": 54.93
+    },
+    "packages/credential-broker/coverage/coverage-summary.json": {
+      "lines": 67.9,
+      "functions": 72.54,
+      "statements": 68.16,
+      "branches": 61.57
+    },
+    "packages/execution-adapters/coverage/coverage-summary.json": {
+      "lines": 73.33,
+      "functions": 71.85,
+      "statements": 73.15,
+      "branches": 58
+    },
+    "packages/hosted-mcp-worker/coverage/coverage-summary.json": {
+      "lines": 61.27,
+      "functions": 68.62,
+      "statements": 61.51,
+      "branches": 40.24
+    },
+    "packages/integration-state/coverage/coverage-summary.json": {
+      "lines": 75.6,
+      "functions": 94.73,
+      "statements": 75.9,
+      "branches": 42
+    },
+    "packages/mcp-registry/coverage/coverage-summary.json": {
+      "lines": 59.25,
+      "functions": 50.49,
+      "statements": 58.63,
+      "branches": 57.18
+    },
+    "packages/policy-engine/coverage/coverage-summary.json": {
+      "lines": 73.52,
+      "functions": 93.93,
+      "statements": 74.1,
+      "branches": 64.42
+    },
+    "packages/recovery-engine/coverage/coverage-summary.json": {
+      "lines": 88.31,
+      "functions": 96.66,
+      "statements": 88.46,
+      "branches": 72.67
+    },
+    "packages/run-journal/coverage/coverage-summary.json": {
+      "lines": 76.19,
+      "functions": 91.57,
+      "statements": 76.37,
+      "branches": 53.34
+    },
+    "packages/snapshot-engine/coverage/coverage-summary.json": {
+      "lines": 68.78,
+      "functions": 79.16,
+      "statements": 68.58,
+      "branches": 61.58
+    },
+    "packages/timeline-helper/coverage/coverage-summary.json": {
+      "lines": 80.02,
+      "functions": 98.64,
+      "statements": 81.41,
+      "branches": 63.8
+    },
+    "packages/workspace-index/coverage/coverage-summary.json": {
+      "lines": 75.09,
+      "functions": 80.95,
+      "statements": 75,
+      "branches": 55.69
+    }
   }
 }

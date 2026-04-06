@@ -14,7 +14,8 @@
 ## Install
 
 ```bash
-pip install agentgit-authority   # coming soon
+# Source-only alpha for the MVP launch contract.
+# Build/install verification is covered by `pnpm py:build`.
 
 # From source (monorepo):
 export PYTHONPATH=/path/to/agentgit/packages/authority-sdk-py

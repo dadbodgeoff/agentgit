@@ -1,3 +1,0 @@
-{"total": {"lines":{"total":550,"covered":413,"skipped":0,"pct":75.09},"statements":{"total":556,"covered":417,"skipped":0,"pct":75},"functions":{"total":63,"covered":51,"skipped":0,"pct":80.95},"branches":{"total":386,"covered":215,"skipped":0,"pct":55.69},"branchesTrue":{"total":0,"covered":0,"skipped":0,"pct":"Unknown"}}
-,"/Users/geoffreyfernald/Documents/agentgit/packages/workspace-index/src/index.ts": {"lines":{"total":550,"covered":413,"skipped":0,"pct":75.09},"functions":{"total":63,"covered":51,"skipped":0,"pct":80.95},"statements":{"total":556,"covered":417,"skipped":0,"pct":75},"branches":{"total":386,"covered":215,"skipped":0,"pct":55.69}}
-}

@@ -14,7 +14,8 @@ Thin Python client for the local agentgit authority daemon. Mirrors the TypeScri
 ## Install
 
 ```bash
-pip install agentgit-authority   # coming soon
+# Source-only alpha for the MVP launch contract.
+# Build/install verification is covered by `pnpm py:build`.
 
 # Or from source (monorepo):
 export PYTHONPATH=packages/authority-sdk-py

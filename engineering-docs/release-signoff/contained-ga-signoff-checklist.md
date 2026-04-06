@@ -60,6 +60,7 @@ Use this checklist before declaring the contained runtime path fully production 
 - `agentgit demo`
 - `agentgit inspect`
 - `agentgit restore`
+- installed `agentgit` artifact smoke path
 
 ## Repo Verification
 
@@ -68,6 +69,8 @@ Use this checklist before declaring the contained runtime path fully production 
 - `pnpm --filter @agentgit/agent-runtime-integration test`
 - `pnpm typecheck`
 - `pnpm test`
+- `pnpm py:build`
+- `pnpm smoke:agent-runtime-install`
 
 ## No-Go Conditions
 
@@ -76,6 +79,7 @@ Use this checklist before declaring the contained runtime path fully production 
 - restore or remove behavior is backend-dependent without being surfaced
 - egress claims exceed actual enforcement
 - launch preflight allows a known-invalid contained profile to run
+- signoff record remains blank at release cut
 
 ## Signoff Record
 
