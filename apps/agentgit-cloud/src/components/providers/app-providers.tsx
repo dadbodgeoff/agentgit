@@ -8,6 +8,7 @@ import { SessionProvider } from "next-auth/react";
 import { WorkspaceProvider } from "@/lib/auth/workspace-context";
 import { QueryProvider } from "@/lib/query/provider";
 import type { WorkspaceSession } from "@/schemas/cloud";
+import { LiveUpdateProvider } from "@/components/providers/live-update-provider";
 
 export function AppProviders({
   children,
@@ -36,7 +37,9 @@ export function AppProviders({
   return (
     <SessionProvider session={session}>
       <WorkspaceProvider value={workspaceSession}>
-        <QueryProvider>{children}</QueryProvider>
+        <QueryProvider>
+          <LiveUpdateProvider workspaceSession={workspaceSession}>{children}</LiveUpdateProvider>
+        </QueryProvider>
       </WorkspaceProvider>
     </SessionProvider>
   );

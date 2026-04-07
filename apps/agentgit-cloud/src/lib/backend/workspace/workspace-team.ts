@@ -11,6 +11,7 @@ import {
   WorkspaceTeamSnapshotSchema,
   type OnboardingTeamInvite,
   type WorkspaceConnectionState,
+  type WorkspaceMembership,
   type WorkspaceSession,
   type WorkspaceTeamSaveResponse,
   type WorkspaceTeamSnapshot,
@@ -29,9 +30,16 @@ function buildFallbackWorkspaceState(workspaceSession: WorkspaceSession): Worksp
     workspaceId: workspaceSession.activeWorkspace.id,
     workspaceName: workspaceSession.activeWorkspace.name,
     workspaceSlug: workspaceSession.activeWorkspace.slug,
-    repositoryIds: collectWorkspaceRepositoryRuntimeRecords(workspaceSession.activeWorkspace.id).map(
-      (record) => record.inventory.id,
-    ),
+    // Before onboarding persists workspace scope, seed visibility from the
+    // discovered local repository inventory instead of an empty workspace filter.
+    repositoryIds: collectWorkspaceRepositoryRuntimeRecords().map((record) => record.inventory.id),
+    members: [
+      {
+        name: workspaceSession.user.name,
+        email: workspaceSession.user.email,
+        role: workspaceSession.activeWorkspace.role,
+      },
+    ],
     invites: [],
     defaultNotificationChannel: "in_app",
     policyPack: "guarded",
@@ -39,8 +47,25 @@ function buildFallbackWorkspaceState(workspaceSession: WorkspaceSession): Worksp
   };
 }
 
-function toWorkspaceTeamSnapshot(
+function ensureWorkspaceMember(
+  members: WorkspaceMembership[],
   workspaceSession: WorkspaceSession,
+): WorkspaceMembership[] {
+  const identity = workspaceSession.user.email.trim().toLowerCase();
+  const retained = members.filter((member) => member.email.trim().toLowerCase() !== identity);
+
+  return [
+    ...retained,
+    {
+      name: workspaceSession.user.name,
+      email: workspaceSession.user.email,
+      role: workspaceSession.activeWorkspace.role,
+    },
+  ];
+}
+
+function toWorkspaceTeamSnapshot(
+  members: WorkspaceMembership[],
   invites: OnboardingTeamInvite[],
   workspaceState: WorkspaceConnectionState,
 ): WorkspaceTeamSnapshot {
@@ -50,13 +75,13 @@ function toWorkspaceTeamSnapshot(
     workspaceSlug: workspaceState.workspaceSlug,
     inviteLimit: WORKSPACE_TEAM_INVITE_LIMIT,
     members: [
-      {
-        id: buildMemberId(workspaceSession.user.email, "active"),
-        name: workspaceSession.user.name,
-        email: workspaceSession.user.email,
-        role: workspaceSession.activeWorkspace.role,
-        status: "active",
-      },
+      ...members.map((member) => ({
+        id: buildMemberId(member.email, "active"),
+        name: member.name,
+        email: member.email,
+        role: member.role,
+        status: "active" as const,
+      })),
       ...invites.map((invite) => ({
         id: buildMemberId(invite.email, "invited"),
         name: invite.name,
@@ -72,7 +97,11 @@ export function resolveWorkspaceTeam(workspaceSession: WorkspaceSession): Worksp
   const workspaceState =
     getWorkspaceConnectionState(workspaceSession.activeWorkspace.id) ?? buildFallbackWorkspaceState(workspaceSession);
 
-  return toWorkspaceTeamSnapshot(workspaceSession, workspaceState.invites, workspaceState);
+  return toWorkspaceTeamSnapshot(
+    ensureWorkspaceMember(workspaceState.members, workspaceSession),
+    workspaceState.invites,
+    workspaceState,
+  );
 }
 
 export function saveWorkspaceTeam(
@@ -87,6 +116,7 @@ export function saveWorkspaceTeam(
     workspaceId: workspaceSession.activeWorkspace.id,
     workspaceName: workspaceSession.activeWorkspace.name,
     workspaceSlug: workspaceSession.activeWorkspace.slug,
+    members: ensureWorkspaceMember(currentState.members, workspaceSession),
     invites: update.invites,
   };
 
@@ -94,7 +124,7 @@ export function saveWorkspaceTeam(
   const savedAt = new Date().toISOString();
 
   return {
-    team: toWorkspaceTeamSnapshot(workspaceSession, savedState.invites, savedState),
+    team: toWorkspaceTeamSnapshot(savedState.members, savedState.invites, savedState),
     savedAt,
     message: "Team roster saved to workspace state.",
   };

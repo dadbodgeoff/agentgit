@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireApiSession } from "@/lib/auth/api-session";
-import { withAuthorityClient } from "@/lib/backend/authority/client";
+import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
 import { mapApprovalInboxToCloud } from "@/lib/backend/authority/contracts";
 import { toAuthorityRouteErrorResponse } from "@/lib/backend/authority/route-errors";
 import { getApprovalsFixture } from "@/mocks/fixtures";
@@ -14,7 +14,7 @@ async function sleep(ms: number): Promise<void> {
 
 export async function GET(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const { unauthorized } = await requireApiSession();
+  const { unauthorized, workspaceSession } = await requireApiSession();
 
   if (unauthorized) {
     return unauthorized;
@@ -37,7 +37,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   try {
-    const approvals = await withAuthorityClient((client) => client.queryApprovalInbox());
+    const approvals = await withWorkspaceAuthorityClient(workspaceSession.activeWorkspace.id, (client) =>
+      client.queryApprovalInbox(),
+    );
     return jsonWithRequestId(mapApprovalInboxToCloud(approvals), undefined, requestId);
   } catch (error) {
     return toAuthorityRouteErrorResponse(error, "Could not load approvals. Retry.", {

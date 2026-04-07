@@ -14,6 +14,7 @@ declare module "next-auth" {
 
   interface User {
     activeWorkspace?: ActiveWorkspace;
+    login?: string;
     role?: WorkspaceRole;
   }
 }

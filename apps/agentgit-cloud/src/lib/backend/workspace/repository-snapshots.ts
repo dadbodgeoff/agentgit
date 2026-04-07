@@ -8,16 +8,17 @@ import { RunJournal, type RunJournalEventRecord } from "@agentgit/run-journal";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 
 import { withScopedAuthorityClient } from "@/lib/backend/authority/client";
+import { findConnectorForRepository, queueConnectorCommand } from "@/lib/backend/control-plane/connectors";
 import { findRepositoryRuntimeRecord } from "@/lib/backend/workspace/repository-inventory";
 import {
   RepositorySnapshotsResponseSchema,
-  SnapshotRestoreExecuteResponseSchema,
+  SnapshotRestoreQueuedResponseSchema,
   SnapshotRestorePreviewSchema,
   type RepositorySnapshotListItem,
   type RepositorySnapshotRecovery,
   type RepositorySnapshotsResponse,
   type SnapshotIntegrityStatus,
-  type SnapshotRestoreExecuteResponse,
+  type SnapshotRestoreQueuedResponse,
   type SnapshotRestoreIntent,
   type SnapshotRestorePreview,
 } from "@/schemas/cloud";
@@ -406,7 +407,7 @@ export async function restoreRepositorySnapshot(
   intent: Extract<SnapshotRestoreIntent, "plan" | "execute">,
   requestId: string,
   workspaceId?: string,
-): Promise<SnapshotRestorePreview | SnapshotRestoreExecuteResponse> {
+): Promise<SnapshotRestorePreview | SnapshotRestoreQueuedResponse> {
   const runtime = await requireSnapshotRuntime(owner, name, snapshotId, workspaceId);
 
   try {
@@ -421,21 +422,49 @@ export async function restoreRepositorySnapshot(
       });
     }
 
-    const result = await withScopedAuthorityClient([runtime.repository.metadata.root], async (client) =>
-      client.executeRecovery(snapshotId, {
-        idempotencyKey: requestId,
-      }),
+    if (!workspaceId) {
+      throw new RepositorySnapshotRestoreError(
+        "Workspace context is required to execute a connector restore.",
+        401,
+      );
+    }
+
+    const connector = findConnectorForRepository(workspaceId, owner, name);
+    if (!connector) {
+      throw new RepositorySnapshotRestoreError(
+        "No registered connector is available for this repository, so restore execution cannot be queued.",
+        409,
+      );
+    }
+
+    const queued = queueConnectorCommand(
+      {
+        user: {
+          id: "system",
+          name: "System",
+          email: "system@agentgit.dev",
+        },
+        activeWorkspace: {
+          id: workspaceId,
+          name: runtime.repository.metadata.name,
+          slug: connector.workspaceSlug,
+          role: "admin",
+        },
+      },
+      connector.id,
+      {
+        type: "execute_restore",
+        snapshotId,
+      },
+      new Date().toISOString(),
     );
 
-    return SnapshotRestoreExecuteResponseSchema.parse({
+    return SnapshotRestoreQueuedResponseSchema.parse({
       snapshotId,
-      plan: result.recovery_plan,
-      restored: result.restored,
-      outcome: result.outcome,
-      executedAt: result.executed_at,
-      message: result.restored
-        ? "Snapshot restored through the authority daemon."
-        : "Recovery completed, but the daemon reported no local restoration.",
+      commandId: queued.commandId,
+      connectorId: queued.connectorId,
+      queuedAt: queued.queuedAt,
+      message: `Restore queued for ${connector.machineName}. The connector will execute it locally and sync the resulting recovery event.`,
     });
   } catch (error) {
     if (error instanceof RepositorySnapshotRestoreError) {

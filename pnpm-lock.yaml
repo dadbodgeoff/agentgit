@@ -56,6 +56,12 @@ importers:
       '@agentgit/authority-sdk':
         specifier: workspace:*
         version: link:../../packages/authority-sdk-ts
+      '@agentgit/cloud-sync-protocol':
+        specifier: workspace:*
+        version: link:../../packages/cloud-sync-protocol
+      '@agentgit/control-plane-state':
+        specifier: workspace:*
+        version: link:../../packages/control-plane-state
       '@agentgit/integration-state':
         specifier: workspace:*
         version: link:../../packages/integration-state
@@ -275,6 +281,48 @@ importers:
       uuid:
         specifier: ^13.0.0
         version: 13.0.0
+
+  packages/cloud-connector:
+    dependencies:
+      '@agentgit/cloud-sync-protocol':
+        specifier: workspace:*
+        version: link:../cloud-sync-protocol
+      '@agentgit/integration-state':
+        specifier: workspace:*
+        version: link:../integration-state
+      '@agentgit/run-journal':
+        specifier: workspace:*
+        version: link:../run-journal
+      '@agentgit/snapshot-engine':
+        specifier: workspace:*
+        version: link:../snapshot-engine
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+
+  packages/cloud-sync-protocol:
+    dependencies:
+      '@agentgit/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+
+  packages/control-plane-state:
+    dependencies:
+      '@agentgit/cloud-sync-protocol':
+        specifier: workspace:*
+        version: link:../cloud-sync-protocol
+      '@agentgit/integration-state':
+        specifier: workspace:*
+        version: link:../integration-state
+      '@agentgit/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
 
   packages/core-ports:
     dependencies:

@@ -15,6 +15,9 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
   }
 
   const workspaceSession = resolveWorkspaceSession(session);
+  if (!workspaceSession) {
+    redirect(`${publicRoutes.signIn}?callbackUrl=${encodeURIComponent(authenticatedRoutes.dashboard)}&error=AccessDenied`);
+  }
 
   return (
     <AppProviders session={session} workspaceSession={workspaceSession}>

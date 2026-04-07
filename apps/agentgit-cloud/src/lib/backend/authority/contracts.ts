@@ -156,6 +156,7 @@ export function mapTimelineToRunDetail(payload: QueryTimelineResponsePayload) {
       title: step.title,
       stepType: step.step_type,
       status: step.status,
+      actionId: step.action_id ?? undefined,
       decision: step.decision,
       summary: step.summary,
       occurredAt: step.occurred_at,

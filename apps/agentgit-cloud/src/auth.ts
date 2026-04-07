@@ -10,6 +10,7 @@ import {
   getFallbackActiveWorkspace,
   isProductionAuth,
 } from "@/lib/auth/provider-config";
+import { resolveWorkspaceAccessForIdentity } from "@/lib/auth/workspace-access";
 import { publicRoutes } from "@/lib/navigation/routes";
 import { WorkspaceRoleSchema } from "@/schemas/cloud";
 
@@ -23,10 +24,71 @@ function buildActiveWorkspace(role = getDefaultWorkspaceRole()) {
   return getFallbackActiveWorkspace(role);
 }
 
+async function fetchGitHubPrimaryEmail(accessToken?: string): Promise<string | null> {
+  if (!accessToken) {
+    return null;
+  }
+
+  const response = await fetch("https://api.github.com/user/emails", {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    return null;
+  }
+
+  const payload = (await response.json().catch(() => null)) as
+    | Array<{ email?: string; primary?: boolean; verified?: boolean }>
+    | null;
+
+  if (!Array.isArray(payload)) {
+    return null;
+  }
+
+  const primaryVerified = payload.find((entry) => entry.primary && entry.verified && typeof entry.email === "string");
+  if (primaryVerified?.email) {
+    return primaryVerified.email;
+  }
+
+  const verified = payload.find((entry) => entry.verified && typeof entry.email === "string");
+  return verified?.email ?? null;
+}
+
+function getGitHubLogin(profile: unknown): string | null {
+  if (!profile || typeof profile !== "object" || !("login" in profile)) {
+    return null;
+  }
+
+  return typeof profile.login === "string" && profile.login.trim().length > 0 ? profile.login : null;
+}
+
 const providers = [];
 
 if (authFeatureFlags.hasGitHubProvider) {
-  providers.push(GitHub);
+  providers.push(
+    GitHub({
+      authorization: {
+        params: {
+          scope: "read:user user:email",
+        },
+      },
+      profile(profile) {
+        const login = typeof profile.login === "string" ? profile.login : undefined;
+
+        return {
+          email: typeof profile.email === "string" ? profile.email : null,
+          id: String(profile.id),
+          image: typeof profile.avatar_url === "string" ? profile.avatar_url : null,
+          login,
+          name: typeof profile.name === "string" && profile.name.trim().length > 0 ? profile.name : login ?? "GitHub user",
+        };
+      },
+    }),
+  );
 }
 
 if (authFeatureFlags.enableDevelopmentCredentials) {
@@ -73,26 +135,49 @@ if (isProductionAuth && providers.length === 0 && !isNextProductionBuild) {
 
 const nextAuthResult: NextAuthResult = NextAuth({
   callbacks: {
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "github") {
+        return true;
+      }
+
+      const email = user.email ?? (await fetchGitHubPrimaryEmail(typeof account.access_token === "string" ? account.access_token : undefined));
+      const login = getGitHubLogin(profile);
+
+      if (!email) {
+        return false;
+      }
+
+      const workspaceAccess = resolveWorkspaceAccessForIdentity({ email, login });
+      if (!workspaceAccess) {
+        return false;
+      }
+
+      user.email = email;
+      user.role = workspaceAccess.role;
+      user.activeWorkspace = workspaceAccess.activeWorkspace;
+      return true;
+    },
     jwt({ token, user }) {
       if (user) {
-        token.role = user.role ?? getDefaultWorkspaceRole();
-        token.activeWorkspace = user.activeWorkspace ?? buildActiveWorkspace(token.role);
-      }
-
-      if (!token.role) {
-        token.role = getDefaultWorkspaceRole();
-      }
-
-      if (!token.activeWorkspace) {
-        token.activeWorkspace = buildActiveWorkspace(token.role);
+        if (user.role && user.activeWorkspace) {
+          token.role = user.role;
+          token.activeWorkspace = user.activeWorkspace;
+        } else {
+          delete token.role;
+          delete token.activeWorkspace;
+        }
       }
 
       return token;
     },
     session({ session, token }) {
       session.user.id = token.sub ?? session.user.email ?? "user_unknown";
-      session.user.role = token.role ?? getDefaultWorkspaceRole();
-      session.activeWorkspace = token.activeWorkspace ?? buildActiveWorkspace(session.user.role);
+      if (token.role) {
+        session.user.role = token.role;
+      }
+      if (token.activeWorkspace) {
+        session.activeWorkspace = token.activeWorkspace;
+      }
 
       return session;
     },

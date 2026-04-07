@@ -37,7 +37,7 @@ function filterRecordsForWorkspace(
 
   const workspaceState = getWorkspaceConnectionState(workspaceId);
   if (!workspaceState) {
-    return records;
+    return [];
   }
 
   const allowedRepositoryIds = new Set(workspaceState.repositoryIds);

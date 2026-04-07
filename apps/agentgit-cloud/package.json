@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "@agentgit/authority-sdk": "workspace:*",
+    "@agentgit/cloud-sync-protocol": "workspace:*",
+    "@agentgit/control-plane-state": "workspace:*",
     "@agentgit/integration-state": "workspace:*",
     "@agentgit/policy-engine": "workspace:*",
     "@agentgit/run-journal": "workspace:*",

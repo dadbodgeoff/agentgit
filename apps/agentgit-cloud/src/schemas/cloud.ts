@@ -8,6 +8,12 @@ import {
   SideEffectLevelSchema,
   TimestampStringSchema,
 } from "@agentgit/schemas";
+import {
+  ConnectorCapabilitySchema,
+  ConnectorCommandStatusSchema,
+  ConnectorCommandTypeSchema,
+  ConnectorStatusSchema,
+} from "@agentgit/cloud-sync-protocol";
 import { z } from "zod";
 
 export const WorkspaceRoleSchema = z.enum(["member", "admin", "owner"]);
@@ -307,6 +313,15 @@ export const OnboardingTeamInviteSchema = z
   .strict();
 export type OnboardingTeamInvite = z.infer<typeof OnboardingTeamInviteSchema>;
 
+export const WorkspaceMembershipSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    email: z.string().email(),
+    role: WorkspaceRoleSchema,
+  })
+  .strict();
+export type WorkspaceMembership = z.infer<typeof WorkspaceMembershipSchema>;
+
 export const OnboardingBootstrapSchema = z
   .object({
     suggestedWorkspaceName: z.string().min(1),
@@ -358,6 +373,7 @@ export const WorkspaceConnectionStateSchema = z
     workspaceName: z.string().min(1),
     workspaceSlug: z.string().min(1),
     repositoryIds: z.array(z.string().min(1)),
+    members: z.array(WorkspaceMembershipSchema).default([]),
     invites: z.array(OnboardingTeamInviteSchema),
     defaultNotificationChannel: NotificationChannelSchema,
     policyPack: PolicyPackSchema,
@@ -532,13 +548,76 @@ export type RecentRun = z.infer<typeof RecentRunSchema>;
 export const ActivityEventSchema = z
   .object({
     id: z.string().min(1),
+    kind: z
+      .enum([
+        "approval_requested",
+        "approval_resolved",
+        "run_started",
+        "run_completed",
+        "run_failed",
+        "snapshot_restored",
+        "connector_command",
+        "connector_event",
+        "policy_changed",
+      ])
+      .optional(),
+    title: z.string().min(1).optional(),
     message: z.string().min(1),
     repo: z.string().min(1),
+    actorLabel: z.string().min(1).optional(),
+    runId: z.string().min(1).optional(),
+    actionId: z.string().min(1).optional(),
+    detailPath: z.string().min(1).optional(),
     createdAt: TimestampStringSchema,
     tone: z.enum(["neutral", "warning", "error", "accent"]).default("neutral"),
   })
   .strict();
 export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
+
+export const ActivityFeedResponseSchema = z
+  .object({
+    items: z.array(ActivityEventSchema),
+    total: z.number().int().nonnegative(),
+    generatedAt: TimestampStringSchema,
+  })
+  .strict();
+export type ActivityFeedResponse = z.infer<typeof ActivityFeedResponseSchema>;
+
+export const AuditActorTypeSchema = z.enum(["human", "agent", "system"]);
+export type AuditActorType = z.infer<typeof AuditActorTypeSchema>;
+
+export const AuditOutcomeSchema = z.enum(["success", "warning", "failure", "info"]);
+export type AuditOutcome = z.infer<typeof AuditOutcomeSchema>;
+
+export const AuditCategorySchema = z.enum(["approval", "connector", "run", "recovery", "policy", "fleet"]);
+export type AuditCategory = z.infer<typeof AuditCategorySchema>;
+
+export const AuditEntrySchema = z
+  .object({
+    id: z.string().min(1),
+    occurredAt: TimestampStringSchema,
+    actorLabel: z.string().min(1),
+    actorType: AuditActorTypeSchema,
+    category: AuditCategorySchema,
+    action: z.string().min(1),
+    target: z.string().min(1),
+    outcome: AuditOutcomeSchema,
+    repo: z.string().min(1).nullable(),
+    runId: z.string().min(1).nullable(),
+    actionId: z.string().min(1).nullable(),
+    details: z.string().min(1),
+  })
+  .strict();
+export type AuditEntry = z.infer<typeof AuditEntrySchema>;
+
+export const AuditLogResponseSchema = z
+  .object({
+    items: z.array(AuditEntrySchema),
+    total: z.number().int().nonnegative(),
+    generatedAt: TimestampStringSchema,
+  })
+  .strict();
+export type AuditLogResponse = z.infer<typeof AuditLogResponseSchema>;
 
 export const DashboardSummarySchema = z
   .object({
@@ -585,6 +664,7 @@ export const RunStepSchema = z
     title: z.string().min(1),
     stepType: RunStepTypeSchema,
     status: RunStepStatusSchema,
+    actionId: z.string().min(1).optional(),
     decision: PolicyDecisionSchema.nullable(),
     summary: z.string().min(1),
     occurredAt: TimestampStringSchema,
@@ -615,6 +695,70 @@ export const RunDetailSchema = z
   })
   .strict();
 export type RunDetail = z.infer<typeof RunDetailSchema>;
+
+export const ActionDetailSchema = z
+  .object({
+    id: z.string().min(1),
+    runId: z.string().min(1),
+    actionId: z.string().min(1),
+    repo: z.string().min(1),
+    workflowName: z.string().min(1),
+    occurredAt: TimestampStringSchema,
+    normalizedAction: z
+      .object({
+        domain: z.string().min(1),
+        kind: z.string().min(1),
+        name: z.string().min(1),
+        displayName: z.string().min(1),
+        targetLocator: z.string().min(1),
+        targetLabel: z.string().min(1).nullable(),
+        executionSurface: z.string().min(1),
+        executionMode: z.string().min(1),
+        confidenceScore: z.number().min(0).max(1),
+        confidenceBand: z.enum(["high", "guarded", "low"]),
+        sideEffectLevel: SideEffectLevelSchema,
+        reversibilityHint: z.string().min(1),
+        externalEffects: z.array(z.string().min(1)),
+        warnings: z.array(z.string().min(1)),
+        rawInput: z.record(z.string(), z.unknown()),
+        redactedInput: z.record(z.string(), z.unknown()),
+      })
+      .strict(),
+    policyOutcome: z
+      .object({
+        decision: PolicyDecisionSchema.nullable(),
+        reasons: z.array(
+          z
+            .object({
+              code: z.string().min(1),
+              severity: z.string().min(1),
+              message: z.string().min(1),
+            })
+            .strict(),
+        ),
+        snapshotRequired: z.boolean(),
+        approvalRequired: z.boolean(),
+        budgetCheck: z.string().min(1),
+        matchedRules: z.array(z.string().min(1)),
+      })
+      .strict(),
+    execution: z
+      .object({
+        stepId: z.string().min(1).nullable(),
+        status: RunStepStatusSchema,
+        stepType: RunStepTypeSchema,
+        summary: z.string().min(1),
+        snapshotId: z.string().min(1).nullable(),
+        artifactLabels: z.array(z.string().min(1)),
+        helperSummary: z.string().min(1).nullable(),
+        policyExplanation: z.string().min(1).nullable(),
+        laterActionsAffected: z.number().int().nonnegative(),
+        overlappingPaths: z.array(z.string().min(1)),
+      })
+      .strict(),
+  })
+  .strict();
+export type ActionDetail = z.infer<typeof ActionDetailSchema>;
 
 export const CalibrationBandSchema = z
   .object({
@@ -731,3 +875,176 @@ export const SnapshotRestoreExecuteResponseSchema = z
   })
   .strict();
 export type SnapshotRestoreExecuteResponse = z.infer<typeof SnapshotRestoreExecuteResponseSchema>;
+
+export const SnapshotRestoreQueuedResponseSchema = z
+  .object({
+    snapshotId: z.string().min(1),
+    commandId: z.string().min(1),
+    connectorId: z.string().min(1),
+    queuedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type SnapshotRestoreQueuedResponse = z.infer<typeof SnapshotRestoreQueuedResponseSchema>;
+
+export const SnapshotRestoreExecutionResultSchema = z.union([
+  SnapshotRestoreExecuteResponseSchema,
+  SnapshotRestoreQueuedResponseSchema,
+]);
+export type SnapshotRestoreExecutionResult = z.infer<typeof SnapshotRestoreExecutionResultSchema>;
+
+export const WorkspaceConnectorCommandSummarySchema = z
+  .object({
+    commandId: z.string().min(1),
+    type: ConnectorCommandTypeSchema,
+    status: ConnectorCommandStatusSchema,
+    issuedAt: TimestampStringSchema,
+    updatedAt: TimestampStringSchema,
+    acknowledgedAt: TimestampStringSchema.nullable(),
+    leaseExpiresAt: TimestampStringSchema.nullable(),
+    attemptCount: z.number().int().nonnegative(),
+    message: z.string().min(1).nullable(),
+  })
+  .strict();
+export type WorkspaceConnectorCommandSummary = z.infer<typeof WorkspaceConnectorCommandSummarySchema>;
+
+export const WorkspaceConnectorEventSummarySchema = z
+  .object({
+    eventId: z.string().min(1),
+    type: z.string().min(1),
+    occurredAt: TimestampStringSchema,
+  })
+  .strict();
+export type WorkspaceConnectorEventSummary = z.infer<typeof WorkspaceConnectorEventSummarySchema>;
+
+export const WorkspaceConnectorSummarySchema = z
+  .object({
+    id: z.string().min(1),
+    connectorName: z.string().min(1),
+    machineName: z.string().min(1),
+    status: ConnectorStatusSchema,
+    connectorVersion: z.string().min(1),
+    registeredAt: TimestampStringSchema,
+    lastSeenAt: TimestampStringSchema,
+    workspaceSlug: z.string().min(1),
+    capabilities: z.array(ConnectorCapabilitySchema),
+    repositoryOwner: z.string().min(1),
+    repositoryName: z.string().min(1),
+    currentBranch: z.string().min(1),
+    headSha: z.string().min(7),
+    isDirty: z.boolean(),
+    aheadBy: z.number().int().nonnegative(),
+    behindBy: z.number().int().nonnegative(),
+    workspaceRoot: z.string().min(1),
+    daemonReachable: z.boolean(),
+    pendingCommandCount: z.number().int().nonnegative(),
+    leasedCommandCount: z.number().int().nonnegative(),
+    retryableCommandCount: z.number().int().nonnegative(),
+    eventCount: z.number().int().nonnegative(),
+    lastEvent: WorkspaceConnectorEventSummarySchema.nullable(),
+    statusReason: z.string().min(1).nullable(),
+    revokedAt: TimestampStringSchema.nullable(),
+    lastCommand: WorkspaceConnectorCommandSummarySchema.nullable(),
+    recentCommands: z.array(WorkspaceConnectorCommandSummarySchema),
+    recentEvents: z.array(WorkspaceConnectorEventSummarySchema),
+  })
+  .strict();
+export type WorkspaceConnectorSummary = z.infer<typeof WorkspaceConnectorSummarySchema>;
+
+export const WorkspaceConnectorInventorySchema = z
+  .object({
+    items: z.array(WorkspaceConnectorSummarySchema),
+    total: z.number().int().nonnegative(),
+    generatedAt: TimestampStringSchema,
+  })
+  .strict();
+export type WorkspaceConnectorInventory = z.infer<typeof WorkspaceConnectorInventorySchema>;
+
+export const ConnectorBootstrapResponseSchema = z
+  .object({
+    bootstrapToken: z.string().min(1),
+    workspaceId: z.string().min(1),
+    workspaceSlug: z.string().min(1),
+    expiresAt: TimestampStringSchema,
+    commandHint: z.string().min(1),
+  })
+  .strict();
+export type ConnectorBootstrapResponse = z.infer<typeof ConnectorBootstrapResponseSchema>;
+
+export const ConnectorCommandDispatchRequestSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("refresh_repo_state"),
+      forceFullSync: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("sync_run_history"),
+      includeSnapshots: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("create_commit"),
+      message: z.string().trim().min(1).max(200),
+      stageAll: z.boolean(),
+      paths: z.array(z.string().min(1)).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("push_branch"),
+      branch: z.string().trim().min(1).optional(),
+      setUpstream: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("execute_restore"),
+      snapshotId: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("open_pull_request"),
+      title: z.string().trim().min(1).max(200),
+      body: z.string().max(20_000).optional(),
+      baseBranch: z.string().trim().min(1).optional(),
+      headBranch: z.string().trim().min(1).optional(),
+      draft: z.boolean().optional(),
+    })
+    .strict(),
+]);
+export type ConnectorCommandDispatchRequest = z.infer<typeof ConnectorCommandDispatchRequestSchema>;
+
+export const ConnectorCommandDispatchResponseSchema = z
+  .object({
+    commandId: z.string().min(1),
+    connectorId: z.string().min(1),
+    status: ConnectorCommandStatusSchema,
+    queuedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type ConnectorCommandDispatchResponse = z.infer<typeof ConnectorCommandDispatchResponseSchema>;
+
+export const ConnectorCommandRetryResponseSchema = z
+  .object({
+    commandId: z.string().min(1),
+    connectorId: z.string().min(1),
+    status: ConnectorCommandStatusSchema,
+    queuedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type ConnectorCommandRetryResponse = z.infer<typeof ConnectorCommandRetryResponseSchema>;
+
+export const ConnectorRevokeResponseSchema = z
+  .object({
+    connectorId: z.string().min(1),
+    revokedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type ConnectorRevokeResponse = z.infer<typeof ConnectorRevokeResponseSchema>;

@@ -1,4 +1,4 @@
-import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { ActionDetailPage } from "@/features/runs/action-detail-page";
 
 export default async function ActionDetailRoute({
   params,
@@ -7,14 +7,5 @@ export default async function ActionDetailRoute({
 }) {
   const { owner, name, runId, actionId } = await params;
 
-  return (
-    <ScaffoldPage
-      description={`Action detail scaffold for ${owner}/${name} run ${runId}, action ${actionId}.`}
-      sections={[
-        { title: "Normalized action", description: "Canonical action payload and policy match details.", kind: "code" },
-        { title: "Execution details", description: "Execution timing, exit code, artifacts, and snapshot references." },
-      ]}
-      title="Action detail"
-    />
-  );
+  return <ActionDetailPage actionId={actionId} name={name} owner={owner} runId={runId} />;
 }

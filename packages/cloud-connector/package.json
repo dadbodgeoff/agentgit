@@ -1,0 +1,35 @@
+{
+  "name": "@agentgit/cloud-connector",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Local connector primitives for syncing AgentGit runtimes to the cloud control plane.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "agentgit-cloud-connector": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "test": "vitest run --dir src",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@agentgit/cloud-sync-protocol": "workspace:*",
+    "@agentgit/integration-state": "workspace:*",
+    "@agentgit/run-journal": "workspace:*",
+    "@agentgit/snapshot-engine": "workspace:*",
+    "zod": "^4.3.6"
+  }
+}

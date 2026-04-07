@@ -134,6 +134,7 @@ describe("dashboard workspace aggregation", () => {
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
       repositoryIds: [inventory.items.find((item) => item.name === "platform-ui")!.id],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
       invites: [],
       defaultNotificationChannel: "slack",
       policyPack: "guarded",
@@ -145,5 +146,20 @@ describe("dashboard workspace aggregation", () => {
     expect(dashboard.metrics.find((metric) => metric.id === "connected_repos")?.value).toBe("1");
     expect(dashboard.recentRuns).toHaveLength(1);
     expect(dashboard.recentRuns[0]!.repo).toBe("acme/platform-ui");
+  });
+
+  it("fails closed for workspaces without a persisted repository scope", () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    createRun(repoRoot, "execution.completed", "2026-04-06T14:32:34Z");
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    const dashboard = getDashboardSummaryFromWorkspace("ws_unknown");
+
+    expect(dashboard.metrics.find((metric) => metric.id === "connected_repos")?.value).toBe("0");
+    expect(dashboard.recentRuns).toHaveLength(0);
+    expect(dashboard.recentActivity).toHaveLength(0);
   });
 });

@@ -70,6 +70,8 @@ These journeys are the primary E2E and UX acceptance baseline and should drive i
 - Bearer token via GitHub OAuth
 - Session stored with httpOnly cookie handling
 - Active workspace scoped by header or route context
+- GitHub OAuth sessions must resolve workspace identity and role from persisted workspace membership data or an explicitly configured bootstrap identity; unresolved or ambiguous identities must be denied instead of falling back to a shared workspace
+- Production auth must never assign a shared default workspace or elevated role when provider claims are incomplete
 - Session TTL: 24 hours with silent refresh when appropriate
 
 ### REST API
@@ -91,7 +93,9 @@ Rules:
 
 - list endpoints use a consistent pagination envelope
 - request and response shapes should be validated against shared Zod schemas
-- invalid payloads return `422` with field-level information
+- invalid payloads return `400` with field-level information
+- daemon-backed approval, run-detail, and readiness endpoints must initialize authority sessions from the active workspace's connected repository roots rather than process-wide roots
+- if a workspace has no persisted repository scope yet, hosted APIs must fail closed for tenant-bound inventory and dashboard data instead of exposing host-wide discovery results
 
 ### WebSocket
 

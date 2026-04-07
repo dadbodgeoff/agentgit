@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi, afterEach } from "vitest";
+import { RunJournal } from "@agentgit/run-journal";
 
 vi.mock("server-only", () => ({}));
 
@@ -139,5 +140,35 @@ describe("repository policy backend adapter", () => {
 
     expect(result.valid).toBe(false);
     expect(result.issues.length).toBeGreaterThan(0);
+  });
+
+  it("degrades gracefully when calibration recommendations cannot be derived", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+    process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = path.join(repoRoot, ".missing-global.toml");
+
+    fs.mkdirSync(path.join(repoRoot, ".agentgit", "state"), { recursive: true });
+    const journal = new RunJournal({
+      dbPath: path.join(repoRoot, ".agentgit", "state", "authority.db"),
+    });
+    journal.close();
+
+    const calibrationSpy = vi
+      .spyOn(RunJournal.prototype, "getPolicyCalibrationReport")
+      .mockImplementation(() => {
+        throw new Error("calibration unavailable");
+      });
+
+    try {
+      const policy = await resolveRepositoryPolicy("acme", "platform-ui");
+
+      expect(policy).not.toBeNull();
+      expect(policy?.recommendations).toEqual([]);
+    } finally {
+      calibrationSpy.mockRestore();
+    }
   });
 });

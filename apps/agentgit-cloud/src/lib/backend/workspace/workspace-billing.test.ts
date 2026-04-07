@@ -84,6 +84,7 @@ describe("workspace billing backend", () => {
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
       repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
       invites: [
         { name: "Riley", email: "riley@acme.dev", role: "member" },
         { name: "Ari", email: "ari@acme.dev", role: "admin" },
@@ -112,6 +113,7 @@ describe("workspace billing backend", () => {
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
       repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
       invites: [{ name: "Riley", email: "riley@acme.dev", role: "member" }],
       defaultNotificationChannel: "slack",
       policyPack: "guarded",

@@ -82,4 +82,43 @@ describe("repository snapshot restore route", () => {
     expect(body.snapshotId).toBe("snap_01");
     expect(body.plan.strategy).toBe("restore_snapshot");
   });
+
+  it("queues a connector-backed restore execution for an authorized admin", async () => {
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+    restoreRepositorySnapshot.mockResolvedValue({
+      snapshotId: "snap_01",
+      commandId: "cmd_restore_01",
+      connectorId: "conn_01",
+      queuedAt: "2026-04-07T15:11:00Z",
+      message: "Restore queued for geoffrey-mbp.",
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/repositories/acme/platform-ui/snapshots/snap_01/restore", {
+        method: "POST",
+        body: JSON.stringify({ intent: "execute" }),
+      }),
+      {
+        params: Promise.resolve({ owner: "acme", name: "platform-ui", snapshotId: "snap_01" }),
+      },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(restoreRepositorySnapshot).toHaveBeenCalledWith(
+      "acme",
+      "platform-ui",
+      "snap_01",
+      "execute",
+      expect.any(String),
+      "ws_acme_01",
+    );
+    expect(body.commandId).toBe("cmd_restore_01");
+  });
 });

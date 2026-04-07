@@ -242,6 +242,9 @@ function getLocalRecommendations(repoRoot: string, compiledPolicy: ReturnType<ty
     return recommendPolicyThresholds(report.report, compiledPolicy, {
       min_samples: 5,
     });
+  } catch {
+    // Policy reads should degrade gracefully even when calibration history is malformed or incomplete.
+    return [];
   } finally {
     journal.close();
   }

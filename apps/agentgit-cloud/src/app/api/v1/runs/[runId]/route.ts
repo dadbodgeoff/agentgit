@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireApiSession } from "@/lib/auth/api-session";
-import { withAuthorityClient } from "@/lib/backend/authority/client";
+import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
 import { mapTimelineToRunDetail } from "@/lib/backend/authority/contracts";
 import { toAuthorityRouteErrorResponse } from "@/lib/backend/authority/route-errors";
 import { getRunFixture } from "@/mocks/fixtures";
@@ -17,7 +17,7 @@ export async function GET(
   context: { params: Promise<{ runId: string }> },
 ): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const { unauthorized } = await requireApiSession();
+  const { unauthorized, workspaceSession } = await requireApiSession();
 
   if (unauthorized) {
     return unauthorized;
@@ -41,7 +41,9 @@ export async function GET(
   }
 
   try {
-    const runDetail = await withAuthorityClient((client) => client.queryTimeline(runId));
+    const runDetail = await withWorkspaceAuthorityClient(workspaceSession.activeWorkspace.id, (client) =>
+      client.queryTimeline(runId),
+    );
     return jsonWithRequestId(mapTimelineToRunDetail(runDetail), undefined, requestId);
   } catch (error) {
     return toAuthorityRouteErrorResponse(error, "Could not load run detail. Retry.", {

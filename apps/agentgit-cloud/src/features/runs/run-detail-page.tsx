@@ -1,9 +1,12 @@
 "use client";
 
+import Link from "next/link";
+
 import { Button, Card, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow } from "@/components/primitives";
 import { PageStatePanel } from "@/components/feedback";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 import { getApiErrorMessage } from "@/lib/api/client";
+import { actionDetailRoute } from "@/lib/navigation/routes";
 import { useRunDetailQuery } from "@/lib/query/hooks";
 import type { PreviewState } from "@/schemas/cloud";
 import { formatAbsoluteDate, formatRelativeTimestamp } from "@/lib/utils/format";
@@ -80,7 +83,16 @@ export function RunDetailPage({
                 <TableRow key={step.id}>
                   <TableCell>
                     <div className="space-y-1">
-                      <div className="font-medium">{step.title}</div>
+                      {step.actionId ? (
+                        <Link
+                          className="ag-focus-ring rounded-sm font-medium text-[var(--ag-text-primary)] underline-offset-4 hover:text-[var(--ag-color-brand)] hover:underline"
+                          href={actionDetailRoute(owner, name, runId, step.actionId)}
+                        >
+                          {step.title}
+                        </Link>
+                      ) : (
+                        <div className="font-medium">{step.title}</div>
+                      )}
                       <div className="text-xs text-[var(--ag-text-secondary)]">{step.summary}</div>
                     </div>
                   </TableCell>

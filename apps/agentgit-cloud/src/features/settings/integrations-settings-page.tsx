@@ -10,11 +10,18 @@ import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedba
 import { MetricCard, PageHeader } from "@/components/composites";
 import { Badge, Button, Card, Input, ToastCard, ToastViewport } from "@/components/primitives";
 import { ApiClientError } from "@/lib/api/client";
+import {
+  dispatchConnectorCommand,
+  issueConnectorBootstrapToken,
+  retryConnectorCommand,
+  revokeConnector,
+} from "@/lib/api/endpoints/connectors";
 import { sendIntegrationTest, updateWorkspaceIntegrations } from "@/lib/api/endpoints/integrations";
-import { useWorkspaceIntegrationsQuery } from "@/lib/query/hooks";
+import { useWorkspaceConnectorsQuery, useWorkspaceIntegrationsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAbsoluteDate, formatNumber, formatRelativeTimestamp } from "@/lib/utils/format";
 import {
+  type ConnectorBootstrapResponse,
   WorkspaceIntegrationUpdateSchema,
   type IntegrationHealthStatus,
   type IntegrationTestChannel,
@@ -58,8 +65,13 @@ type IntegrationToast = {
 export function IntegrationsSettingsPage() {
   const queryClient = useQueryClient();
   const integrationsQuery = useWorkspaceIntegrationsQuery();
+  const connectorsQuery = useWorkspaceConnectorsQuery();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [toast, setToast] = useState<IntegrationToast | null>(null);
+  const [bootstrapDetails, setBootstrapDetails] = useState<ConnectorBootstrapResponse | null>(null);
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string>("");
+  const [commitMessage, setCommitMessage] = useState("chore: sync local AgentGit connector changes");
+  const [pullRequestTitle, setPullRequestTitle] = useState("AgentGit governed update");
 
   const form = useForm<WorkspaceIntegrationUpdate>({
     resolver: zodResolver(WorkspaceIntegrationUpdateSchema),
@@ -111,6 +123,17 @@ export function IntegrationsSettingsPage() {
 
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!connectorsQuery.data?.items.length) {
+      setSelectedConnectorId("");
+      return;
+    }
+
+    if (!selectedConnectorId || !connectorsQuery.data.items.some((item) => item.id === selectedConnectorId)) {
+      setSelectedConnectorId(connectorsQuery.data.items[0]!.id);
+    }
+  }, [connectorsQuery.data, selectedConnectorId]);
 
   const saveMutation = useMutation({
     mutationFn: (values: WorkspaceIntegrationUpdate) => updateWorkspaceIntegrations(values),
@@ -185,7 +208,94 @@ export function IntegrationsSettingsPage() {
     },
   });
 
+  const bootstrapMutation = useMutation({
+    mutationFn: () => issueConnectorBootstrapToken(),
+    onSuccess: (result) => {
+      setBootstrapDetails(result);
+      setToast({
+        title: "Bootstrap token ready",
+        message: "Use the generated command locally to register the connector.",
+        tone: "success",
+      });
+    },
+    onError: () => {
+      setToast({
+        title: "Bootstrap failed",
+        message: "Could not issue a connector bootstrap token.",
+        tone: "warning",
+      });
+    },
+  });
+
+  const commandMutation = useMutation({
+    mutationFn: ({
+      connectorId,
+      request,
+    }: {
+      connectorId: string;
+      request:
+        | { type: "refresh_repo_state"; forceFullSync?: boolean }
+        | { type: "create_commit"; message: string; stageAll: boolean }
+        | { type: "push_branch"; branch?: string; setUpstream?: boolean }
+        | { type: "open_pull_request"; title: string; baseBranch?: string; draft?: boolean };
+    }) => dispatchConnectorCommand(connectorId, request),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.connectors }).catch(() => undefined);
+      setToast({
+        title: "Connector command queued",
+        message: result.message,
+        tone: "success",
+      });
+    },
+    onError: () => {
+      setToast({
+        title: "Command failed",
+        message: "Could not queue the connector command.",
+        tone: "warning",
+      });
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: (commandId: string) => retryConnectorCommand(commandId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.connectors }).catch(() => undefined);
+      setToast({
+        title: "Command retried",
+        message: result.message,
+        tone: "success",
+      });
+    },
+    onError: () => {
+      setToast({
+        title: "Retry failed",
+        message: "Could not re-queue the connector command.",
+        tone: "warning",
+      });
+    },
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (connectorId: string) => revokeConnector(connectorId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.connectors }).catch(() => undefined);
+      setToast({
+        title: "Connector revoked",
+        message: result.message,
+        tone: "warning",
+      });
+    },
+    onError: () => {
+      setToast({
+        title: "Revoke failed",
+        message: "Could not revoke the connector.",
+        tone: "warning",
+      });
+    },
+  });
+
   const values = watch();
+  const selectedConnector = connectorsQuery.data?.items.find((item) => item.id === selectedConnectorId) ?? null;
   const activeChannels = useMemo(() => {
     let total = 1;
 
@@ -502,6 +612,282 @@ export function IntegrationsSettingsPage() {
           </Card>
 
           <Card className="space-y-4">
+            <h2 className="text-lg font-semibold">Connector sync</h2>
+            <p className="text-sm text-[var(--ag-text-secondary)]">
+              The cloud control plane can now bootstrap local connectors, observe repo and journal state, and queue the first git write-back commands.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={bootstrapMutation.isPending}
+                onClick={() => bootstrapMutation.mutate()}
+                size="sm"
+                variant="secondary"
+              >
+                {bootstrapMutation.isPending ? "Generating..." : "Generate bootstrap token"}
+              </Button>
+              <Button
+                disabled={!selectedConnector || commandMutation.isPending}
+                onClick={() =>
+                  selectedConnector
+                    ? commandMutation.mutate({
+                        connectorId: selectedConnector.id,
+                        request: {
+                          type: "refresh_repo_state",
+                          forceFullSync: true,
+                        },
+                      })
+                    : undefined
+                }
+                size="sm"
+                variant="secondary"
+              >
+                Queue sync now
+              </Button>
+            </div>
+
+            {bootstrapDetails ? (
+              <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
+                <div className="font-semibold text-[var(--ag-text-primary)]">Bootstrap command</div>
+                <div className="mt-2 break-all font-mono text-xs">{bootstrapDetails.commandHint}</div>
+                <div className="mt-2">Expires {formatAbsoluteDate(bootstrapDetails.expiresAt)}</div>
+              </div>
+            ) : null}
+
+            {connectorsQuery.isPending ? (
+              <LoadingSkeleton className="w-full" lines={4} />
+            ) : connectorsQuery.isError ? (
+              <div className="rounded-[var(--ag-radius-md)] border border-[color:rgb(239_68_68_/_0.25)] bg-[var(--ag-bg-error)] px-4 py-3 text-sm text-[var(--ag-color-error)]">
+                Could not load connector state. Retry.
+              </div>
+            ) : !connectorsQuery.data?.items.length ? (
+              <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
+                No local connectors have registered for this workspace yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  {connectorsQuery.data.items.map((connector) => (
+                    <button
+                      className={
+                        connector.id === selectedConnectorId
+                          ? "ag-focus-ring flex w-full items-start justify-between gap-3 rounded-[var(--ag-radius-md)] border border-[var(--ag-color-brand)] bg-[var(--ag-bg-elevated)] p-3 text-left"
+                          : "ag-focus-ring flex w-full items-start justify-between gap-3 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] p-3 text-left hover:border-[var(--ag-border-strong)]"
+                      }
+                      key={connector.id}
+                      onClick={() => setSelectedConnectorId(connector.id)}
+                      type="button"
+                    >
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold text-[var(--ag-text-primary)]">{connector.machineName}</div>
+                        <div className="text-xs text-[var(--ag-text-secondary)]">
+                          {connector.repositoryOwner}/{connector.repositoryName} on {connector.currentBranch}
+                        </div>
+                      </div>
+                      <Badge tone={connector.daemonReachable ? "success" : "warning"}>
+                        {connector.status === "revoked"
+                          ? "revoked"
+                          : connector.daemonReachable
+                            ? "daemon reachable"
+                            : "daemon offline"}
+                      </Badge>
+                    </button>
+                  ))}
+                </div>
+
+                {selectedConnector ? (
+                  <div className="space-y-3 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-[var(--ag-text-primary)]">{selectedConnector.connectorName}</div>
+                        <div className="text-xs text-[var(--ag-text-secondary)]">
+                          Last seen {formatRelativeTimestamp(selectedConnector.lastSeenAt)}
+                        </div>
+                        {selectedConnector.statusReason ? (
+                          <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">{selectedConnector.statusReason}</div>
+                        ) : null}
+                      </div>
+                      <Badge tone={selectedConnector.isDirty ? "warning" : "success"}>
+                        {selectedConnector.isDirty ? "dirty workspace" : "clean workspace"}
+                      </Badge>
+                    </div>
+
+                    <div className="grid gap-2 text-xs text-[var(--ag-text-secondary)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Head SHA</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">{selectedConnector.headSha.slice(0, 12)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Pending commands</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">{formatNumber(selectedConnector.pendingCommandCount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Leased commands</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">{formatNumber(selectedConnector.leasedCommandCount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Retryable commands</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">{formatNumber(selectedConnector.retryableCommandCount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Synced events</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">{formatNumber(selectedConnector.eventCount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Last command</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">
+                          {selectedConnector.lastCommand
+                            ? `${selectedConnector.lastCommand.type} / ${selectedConnector.lastCommand.status}`
+                            : "none"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <Input
+                      helpText="Queues the first cloud-driven local git commit through the connector runtime."
+                      id="connector-commit-message"
+                      label="Commit message"
+                      onChange={(event) => setCommitMessage(event.target.value)}
+                      value={commitMessage}
+                    />
+
+                    <Input
+                      helpText="Queues a provider-backed pull request on the selected connector after the branch is pushed."
+                      id="connector-pr-title"
+                      label="Pull request title"
+                      onChange={(event) => setPullRequestTitle(event.target.value)}
+                      value={pullRequestTitle}
+                    />
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        disabled={commandMutation.isPending || commitMessage.trim().length === 0}
+                        onClick={() =>
+                          commandMutation.mutate({
+                            connectorId: selectedConnector.id,
+                            request: {
+                              type: "create_commit",
+                              message: commitMessage.trim(),
+                              stageAll: true,
+                            },
+                          })
+                        }
+                        size="sm"
+                      >
+                        Queue create commit
+                      </Button>
+                      <Button
+                        disabled={commandMutation.isPending}
+                        onClick={() =>
+                          commandMutation.mutate({
+                            connectorId: selectedConnector.id,
+                            request: {
+                              type: "push_branch",
+                              setUpstream: false,
+                            },
+                          })
+                        }
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Queue push branch
+                      </Button>
+                      <Button
+                        disabled={commandMutation.isPending || pullRequestTitle.trim().length === 0}
+                        onClick={() =>
+                          commandMutation.mutate({
+                            connectorId: selectedConnector.id,
+                            request: {
+                              type: "open_pull_request",
+                              title: pullRequestTitle.trim(),
+                            },
+                          })
+                        }
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Queue open PR
+                      </Button>
+                      <Button
+                        disabled={
+                          retryMutation.isPending ||
+                          !selectedConnector.recentCommands.some(
+                            (command) => command.status === "failed" || command.status === "expired",
+                          )
+                        }
+                        onClick={() => {
+                          const retryable = selectedConnector.recentCommands.find(
+                            (command) => command.status === "failed" || command.status === "expired",
+                          );
+                          if (retryable) {
+                            retryMutation.mutate(retryable.commandId);
+                          }
+                        }}
+                        size="sm"
+                        variant="secondary"
+                      >
+                        Retry last failed command
+                      </Button>
+                      <Button
+                        disabled={revokeMutation.isPending || selectedConnector.status === "revoked"}
+                        onClick={() => revokeMutation.mutate(selectedConnector.id)}
+                        size="sm"
+                        variant="destructive"
+                      >
+                        {selectedConnector.status === "revoked" ? "Connector revoked" : "Revoke connector"}
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] p-3">
+                      <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Recent command history</div>
+                      <div className="space-y-2">
+                        {selectedConnector.recentCommands.length === 0 ? (
+                          <div className="text-xs text-[var(--ag-text-secondary)]">No connector commands recorded yet.</div>
+                        ) : (
+                          selectedConnector.recentCommands.map((command) => (
+                            <div className="rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] px-3 py-2" key={command.commandId}>
+                              <div className="flex items-center justify-between gap-3 text-xs">
+                                <span className="font-medium text-[var(--ag-text-primary)]">
+                                  {command.type} / {command.status}
+                                </span>
+                                <span className="font-mono text-[var(--ag-text-secondary)]">
+                                  attempt {formatNumber(command.attemptCount)}
+                                </span>
+                              </div>
+                              <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
+                                Updated {formatRelativeTimestamp(command.updatedAt)}
+                                {command.leaseExpiresAt ? ` · lease expires ${formatAbsoluteDate(command.leaseExpiresAt)}` : ""}
+                              </div>
+                              {command.message ? (
+                                <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">{command.message}</div>
+                              ) : null}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] p-3">
+                      <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Recent synced events</div>
+                      <div className="space-y-2">
+                        {selectedConnector.recentEvents.length === 0 ? (
+                          <div className="text-xs text-[var(--ag-text-secondary)]">No connector events have synced yet.</div>
+                        ) : (
+                          selectedConnector.recentEvents.map((event) => (
+                            <div className="flex items-center justify-between gap-3 rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] px-3 py-2 text-xs" key={event.eventId}>
+                              <span className="font-medium text-[var(--ag-text-primary)]">{event.type}</span>
+                              <span className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(event.occurredAt)}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </Card>
+
+          <Card className="space-y-4">
             <h2 className="text-lg font-semibold">Current health</h2>
             <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">
               <div className="flex items-center justify-between gap-3">
@@ -526,10 +912,15 @@ export function IntegrationsSettingsPage() {
               <div>- admin-only integrations settings route</div>
               <div>- protected GitHub app and notification config API</div>
               <div>- test notification success/error mutation states</div>
+              <div>- connector bootstrap tokens and workspace connector inventory</div>
+              <div>- command queue plus acknowledgements for local connector execution</div>
+              <div>- first local git commit and push write-back command path</div>
+              <div>- provider-backed GitHub pull request queueing through the connector</div>
+              <div>- operator retry and revoke controls for connector fleet management</div>
+              <div>- recent command and event diagnostics per registered connector</div>
               <div className="mt-3">Next queued:</div>
-              <div>- replace fixture-backed dashboard and repositories with real backend contracts</div>
-              <div>- remove development credentials before production launch</div>
-              <div>- wire external providers once backend contracts are stable</div>
+              <div>- replace remaining placeholder activity, audit, and action-detail surfaces</div>
+              <div>- authority-backed live updates for approvals, dashboard, calibration, and operator views</div>
             </div>
           </Card>
         </div>

@@ -91,6 +91,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     workspaceName: payload.data.workspaceName,
     workspaceSlug: payload.data.workspaceSlug,
     repositoryIds: payload.data.repositoryIds,
+    members: [
+      {
+        name: access.workspaceSession.user.name,
+        email: access.workspaceSession.user.email,
+        role: access.workspaceSession.activeWorkspace.role,
+      },
+    ],
     invites: payload.data.invites,
     defaultNotificationChannel: payload.data.defaultNotificationChannel,
     policyPack: payload.data.policyPack,

@@ -30,7 +30,7 @@ import { hasAtLeastRole } from "@/lib/rbac/roles";
 import type {
   PreviewState,
   RepositorySnapshotListItem,
-  SnapshotRestoreExecuteResponse,
+  SnapshotRestoreExecutionResult,
   SnapshotRestorePreview,
 } from "@/schemas/cloud";
 import { formatAbsoluteDate, formatConfidence, formatNumber, formatRelativeTimestamp } from "@/lib/utils/format";
@@ -134,16 +134,23 @@ export function RepositorySnapshotsPage({
 
   const restoreMutation = useMutation({
     mutationFn: (snapshotId: string) => executeSnapshotRestore(owner, name, snapshotId),
-    onSuccess: (result: SnapshotRestoreExecuteResponse) => {
+    onSuccess: (result: SnapshotRestoreExecutionResult) => {
       setPanelError(null);
-      setRestorePreview({
-        snapshotId: result.snapshotId,
-        plan: result.plan,
-      });
-      setToast({
-        tone: result.outcome === "compensated" ? "warning" : "success",
-        message: result.message,
-      });
+      if ("plan" in result) {
+        setRestorePreview({
+          snapshotId: result.snapshotId,
+          plan: result.plan,
+        });
+        setToast({
+          tone: result.outcome === "compensated" ? "warning" : "success",
+          message: result.message,
+        });
+      } else {
+        setToast({
+          tone: "success",
+          message: result.message,
+        });
+      }
       void queryClient.invalidateQueries({ queryKey: queryKeys.repositorySnapshots(owner, name) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.repository(owner, name) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.runs(owner, name) });
@@ -367,7 +374,7 @@ export function RepositorySnapshotsPage({
                   <div>
                     <div className="text-sm font-medium text-[var(--ag-text-primary)]">Admin restore controls</div>
                     <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
-                      Preview the recovery plan before executing a restore through the authority daemon.
+                      Preview the recovery plan before queueing a governed restore onto the local connector.
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-3">
@@ -399,12 +406,12 @@ export function RepositorySnapshotsPage({
                         restoreMutation.mutate(selectedSnapshot.snapshotId);
                       }}
                     >
-                      {restoreMutation.isPending ? "Restoring..." : "Execute restore"}
+                      {restoreMutation.isPending ? "Queueing restore..." : "Execute restore"}
                     </Button>
                   </div>
                   {!snapshots.authorityReachable ? (
                     <div className="text-sm text-[var(--ag-status-warning)]">
-                      The authority daemon is offline, so restore planning and execution are temporarily unavailable.
+                      The authority daemon is offline, so restore planning and connector execution are temporarily unavailable.
                     </div>
                   ) : null}
                   {selectedSnapshot.integrityStatus !== "verified" ? (

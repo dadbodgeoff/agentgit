@@ -7,7 +7,7 @@ import {
   RepositoryPolicyValidationSchema,
   RepositorySnapshotsResponseSchema,
   RepositoryRunsResponseSchema,
-  SnapshotRestoreExecuteResponseSchema,
+  SnapshotRestoreExecutionResultSchema,
   SnapshotRestorePreviewSchema,
   type PreviewState,
   type RepositoryDetail,
@@ -17,7 +17,7 @@ import {
   type RepositoryPolicyValidation,
   type RepositorySnapshotsResponse,
   type RepositoryRunsResponse,
-  type SnapshotRestoreExecuteResponse,
+  type SnapshotRestoreExecutionResult,
   type SnapshotRestorePreview,
 } from "@/schemas/cloud";
 
@@ -144,7 +144,7 @@ export async function executeSnapshotRestore(
   owner: string,
   name: string,
   snapshotId: string,
-): Promise<SnapshotRestoreExecuteResponse> {
+): Promise<SnapshotRestoreExecutionResult> {
   const response = await fetchJson<unknown>(
     `/api/v1/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/snapshots/${encodeURIComponent(snapshotId)}/restore`,
     {
@@ -153,5 +153,5 @@ export async function executeSnapshotRestore(
     },
   );
 
-  return SnapshotRestoreExecuteResponseSchema.parse(response);
+  return SnapshotRestoreExecutionResultSchema.parse(response);
 }

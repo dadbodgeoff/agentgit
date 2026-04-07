@@ -36,9 +36,19 @@ This file captures scaffolding issues that surfaced during implementation and th
 - Workspace-state fallback behavior now seeds repository scope from live inventory, preventing admin saves like team updates from unintentionally hiding every repository before onboarding has explicitly narrowed scope.
 - Repository snapshots are now a real member-visible recovery surface with journal-backed inventory, manifest integrity checks, admin restore-plan and execute contracts, and authenticated smoke coverage against seeded snapshot state.
 - Repository snapshot path matching now normalizes real filesystem paths, preventing valid `/var` versus `/private/var` workspace roots from being silently excluded on macOS.
+- The first cloud sync/control-plane substrate now exists in the repo through shared sync schemas, durable connector/control-plane state packages, local connector outbox/client primitives, and cloud-side `/api/v1/sync/*` registration, heartbeat, event-ingestion, and command-pull routes.
+- The connector path is now operational end to end: admins can issue bootstrap tokens from the integrations surface, the local connector can register and sync real repo plus journal state, cloud commands now support acknowledgements, and the first local git write-back flow (`create_commit` plus `push_branch`) is wired through the connector runtime with package and browser coverage.
+- Connector command dispatch now uses durable execution leases with reclaim semantics, so commands that are acknowledged but not completed can be safely surfaced for retry instead of being stranded indefinitely.
+- Snapshot restore execution is now a real connector-backed command path: cloud plans remain synchronous, while execute requests are queued onto the local connector for governed workspace recovery and journaled completion.
+- Provider-backed pull request creation is now wired through the connector command path for GitHub-backed repositories, so local governed commit and push flows can culminate in a hosted PR without bypassing AgentGit audit and command control.
+- Connector fleet operations now surface retryable work, active lease counts, recent events, recent commands, and explicit revocation controls from the authenticated cloud UI instead of relying on raw control-plane state alone.
+- Activity, audit, and action detail are now real workspace surfaces backed by journal and control-plane data, replacing the last major placeholder route family for governed execution history.
+- Live updates now flow through an authenticated server-sent events channel that invalidates approvals, dashboard, calibration, activity, audit, and connector query state when workspace runtime signatures change.
 
 ## Next Up
 
-- Replace the remaining placeholder product surfaces such as activity, audit, and action detail with real backend contracts.
-- Add authority-daemon-backed live updates and reconnect handling so approvals, dashboard, and calibration data stay fresh without manual reloads.
+- Reconcile local repository identity with provider-backed metadata so cloud-facing repository records are not derived from local git parsing alone.
+- Expand the connector control surface into fuller fleet management views, including longer command and event history, connector diagnostics, and operator drill-down.
+- Extend restore execution beyond the first queued path with richer operator feedback, command detail, and post-recovery validation rails.
+- Harden live updates with stronger reconnect and backoff behavior plus broader coverage for additional query families as the product surface grows.
 - Tighten deployment hygiene by resolving the existing Next ESLint plugin configuration warning and the TypeScript project-references build warning.

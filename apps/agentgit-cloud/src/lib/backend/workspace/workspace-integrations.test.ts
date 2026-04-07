@@ -85,9 +85,9 @@ describe("workspace integrations backend", () => {
 
     const snapshot = resolveWorkspaceIntegrations(buildWorkspaceSession());
 
-    expect(snapshot.githubOrgName).toBe("acme");
-    expect(snapshot.githubAppInstalled).toBe(true);
-    expect(snapshot.webhookStatus).toBe("healthy");
+    expect(snapshot.githubOrgName).toBe("acme-platform");
+    expect(snapshot.githubAppInstalled).toBe(false);
+    expect(snapshot.webhookStatus).toBe("warning");
   });
 
   it("persists integration settings and supports test delivery on enabled channels", () => {
@@ -102,6 +102,7 @@ describe("workspace integrations backend", () => {
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
       repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "admin" }],
       invites: [],
       defaultNotificationChannel: "slack",
       policyPack: "guarded",

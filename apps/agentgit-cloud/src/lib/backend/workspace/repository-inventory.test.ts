@@ -142,6 +142,7 @@ describe("repository inventory backend adapter", () => {
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
       repositoryIds: [fullInventory.items[0]!.id],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
       invites: [],
       defaultNotificationChannel: "slack",
       policyPack: "guarded",
@@ -152,5 +153,19 @@ describe("repository inventory backend adapter", () => {
 
     expect(filteredInventory.items).toHaveLength(1);
     expect(filteredInventory.items[0]!.id).toBe(fullInventory.items[0]!.id);
+  });
+
+  it("returns no repositories when the workspace has no persisted repository scope", () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    createRun(repoRoot, "execution.completed");
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    const inventory = listRepositoryInventory("ws_unknown");
+
+    expect(inventory.items).toHaveLength(0);
+    expect(inventory.total).toBe(0);
   });
 });

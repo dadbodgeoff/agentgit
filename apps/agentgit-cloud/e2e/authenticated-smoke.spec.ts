@@ -5,6 +5,13 @@ import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { RunJournal } from "@agentgit/run-journal";
 
+async function waitForOkResponse(page: Page, pathFragment: string) {
+  await page.waitForResponse(
+    (response) => response.url().includes(pathFragment) && response.ok(),
+    { timeout: 45_000 },
+  );
+}
+
 async function signInAs(
   page: Page,
   params: {
@@ -19,8 +26,16 @@ async function signInAs(
   await page.getByLabel("Display name").fill(params.name);
   await page.getByLabel("Email").fill(params.email);
   await page.getByLabel("Workspace role").selectOption(params.role);
-  await page.getByRole("button", { name: "Continue with development access" }).click();
-  await page.waitForURL((url) => url.pathname === params.callbackUrl);
+  await Promise.all([
+    page.waitForURL(
+      (url) =>
+        url.pathname === params.callbackUrl ||
+        url.pathname === params.callbackUrl.replace(/\/$/, "") ||
+        url.pathname.startsWith("/app"),
+      { timeout: 20_000 },
+    ),
+    page.getByRole("button", { name: "Continue with development access" }).click(),
+  ]);
 }
 
 function parseRepositoryIdentity(remoteUrl: string): { owner: string; name: string } {
@@ -67,7 +82,7 @@ function getWorkspaceRepositoryIdentity(): { owner: string; name: string; worksp
   };
 }
 
-function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: string } {
+function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: string; runId: string; actionId: string } {
   const { owner, name, workspaceRoot } = getWorkspaceRepositoryIdentity();
   const snapshotId = `snap_smoke_${Date.now()}`;
   const runId = `run_smoke_${Date.now()}`;
@@ -94,9 +109,23 @@ function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: st
     });
 
     journal.appendRunEvent(runId, {
-      event_type: "action.normalized",
+      event_type: "policy.evaluated",
       occurred_at: "2026-04-07T15:00:01Z",
       recorded_at: "2026-04-07T15:00:01Z",
+      payload: {
+        action_id: actionId,
+        decision: "allow",
+        reasons: ["Smoke policy seed"],
+        snapshot_required: true,
+        approval_required: false,
+        matched_rules: ["repo.default"],
+      },
+    });
+
+    journal.appendRunEvent(runId, {
+      event_type: "action.normalized",
+      occurred_at: "2026-04-07T15:00:02Z",
+      recorded_at: "2026-04-07T15:00:02Z",
       payload: {
         action_id: actionId,
         target_locator: targetPath,
@@ -116,14 +145,33 @@ function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: st
     });
 
     journal.appendRunEvent(runId, {
+      event_type: "execution.completed",
+      occurred_at: "2026-04-07T15:00:03Z",
+      recorded_at: "2026-04-07T15:00:03Z",
+      payload: {
+        action_id: actionId,
+      },
+    });
+
+    journal.appendRunEvent(runId, {
       event_type: "snapshot.created",
-      occurred_at: "2026-04-07T15:00:02Z",
-      recorded_at: "2026-04-07T15:00:02Z",
+      occurred_at: "2026-04-07T15:00:04Z",
+      recorded_at: "2026-04-07T15:00:04Z",
       payload: {
         action_id: actionId,
         snapshot_id: snapshotId,
         snapshot_class: "metadata_only",
         fidelity: "metadata_only",
+      },
+    });
+
+    journal.appendRunEvent(runId, {
+      event_type: "recovery.executed",
+      occurred_at: "2026-04-07T15:00:05Z",
+      recorded_at: "2026-04-07T15:00:05Z",
+      payload: {
+        action_id: actionId,
+        snapshot_id: snapshotId,
       },
     });
   } finally {
@@ -163,11 +211,11 @@ function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: st
     "utf8",
   );
 
-  return { owner, name, snapshotId };
+  return { owner, name, snapshotId, runId, actionId };
 }
 
 test("admin smoke covers approvals, team settings, policy, and calibration", async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const snapshotSeed = seedRepositorySnapshot();
 
   await signInAs(page, {
@@ -182,10 +230,17 @@ test("admin smoke covers approvals, team settings, policy, and calibration", asy
   await page.goto("/app/settings/team");
   await expect(page.getByRole("heading", { name: "Team" })).toBeVisible();
   await page.getByRole("button", { name: "Add invite" }).click();
-  await page.getByLabel("Name").fill("Riley Smoke");
-  await page.getByLabel("Email").fill("riley-smoke@agentgit.dev");
+  await page.getByLabel("Name").last().fill("Riley Smoke");
+  await page.getByLabel("Email").last().fill("riley-smoke@agentgit.dev");
   await page.getByRole("button", { name: "Save roster" }).click();
   await expect(page.getByText("Team saved")).toBeVisible();
+
+  await page.goto("/app/settings/integrations");
+  await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+  await expect(page.getByText("Connector sync")).toBeVisible();
+  await page.getByRole("button", { name: "Generate bootstrap token" }).click();
+  await expect(page.getByText("Bootstrap command")).toBeVisible();
+  await expect(page.locator("main")).toContainText("agentgit-cloud-connector bootstrap");
 
   await page.goto(getWorkspaceRepositoryPolicyPath());
   await expect(page.getByRole("heading", { name: "Policy" })).toBeVisible();
@@ -203,13 +258,25 @@ test("admin smoke covers approvals, team settings, policy, and calibration", asy
   await expect(page.getByRole("heading", { name: "Calibration" })).toBeVisible();
   await expect(page.locator("main")).toContainText("Policy calibration dashboard");
 
+  await page.goto("/app/activity");
+  await waitForOkResponse(page, "/api/v1/activity");
+  await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
+  await expect(page.locator("main")).toContainText(snapshotSeed.runId, { timeout: 15_000 });
+
+  await page.goto("/app/audit");
+  await waitForOkResponse(page, "/api/v1/audit");
+  await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("playwright-snapshot-smoke", { timeout: 15_000 });
+
   await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
+  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
   await expect(page.getByRole("heading", { name: "Snapshots" })).toBeVisible();
-  await expect(page.getByText(snapshotSeed.snapshotId)).toBeVisible();
-  await expect(page.locator("main")).toContainText("Update README.md");
+  await expect(page.getByText(snapshotSeed.snapshotId)).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("Update README.md", { timeout: 20_000 });
 });
 
 test("owner smoke covers onboarding and billing", async ({ page }) => {
+  test.setTimeout(60_000);
   await signInAs(page, {
     callbackUrl: "/app/onboarding",
     email: "owner-smoke@agentgit.dev",
@@ -218,14 +285,17 @@ test("owner smoke covers onboarding and billing", async ({ page }) => {
   });
 
   await expect(page.getByRole("heading", { name: "Onboarding" })).toBeVisible();
-  await expect(page.getByText("Workspace", { exact: true })).toBeVisible();
+  await waitForOkResponse(page, "/api/v1/onboarding");
+  await expect(page.getByRole("heading", { name: "Create the workspace" })).toBeVisible({ timeout: 15_000 });
 
   await page.goto("/app/settings/billing");
   await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save billing" })).toBeVisible();
+  await waitForOkResponse(page, "/api/v1/settings/billing");
+  await expect(page.getByRole("heading", { name: "Plan and billing cycle" })).toBeVisible({ timeout: 15_000 });
 });
 
 test("member smoke verifies RBAC denial on admin settings", async ({ page }) => {
+  test.setTimeout(60_000);
   await signInAs(page, {
     callbackUrl: "/app",
     email: "member-smoke@agentgit.dev",

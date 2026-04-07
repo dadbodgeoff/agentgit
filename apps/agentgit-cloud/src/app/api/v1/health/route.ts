@@ -1,5 +1,5 @@
 import { requireApiRole } from "@/lib/auth/api-session";
-import { withAuthorityClient } from "@/lib/backend/authority/client";
+import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { getCloudReadinessChecks, summarizeReadiness } from "@/lib/release/readiness";
 
@@ -12,7 +12,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const checks = getCloudReadinessChecks();
-  const authority = await withAuthorityClient(async () => ({
+  const authority = await withWorkspaceAuthorityClient(access.workspaceSession.activeWorkspace.id, async () => ({
     level: "ok" as const,
     message: "Authority daemon responded successfully.",
   })).catch((error) => ({

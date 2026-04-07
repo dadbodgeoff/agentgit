@@ -40,7 +40,7 @@ export function SignInCard({
     }
 
     if (errorMessage === "AccessDenied") {
-      return "Access was denied by the authentication provider.";
+      return "Access was denied because this GitHub account is not mapped to a workspace, or the workspace selection is ambiguous.";
     }
 
     return errorMessage;

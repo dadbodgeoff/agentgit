@@ -60,6 +60,7 @@ describe("workspace team backend", () => {
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
       repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "admin" }],
       invites: [{ name: "Riley", email: "riley@acme.dev", role: "member" }],
       defaultNotificationChannel: "slack",
       policyPack: "guarded",
@@ -87,6 +88,18 @@ describe("workspace team backend", () => {
 
     expect(response.team.members.filter((member) => member.status === "invited")).toHaveLength(2);
     expect(response.message).toContain("workspace state");
+    expect(getWorkspaceConnectionState("ws_acme_01")?.repositoryIds).toEqual(["repo_01"]);
+  });
+
+  it("preserves discovered repository visibility before onboarding state exists", () => {
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-team-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    const response = saveWorkspaceTeam(buildWorkspaceSession(), {
+      invites: [{ name: "Riley", email: "riley@acme.dev", role: "member" }],
+    });
+
+    expect(response.team.members.filter((member) => member.status === "invited")).toHaveLength(1);
     expect(getWorkspaceConnectionState("ws_acme_01")?.repositoryIds).toEqual(["repo_01"]);
   });
 });
