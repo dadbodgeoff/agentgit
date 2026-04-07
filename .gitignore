@@ -10,6 +10,7 @@ __pycache__
 coverage
 packages/*/coverage
 apps/*/coverage
+apps/*/.next
 packages/authority-sdk-py/build
 packages/authority-sdk-py/dist
 packages/authority-sdk-py/*.egg-info
