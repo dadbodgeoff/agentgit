@@ -1,3 +1,4 @@
+import type { RequestContext } from "@agentgit/core-ports";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -294,6 +295,7 @@ export interface HandleSubmitActionAttemptParams {
     hostedExecutionQueue: HostedExecutionQueue;
   }) => Promise<SubmitActionAttemptResponsePayload["execution_result"]>;
   request: RequestEnvelope<unknown>;
+  context: RequestContext;
 }
 
 export async function handleSubmitActionAttempt(

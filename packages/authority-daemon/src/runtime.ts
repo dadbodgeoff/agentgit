@@ -1,8 +1,11 @@
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { startServer } from "./server.js";
+import { bootstrapLocalDaemon } from "./app/bootstrap.js";
+import { type StartServerOptions } from "./stores/local-store-factory.js";
+import { UnixSocketTransport } from "./transports/unix-socket.js";
 
 export interface AuthorityDaemonRuntimeConfig {
   projectRoot: string;
@@ -55,7 +58,7 @@ export interface RunAuthorityDaemonOptions {
 export interface StartedAuthorityDaemon {
   config: AuthorityDaemonRuntimeConfig;
   summary: AuthorityDaemonListeningSummary;
-  server: Awaited<ReturnType<typeof startServer>>;
+  server: net.Server;
   shutdown: () => Promise<void>;
 }
 
@@ -161,7 +164,7 @@ export async function runAuthorityDaemon(
   config: AuthorityDaemonRuntimeConfig,
   options: RunAuthorityDaemonOptions = {},
 ): Promise<StartedAuthorityDaemon> {
-  const server = await startServer({
+  const startServerOptions: StartServerOptions = {
     socketPath: config.socketPath,
     workspaceRootPath: config.projectRoot,
     journalPath: config.journalPath,
@@ -182,6 +185,24 @@ export async function runAuthorityDaemon(
     policyCalibrationConfigPath: config.policyCalibrationConfigPath,
     policyConfigPath: config.policyConfigPath,
     artifactRetentionMs: config.artifactRetentionMs,
+  };
+
+  const { service, cleanup } = await bootstrapLocalDaemon(startServerOptions);
+  const unixTransport = new UnixSocketTransport({ socketPath: config.socketPath });
+  await unixTransport.listen((request, context) => service.dispatch(request, context));
+  const server = unixTransport.getServer()!;
+  let cleanupPromise: Promise<void> | null = null;
+  const runCleanup = (): Promise<void> => {
+    if (!cleanupPromise) {
+      cleanupPromise = (async () => {
+        service.close();
+        await cleanup();
+      })();
+    }
+    return cleanupPromise;
+  };
+  server.on("close", () => {
+    void runCleanup();
   });
 
   const summary = buildListeningSummary(config);
@@ -202,6 +223,7 @@ export async function runAuthorityDaemon(
         resolve();
       });
     });
+    await runCleanup();
     if (fs.existsSync(config.socketPath)) {
       fs.rmSync(config.socketPath, { force: true });
     }

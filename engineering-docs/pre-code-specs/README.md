@@ -31,6 +31,14 @@ Verification date for the versioned baselines in this folder: **2026-03-29**
 - `14-hosted-mcp-and-remote-trust-spec.md`
 - `15-policy-hardening-and-calibration-spec.md`
 
+## Cloud Product Frontend Specs
+
+Hosted cloud/frontend product specs live in:
+
+- `/Users/geoffreyfernald/Documents/agentgit/engineering-docs/pre-code-specs/cloud-product/README.md`
+
+That folder converts the current brand, design-system, and cloud implementation documents into repo-native Markdown and defines how future build decisions should be recorded.
+
 ## Verified Version Choices
 
 These are the launch baselines verified from primary sources before updating this doc set:

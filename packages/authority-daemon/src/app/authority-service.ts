@@ -1,0 +1,3143 @@
+import { createHash, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { RequestContext } from "@agentgit/core-ports";
+import { LocalEncryptedSecretStore, SessionCredentialBroker } from "@agentgit/credential-broker";
+import {
+  AdapterRegistry,
+  FilesystemExecutionAdapter,
+  FunctionExecutionAdapter,
+  McpExecutionAdapter,
+  OwnedDraftStore,
+  OwnedNoteStore,
+  OwnedTicketIntegration,
+  OwnedTicketStore,
+  parseDraftLabelLocator,
+  parseDraftLocator,
+  parseNoteLocator,
+  parseTicketAssigneeLocator,
+  parseTicketLabelLocator,
+  parseTicketLocator,
+  ShellExecutionAdapter,
+} from "@agentgit/execution-adapters";
+import {
+  classifyMcpNetworkScope,
+  extractContainerRegistryHost,
+  isContainerRegistryAllowed,
+  isDigestPinnedContainerImage,
+  McpPublicHostPolicyRegistry,
+  McpServerRegistry,
+  validateMcpServerDefinitions,
+} from "@agentgit/mcp-registry";
+import {
+  replayPolicyThresholds,
+  recommendPolicyThresholds,
+  validatePolicyConfigDocument,
+} from "@agentgit/policy-engine";
+import {
+  type CachedCapabilityState,
+  StaticCompensationRegistry,
+  createActionBoundaryReviewPlan,
+  executePathSubsetRecovery,
+  executeSnapshotRecovery,
+  loadRecoverySnapshotManifest,
+  planPathSubsetRecovery,
+  planSnapshotRecovery,
+} from "@agentgit/recovery-engine";
+import { createRunJournal, type RunJournal, type RunJournalEventRecord } from "@agentgit/run-journal";
+import { answerHelperQuery, projectTimelineView } from "@agentgit/timeline-helper";
+import {
+  API_VERSION,
+  type ActionRecord,
+  ActionRecordSchema,
+  AgentGitError,
+  type ApprovalInboxItem,
+  type DaemonMethod,
+  ActivateMcpServerProfileRequestPayloadSchema,
+  type ActivateMcpServerProfileResponsePayload,
+  ApproveMcpServerProfileRequestPayloadSchema,
+  type ApproveMcpServerProfileResponsePayload,
+  BindMcpServerCredentialsRequestPayloadSchema,
+  type BindMcpServerCredentialsResponsePayload,
+  DiagnosticsRequestPayloadSchema,
+  type DiagnosticsResponsePayload,
+  ExplainPolicyActionRequestPayloadSchema,
+  type ExplainPolicyActionResponsePayload,
+  CreateRunCheckpointRequestPayloadSchema,
+  type CreateRunCheckpointResponsePayload,
+  type ErrorEnvelope,
+  ExecuteRecoveryRequestPayloadSchema,
+  type ExecuteRecoveryResponsePayload,
+  type ExecutionResult,
+  GetEffectivePolicyRequestPayloadSchema,
+  type GetEffectivePolicyResponsePayload,
+  GetPolicyCalibrationReportRequestPayloadSchema,
+  type GetPolicyCalibrationReportResponsePayload,
+  GetPolicyThresholdReplayRequestPayloadSchema,
+  type GetPolicyThresholdReplayResponsePayload,
+  GetPolicyThresholdRecommendationsRequestPayloadSchema,
+  type GetPolicyThresholdRecommendationsResponsePayload,
+  GetCapabilitiesRequestPayloadSchema,
+  type GetCapabilitiesResponsePayload,
+  ListMcpServerTrustDecisionsRequestPayloadSchema,
+  type ListMcpServerTrustDecisionsResponsePayload,
+  ListMcpServerCredentialBindingsRequestPayloadSchema,
+  type ListMcpServerCredentialBindingsResponsePayload,
+  ListMcpServerCandidatesRequestPayloadSchema,
+  type ListMcpServerCandidatesResponsePayload,
+  ListMcpServerProfilesRequestPayloadSchema,
+  type ListMcpServerProfilesResponsePayload,
+  ListHostedMcpJobsRequestPayloadSchema,
+  type ListHostedMcpJobsResponsePayload,
+  ListMcpHostPoliciesRequestPayloadSchema,
+  type ListMcpHostPoliciesResponsePayload,
+  ListMcpSecretsRequestPayloadSchema,
+  type ListMcpSecretsResponsePayload,
+  ListMcpServersRequestPayloadSchema,
+  type ListMcpServersResponsePayload,
+  type HostedMcpExecutionAttestationRecord,
+  type HostedMcpExecutionJobRecord,
+  type HostedMcpExecutionLeaseRecord,
+  type ImportedMcpToolRecord,
+  type McpCredentialBindingRecord,
+  type McpServerCandidateRecord,
+  type McpServerRegistrationRecord,
+  type McpServerProfileRecord,
+  type McpServerTrustDecisionRecord,
+  type HelperQuestionType,
+  GetRunSummaryRequestPayloadSchema,
+  type GetRunSummaryResponsePayload,
+  GetMcpServerReviewRequestPayloadSchema,
+  type GetMcpServerReviewResponsePayload,
+  GetHostedMcpJobRequestPayloadSchema,
+  type GetHostedMcpJobResponsePayload,
+  HelloRequestPayloadSchema,
+  type HelloResponsePayload,
+  InternalError,
+  ListApprovalsRequestPayloadSchema,
+  type ListApprovalsResponsePayload,
+  RunMaintenanceRequestPayloadSchema,
+  type RunMaintenanceResponsePayload,
+  QueryApprovalInboxRequestPayloadSchema,
+  type QueryApprovalInboxResponsePayload,
+  QuarantineMcpServerProfileRequestPayloadSchema,
+  type QuarantineMcpServerProfileResponsePayload,
+  CancelHostedMcpJobRequestPayloadSchema,
+  type CancelHostedMcpJobResponsePayload,
+  RequeueHostedMcpJobRequestPayloadSchema,
+  type RequeueHostedMcpJobResponsePayload,
+  ResolveMcpServerCandidateRequestPayloadSchema,
+  type ResolveMcpServerCandidateResponsePayload,
+  RevokeMcpServerProfileRequestPayloadSchema,
+  type RevokeMcpServerProfileResponsePayload,
+  NotFoundError,
+  QueryHelperRequestPayloadSchema,
+  type QueryHelperResponsePayload,
+  QueryArtifactRequestPayloadSchema,
+  type QueryArtifactResponsePayload,
+  QueryTimelineRequestPayloadSchema,
+  type QueryTimelineResponsePayload,
+  PlanRecoveryRequestPayloadSchema,
+  type PlanRecoveryResponsePayload,
+  McpServerDefinitionSchema,
+  type McpPublicHostPolicy,
+  type McpServerDefinition,
+  RevokeMcpServerCredentialsRequestPayloadSchema,
+  type RevokeMcpServerCredentialsResponsePayload,
+  RemoveMcpHostPolicyRequestPayloadSchema,
+  type RemoveMcpHostPolicyResponsePayload,
+  RemoveMcpSecretRequestPayloadSchema,
+  type RemoveMcpSecretResponsePayload,
+  RemoveMcpServerRequestPayloadSchema,
+  type RemoveMcpServerResponsePayload,
+  type PolicyOutcomeRecord,
+  PreconditionError,
+  type ReasonDetail,
+  type RecoveryPlan,
+  type RecoveryTarget,
+  type RunCheckpointKind,
+  RegisterRunRequestPayloadSchema,
+  type RegisterRunResponsePayload,
+  ResolveApprovalRequestPayloadSchema,
+  type ResolveApprovalResponsePayload,
+  type RequestEnvelope,
+  RequestEnvelopeSchema,
+  type ResponseEnvelope,
+  SCHEMA_PACK_VERSION,
+  SubmitMcpServerCandidateRequestPayloadSchema,
+  type TimelineStep,
+  type SubmitMcpServerCandidateResponsePayload,
+  type SubmitActionAttemptResponsePayload,
+  UpsertMcpHostPolicyRequestPayloadSchema,
+  type UpsertMcpHostPolicyResponsePayload,
+  UpsertMcpSecretRequestPayloadSchema,
+  type UpsertMcpSecretResponsePayload,
+  UpsertMcpServerRequestPayloadSchema,
+  type UpsertMcpServerResponsePayload,
+  ValidatePolicyConfigRequestPayloadSchema,
+  type ValidatePolicyConfigResponsePayload,
+  ValidationError,
+  validate,
+  type VisibilityScope,
+} from "@agentgit/schemas";
+import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
+import { selectSnapshotClass } from "@agentgit/snapshot-engine";
+
+import { createPrefixedId } from "../ids.js";
+import {
+  handleSubmitActionAttempt as handleSubmitActionAttemptFlow,
+  prepareActionAttemptEvaluation,
+} from "../handlers/submit-action.js";
+import { HostedExecutionQueue } from "../hosted-execution-queue.js";
+import { HostedMcpWorkerClient } from "../hosted-worker-client.js";
+import {
+  loadPolicyRuntime,
+  reloadPolicyRuntime,
+  type LoadPolicyRuntimeOptions,
+  type PolicyRuntimeState,
+} from "../policy-runtime.js";
+import {
+  makeErrorResponse,
+  makeSuccessResponse,
+  replayStoredSuccessResponse,
+  toErrorEnvelope,
+} from "./response-helpers.js";
+import { getRequestContext as getRequestContextFromHelpers } from "./request-helpers.js";
+import type { ServiceDependencies, ServiceOptions } from "./types.js";
+import { canUseIdempotency as canUseIdempotencyHelper } from "./idempotency.js";
+import {
+  handleListApprovals as handleListApprovalsHandler,
+  handleQueryApprovalInbox as handleQueryApprovalInboxHandler,
+  handleResolveApproval as handleResolveApprovalHandler,
+} from "./handlers/approvals.js";
+import {
+  handleGetEffectivePolicy as handleGetEffectivePolicyHandler,
+  handleExplainPolicyAction as handleExplainPolicyActionHandler,
+  handleGetPolicyCalibrationReport as handleGetPolicyCalibrationReportHandler,
+  handleGetPolicyThresholdRecommendations as handleGetPolicyThresholdRecommendationsHandler,
+  handleHello as handleHelloHandler,
+  handleRegisterRun as handleRegisterRunHandler,
+  handleReplayPolicyThresholds as handleReplayPolicyThresholdsHandler,
+  handleValidatePolicyConfig as handleValidatePolicyConfigHandler,
+} from "./handlers/policy.js";
+import {
+  handleCreateRunCheckpoint as handleCreateRunCheckpointHandler,
+  handleGetRunSummary as handleGetRunSummaryHandler,
+} from "./handlers/run.js";
+import {
+  detectCapabilities as detectCapabilitiesHandler,
+  handleDiagnostics as handleDiagnosticsHandler,
+  handleGetCapabilities as handleGetCapabilitiesHandler,
+} from "./handlers/session.js";
+import {
+  handleQueryArtifact as handleQueryArtifactHandler,
+  handleQueryHelper as handleQueryHelperHandler,
+  handleQueryTimeline as handleQueryTimelineHandler,
+} from "./handlers/timeline.js";
+import {
+  handleExecuteRecovery as handleExecuteRecoveryHandler,
+  handlePlanRecovery as handlePlanRecoveryHandler,
+} from "./handlers/recovery.js";
+import {
+  executeHostedDelegatedMcpAction,
+  handleActivateMcpServerProfile,
+  handleApproveMcpServerProfile,
+  handleBindMcpServerCredentials,
+  handleCancelHostedMcpJob,
+  handleGetHostedMcpJob,
+  handleGetMcpServerReview,
+  handleListHostedMcpJobs,
+  handleListMcpHostPolicies,
+  handleListMcpSecrets,
+  handleListMcpServerCandidates,
+  handleListMcpServerCredentialBindings,
+  handleListMcpServerProfiles,
+  handleListMcpServers,
+  handleListMcpServerTrustDecisions,
+  handleQuarantineMcpServerProfile,
+  handleRemoveMcpHostPolicy,
+  handleRemoveMcpSecret,
+  handleRemoveMcpServer,
+  handleRequeueHostedMcpJob,
+  handleResolveMcpServerCandidate,
+  handleRevokeMcpServerCredentials,
+  handleRevokeMcpServerProfile,
+  handleSubmitMcpServerCandidate,
+  handleUpsertMcpHostPolicy,
+  handleUpsertMcpSecret,
+  handleUpsertMcpServer,
+} from "./handlers/mcp.js";
+import { executeGovernedAction as executeGovernedActionFlow } from "../services/action-execution.js";
+import {
+  deriveSnapshotCapabilityState as deriveSnapshotCapabilityStateService,
+  deriveSnapshotRunRiskContext as deriveSnapshotRunRiskContextService,
+} from "../services/snapshot-risk.js";
+import { AuthorityState } from "../state.js";
+
+const METHODS: DaemonMethod[] = [
+  "hello",
+  "register_run",
+  "get_run_summary",
+  "get_capabilities",
+  "get_effective_policy",
+  "validate_policy_config",
+  "get_policy_calibration_report",
+  "explain_policy_action",
+  "get_policy_threshold_recommendations",
+  "replay_policy_thresholds",
+  "list_mcp_servers",
+  "list_mcp_server_candidates",
+  "submit_mcp_server_candidate",
+  "list_mcp_server_profiles",
+  "resolve_mcp_server_candidate",
+  "list_mcp_server_trust_decisions",
+  "approve_mcp_server_profile",
+  "list_mcp_server_credential_bindings",
+  "bind_mcp_server_credentials",
+  "revoke_mcp_server_credentials",
+  "activate_mcp_server_profile",
+  "quarantine_mcp_server_profile",
+  "revoke_mcp_server_profile",
+  "upsert_mcp_server",
+  "remove_mcp_server",
+  "list_mcp_secrets",
+  "upsert_mcp_secret",
+  "remove_mcp_secret",
+  "list_mcp_host_policies",
+  "upsert_mcp_host_policy",
+  "remove_mcp_host_policy",
+  "get_hosted_mcp_job",
+  "list_hosted_mcp_jobs",
+  "requeue_hosted_mcp_job",
+  "cancel_hosted_mcp_job",
+  "get_mcp_server_review",
+  "diagnostics",
+  "run_maintenance",
+  "submit_action_attempt",
+  "list_approvals",
+  "query_approval_inbox",
+  "resolve_approval",
+  "query_timeline",
+  "query_helper",
+  "query_artifact",
+  "plan_recovery",
+  "execute_recovery",
+];
+const IDEMPOTENT_MUTATION_METHODS = new Set<DaemonMethod>([
+  "register_run",
+  "submit_mcp_server_candidate",
+  "resolve_mcp_server_candidate",
+  "approve_mcp_server_profile",
+  "bind_mcp_server_credentials",
+  "revoke_mcp_server_credentials",
+  "activate_mcp_server_profile",
+  "quarantine_mcp_server_profile",
+  "revoke_mcp_server_profile",
+  "upsert_mcp_server",
+  "remove_mcp_server",
+  "upsert_mcp_secret",
+  "remove_mcp_secret",
+  "upsert_mcp_host_policy",
+  "remove_mcp_host_policy",
+  "requeue_hosted_mcp_job",
+  "cancel_hosted_mcp_job",
+  "run_maintenance",
+  "submit_action_attempt",
+  "resolve_approval",
+  "execute_recovery",
+]);
+const RUNTIME_VERSION = "0.1.0";
+
+const MAX_ARTIFACT_RESPONSE_CHARS = 8_192;
+const CAPABILITY_REFRESH_STALE_MS = 5 * 60 * 1_000;
+const HELPER_FACT_WARM_VISIBILITY_SCOPES: VisibilityScope[] = ["user", "model", "internal", "sensitive_internal"];
+const HELPER_FACT_WARM_RUN_QUESTIONS: HelperQuestionType[] = [
+  "run_summary",
+  "what_happened",
+  "reversible_steps",
+  "why_blocked",
+  "likely_cause",
+  "suggest_likely_cause",
+  "identify_external_effects",
+  "external_side_effects",
+];
+const HELPER_FACT_WARM_STEP_QUESTIONS: HelperQuestionType[] = [
+  "step_details",
+  "explain_policy_decision",
+  "summarize_after_boundary",
+  "what_changed_after_step",
+  "revert_impact",
+  "preview_revert_loss",
+  "what_would_i_lose_if_i_revert_here",
+  "list_actions_touching_scope",
+];
+const POLICY_CALIBRATION_MIN_SAMPLES = 5;
+
+interface HelperProjectionContext {
+  visibility_scope: VisibilityScope;
+  redactions_applied: number;
+  preview_budget: QueryHelperResponsePayload["preview_budget"];
+  steps: TimelineStep[];
+  unavailable_artifacts_present: boolean;
+  artifact_state_digest: string;
+}
+
+function resolveCapabilityRefreshStaleMs(options?: { capabilityRefreshStaleMs?: number | null }): number {
+  if (typeof options?.capabilityRefreshStaleMs === "number") {
+    return Math.max(0, options.capabilityRefreshStaleMs);
+  }
+
+  const configured = process.env.AGENTGIT_CAPABILITY_REFRESH_STALE_MS?.trim();
+  if (!configured) {
+    return CAPABILITY_REFRESH_STALE_MS;
+  }
+
+  const parsed = Number.parseInt(configured, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new InternalError("Capability refresh stale threshold must be a non-negative integer.", {
+      configured_value: configured,
+      env_var: "AGENTGIT_CAPABILITY_REFRESH_STALE_MS",
+    });
+  }
+
+  return parsed;
+}
+
+function buildCachedCapabilityState(
+  journal: RunJournal,
+  runtimeOptions: { capabilityRefreshStaleMs?: number | null },
+): CachedCapabilityState | null {
+  const capabilitySnapshot = journal.getCapabilitySnapshot();
+  if (capabilitySnapshot === null) {
+    return null;
+  }
+
+  const capabilityRefreshStaleMs = resolveCapabilityRefreshStaleMs(runtimeOptions);
+  const refreshedAtMillis = Date.parse(capabilitySnapshot.refreshed_at);
+
+  return {
+    capabilities: capabilitySnapshot.capabilities,
+    degraded_mode_warnings: capabilitySnapshot.degraded_mode_warnings,
+    refreshed_at: capabilitySnapshot.refreshed_at,
+    stale_after_ms: capabilityRefreshStaleMs,
+    is_stale: !Number.isNaN(refreshedAtMillis) && Date.now() - refreshedAtMillis > capabilityRefreshStaleMs,
+  };
+}
+
+function capabilityReasonForRecord(capability: GetCapabilitiesResponsePayload["capabilities"][number]): ReasonDetail {
+  switch (capability.capability_name) {
+    case "workspace.root_access":
+      return {
+        code:
+          capability.status === "unavailable" ? "WORKSPACE_CAPABILITY_UNAVAILABLE" : "WORKSPACE_CAPABILITY_DEGRADED",
+        message: `Cached workspace access capability is ${capability.status}; governed workspace guarantees are not currently trustworthy.`,
+      };
+    case "host.runtime_storage":
+      return {
+        code:
+          capability.status === "unavailable"
+            ? "RUNTIME_STORAGE_CAPABILITY_UNAVAILABLE"
+            : "RUNTIME_STORAGE_CAPABILITY_DEGRADED",
+        message: `Cached runtime storage capability is ${capability.status}; durable snapshot and artifact guarantees are weakened.`,
+      };
+    case "adapter.tickets_brokered_credentials":
+      return {
+        code: capability.status === "unavailable" ? "BROKERED_CAPABILITY_UNAVAILABLE" : "BROKERED_CAPABILITY_DEGRADED",
+        message: `Cached ticket broker capability is ${capability.status}; trusted brokered ticket execution is not currently available.`,
+      };
+    case "host.credential_broker_mode":
+      return {
+        code: "CREDENTIAL_BROKER_MODE_DEGRADED",
+        message:
+          "Credential brokering is operating in a degraded mode, so durable secure-store guarantees are reduced.",
+      };
+    default:
+      return {
+        code: capability.status === "unavailable" ? "CAPABILITY_UNAVAILABLE" : "CAPABILITY_DEGRADED",
+        message: `Cached capability ${capability.capability_name} is ${capability.status}.`,
+      };
+  }
+}
+
+function primaryCapabilityReason(
+  capabilitySnapshot: ReturnType<RunJournal["getCapabilitySnapshot"]>,
+  capabilityRefreshStaleMs: number,
+): ReasonDetail | null {
+  if (!capabilitySnapshot) {
+    return {
+      code: "CAPABILITY_STATE_UNCACHED",
+      message: "Capability state has not been refreshed durably yet.",
+    };
+  }
+
+  const refreshedAtMillis = Date.parse(capabilitySnapshot.refreshed_at);
+  if (!Number.isNaN(refreshedAtMillis) && Date.now() - refreshedAtMillis > capabilityRefreshStaleMs) {
+    return {
+      code: "CAPABILITY_STATE_STALE",
+      message:
+        "Latest capability refresh is stale; rerun capability_refresh if the host or workspace may have changed.",
+    };
+  }
+
+  const firstUnavailable = capabilitySnapshot.capabilities.find((capability) => capability.status === "unavailable");
+  if (firstUnavailable) {
+    return capabilityReasonForRecord(firstUnavailable);
+  }
+
+  const firstDegraded = capabilitySnapshot.capabilities.find((capability) => capability.status === "degraded");
+  if (firstDegraded) {
+    return capabilityReasonForRecord(firstDegraded);
+  }
+
+  const firstWarning = capabilitySnapshot.degraded_mode_warnings[0];
+  return firstWarning
+    ? {
+        code: "CAPABILITY_WARNING",
+        message: firstWarning,
+      }
+    : null;
+}
+
+function primaryStorageReason(overview: ReturnType<RunJournal["getDiagnosticsOverview"]>): ReasonDetail | null {
+  if (overview.maintenance_status.degraded_artifact_capture_actions > 0) {
+    return {
+      code: "DEGRADED_ARTIFACT_CAPTURE",
+      message: `${overview.maintenance_status.degraded_artifact_capture_actions} action(s) completed with degraded durable evidence capture.`,
+    };
+  }
+
+  if (overview.maintenance_status.low_disk_pressure_signals > 0) {
+    return {
+      code: "LOW_DISK_PRESSURE_OBSERVED",
+      message: `${overview.maintenance_status.low_disk_pressure_signals} low-disk pressure signal(s) were recorded while storing evidence.`,
+    };
+  }
+
+  if (overview.maintenance_status.artifact_health.missing > 0) {
+    return {
+      code: "ARTIFACT_BLOB_MISSING",
+      message: `${overview.maintenance_status.artifact_health.missing} artifact blob(s) are missing.`,
+    };
+  }
+
+  if (overview.maintenance_status.artifact_health.expired > 0) {
+    return {
+      code: "ARTIFACT_BLOB_EXPIRED",
+      message: `${overview.maintenance_status.artifact_health.expired} artifact blob(s) have expired by retention policy.`,
+    };
+  }
+
+  if (overview.maintenance_status.artifact_health.corrupted > 0) {
+    return {
+      code: "ARTIFACT_BLOB_CORRUPTED",
+      message: `${overview.maintenance_status.artifact_health.corrupted} artifact blob(s) are structurally corrupted.`,
+    };
+  }
+
+  if (overview.maintenance_status.artifact_health.tampered > 0) {
+    return {
+      code: "ARTIFACT_BLOB_TAMPERED",
+      message: `${overview.maintenance_status.artifact_health.tampered} artifact blob(s) failed integrity verification.`,
+    };
+  }
+
+  return null;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function normalizeRecoveryTarget(payload: { snapshot_id?: string; target?: RecoveryTarget }): RecoveryTarget {
+  if (payload.target) {
+    return payload.target;
+  }
+
+  return {
+    type: "snapshot_id",
+    snapshot_id: payload.snapshot_id as string,
+  };
+}
+
+function eventPayloadRecord(event: RunJournalEventRecord): Record<string, unknown> {
+  return isObject(event.payload) ? event.payload : {};
+}
+
+function eventPayloadString(event: RunJournalEventRecord, key: string): string | null {
+  const value = eventPayloadRecord(event)[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function eventActionId(event: RunJournalEventRecord): string | null {
+  return eventPayloadString(event, "action_id");
+}
+
+function parseEventTimestampMillis(value: string): number {
+  const millis = Date.parse(value);
+  return Number.isNaN(millis) ? 0 : millis;
+}
+
+function parseRunCheckpointToken(runCheckpoint: string): { runId: string; sequence: number } {
+  const separatorIndex = runCheckpoint.lastIndexOf("#");
+  if (separatorIndex <= 0 || separatorIndex === runCheckpoint.length - 1) {
+    throw new PreconditionError("Malformed run checkpoint target.", {
+      run_checkpoint: runCheckpoint,
+      expected_format: "<run_id>#<snapshot_sequence>",
+    });
+  }
+
+  const runId = runCheckpoint.slice(0, separatorIndex);
+  const sequence = Number.parseInt(runCheckpoint.slice(separatorIndex + 1), 10);
+  if (!Number.isInteger(sequence) || sequence <= 0) {
+    throw new PreconditionError("Malformed run checkpoint target.", {
+      run_checkpoint: runCheckpoint,
+      expected_format: "<run_id>#<snapshot_sequence>",
+    });
+  }
+
+  return { runId, sequence };
+}
+
+function buildSyntheticCheckpointAction(params: {
+  run_id: string;
+  session_id: string;
+  workspace_root: string;
+  checkpoint_kind: RunCheckpointKind;
+  reason?: string;
+}): ActionRecord {
+  const now = new Date().toISOString();
+  const checkpointLabel = params.checkpoint_kind === "hard_checkpoint" ? "hard checkpoint" : "checkpoint";
+  return ActionRecordSchema.parse({
+    schema_version: "action.v1",
+    action_id: `act_checkpoint_${randomUUID().replaceAll("-", "")}`,
+    run_id: params.run_id,
+    session_id: params.session_id,
+    status: "normalized",
+    timestamps: {
+      requested_at: now,
+      normalized_at: now,
+    },
+    provenance: {
+      mode: "governed",
+      source: "authority_daemon.checkpoint",
+      confidence: 1,
+    },
+    actor: {
+      type: "system",
+      tool_name: "agentgit_checkpoint",
+      tool_kind: "function",
+    },
+    operation: {
+      domain: "filesystem",
+      kind: "checkpoint_workspace",
+      name: "checkpoint_workspace",
+      display_name: `Create ${checkpointLabel}`,
+    },
+    execution_path: {
+      surface: "observer",
+      mode: "imported",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "workspace",
+        locator: params.workspace_root,
+        label: path.basename(params.workspace_root),
+      },
+      scope: {
+        breadth: "workspace",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: {
+        checkpoint_kind: params.checkpoint_kind,
+        ...(params.reason ? { reason: params.reason } : {}),
+      },
+      redacted: {
+        checkpoint_kind: params.checkpoint_kind,
+        ...(params.reason ? { reason: params.reason } : {}),
+      },
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: "read_only",
+      external_effects: "none",
+      reversibility_hint: "reversible",
+      sensitivity_hint: "moderate",
+      batch: false,
+    },
+    facets: {
+      checkpoint_kind: params.checkpoint_kind,
+      ...(params.reason ? { checkpoint_reason: params.reason } : {}),
+    },
+    normalization: {
+      mapper: "authority_daemon.synthetic_checkpoint",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: 1,
+    },
+    confidence_assessment: {
+      engine_version: "authority_daemon.synthetic_checkpoint.v1",
+      score: 1,
+      band: "high",
+      requires_human_review: false,
+      factors: [
+        {
+          factor_id: "synthetic_checkpoint",
+          label: "Synthetic checkpoint request",
+          kind: "baseline",
+          delta: 1,
+          rationale: "AgentGit created this deliberate recovery boundary directly.",
+        },
+      ],
+    },
+  });
+}
+
+function canonicalExternalObject(locator: string): { externalObjectId: string; canonicalLocator: string } | null {
+  const draftLabel = parseDraftLabelLocator(locator);
+  if (draftLabel) {
+    return {
+      externalObjectId: draftLabel.draftId,
+      canonicalLocator: `drafts://message_draft/${draftLabel.draftId}`,
+    };
+  }
+
+  const draftId = parseDraftLocator(locator);
+  if (draftId) {
+    return {
+      externalObjectId: draftId,
+      canonicalLocator: `drafts://message_draft/${draftId}`,
+    };
+  }
+
+  const noteId = parseNoteLocator(locator);
+  if (noteId) {
+    return {
+      externalObjectId: noteId,
+      canonicalLocator: `notes://workspace_note/${noteId}`,
+    };
+  }
+
+  const ticketLabel = parseTicketLabelLocator(locator);
+  if (ticketLabel) {
+    return {
+      externalObjectId: ticketLabel.ticketId,
+      canonicalLocator: `tickets://issue/${ticketLabel.ticketId}`,
+    };
+  }
+
+  const ticketAssignee = parseTicketAssigneeLocator(locator);
+  if (ticketAssignee) {
+    return {
+      externalObjectId: ticketAssignee.ticketId,
+      canonicalLocator: `tickets://issue/${ticketAssignee.ticketId}`,
+    };
+  }
+
+  const ticketId = parseTicketLocator(locator);
+  if (ticketId) {
+    return {
+      externalObjectId: ticketId,
+      canonicalLocator: `tickets://issue/${ticketId}`,
+    };
+  }
+
+  return null;
+}
+
+interface ActionBoundaryContext {
+  runId: string;
+  actionId: string;
+  normalizedEvent: RunJournalEventRecord;
+  snapshotId: string | null;
+  laterActionsAffected: number;
+  overlappingPaths: string[];
+}
+
+interface RunCheckpointContext {
+  runId: string;
+  actionId: string | null;
+  snapshotId: string;
+  sequence: number;
+}
+
+function findSnapshotBoundaryContext(
+  journal: RunJournal,
+  runId: string,
+  sequence: number,
+  errorContext: Record<string, unknown>,
+): RunCheckpointContext {
+  const runSummary = journal.getRunSummary(runId);
+  if (!runSummary) {
+    throw new NotFoundError(`No run found for ${runId}.`, {
+      run_id: runId,
+      ...errorContext,
+    });
+  }
+
+  const checkpointEvent = journal
+    .listRunEvents(runId)
+    .find((event) => event.sequence === sequence && event.event_type === "snapshot.created");
+  if (!checkpointEvent) {
+    throw new NotFoundError(`No persisted checkpoint found for run ${runId} at sequence ${sequence}.`, {
+      run_id: runId,
+      sequence,
+      ...errorContext,
+    });
+  }
+
+  const snapshotId = eventPayloadString(checkpointEvent, "snapshot_id");
+  if (!snapshotId) {
+    throw new PreconditionError("Checkpoint does not reference a persisted snapshot.", {
+      run_id: runId,
+      sequence,
+      ...errorContext,
+    });
+  }
+
+  return {
+    runId,
+    actionId: eventActionId(checkpointEvent),
+    snapshotId,
+    sequence,
+  };
+}
+
+function findActionBoundaryContext(journal: RunJournal, actionId: string): ActionBoundaryContext {
+  for (const run of journal.listAllRuns()) {
+    const events = journal.listRunEvents(run.run_id);
+    const normalizedEvent = events.find(
+      (event) => event.event_type === "action.normalized" && eventActionId(event) === actionId,
+    );
+
+    if (!normalizedEvent) {
+      continue;
+    }
+
+    const snapshotCreatedEvent =
+      events.find((event) => event.event_type === "snapshot.created" && eventActionId(event) === actionId) ?? null;
+    const snapshotId = snapshotCreatedEvent ? eventPayloadString(snapshotCreatedEvent, "snapshot_id") : null;
+    const targetLocator = eventPayloadString(normalizedEvent, "target_locator");
+    const laterActionIds = new Set<string>();
+
+    for (const event of events) {
+      if (event.sequence <= normalizedEvent.sequence || event.event_type !== "action.normalized") {
+        continue;
+      }
+
+      const laterActionId = eventActionId(event);
+      if (!laterActionId || laterActionId === actionId) {
+        continue;
+      }
+
+      const laterTargetLocator = eventPayloadString(event, "target_locator");
+      if (targetLocator && laterTargetLocator === targetLocator) {
+        laterActionIds.add(laterActionId);
+      }
+    }
+
+    return {
+      runId: run.run_id,
+      actionId,
+      normalizedEvent,
+      snapshotId,
+      laterActionsAffected: laterActionIds.size,
+      overlappingPaths: targetLocator && laterActionIds.size > 0 ? [targetLocator] : [],
+    };
+  }
+
+  throw new NotFoundError(`No recovery boundary found for action ${actionId}.`, {
+    action_id: actionId,
+  });
+}
+
+function findExternalObjectBoundaryContext(journal: RunJournal, externalObjectId: string): ActionBoundaryContext {
+  let latestMatch: {
+    actionId: string;
+    occurredAtMillis: number;
+    recordedAtMillis: number;
+    sequence: number;
+  } | null = null;
+  const matchingLocators = new Set<string>();
+
+  for (const run of journal.listAllRuns()) {
+    const events = journal.listRunEvents(run.run_id);
+
+    for (const event of events) {
+      if (event.event_type !== "action.normalized") {
+        continue;
+      }
+
+      const actionId = eventActionId(event);
+      const targetLocator = eventPayloadString(event, "target_locator");
+      if (!actionId || !targetLocator) {
+        continue;
+      }
+
+      const resolvedObject = canonicalExternalObject(targetLocator);
+      if (!resolvedObject || resolvedObject.externalObjectId !== externalObjectId) {
+        continue;
+      }
+
+      matchingLocators.add(resolvedObject.canonicalLocator);
+
+      const candidate = {
+        actionId,
+        occurredAtMillis: parseEventTimestampMillis(event.occurred_at),
+        recordedAtMillis: parseEventTimestampMillis(event.recorded_at),
+        sequence: event.sequence,
+      };
+
+      if (
+        !latestMatch ||
+        candidate.occurredAtMillis > latestMatch.occurredAtMillis ||
+        (candidate.occurredAtMillis === latestMatch.occurredAtMillis &&
+          candidate.recordedAtMillis > latestMatch.recordedAtMillis) ||
+        (candidate.occurredAtMillis === latestMatch.occurredAtMillis &&
+          candidate.recordedAtMillis === latestMatch.recordedAtMillis &&
+          candidate.sequence > latestMatch.sequence)
+      ) {
+        latestMatch = candidate;
+      }
+    }
+  }
+
+  if (!latestMatch) {
+    throw new NotFoundError(`No recovery boundary found for external object ${externalObjectId}.`, {
+      external_object_id: externalObjectId,
+    });
+  }
+
+  if (matchingLocators.size > 1) {
+    throw new PreconditionError("External object recovery target is ambiguous across multiple object families.", {
+      external_object_id: externalObjectId,
+      matching_locators: Array.from(matchingLocators).sort(),
+    });
+  }
+
+  return findActionBoundaryContext(journal, latestMatch.actionId);
+}
+
+function findRunCheckpointContext(journal: RunJournal, runCheckpoint: string): RunCheckpointContext {
+  const parsed = parseRunCheckpointToken(runCheckpoint);
+  return findSnapshotBoundaryContext(journal, parsed.runId, parsed.sequence, {
+    run_checkpoint: runCheckpoint,
+  });
+}
+
+function findBranchPointContext(
+  journal: RunJournal,
+  target: Extract<RecoveryTarget, { type: "branch_point" }>,
+): RunCheckpointContext {
+  return findSnapshotBoundaryContext(journal, target.run_id, target.sequence, {
+    branch_point: {
+      run_id: target.run_id,
+      sequence: target.sequence,
+    },
+  });
+}
+
+function retargetRecoveryPlan(plan: RecoveryPlan, target: RecoveryTarget): RecoveryPlan {
+  return {
+    ...plan,
+    target,
+  };
+}
+
+function createActionBoundaryPlan(journal: RunJournal, actionId: string): RecoveryPlan {
+  const context = findActionBoundaryContext(journal, actionId);
+  const operation = eventPayloadRecord(context.normalizedEvent).operation;
+  const riskHints = eventPayloadRecord(context.normalizedEvent).risk_hints;
+  const displayName =
+    operation &&
+    typeof operation === "object" &&
+    typeof (operation as Record<string, unknown>).display_name === "string"
+      ? ((operation as Record<string, unknown>).display_name as string)
+      : null;
+
+  return createActionBoundaryReviewPlan({
+    action_id: actionId,
+    target_locator: eventPayloadString(context.normalizedEvent, "target_locator") ?? `action:${actionId}`,
+    operation_domain:
+      operation && typeof operation === "object" && typeof (operation as Record<string, unknown>).domain === "string"
+        ? ((operation as Record<string, unknown>).domain as string)
+        : "unknown",
+    display_name: displayName,
+    side_effect_level:
+      riskHints &&
+      typeof riskHints === "object" &&
+      typeof (riskHints as Record<string, unknown>).side_effect_level === "string"
+        ? ((riskHints as Record<string, unknown>).side_effect_level as string)
+        : null,
+    external_effects:
+      riskHints &&
+      typeof riskHints === "object" &&
+      typeof (riskHints as Record<string, unknown>).external_effects === "string"
+        ? ((riskHints as Record<string, unknown>).external_effects as string)
+        : null,
+    reversibility_hint:
+      riskHints &&
+      typeof riskHints === "object" &&
+      typeof (riskHints as Record<string, unknown>).reversibility_hint === "string"
+        ? ((riskHints as Record<string, unknown>).reversibility_hint as string)
+        : null,
+    later_actions_affected: context.laterActionsAffected,
+    overlapping_paths: context.overlappingPaths,
+  });
+}
+
+export function createCredentialBroker(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    mcpSecretStorePath?: string;
+    mcpSecretKeyPath?: string;
+  } = {},
+): SessionCredentialBroker {
+  const env = options.env ?? process.env;
+  const mcpSecretStore =
+    options.mcpSecretStorePath && options.mcpSecretKeyPath
+      ? new LocalEncryptedSecretStore({
+          dbPath: options.mcpSecretStorePath,
+          keyPath: options.mcpSecretKeyPath,
+        })
+      : null;
+  const broker = new SessionCredentialBroker({
+    mcpSecretStore,
+  });
+  const ticketsBaseUrl = env.AGENTGIT_TICKETS_BASE_URL?.trim() ?? "";
+  const ticketsToken = env.AGENTGIT_TICKETS_BEARER_TOKEN?.trim() ?? "";
+
+  if (ticketsBaseUrl.length === 0 && ticketsToken.length === 0) {
+    return broker;
+  }
+
+  if (ticketsBaseUrl.length === 0 || ticketsToken.length === 0) {
+    throw new InternalError("Tickets broker configuration is incomplete.", {
+      requires: ["AGENTGIT_TICKETS_BASE_URL", "AGENTGIT_TICKETS_BEARER_TOKEN"],
+    });
+  }
+
+  broker.registerBearerProfile({
+    integration: "tickets",
+    profile_id: "credprof_tickets",
+    base_url: ticketsBaseUrl,
+    token: ticketsToken,
+    scopes: ["tickets:write"],
+  });
+  return broker;
+}
+
+export function createMcpServerRegistryFromEnv(env: NodeJS.ProcessEnv = process.env): McpServerDefinition[] {
+  const rawConfig = env.AGENTGIT_MCP_SERVERS_JSON?.trim() ?? "";
+  if (rawConfig.length === 0) {
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawConfig);
+  } catch (error) {
+    throw new InternalError("MCP server registry configuration is not valid JSON.", {
+      env_var: "AGENTGIT_MCP_SERVERS_JSON",
+      cause: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  try {
+    return validateMcpServerDefinitions(validate(McpServerDefinitionSchema.array(), parsed));
+  } catch (error) {
+    if (error instanceof AgentGitError) {
+      throw new InternalError(error.message, {
+        env_var: "AGENTGIT_MCP_SERVERS_JSON",
+        ...(error.details ?? {}),
+      });
+    }
+
+    throw error;
+  }
+}
+
+export function createOwnedCompensationRegistry(
+  draftStore: OwnedDraftStore,
+  noteStore: OwnedNoteStore,
+  ticketIntegration: OwnedTicketIntegration,
+): StaticCompensationRegistry {
+  return new StaticCompensationRegistry([
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          (manifest.operation_kind === "update_ticket" || manifest.operation_kind === "restore_ticket") &&
+          manifest.target_path.startsWith("tickets://issue/") &&
+          Boolean(manifest.captured_preimage)
+        );
+      },
+      buildCandidate({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+
+        return {
+          strategy: "restore_owned_ticket_preimage",
+          confidence: 0.84,
+          steps: [
+            {
+              step_id: `step_restore_ticket_${ticketId}`,
+              type: "restore_owned_ticket_preimage",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_restore"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [
+              "Verify the external ticket status, title, body, labels, and assignees match the captured preimage after recovery executes.",
+            ],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+        if (!manifest.captured_preimage) {
+          throw new PreconditionError("Owned ticket update recovery requires captured preimage metadata.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            ticket_id: ticketId,
+          });
+        }
+
+        await ticketIntegration.restoreTicketFromSnapshot(ticketId, manifest.captured_preimage);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "delete_ticket" &&
+          manifest.target_path.startsWith("tickets://issue/") &&
+          Boolean(manifest.captured_preimage)
+        );
+      },
+      buildCandidate({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+
+        return {
+          strategy: "restore_owned_ticket_preimage",
+          confidence: 0.85,
+          steps: [
+            {
+              step_id: `step_restore_deleted_ticket_${ticketId}`,
+              type: "restore_owned_ticket_preimage",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_restore"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [
+              "Verify the external ticket has been recreated with its prior status, labels, and assignees after recovery executes.",
+            ],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+        if (!manifest.captured_preimage) {
+          throw new PreconditionError("Owned ticket delete recovery requires captured preimage metadata.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            ticket_id: ticketId,
+          });
+        }
+
+        await ticketIntegration.restoreTicketFromSnapshot(ticketId, manifest.captured_preimage);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "create_ticket" &&
+          manifest.target_path.startsWith("tickets://issue/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+
+        return {
+          strategy: "delete_owned_ticket",
+          confidence: 0.83,
+          steps: [
+            {
+              step_id: `step_delete_ticket_${ticketId}`,
+              type: "delete_owned_ticket",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_delete"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the external ticket no longer exists after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+        await ticketIntegration.deleteTicket(ticketId);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "close_ticket" &&
+          manifest.target_path.startsWith("tickets://issue/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+
+        return {
+          strategy: "reopen_owned_ticket",
+          confidence: 0.82,
+          steps: [
+            {
+              step_id: `step_reopen_ticket_${ticketId}`,
+              type: "reopen_owned_ticket",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_reopen"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the external ticket is active again after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+        await ticketIntegration.reopenTicket(ticketId);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "reopen_ticket" &&
+          manifest.target_path.startsWith("tickets://issue/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+
+        return {
+          strategy: "close_owned_ticket",
+          confidence: 0.82,
+          steps: [
+            {
+              step_id: `step_close_ticket_${ticketId}`,
+              type: "close_owned_ticket",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_close"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the external ticket is closed after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const ticketId = parseTicketLocator(manifest.target_path) ?? `ticket_${manifest.action_id}`;
+        await ticketIntegration.closeTicket(ticketId);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "add_label" &&
+          Boolean(parseTicketLabelLocator(manifest.target_path))
+        );
+      },
+      buildCandidate({ manifest }) {
+        const labelTarget = parseTicketLabelLocator(manifest.target_path);
+        const ticketId = labelTarget?.ticketId ?? `ticket_${manifest.action_id}`;
+        const label = labelTarget?.label ?? "unknown";
+
+        return {
+          strategy: "remove_owned_ticket_label",
+          confidence: 0.88,
+          steps: [
+            {
+              step_id: `step_remove_ticket_label_${ticketId}`,
+              type: "remove_owned_ticket_label",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_label_remove"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [`Verify label "${label}" is absent from the external ticket after recovery executes.`],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const labelTarget = parseTicketLabelLocator(manifest.target_path);
+        if (!labelTarget) {
+          throw new PreconditionError("Owned ticket label recovery requires a concrete label target.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            target_path: manifest.target_path,
+          });
+        }
+
+        await ticketIntegration.removeLabel(labelTarget.ticketId, labelTarget.label);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "remove_label" &&
+          Boolean(parseTicketLabelLocator(manifest.target_path))
+        );
+      },
+      buildCandidate({ manifest }) {
+        const labelTarget = parseTicketLabelLocator(manifest.target_path);
+        const ticketId = labelTarget?.ticketId ?? `ticket_${manifest.action_id}`;
+        const label = labelTarget?.label ?? "unknown";
+
+        return {
+          strategy: "add_owned_ticket_label",
+          confidence: 0.88,
+          steps: [
+            {
+              step_id: `step_add_ticket_label_${ticketId}`,
+              type: "add_owned_ticket_label",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_label_add"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [`Verify label "${label}" is present on the external ticket after recovery executes.`],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const labelTarget = parseTicketLabelLocator(manifest.target_path);
+        if (!labelTarget) {
+          throw new PreconditionError("Owned ticket label removal recovery requires a concrete label target.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            target_path: manifest.target_path,
+          });
+        }
+
+        await ticketIntegration.addLabel(labelTarget.ticketId, labelTarget.label);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "assign_user" &&
+          Boolean(parseTicketAssigneeLocator(manifest.target_path))
+        );
+      },
+      buildCandidate({ manifest }) {
+        const assigneeTarget = parseTicketAssigneeLocator(manifest.target_path);
+        const ticketId = assigneeTarget?.ticketId ?? `ticket_${manifest.action_id}`;
+        const userId = assigneeTarget?.userId ?? "unknown";
+
+        return {
+          strategy: "unassign_owned_ticket_user",
+          confidence: 0.88,
+          steps: [
+            {
+              step_id: `step_unassign_ticket_user_${ticketId}`,
+              type: "unassign_owned_ticket_user",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_user_unassign"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [
+              `Verify user "${userId}" is no longer assigned to the external ticket after recovery executes.`,
+            ],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const assigneeTarget = parseTicketAssigneeLocator(manifest.target_path);
+        if (!assigneeTarget) {
+          throw new PreconditionError("Owned ticket assignment recovery requires a concrete assignee target.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            target_path: manifest.target_path,
+          });
+        }
+
+        await ticketIntegration.unassignUser(assigneeTarget.ticketId, assigneeTarget.userId);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "unassign_user" &&
+          Boolean(parseTicketAssigneeLocator(manifest.target_path))
+        );
+      },
+      buildCandidate({ manifest }) {
+        const assigneeTarget = parseTicketAssigneeLocator(manifest.target_path);
+        const ticketId = assigneeTarget?.ticketId ?? `ticket_${manifest.action_id}`;
+        const userId = assigneeTarget?.userId ?? "unknown";
+
+        return {
+          strategy: "assign_owned_ticket_user",
+          confidence: 0.88,
+          steps: [
+            {
+              step_id: `step_assign_ticket_user_${ticketId}`,
+              type: "assign_owned_ticket_user",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["ticket_user_assign"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned tickets integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [`Verify user "${userId}" is assigned to the external ticket after recovery executes.`],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const assigneeTarget = parseTicketAssigneeLocator(manifest.target_path);
+        if (!assigneeTarget) {
+          throw new PreconditionError("Owned ticket unassignment recovery requires a concrete assignee target.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            target_path: manifest.target_path,
+          });
+        }
+
+        await ticketIntegration.assignUser(assigneeTarget.ticketId, assigneeTarget.userId);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "create_note" &&
+          manifest.target_path.startsWith("notes://workspace_note/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+
+        return {
+          strategy: "archive_owned_note",
+          confidence: 0.79,
+          steps: [
+            {
+              step_id: `step_archive_note_${noteId}`,
+              type: "archive_owned_note",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["note_archive"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned notes integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the workspace note is archived in the owned notes store after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+        const archived = await noteStore.archiveNote(noteId);
+        if (!archived) {
+          throw new NotFoundError("Owned note no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            note_id: noteId,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "archive_note" &&
+          manifest.target_path.startsWith("notes://workspace_note/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+
+        return {
+          strategy: "unarchive_owned_note",
+          confidence: 0.8,
+          steps: [
+            {
+              step_id: `step_unarchive_note_${noteId}`,
+              type: "unarchive_owned_note",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["note_unarchive"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned notes integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the workspace note returns to active status after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+        const unarchived = await noteStore.unarchiveNote(noteId);
+        if (!unarchived) {
+          throw new NotFoundError("Owned note no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            note_id: noteId,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "unarchive_note" &&
+          manifest.target_path.startsWith("notes://workspace_note/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+
+        return {
+          strategy: "archive_owned_note",
+          confidence: 0.8,
+          steps: [
+            {
+              step_id: `step_archive_note_${noteId}`,
+              type: "archive_owned_note",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["note_archive"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned notes integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the workspace note is archived after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+        const archived = await noteStore.archiveNote(noteId);
+        if (!archived) {
+          throw new NotFoundError("Owned note no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            note_id: noteId,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          (manifest.operation_kind === "update_note" ||
+            manifest.operation_kind === "restore_note" ||
+            manifest.operation_kind === "delete_note") &&
+          manifest.target_path.startsWith("notes://workspace_note/") &&
+          Boolean(manifest.captured_preimage)
+        );
+      },
+      buildCandidate({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+
+        return {
+          strategy: "restore_owned_note_preimage",
+          confidence: 0.84,
+          steps: [
+            {
+              step_id: `step_restore_note_${noteId}`,
+              type: "restore_owned_note_preimage",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["note_restore"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned notes integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [
+              "Verify the workspace note title and body match the pre-update version after recovery executes.",
+            ],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const noteId = parseNoteLocator(manifest.target_path) ?? `note_${manifest.action_id}`;
+        if (!manifest.captured_preimage) {
+          throw new PreconditionError("Owned note recovery requires captured preimage metadata.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            note_id: noteId,
+          });
+        }
+
+        await noteStore.restoreNoteFromSnapshot(noteId, manifest.captured_preimage);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "add_label" &&
+          Boolean(parseDraftLabelLocator(manifest.target_path))
+        );
+      },
+      buildCandidate({ manifest }) {
+        const labelTarget = parseDraftLabelLocator(manifest.target_path);
+        const draftId = labelTarget?.draftId ?? `draft_${manifest.action_id}`;
+        const label = labelTarget?.label ?? "unknown";
+
+        return {
+          strategy: "remove_owned_draft_label",
+          confidence: 0.89,
+          steps: [
+            {
+              step_id: `step_remove_label_${draftId}`,
+              type: "remove_owned_draft_label",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["draft_label_remove"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned drafts integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [`Verify label "${label}" is absent from the owned draft after recovery executes.`],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const labelTarget = parseDraftLabelLocator(manifest.target_path);
+        if (!labelTarget) {
+          throw new PreconditionError("Owned draft label recovery requires a concrete label target.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            target_path: manifest.target_path,
+          });
+        }
+
+        const updated = await draftStore.removeLabel(labelTarget.draftId, labelTarget.label);
+        if (!updated) {
+          throw new NotFoundError("Owned draft no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            draft_id: labelTarget.draftId,
+            label: labelTarget.label,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "remove_label" &&
+          Boolean(parseDraftLabelLocator(manifest.target_path))
+        );
+      },
+      buildCandidate({ manifest }) {
+        const labelTarget = parseDraftLabelLocator(manifest.target_path);
+        const draftId = labelTarget?.draftId ?? `draft_${manifest.action_id}`;
+        const label = labelTarget?.label ?? "unknown";
+
+        return {
+          strategy: "add_owned_draft_label",
+          confidence: 0.89,
+          steps: [
+            {
+              step_id: `step_add_label_${draftId}`,
+              type: "add_owned_draft_label",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["draft_label_add"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned drafts integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [`Verify label "${label}" is present on the owned draft after recovery executes.`],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const labelTarget = parseDraftLabelLocator(manifest.target_path);
+        if (!labelTarget) {
+          throw new PreconditionError("Owned draft label removal recovery requires a concrete label target.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            target_path: manifest.target_path,
+          });
+        }
+
+        const updated = await draftStore.addLabel(labelTarget.draftId, labelTarget.label);
+        if (!updated) {
+          throw new NotFoundError("Owned draft no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            draft_id: labelTarget.draftId,
+            label: labelTarget.label,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "create_draft" &&
+          manifest.target_path.startsWith("drafts://message_draft/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+
+        return {
+          strategy: "archive_owned_draft",
+          confidence: 0.78,
+          steps: [
+            {
+              step_id: `step_archive_${draftId}`,
+              type: "archive_owned_draft",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["draft_archive"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned drafts integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the draft remains archived in the owned drafts store after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+        const archived = await draftStore.archiveDraft(draftId);
+        if (!archived) {
+          throw new NotFoundError("Owned draft no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            draft_id: draftId,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "archive_draft" &&
+          manifest.target_path.startsWith("drafts://message_draft/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+
+        return {
+          strategy: "unarchive_owned_draft",
+          confidence: 0.81,
+          steps: [
+            {
+              step_id: `step_unarchive_${draftId}`,
+              type: "unarchive_owned_draft",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["draft_unarchive"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned drafts integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [
+              "Verify the draft returns to active status in the owned drafts store after recovery executes.",
+            ],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+        const unarchived = await draftStore.unarchiveDraft(draftId);
+        if (!unarchived) {
+          throw new NotFoundError("Owned draft no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            draft_id: draftId,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "unarchive_draft" &&
+          manifest.target_path.startsWith("drafts://message_draft/")
+        );
+      },
+      buildCandidate({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+
+        return {
+          strategy: "archive_owned_draft",
+          confidence: 0.81,
+          steps: [
+            {
+              step_id: `step_archive_${draftId}`,
+              type: "archive_owned_draft",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["draft_archive"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned drafts integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [
+              "Verify the draft returns to archived status in the owned drafts store after recovery executes.",
+            ],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+        const archived = await draftStore.archiveDraft(draftId);
+        if (!archived) {
+          throw new NotFoundError("Owned draft no longer exists for compensating recovery.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            draft_id: draftId,
+          });
+        }
+
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          manifest.operation_kind === "delete_draft" &&
+          manifest.target_path.startsWith("drafts://message_draft/") &&
+          Boolean(manifest.captured_preimage)
+        );
+      },
+      buildCandidate({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+
+        return {
+          strategy: "restore_owned_draft_preimage",
+          confidence: 0.85,
+          steps: [
+            {
+              step_id: `step_restore_deleted_${draftId}`,
+              type: "restore_owned_draft_preimage",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["draft_restore"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned drafts integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: [
+              "Verify the draft has been restored with its prior subject, body, labels, and status after recovery executes.",
+            ],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+        if (!manifest.captured_preimage) {
+          throw new PreconditionError("Owned draft delete recovery requires captured preimage metadata.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            draft_id: draftId,
+          });
+        }
+
+        await draftStore.restoreDraftFromSnapshot(draftId, manifest.captured_preimage);
+        return true;
+      },
+    },
+    {
+      canCompensate(manifest) {
+        return (
+          manifest.operation_domain === "function" &&
+          (manifest.operation_kind === "update_draft" || manifest.operation_kind === "restore_draft") &&
+          manifest.target_path.startsWith("drafts://message_draft/") &&
+          Boolean(manifest.captured_preimage)
+        );
+      },
+      buildCandidate({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+
+        return {
+          strategy: "restore_owned_draft_preimage",
+          confidence: 0.84,
+          steps: [
+            {
+              step_id: `step_restore_${draftId}`,
+              type: "restore_owned_draft_preimage",
+              idempotent: true,
+              depends_on: [],
+            },
+          ],
+          impact_preview: {
+            external_effects: ["draft_restore"],
+            data_loss_risk: "low",
+          },
+          warnings: [],
+          review_guidance: {
+            systems_touched: ["owned drafts integration"],
+            objects_touched: [manifest.target_path],
+            manual_steps: ["Verify the draft subject and body match the pre-update version after recovery executes."],
+            uncertainty: [],
+          },
+        };
+      },
+      async execute({ manifest }) {
+        const draftId = parseDraftLocator(manifest.target_path) ?? `draft_${manifest.action_id}`;
+        if (!manifest.captured_preimage) {
+          throw new PreconditionError("Owned draft update recovery requires captured preimage metadata.", {
+            snapshot_id: manifest.snapshot_id,
+            action_id: manifest.action_id,
+            draft_id: draftId,
+          });
+        }
+
+        await draftStore.restoreDraftFromSnapshot(draftId, manifest.captured_preimage);
+        return true;
+      },
+    },
+  ]);
+}
+
+function buildPolicyRuntimeLoadOptions(
+  runtimeOptions: Pick<
+    ServiceOptions,
+    "policyGlobalConfigPath" | "policyWorkspaceConfigPath" | "policyCalibrationConfigPath" | "policyConfigPath"
+  >,
+): LoadPolicyRuntimeOptions {
+  return {
+    globalConfigPath: runtimeOptions.policyGlobalConfigPath,
+    workspaceConfigPath: runtimeOptions.policyWorkspaceConfigPath,
+    generatedConfigPath: runtimeOptions.policyCalibrationConfigPath,
+    explicitConfigPath: runtimeOptions.policyConfigPath,
+  };
+}
+
+function buildCalibrationThresholdUpdates(recommendations: ReturnType<typeof recommendPolicyThresholds>): Array<{
+  action_family: string;
+  current_ask_below: number | null;
+  recommended_ask_below: number;
+  direction: string;
+}> {
+  return recommendations
+    .filter(
+      (recommendation) =>
+        recommendation.requires_policy_update &&
+        recommendation.recommended_ask_below !== null &&
+        recommendation.recommended_ask_below !== recommendation.current_ask_below,
+    )
+    .map((recommendation) => ({
+      action_family: recommendation.action_family,
+      current_ask_below: recommendation.current_ask_below,
+      recommended_ask_below: recommendation.recommended_ask_below as number,
+      direction: recommendation.direction,
+    }));
+}
+
+async function handleRunMaintenance(
+  state: AuthorityState,
+  journal: RunJournal,
+  snapshotEngine: LocalSnapshotEngine,
+  broker: SessionCredentialBroker,
+  mcpRegistry: McpServerRegistry,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
+  hostedWorkerClient: HostedMcpWorkerClient,
+  draftStore: OwnedDraftStore,
+  noteStore: OwnedNoteStore,
+  ticketStore: OwnedTicketStore,
+  policyRuntime: PolicyRuntimeState,
+  runtimeOptions: Pick<
+    ServiceOptions,
+    | "socketPath"
+    | "journalPath"
+    | "snapshotRootPath"
+    | "mcpConcurrencyLeasePath"
+    | "policyGlobalConfigPath"
+    | "policyWorkspaceConfigPath"
+    | "policyCalibrationConfigPath"
+    | "policyConfigPath"
+  >,
+  request: RequestEnvelope<unknown>,
+  _context: RequestContext,
+): Promise<ResponseEnvelope<RunMaintenanceResponsePayload>> {
+  const payload = validate(RunMaintenanceRequestPayloadSchema, request.payload);
+  const acceptedPriority = payload.priority_override ?? "administrative";
+  const workspaceRoots = payload.scope?.workspace_root ? [payload.scope.workspace_root] : undefined;
+  const jobs: RunMaintenanceResponsePayload["jobs"] = [];
+
+  for (const jobType of payload.job_types) {
+    switch (jobType) {
+      case "startup_reconcile_runs": {
+        const result = reconcilePersistedRuns(state, journal);
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            result.runs_considered > 0
+              ? `Reconciled ${result.runs_considered} persisted run(s); rehydrated ${result.runs_rehydrated} run record(s) and ${result.sessions_rehydrated} session record(s).`
+              : "No persisted runs were available for reconciliation.",
+          stats: result,
+        });
+        break;
+      }
+      case "startup_reconcile_recoveries": {
+        const reconciledActions = recoverInterruptedActions(journal);
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            reconciledActions > 0
+              ? `Marked ${reconciledActions} interrupted action(s) as outcome_unknown for manual reconciliation.`
+              : "No interrupted actions required recovery reconciliation.",
+          stats: {
+            reconciled_actions: reconciledActions,
+          },
+        });
+        break;
+      }
+      case "artifact_expiry": {
+        const expiredArtifacts = journal.enforceArtifactRetention();
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            expiredArtifacts > 0
+              ? `Expired ${expiredArtifacts} durable artifact blob(s) by retention policy.`
+              : "No durable artifacts were eligible for expiry.",
+          stats: {
+            expired_artifacts: expiredArtifacts,
+          },
+        });
+        break;
+      }
+      case "artifact_orphan_cleanup": {
+        const result = journal.cleanupOrphanedArtifacts();
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            result.orphaned_files_removed > 0
+              ? `Removed ${result.orphaned_files_removed} orphaned artifact blob(s) and reclaimed ${result.bytes_freed} byte(s).`
+              : result.files_scanned > 0
+                ? `Scanned ${result.files_scanned} artifact blob(s) and found no orphaned files to remove.`
+                : "No durable artifact blobs were present for orphan cleanup.",
+          stats: {
+            ...result,
+          },
+        });
+        break;
+      }
+      case "snapshot_compaction": {
+        const result = await snapshotEngine.compactSnapshots(workspaceRoots);
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            result.snaps_removed > 0
+              ? `Compaction removed ${result.snaps_removed} snapshot layer(s) across ${result.workspaces_considered} workspace(s).`
+              : result.workspaces_considered > 0
+                ? `Snapshot compaction ran across ${result.workspaces_considered} workspace(s) and found nothing to flatten.`
+                : "No workspace indexes were available for snapshot compaction.",
+          stats: {
+            ...result,
+          },
+        });
+        break;
+      }
+      case "snapshot_rebase_anchor": {
+        const result = await snapshotEngine.rebaseSyntheticAnchors(workspaceRoots);
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            result.anchors_rebased > 0
+              ? `Rebased ${result.anchors_rebased} synthetic anchor reference(s) across ${result.workspaces_considered} workspace(s) and reclaimed ${result.bytes_freed} byte(s).`
+              : result.workspaces_considered > 0
+                ? `Synthetic anchor rebasing scanned ${result.snapshots_scanned} snapshot(s) across ${result.workspaces_considered} workspace(s) and found no duplicate anchors to rebase.`
+                : "No workspace indexes were available for synthetic anchor rebasing.",
+          stats: {
+            ...result,
+          },
+        });
+        break;
+      }
+      case "sqlite_wal_checkpoint": {
+        const journalCheckpoint = journal.checkpointWal();
+        const snapshotCheckpoint = snapshotEngine.checkpointWal(workspaceRoots);
+        const draftCheckpoint = draftStore.checkpointWal();
+        const noteCheckpoint = noteStore.checkpointWal();
+        const ticketCheckpoint = ticketStore.checkpointWal();
+        const mcpRegistryCheckpoint = mcpRegistry.checkpointWal();
+        const mcpHostPolicyCheckpoint = publicHostPolicyRegistry.checkpointWal();
+        const mcpSecretStoreCheckpoint = broker.checkpointMcpSecretStore();
+        const checkpointedDatabases =
+          (journalCheckpoint.checkpointed ? 1 : 0) +
+          snapshotCheckpoint.checkpointed_databases +
+          (mcpRegistryCheckpoint.checkpointed ? 1 : 0) +
+          (mcpHostPolicyCheckpoint.checkpointed ? 1 : 0) +
+          (mcpSecretStoreCheckpoint?.checkpointed ? 1 : 0) +
+          (draftCheckpoint.checkpointed ? 1 : 0) +
+          (noteCheckpoint.checkpointed ? 1 : 0) +
+          (ticketCheckpoint.checkpointed ? 1 : 0);
+        const skippedDatabases =
+          (journalCheckpoint.checkpointed ? 0 : 1) +
+          snapshotCheckpoint.skipped_databases +
+          (mcpRegistryCheckpoint.checkpointed ? 0 : 1) +
+          (mcpHostPolicyCheckpoint.checkpointed ? 0 : 1) +
+          (mcpSecretStoreCheckpoint?.checkpointed ? 0 : 1) +
+          (draftCheckpoint.checkpointed ? 0 : 1) +
+          (noteCheckpoint.checkpointed ? 0 : 1) +
+          (ticketCheckpoint.checkpointed ? 0 : 1);
+
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            checkpointedDatabases > 0
+              ? `Checkpointed ${checkpointedDatabases} SQLite WAL database(s); skipped ${skippedDatabases} non-WAL database(s).`
+              : `No SQLite databases required WAL checkpointing; skipped ${skippedDatabases} non-WAL database(s).`,
+          stats: {
+            checkpointed_databases: checkpointedDatabases,
+            skipped_databases: skippedDatabases,
+            journal: journalCheckpoint,
+            snapshots: snapshotCheckpoint,
+            mcp_registry: mcpRegistryCheckpoint,
+            mcp_host_policies: mcpHostPolicyCheckpoint,
+            mcp_secrets: mcpSecretStoreCheckpoint,
+            drafts: draftCheckpoint,
+            notes: noteCheckpoint,
+            tickets: ticketCheckpoint,
+          },
+        });
+        break;
+      }
+      case "projection_refresh":
+      case "projection_rebuild": {
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            "Timeline and helper projections are derived fresh from the journal on read at launch, so no queued rebuild was required.",
+          stats: {
+            projection_status: "fresh",
+            lag_events: 0,
+          },
+        });
+        break;
+      }
+      case "snapshot_gc": {
+        const result = await snapshotEngine.garbageCollectSnapshots(workspaceRoots);
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            result.layered_snapshots_removed > 0 ||
+            result.legacy_snapshots_removed > 0 ||
+            result.stray_entries_removed > 0
+              ? `Removed ${result.layered_snapshots_removed + result.legacy_snapshots_removed} orphaned snapshot container(s), ${result.stray_entries_removed} stray snapshot entry(s), and reclaimed ${result.bytes_freed} byte(s).`
+              : result.workspaces_considered > 0
+                ? `Scanned ${result.workspaces_considered} workspace snapshot index(es) and found no orphaned snapshot storage to remove.`
+                : "No persisted workspace snapshot indexes were available for snapshot garbage collection.",
+          stats: {
+            ...result,
+          },
+        });
+        break;
+      }
+      case "helper_fact_warm": {
+        journal.enforceArtifactRetention();
+        const targetRuns = payload.scope?.run_id
+          ? (() => {
+              const runSummary = journal.getRunSummary(payload.scope.run_id);
+              if (!runSummary) {
+                throw new NotFoundError(`No run found for ${payload.scope.run_id}.`, {
+                  run_id: payload.scope.run_id,
+                });
+              }
+
+              return [runSummary];
+            })()
+          : journal.listAllRuns();
+        let runsWarmed = 0;
+        let visibilityScopesWarmed = 0;
+        let stepsScanned = 0;
+        let helperAnswersCached = 0;
+
+        for (const runSummary of targetRuns) {
+          const currentLatestSequence = latestRunSequence(runSummary);
+          const artifactStateDigest = journal.getRunArtifactStateDigest(runSummary.run_id);
+
+          for (const visibilityScope of HELPER_FACT_WARM_VISIBILITY_SCOPES) {
+            const context = buildHelperProjectionContext(
+              journal,
+              runSummary.run_id,
+              visibilityScope,
+              artifactStateDigest,
+            );
+            visibilityScopesWarmed += 1;
+            stepsScanned += context.steps.length;
+
+            for (const questionType of HELPER_FACT_WARM_RUN_QUESTIONS) {
+              journal.storeHelperFactCache({
+                run_id: runSummary.run_id,
+                question_type: questionType,
+                focus_step_id: null,
+                compare_step_id: null,
+                visibility_scope: visibilityScope,
+                event_count: runSummary.event_count,
+                latest_sequence: currentLatestSequence,
+                artifact_state_digest: artifactStateDigest,
+                response: buildHelperResponseFromContext(questionType, context),
+                warmed_at: new Date().toISOString(),
+              });
+              helperAnswersCached += 1;
+            }
+
+            for (const step of context.steps) {
+              for (const questionType of HELPER_FACT_WARM_STEP_QUESTIONS) {
+                journal.storeHelperFactCache({
+                  run_id: runSummary.run_id,
+                  question_type: questionType,
+                  focus_step_id: step.step_id,
+                  compare_step_id: null,
+                  visibility_scope: visibilityScope,
+                  event_count: runSummary.event_count,
+                  latest_sequence: currentLatestSequence,
+                  artifact_state_digest: artifactStateDigest,
+                  response: buildHelperResponseFromContext(questionType, context, step.step_id),
+                  warmed_at: new Date().toISOString(),
+                });
+                helperAnswersCached += 1;
+              }
+            }
+          }
+
+          runsWarmed += 1;
+        }
+
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary:
+            targetRuns.length > 0
+              ? `Warmed ${helperAnswersCached} helper answer(s) across ${runsWarmed} run(s) and ${visibilityScopesWarmed} visibility projection(s).`
+              : "No runs were available for helper fact warming.",
+          stats: {
+            runs_considered: targetRuns.length,
+            runs_warmed: runsWarmed,
+            visibility_scopes_warmed: visibilityScopesWarmed,
+            steps_scanned: stepsScanned,
+            helper_answers_cached: helperAnswersCached,
+          },
+        });
+        break;
+      }
+      case "capability_refresh": {
+        const snapshot = detectCapabilitiesHandler(
+          broker,
+          runtimeOptions,
+          mcpRegistry,
+          publicHostPolicyRegistry,
+          hostedWorkerClient,
+          payload.scope?.workspace_root,
+        );
+        const degradedCount = snapshot.capabilities.filter((capability) => capability.status === "degraded").length;
+        const unavailableCount = snapshot.capabilities.filter(
+          (capability) => capability.status === "unavailable",
+        ).length;
+        journal.storeCapabilitySnapshot({
+          ...snapshot,
+          workspace_root: payload.scope?.workspace_root ?? null,
+          refreshed_at: snapshot.detection_timestamps.completed_at,
+        });
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary: `Refreshed ${snapshot.capabilities.length} capability record(s); ${degradedCount} degraded and ${unavailableCount} unavailable.`,
+          stats: {
+            capability_count: snapshot.capabilities.length,
+            degraded_capabilities: degradedCount,
+            unavailable_capabilities: unavailableCount,
+            refreshed_at: snapshot.detection_timestamps.completed_at,
+            workspace_root: payload.scope?.workspace_root ?? null,
+          },
+        });
+        break;
+      }
+      case "policy_threshold_calibration": {
+        const calibrationReport = journal.getPolicyCalibrationReport({
+          run_id: payload.scope?.run_id,
+          include_samples: true,
+          sample_limit: null,
+        });
+        const recommendations = recommendPolicyThresholds(calibrationReport.report, policyRuntime.compiled_policy, {
+          min_samples: POLICY_CALIBRATION_MIN_SAMPLES,
+        });
+        const thresholdUpdates = buildCalibrationThresholdUpdates(recommendations);
+
+        if (thresholdUpdates.length === 0) {
+          jobs.push({
+            job_type: jobType,
+            status: "completed",
+            performed_inline: true,
+            summary:
+              calibrationReport.report.totals.sample_count > 0
+                ? `No policy threshold updates were applied; ${calibrationReport.report.totals.sample_count} calibration sample(s) did not justify a change.`
+                : "No policy threshold updates were applied because no calibration samples were available yet.",
+            stats: {
+              run_id: payload.scope?.run_id ?? null,
+              min_samples: POLICY_CALIBRATION_MIN_SAMPLES,
+              sample_count: calibrationReport.report.totals.sample_count,
+              action_families_considered: calibrationReport.report.action_families.length,
+              recommendations_considered: recommendations.length,
+              thresholds_applied: 0,
+              generated_config_path: runtimeOptions.policyCalibrationConfigPath,
+            },
+          });
+          break;
+        }
+
+        const generatedConfigPath = runtimeOptions.policyCalibrationConfigPath;
+        if (!generatedConfigPath) {
+          throw new InternalError("Policy calibration config path is not configured.", {
+            job_type: jobType,
+          });
+        }
+        const generatedPolicyVersion = `workspace-generated-calibration@${new Date().toISOString()}`;
+        const generatedPolicyDocument = {
+          profile_name: policyRuntime.effective_policy.policy.profile_name,
+          policy_version: generatedPolicyVersion,
+          thresholds: {
+            low_confidence: thresholdUpdates.map((update) => ({
+              action_family: update.action_family,
+              ask_below: update.recommended_ask_below,
+            })),
+          },
+          rules: [],
+        };
+        const generatedValidation = validatePolicyConfigDocument(generatedPolicyDocument);
+        if (!generatedValidation.valid || !generatedValidation.normalized_config) {
+          throw new InternalError("Generated calibration policy document failed validation.", {
+            issues: generatedValidation.issues,
+          });
+        }
+
+        fs.mkdirSync(path.dirname(generatedConfigPath), { recursive: true });
+        fs.writeFileSync(
+          generatedConfigPath,
+          `${JSON.stringify(generatedValidation.normalized_config, null, 2)}\n`,
+          "utf8",
+        );
+        reloadPolicyRuntime(policyRuntime, buildPolicyRuntimeLoadOptions(runtimeOptions));
+
+        jobs.push({
+          job_type: jobType,
+          status: "completed",
+          performed_inline: true,
+          summary: `Applied ${thresholdUpdates.length} policy low-confidence threshold update(s) from ${calibrationReport.report.totals.sample_count} calibration sample(s).`,
+          stats: {
+            run_id: payload.scope?.run_id ?? null,
+            min_samples: POLICY_CALIBRATION_MIN_SAMPLES,
+            sample_count: calibrationReport.report.totals.sample_count,
+            action_families_considered: calibrationReport.report.action_families.length,
+            recommendations_considered: recommendations.length,
+            thresholds_applied: thresholdUpdates.length,
+            generated_policy_version: generatedPolicyVersion,
+            generated_config_path: generatedConfigPath,
+            updates: thresholdUpdates,
+          },
+        });
+        break;
+      }
+      default: {
+        jobs.push({
+          job_type: jobType,
+          status: "not_supported",
+          performed_inline: false,
+          summary: "This maintenance job is documented but not yet owned by the launch runtime.",
+        });
+        break;
+      }
+    }
+  }
+
+  return makeSuccessResponse(request.request_id, request.session_id, {
+    accepted_priority: acceptedPriority,
+    scope: payload.scope ?? null,
+    jobs,
+    stream_id: null,
+  });
+}
+
+function enrichTimelineArtifactHealth(journal: RunJournal, steps: TimelineStep[]): TimelineStep[] {
+  return steps.map((step) => {
+    const primaryArtifacts = step.primary_artifacts.map((artifact) => {
+      if (!artifact.artifact_id) {
+        return artifact;
+      }
+
+      try {
+        const storedArtifact = journal.getArtifact(artifact.artifact_id);
+        return {
+          ...artifact,
+          artifact_status: storedArtifact.artifact_status,
+          integrity: storedArtifact.integrity,
+        };
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          return {
+            ...artifact,
+            artifact_status: "missing" as const,
+          };
+        }
+
+        throw error;
+      }
+    });
+
+    const availabilityWarnings = primaryArtifacts
+      .filter(
+        (artifact) => artifact.artifact_id && artifact.artifact_status && artifact.artifact_status !== "available",
+      )
+      .map((artifact) =>
+        artifact.artifact_status === "expired"
+          ? `Artifact ${artifact.artifact_id} expired under the configured retention policy and is no longer available.`
+          : artifact.artifact_status === "tampered"
+            ? `Artifact ${artifact.artifact_id} failed content integrity verification and may have been tampered with.`
+            : artifact.artifact_status === "corrupted"
+              ? `Artifact ${artifact.artifact_id} is corrupted in durable storage and can no longer be read safely.`
+              : `Artifact ${artifact.artifact_id} is missing from durable storage.`,
+      );
+
+    return {
+      ...step,
+      primary_artifacts: primaryArtifacts,
+      warnings: [...(step.warnings ?? []), ...availabilityWarnings],
+    };
+  });
+}
+
+function latestRunSequence(runSummary: ReturnType<RunJournal["getRunSummary"]>): number {
+  return runSummary?.latest_event?.sequence ?? 0;
+}
+
+function buildHelperProjectionContext(
+  journal: RunJournal,
+  runId: string,
+  visibilityScope: VisibilityScope,
+  artifactStateDigest?: string,
+): HelperProjectionContext {
+  const events = journal.listRunEvents(runId);
+  const projection = projectTimelineView(runId, events, visibilityScope);
+  const steps = enrichTimelineArtifactHealth(journal, projection.steps);
+
+  return {
+    visibility_scope: projection.visibility_scope,
+    redactions_applied: projection.redactions_applied,
+    preview_budget: projection.preview_budget,
+    steps,
+    unavailable_artifacts_present: steps.some((step) =>
+      step.primary_artifacts.some((artifact) => artifact.artifact_status && artifact.artifact_status !== "available"),
+    ),
+    artifact_state_digest: artifactStateDigest ?? journal.getRunArtifactStateDigest(runId),
+  };
+}
+
+function buildHelperResponseFromContext(
+  questionType: HelperQuestionType,
+  context: HelperProjectionContext,
+  focusStepId?: string,
+  compareStepId?: string,
+): QueryHelperResponsePayload {
+  const answer = answerHelperQuery(questionType, context.steps, focusStepId, compareStepId);
+
+  return {
+    ...answer,
+    visibility_scope: context.visibility_scope,
+    redactions_applied: context.redactions_applied,
+    preview_budget: context.preview_budget,
+    uncertainty: [
+      ...answer.uncertainty,
+      ...(context.redactions_applied > 0
+        ? [`Some details were redacted for ${context.visibility_scope} visibility.`]
+        : []),
+      ...(context.preview_budget.truncated_previews > 0 || context.preview_budget.omitted_previews > 0
+        ? [
+            `Some inline previews were truncated or omitted to stay within the response preview budget (${context.preview_budget.preview_chars_used}/${context.preview_budget.max_total_inline_preview_chars} chars used).`,
+          ]
+        : []),
+      ...(context.unavailable_artifacts_present
+        ? [
+            "Some referenced artifacts are no longer available in durable storage because they expired, failed integrity verification, became corrupted, or went missing, so parts of the supporting evidence may be unavailable.",
+          ]
+        : []),
+    ],
+  };
+}
+
+export async function handleRequest(
+  state: AuthorityState,
+  journal: RunJournal,
+  adapterRegistry: AdapterRegistry,
+  snapshotEngine: LocalSnapshotEngine,
+  compensationRegistry: StaticCompensationRegistry,
+  broker: SessionCredentialBroker,
+  mcpRegistry: McpServerRegistry,
+  publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
+  hostedWorkerClient: HostedMcpWorkerClient,
+  hostedExecutionQueue: HostedExecutionQueue,
+  policyRuntime: PolicyRuntimeState,
+  draftStore: OwnedDraftStore,
+  noteStore: OwnedNoteStore,
+  ticketStore: OwnedTicketStore,
+  runtimeOptions: Pick<
+    ServiceOptions,
+    | "socketPath"
+    | "journalPath"
+    | "snapshotRootPath"
+    | "capabilityRefreshStaleMs"
+    | "mcpConcurrencyLeasePath"
+    | "policyGlobalConfigPath"
+    | "policyWorkspaceConfigPath"
+    | "policyCalibrationConfigPath"
+    | "policyConfigPath"
+  >,
+  rawRequest: unknown,
+  context: RequestContext,
+): Promise<ResponseEnvelope<unknown>> {
+  const requestContext = getRequestContextFromHelpers(rawRequest);
+
+  try {
+    const request = validate(RequestEnvelopeSchema, rawRequest);
+    const idempotencyClaim =
+      canUseIdempotencyHelper(request, IDEMPOTENT_MUTATION_METHODS) && request.session_id
+        ? journal.claimIdempotentMutation({
+            session_id: request.session_id,
+            idempotency_key: request.idempotency_key!,
+            method: request.method,
+            payload: request.payload,
+            stored_at: new Date().toISOString(),
+          })
+        : null;
+
+    if (idempotencyClaim?.status === "replay") {
+      return replayStoredSuccessResponse(request.request_id, request.session_id, idempotencyClaim.record.response);
+    }
+
+    if (idempotencyClaim?.status === "conflict") {
+      throw new PreconditionError("Idempotency key has already been used for a different mutating request.", {
+        session_id: request.session_id,
+        idempotency_key: request.idempotency_key,
+        recorded_method: idempotencyClaim.record?.method ?? request.method,
+        request_method: idempotencyClaim.request_method,
+        recorded_payload_digest: idempotencyClaim.record?.payload_digest ?? null,
+        request_payload_digest: idempotencyClaim.request_payload_digest,
+      });
+    }
+
+    if (idempotencyClaim?.status === "in_progress") {
+      throw new AgentGitError(
+        "An idempotent request with the same key is already in progress. Retry after the original request finishes.",
+        "PRECONDITION_FAILED",
+        {
+          session_id: request.session_id,
+          idempotency_key: request.idempotency_key,
+          method: request.method,
+          stored_at: idempotencyClaim.stored_at,
+        },
+        true,
+      );
+    }
+
+    try {
+      let response: ResponseEnvelope<unknown>;
+
+      switch (request.method) {
+        case "hello":
+          response = handleHelloHandler(state, METHODS, RUNTIME_VERSION, request, context);
+          break;
+        case "register_run":
+          response = handleRegisterRunHandler(state, journal, policyRuntime, request, context);
+          break;
+        case "get_run_summary":
+          response = handleGetRunSummaryHandler(state, journal, request, context);
+          break;
+        case "get_capabilities":
+          response = handleGetCapabilitiesHandler(
+            broker,
+            runtimeOptions,
+            mcpRegistry,
+            publicHostPolicyRegistry,
+            hostedWorkerClient,
+            request,
+            context,
+          );
+          break;
+        case "get_effective_policy":
+          response = handleGetEffectivePolicyHandler(request, policyRuntime, context);
+          break;
+        case "validate_policy_config":
+          response = handleValidatePolicyConfigHandler(request, context);
+          break;
+        case "get_policy_calibration_report":
+          response = handleGetPolicyCalibrationReportHandler(state, journal, request, context);
+          break;
+        case "explain_policy_action":
+          response = handleExplainPolicyActionHandler(
+            state,
+            journal,
+            policyRuntime,
+            runtimeOptions,
+            mcpRegistry,
+            request,
+            context,
+          );
+          break;
+        case "get_policy_threshold_recommendations":
+          response = handleGetPolicyThresholdRecommendationsHandler(state, journal, policyRuntime, request, context);
+          break;
+        case "replay_policy_thresholds":
+          response = handleReplayPolicyThresholdsHandler(state, journal, policyRuntime, request, context);
+          break;
+        case "list_mcp_servers":
+          response = handleListMcpServers(mcpRegistry, request, context);
+          break;
+        case "list_mcp_server_candidates":
+          response = handleListMcpServerCandidates(mcpRegistry, request, context);
+          break;
+        case "submit_mcp_server_candidate":
+          response = handleSubmitMcpServerCandidate(state, mcpRegistry, request, context);
+          break;
+        case "list_mcp_server_profiles":
+          response = handleListMcpServerProfiles(mcpRegistry, request, context);
+          break;
+        case "get_mcp_server_review":
+          response = handleGetMcpServerReview(mcpRegistry, request, context);
+          break;
+        case "resolve_mcp_server_candidate":
+          response = await handleResolveMcpServerCandidate(state, mcpRegistry, request, context);
+          break;
+        case "list_mcp_server_trust_decisions":
+          response = handleListMcpServerTrustDecisions(mcpRegistry, request, context);
+          break;
+        case "approve_mcp_server_profile":
+          response = handleApproveMcpServerProfile(state, mcpRegistry, request, context);
+          break;
+        case "list_mcp_server_credential_bindings":
+          response = handleListMcpServerCredentialBindings(mcpRegistry, request, context);
+          break;
+        case "bind_mcp_server_credentials":
+          response = handleBindMcpServerCredentials(state, broker, mcpRegistry, request, context);
+          break;
+        case "revoke_mcp_server_credentials":
+          response = handleRevokeMcpServerCredentials(state, mcpRegistry, request, context);
+          break;
+        case "activate_mcp_server_profile":
+          response = handleActivateMcpServerProfile(state, mcpRegistry, request, context);
+          break;
+        case "quarantine_mcp_server_profile":
+          response = handleQuarantineMcpServerProfile(state, mcpRegistry, request, context);
+          break;
+        case "revoke_mcp_server_profile":
+          response = handleRevokeMcpServerProfile(state, mcpRegistry, request, context);
+          break;
+        case "upsert_mcp_server":
+          response = handleUpsertMcpServer(state, mcpRegistry, broker, request, context);
+          break;
+        case "remove_mcp_server":
+          response = handleRemoveMcpServer(state, mcpRegistry, request, context);
+          break;
+        case "list_mcp_secrets":
+          response = handleListMcpSecrets(broker, request, context);
+          break;
+        case "upsert_mcp_secret":
+          response = handleUpsertMcpSecret(state, broker, request, context);
+          break;
+        case "remove_mcp_secret":
+          response = handleRemoveMcpSecret(state, broker, request, context);
+          break;
+        case "list_mcp_host_policies":
+          response = handleListMcpHostPolicies(publicHostPolicyRegistry, request, context);
+          break;
+        case "upsert_mcp_host_policy":
+          response = handleUpsertMcpHostPolicy(state, publicHostPolicyRegistry, request, context);
+          break;
+        case "remove_mcp_host_policy":
+          response = handleRemoveMcpHostPolicy(state, publicHostPolicyRegistry, request, context);
+          break;
+        case "get_hosted_mcp_job":
+          response = handleGetHostedMcpJob(mcpRegistry, hostedExecutionQueue, journal, request, context);
+          break;
+        case "list_hosted_mcp_jobs":
+          response = handleListHostedMcpJobs(mcpRegistry, hostedExecutionQueue, request, context);
+          break;
+        case "requeue_hosted_mcp_job":
+          response = handleRequeueHostedMcpJob(state, journal, hostedExecutionQueue, request, context);
+          break;
+        case "cancel_hosted_mcp_job":
+          response = handleCancelHostedMcpJob(state, journal, hostedExecutionQueue, request, context);
+          break;
+        case "diagnostics":
+          response = handleDiagnosticsHandler(
+            state,
+            journal,
+            broker,
+            mcpRegistry,
+            publicHostPolicyRegistry,
+            hostedWorkerClient,
+            hostedExecutionQueue,
+            policyRuntime,
+            runtimeOptions,
+            request,
+            context,
+          );
+          break;
+        case "run_maintenance":
+          response = await handleRunMaintenance(
+            state,
+            journal,
+            snapshotEngine,
+            broker,
+            mcpRegistry,
+            publicHostPolicyRegistry,
+            hostedWorkerClient,
+            draftStore,
+            noteStore,
+            ticketStore,
+            policyRuntime,
+            runtimeOptions,
+            request,
+            context,
+          );
+          break;
+        case "list_approvals":
+          response = handleListApprovalsHandler(state, journal, request, context);
+          break;
+        case "query_approval_inbox":
+          response = handleQueryApprovalInboxHandler(state, journal, request, context);
+          break;
+        case "resolve_approval":
+          response = await handleResolveApprovalHandler(
+            state,
+            journal,
+            adapterRegistry,
+            snapshotEngine,
+            draftStore,
+            noteStore,
+            ticketStore,
+            mcpRegistry,
+            hostedExecutionQueue,
+            runtimeOptions,
+            request,
+            context,
+            executeHostedDelegatedMcpAction,
+          );
+          break;
+        case "query_timeline":
+          response = handleQueryTimelineHandler(state, journal, request, context);
+          break;
+        case "query_helper":
+          response = handleQueryHelperHandler(state, journal, request, context);
+          break;
+        case "query_artifact":
+          response = handleQueryArtifactHandler(state, journal, request, context);
+          break;
+        case "submit_action_attempt":
+          response = await handleSubmitActionAttemptFlow({
+            state,
+            journal,
+            adapterRegistry,
+            snapshotEngine,
+            draftStore,
+            noteStore,
+            ticketStore,
+            mcpRegistry,
+            hostedExecutionQueue,
+            policyRuntime,
+            runtimeOptions,
+            buildCachedCapabilityState,
+            executeHostedDelegatedAction: executeHostedDelegatedMcpAction,
+            request,
+            context,
+          });
+          break;
+        case "plan_recovery":
+          response = await handlePlanRecoveryHandler(
+            state,
+            journal,
+            snapshotEngine,
+            compensationRegistry,
+            runtimeOptions,
+            request,
+            context,
+          );
+          break;
+        case "create_run_checkpoint":
+          response = await handleCreateRunCheckpointHandler(
+            state,
+            journal,
+            snapshotEngine,
+            runtimeOptions,
+            request,
+            context,
+          );
+          break;
+        case "execute_recovery":
+          response = await handleExecuteRecoveryHandler(
+            state,
+            journal,
+            snapshotEngine,
+            compensationRegistry,
+            runtimeOptions,
+            request,
+            context,
+          );
+          break;
+        default:
+          throw new ValidationError(`Unknown method: ${request.method}`);
+      }
+
+      if (idempotencyClaim?.status === "claimed" && request.session_id && request.idempotency_key && response.ok) {
+        journal.completeIdempotentMutation({
+          session_id: request.session_id,
+          idempotency_key: request.idempotency_key,
+          response,
+          completed_at: new Date().toISOString(),
+        });
+      }
+
+      return response;
+    } catch (error) {
+      if (idempotencyClaim?.status === "claimed" && request.session_id && request.idempotency_key) {
+        journal.releaseIdempotentMutation(request.session_id, request.idempotency_key);
+      }
+
+      throw error;
+    }
+  } catch (error) {
+    return makeErrorResponse(requestContext.request_id, requestContext.session_id, error);
+  }
+}
+
+export function rehydrateState(state: AuthorityState, journal: RunJournal): void {
+  const result = reconcilePersistedRuns(state, journal);
+
+  console.log(
+    JSON.stringify({
+      status: "rehydrated",
+      sessions: result.total_sessions,
+      runs: result.total_runs,
+    }),
+  );
+}
+
+function reconcilePersistedRuns(
+  state: AuthorityState,
+  journal: RunJournal,
+): {
+  runs_considered: number;
+  sessions_rehydrated: number;
+  runs_rehydrated: number;
+  total_sessions: number;
+  total_runs: number;
+} {
+  const runs = journal.listAllRuns();
+  const sessionsBefore = state.getSessionCount();
+  const runsBefore = state.getRunCount();
+
+  for (const run of runs) {
+    state.rehydrateSession(run.session_id, run.workspace_roots);
+    state.rehydrateRun(run);
+  }
+
+  return {
+    runs_considered: runs.length,
+    sessions_rehydrated: state.getSessionCount() - sessionsBefore,
+    runs_rehydrated: state.getRunCount() - runsBefore,
+    total_sessions: state.getSessionCount(),
+    total_runs: state.getRunCount(),
+  };
+}
+
+export function recoverInterruptedActions(journal: RunJournal): number {
+  const runs = journal.listAllRuns();
+  let reconciledActions = 0;
+
+  for (const run of runs) {
+    const events = journal.listRunEvents(run.run_id);
+    const snapshotEvents = events.filter((event) => event.event_type === "snapshot.created");
+
+    for (const snapshotEvent of snapshotEvents) {
+      const actionId = typeof snapshotEvent.payload?.action_id === "string" ? snapshotEvent.payload.action_id : null;
+      if (!actionId) {
+        continue;
+      }
+
+      const alreadyReconciled = events.some(
+        (event) => event.payload?.action_id === actionId && event.event_type === "execution.outcome_unknown",
+      );
+      if (alreadyReconciled) {
+        continue;
+      }
+
+      const hasTerminalEvent = events.some(
+        (event) =>
+          event.payload?.action_id === actionId &&
+          (event.event_type === "execution.completed" ||
+            event.event_type === "execution.failed" ||
+            event.event_type === "execution.simulated"),
+      );
+      if (hasTerminalEvent) {
+        continue;
+      }
+
+      const now = new Date().toISOString();
+      journal.appendRunEvent(run.run_id, {
+        event_type: "execution.outcome_unknown",
+        occurred_at: now,
+        recorded_at: now,
+        payload: {
+          action_id: actionId,
+          reason: "daemon_crash_recovery",
+          message:
+            "Daemon restarted before a terminal execution event was recorded. Workspace may have changed; snapshot preserved for reconciliation or manual recovery.",
+        },
+      });
+      reconciledActions += 1;
+    }
+  }
+
+  return reconciledActions;
+}
+
+export class AuthorityService {
+  constructor(
+    private readonly deps: ServiceDependencies,
+    private readonly options: ServiceOptions,
+  ) {}
+
+  dispatch(rawRequest: unknown, context: RequestContext): Promise<ResponseEnvelope<unknown>> {
+    return handleRequest(
+      this.deps.state,
+      this.deps.journal,
+      this.deps.adapterRegistry,
+      this.deps.snapshotEngine,
+      this.deps.compensationRegistry,
+      this.deps.broker,
+      this.deps.mcpRegistry,
+      this.deps.publicHostPolicyRegistry,
+      this.deps.hostedWorkerClient,
+      this.deps.hostedExecutionQueue,
+      this.deps.policyRuntime,
+      this.deps.draftStore,
+      this.deps.noteStore,
+      this.deps.ticketStore,
+      this.options,
+      rawRequest,
+      context,
+    );
+  }
+
+  rehydrate(): void {
+    rehydrateState(this.deps.state, this.deps.journal);
+  }
+
+  recoverInterrupted(): number {
+    return recoverInterruptedActions(this.deps.journal);
+  }
+
+  close(): void {}
+}

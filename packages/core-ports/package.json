@@ -1,0 +1,45 @@
+{
+  "name": "@agentgit/core-ports",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Shared transport and request-context interfaces for agentgit core runtime layers.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/core-ports"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/core-ports",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "authority",
+    "transport",
+    "context",
+    "ports"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "prepack": "pnpm run build"
+  },
+  "dependencies": {
+    "@agentgit/schemas": "workspace:*"
+  }
+}
