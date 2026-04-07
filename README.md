@@ -98,6 +98,14 @@ pnpm live:mvp
 
 This builds the product surfaces, seeds a demo workspace, runs a governed task, starts a persistent local authority daemon, starts the inspector UI, and leaves an audit bundle plus JSON evidence behind for review. Use `pnpm live:mvp -- --mode contained` to exercise the Docker-contained path, and `pnpm live:mvp:stop` when you want to shut the background daemon and inspector down.
 
+For a more adversarial autonomy-style validation pass, run:
+
+```bash
+pnpm stress:autonomy
+```
+
+That harness seeds a workspace policy that biases recoverable filesystem and shell mutations toward `allow_with_snapshot`, performs randomized governed actions over time, periodically executes recovery on the latest action boundary, and writes a JSON report plus evidence files under a temp session root so you can inspect whether exact file restore held up.
+
 ---
 
 ## How It Works

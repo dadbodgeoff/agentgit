@@ -475,6 +475,48 @@ describe.sequential("agentgit product CLI", () => {
     service.close();
   }, 20_000);
 
+  it("keeps shell mutation recovery in review-only inspect mode", async () => {
+    const harness = setupWorkspace();
+    tempDir = harness.root;
+    const sourcePath = path.join(harness.workspaceRoot, "shell-restore-source.txt");
+    const destinationPath = path.join(harness.workspaceRoot, "shell-restore-destination.txt");
+    fs.writeFileSync(sourcePath, "shell review boundary\n", "utf8");
+
+    await runCli([
+      "setup",
+      "--command",
+      `node -e ${JSON.stringify(
+        `const cp=require('node:child_process'); const result=cp.spawnSync('mv', ['${path.basename(sourcePath)}', '${path.basename(destinationPath)}'], { cwd: ${JSON.stringify(harness.workspaceRoot)}, encoding: 'utf8' }); process.exit(result.status ?? 0);`,
+      )}`,
+    ]);
+    const runResult = await runCli(["run"]);
+    expect(runResult?.exit_code).toBe(0);
+    expect(fs.existsSync(sourcePath)).toBe(false);
+    expect(fs.existsSync(destinationPath)).toBe(true);
+
+    const service = new AgentRuntimeIntegrationService({
+      cwd: harness.workspaceRoot,
+      env: process.env,
+    });
+    const inspectResult = await service.inspect(harness.workspaceRoot);
+    expect(inspectResult.found).toBe(true);
+    expect(inspectResult.restore_available).toBe(true);
+    expect(inspectResult.restore_boundary).toBe("review-only snapshot boundary");
+    expect(inspectResult.restore_guidance).toContain("manual review");
+    expect(inspectResult.restore_guidance).toContain("exact automatic replay");
+
+    const previewResult = await service.restore(harness.workspaceRoot);
+    expect(previewResult.preview_only).toBe(true);
+    expect(previewResult.recovery_class).toBe("review_only");
+    expect(previewResult.exactness).toBe("review_only");
+    expect(previewResult.restore_boundary).toBe("review-only snapshot boundary");
+    expect(previewResult.preview_reason).toBe(
+      "AgentGit is previewing only because this recovery boundary is not trusted for exact automatic restore.",
+    );
+
+    service.close();
+  }, 20_000);
+
   it("supports the generic setup, run, demo, inspect, and restore flow end to end", async () => {
     const harness = setupWorkspace();
     tempDir = harness.root;

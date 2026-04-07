@@ -584,6 +584,22 @@ const BUILD_TOOL_COMMANDS = new Set([
   "turbo",
 ]);
 const INTERPRETER_COMMANDS = new Set(["python", "python3", "node", "bash", "sh", "zsh", "ruby", "php"]);
+const SHELL_READ_ONLY_PATH_COMMANDS = new Set(["ls", "cat", "head", "tail", "wc"]);
+const PROTECTED_SECRET_PATH_PATTERNS = [
+  /(^|\/)\.env(\.[^/]+)?$/i,
+  /(^|\/)\.npmrc$/i,
+  /(^|\/)\.netrc$/i,
+  /(^|\/)\.ssh(\/|$)/i,
+  /(^|\/)\.aws(\/|$)/i,
+  /(^|\/)\.gnupg(\/|$)/i,
+  /\.(pem|key)$/i,
+];
+const CONTROL_SURFACE_PATH_PATTERNS = [
+  /(^|\/)\.claude(\/|$)/i,
+  /(^|\/)\.codex(\/|$)/i,
+  /(^|\/)\.agentgit(\/|$)/i,
+  /(^|\/)\.mcp\.json$/i,
+];
 
 interface ShellClassification {
   commandFamily: string;
@@ -595,6 +611,17 @@ interface ShellClassification {
   warnings: string[];
   confidence: number;
   classifierRule: string;
+}
+
+interface ShellPathAnalysis {
+  extractedPaths: string[];
+  insideWorkspacePaths: string[];
+  outsideWorkspacePaths: string[];
+  protectedPaths: string[];
+  controlPaths: string[];
+  primaryPath: string | null;
+  scopeBreadth: ActionRecord["target"]["scope"]["breadth"];
+  unknowns: string[];
 }
 
 interface FunctionRawCall {
@@ -720,6 +747,184 @@ function shellDisplayName(argv: string[], classification: ShellClassification): 
     default:
       return "Run shell command";
   }
+}
+
+function looksLikePathOperand(value: string): boolean {
+  if (value.length === 0) {
+    return false;
+  }
+
+  if (path.isAbsolute(value) || value === "." || value === ".." || value.startsWith("./") || value.startsWith("../")) {
+    return true;
+  }
+
+  if (value.startsWith("~")) {
+    return true;
+  }
+
+  if (value.includes(path.sep)) {
+    return true;
+  }
+
+  if (value.startsWith(".")) {
+    return true;
+  }
+
+  return /[./\\]/.test(value);
+}
+
+function normalizeShellPathOperands(rawPaths: string[], cwd: string): string[] {
+  const normalized = rawPaths
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => normalizePath(entry, cwd));
+
+  return [...new Set(normalized)];
+}
+
+function collectNonOptionOperands(argv: string[], startIndex = 1): string[] {
+  return argv.slice(startIndex).filter((entry) => !entry.startsWith("-"));
+}
+
+function extractInterpreterPathOperands(argv: string[]): string[] {
+  for (let index = 1; index < argv.length; index += 1) {
+    const current = argv[index];
+    if (current === "-e" || current === "-c") {
+      return argv.slice(index + 2).filter((entry) => looksLikePathOperand(entry));
+    }
+  }
+
+  return argv.slice(2).filter((entry) => looksLikePathOperand(entry));
+}
+
+function extractShellPathOperands(argv: string[], classification: ShellClassification): string[] {
+  const command = argv[0] ?? "unknown";
+
+  if (classification.commandFamily === "read_only_shell") {
+    if (command === "find") {
+      const operands = collectNonOptionOperands(argv).filter((entry) => looksLikePathOperand(entry));
+      return operands.length > 0 ? [operands[0]!] : [];
+    }
+
+    if (command === "rg") {
+      const operands = collectNonOptionOperands(argv);
+      return operands.slice(1).filter((entry) => looksLikePathOperand(entry));
+    }
+
+    if (SHELL_READ_ONLY_PATH_COMMANDS.has(command)) {
+      return collectNonOptionOperands(argv).filter((entry) => looksLikePathOperand(entry));
+    }
+
+    return [];
+  }
+
+  if (classification.commandFamily === "filesystem_primitive") {
+    return collectNonOptionOperands(argv).filter((entry) => looksLikePathOperand(entry));
+  }
+
+  if (classification.commandFamily === "interpreter") {
+    return extractInterpreterPathOperands(argv);
+  }
+
+  return argv.slice(1).filter((entry) => path.isAbsolute(entry));
+}
+
+function isProtectedSecretPath(targetPath: string): boolean {
+  return PROTECTED_SECRET_PATH_PATTERNS.some((pattern) => pattern.test(targetPath));
+}
+
+function isControlSurfacePath(targetPath: string): boolean {
+  return CONTROL_SURFACE_PATH_PATTERNS.some((pattern) => pattern.test(targetPath));
+}
+
+function choosePrimaryShellPath(params: {
+  outsideWorkspacePaths: string[];
+  protectedPaths: string[];
+  controlPaths: string[];
+  extractedPaths: string[];
+}): string | null {
+  if (params.outsideWorkspacePaths.length > 0) {
+    return params.outsideWorkspacePaths[0] ?? null;
+  }
+
+  if (params.protectedPaths.length > 0) {
+    return params.protectedPaths[0] ?? null;
+  }
+
+  if (params.controlPaths.length > 0) {
+    return params.controlPaths[0] ?? null;
+  }
+
+  return params.extractedPaths[0] ?? null;
+}
+
+function analyzeShellPaths(
+  argv: string[],
+  cwd: string,
+  workspaceRoots: string[],
+  classification: ShellClassification,
+): ShellPathAnalysis {
+  const extractedPaths = normalizeShellPathOperands(extractShellPathOperands(argv, classification), cwd);
+  const insideWorkspacePaths = extractedPaths.filter((entry) => isPathInsideWorkspace(entry, workspaceRoots));
+  const outsideWorkspacePaths = extractedPaths.filter((entry) => !insideWorkspacePaths.includes(entry));
+  const protectedPaths = extractedPaths.filter((entry) => isProtectedSecretPath(entry));
+  const controlPaths = extractedPaths.filter((entry) => isControlSurfacePath(entry));
+  const primaryPath = choosePrimaryShellPath({
+    outsideWorkspacePaths,
+    protectedPaths,
+    controlPaths,
+    extractedPaths,
+  });
+
+  if (outsideWorkspacePaths.length > 0) {
+    return {
+      extractedPaths,
+      insideWorkspacePaths,
+      outsideWorkspacePaths,
+      protectedPaths,
+      controlPaths,
+      primaryPath,
+      scopeBreadth: "external",
+      unknowns: [],
+    };
+  }
+
+  if (extractedPaths.length === 1) {
+    return {
+      extractedPaths,
+      insideWorkspacePaths,
+      outsideWorkspacePaths,
+      protectedPaths,
+      controlPaths,
+      primaryPath,
+      scopeBreadth: "single",
+      unknowns: [],
+    };
+  }
+
+  if (extractedPaths.length > 1) {
+    return {
+      extractedPaths,
+      insideWorkspacePaths,
+      outsideWorkspacePaths,
+      protectedPaths,
+      controlPaths,
+      primaryPath,
+      scopeBreadth: "set",
+      unknowns: [],
+    };
+  }
+
+  return {
+    extractedPaths,
+    insideWorkspacePaths,
+    outsideWorkspacePaths,
+    protectedPaths,
+    controlPaths,
+    primaryPath: null,
+    scopeBreadth: classification.warnings.includes("unknown_scope") ? "unknown" : "workspace",
+    unknowns: classification.warnings.includes("unknown_scope") ? ["scope", "target_count"] : [],
+  };
 }
 
 function classifyShellCommand(argv: string[]): ShellClassification {
@@ -892,6 +1097,34 @@ function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): No
   const command = rawArgv[0] ?? "unknown";
   const cwd = attempt.environment_context.cwd ?? attempt.environment_context.workspace_roots[0] ?? process.cwd();
   const classification = classifyShellCommand(rawArgv);
+  const pathAnalysis = analyzeShellPaths(rawArgv, cwd, attempt.environment_context.workspace_roots, classification);
+  const hasExplicitPaths = pathAnalysis.extractedPaths.length > 0;
+  const warnings = [...new Set([...classification.warnings])];
+  if (pathAnalysis.outsideWorkspacePaths.length > 0) {
+    warnings.push("outside_workspace");
+  }
+  if (pathAnalysis.protectedPaths.length > 0) {
+    warnings.push("protected_target");
+  }
+  if (pathAnalysis.controlPaths.length > 0) {
+    warnings.push("control_surface_target");
+  }
+  const targetLocator = pathAnalysis.primaryPath ?? cwd;
+  const targetType = pathAnalysis.primaryPath ? "path" : "workspace";
+  const normalizationConfidence =
+    pathAnalysis.outsideWorkspacePaths.length > 0
+      ? Math.min(classification.confidence, 0.7)
+      : hasExplicitPaths
+        ? Math.max(classification.confidence, 0.9)
+        : classification.confidence;
+  const provenanceConfidence =
+    pathAnalysis.outsideWorkspacePaths.length > 0 ? 0.7 : hasExplicitPaths ? 0.99 : classification.confidence;
+  const sensitivityHint =
+    pathAnalysis.protectedPaths.length > 0 ||
+    pathAnalysis.controlPaths.length > 0 ||
+    pathAnalysis.outsideWorkspacePaths.length > 0
+      ? "high"
+      : classification.sensitivityHint;
 
   return {
     schema_version: "action.v1",
@@ -906,7 +1139,7 @@ function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): No
     provenance: {
       mode: "governed",
       source: "authority-sdk-ts",
-      confidence: classification.confidence,
+      confidence: provenanceConfidence,
     },
     actor: {
       type: "agent",
@@ -928,13 +1161,14 @@ function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): No
     },
     target: {
       primary: {
-        type: "workspace",
-        locator: cwd,
-        label: path.basename(cwd),
+        type: targetType,
+        locator: targetLocator,
+        label: path.basename(targetLocator),
       },
       scope: {
-        breadth: classification.warnings.includes("unknown_scope") ? "unknown" : "workspace",
-        unknowns: classification.warnings.includes("unknown_scope") ? ["scope", "target_count"] : [],
+        breadth: pathAnalysis.scopeBreadth,
+        estimated_count: hasExplicitPaths ? pathAnalysis.extractedPaths.length : undefined,
+        unknowns: pathAnalysis.unknowns,
       },
     },
     input: {
@@ -947,7 +1181,7 @@ function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): No
       side_effect_level: classification.sideEffectLevel,
       external_effects: classification.externalEffects,
       reversibility_hint: classification.reversibilityHint,
-      sensitivity_hint: classification.sensitivityHint,
+      sensitivity_hint: sensitivityHint,
       batch: classification.batch,
     },
     facets: {
@@ -957,15 +1191,20 @@ function normalizeShellAttempt(attempt: RawActionAttempt, sessionId: string): No
         interpreter: command,
         command_family: classification.commandFamily,
         classifier_rule: classification.classifierRule,
+        target_paths: pathAnalysis.extractedPaths,
+        inside_workspace_paths: pathAnalysis.insideWorkspacePaths,
+        outside_workspace_paths: pathAnalysis.outsideWorkspacePaths,
+        protected_paths: pathAnalysis.protectedPaths,
+        control_surface_paths: pathAnalysis.controlPaths,
         declared_env_keys: [],
         stdin_kind: "none",
       },
     },
     normalization: {
       mapper: "shell/v1",
-      inferred_fields: ["risk_hints", "target.scope"],
-      warnings: classification.warnings,
-      normalization_confidence: classification.confidence,
+      inferred_fields: ["risk_hints", "target.primary", "target.scope"],
+      warnings,
+      normalization_confidence: normalizationConfidence,
     },
   };
 }

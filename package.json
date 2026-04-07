@@ -38,6 +38,8 @@
     "smoke:cli-compat": "node scripts/verify-cli-compatibility.mjs",
     "live:mvp": "node scripts/live-mvp.mjs",
     "live:mvp:stop": "node scripts/live-mvp-stop.mjs",
+    "stress:autonomy": "node scripts/stress-autonomous-governance.mjs",
+    "audit:campaign0": "node scripts/run-adversarial-campaign-0.mjs",
     "release:verify": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm release:verify:claims && pnpm security:audit && pnpm test:coverage && pnpm release:verify:coverage-ratchet && pnpm py:test && pnpm py:build && pnpm smoke:cli-install && pnpm smoke:agent-runtime-install && pnpm smoke:cli-compat",
     "release:publish": "pnpm changeset publish --access public"
   },

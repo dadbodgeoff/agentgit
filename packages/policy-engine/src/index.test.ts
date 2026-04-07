@@ -569,6 +569,127 @@ describe("evaluatePolicy", () => {
     expect(outcome.reasons[0]?.code).toBe("PROTECTED_SECRET_PATH_DENIED");
   });
 
+  it("should deny shell access to protected secret paths from the default policy pack", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        operation: {
+          domain: "shell",
+          kind: "exec",
+          name: "shell.exec",
+          display_name: "Inspect protected file",
+        },
+        execution_path: {
+          surface: "governed_shell",
+          mode: "pre_execution",
+          credential_mode: "none",
+        },
+        target: {
+          primary: {
+            type: "path",
+            locator: "/workspace/project/.env",
+            label: ".env",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "read_only",
+          external_effects: "none",
+          reversibility_hint: "reversible",
+          sensitivity_hint: "high",
+          batch: false,
+        },
+        facets: {
+          shell: {
+            argv: ["cat", "/workspace/project/.env"],
+            command_family: "read_only_shell",
+            target_paths: ["/workspace/project/.env"],
+          },
+        },
+        normalization: {
+          mapper: "test",
+          inferred_fields: [],
+          warnings: ["protected_target"],
+          normalization_confidence: 0.96,
+        },
+      }),
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("PROTECTED_SECRET_PATH_DENIED");
+  });
+
+  it("should deny shell access to explicit outside-workspace paths", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        operation: {
+          domain: "shell",
+          kind: "exec",
+          name: "shell.exec",
+          display_name: "Inspect outside file",
+        },
+        execution_path: {
+          surface: "governed_shell",
+          mode: "pre_execution",
+          credential_mode: "none",
+        },
+        target: {
+          primary: {
+            type: "path",
+            locator: "/tmp/outside.txt",
+            label: "outside.txt",
+          },
+          scope: {
+            breadth: "external",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "read_only",
+          external_effects: "none",
+          reversibility_hint: "reversible",
+          sensitivity_hint: "high",
+          batch: false,
+        },
+        facets: {
+          shell: {
+            argv: ["cat", "/tmp/outside.txt"],
+            command_family: "read_only_shell",
+            target_paths: ["/tmp/outside.txt"],
+            outside_workspace_paths: ["/tmp/outside.txt"],
+          },
+        },
+        normalization: {
+          mapper: "test",
+          inferred_fields: [],
+          warnings: ["outside_workspace"],
+          normalization_confidence: 0.7,
+        },
+      }),
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("PATH_NOT_GOVERNED");
+  });
+
   it("should deny mutation of protected agent configuration surfaces from the default policy pack", () => {
     const outcome = evaluatePolicy(
       makeAction({
@@ -596,6 +717,187 @@ describe("evaluatePolicy", () => {
 
     expect(outcome.decision).toBe("deny");
     expect(outcome.reasons[0]?.code).toBe("AGENT_CONFIG_MUTATION_DENIED");
+  });
+
+  it("should deny shell mutation of protected agent configuration surfaces", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        operation: {
+          domain: "shell",
+          kind: "exec",
+          name: "shell.exec",
+          display_name: "Mutate control surface",
+        },
+        execution_path: {
+          surface: "governed_shell",
+          mode: "pre_execution",
+          credential_mode: "none",
+        },
+        target: {
+          primary: {
+            type: "path",
+            locator: "/workspace/project/.agentgit/policy.toml",
+            label: "policy.toml",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "mutating",
+          external_effects: "none",
+          reversibility_hint: "potentially_reversible",
+          sensitivity_hint: "high",
+          batch: false,
+        },
+        facets: {
+          shell: {
+            argv: ["node", "-e", "mutate", "/workspace/project/.agentgit/policy.toml"],
+            command_family: "interpreter",
+            target_paths: ["/workspace/project/.agentgit/policy.toml"],
+            control_surface_paths: ["/workspace/project/.agentgit/policy.toml"],
+          },
+        },
+        normalization: {
+          mapper: "test",
+          inferred_fields: [],
+          warnings: ["control_surface_target"],
+          normalization_confidence: 0.9,
+        },
+      }),
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("AGENT_CONFIG_MUTATION_DENIED");
+  });
+
+  it("should require approval for opaque shell scope even when it is local", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        operation: {
+          domain: "shell",
+          kind: "exec",
+          name: "shell.exec",
+          display_name: "Run opaque shell",
+        },
+        execution_path: {
+          surface: "governed_shell",
+          mode: "pre_execution",
+          credential_mode: "none",
+        },
+        target: {
+          primary: {
+            type: "workspace",
+            locator: "/workspace/project",
+            label: "project",
+          },
+          scope: {
+            breadth: "unknown",
+            unknowns: ["scope", "target_count"],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "mutating",
+          external_effects: "none",
+          reversibility_hint: "potentially_reversible",
+          sensitivity_hint: "moderate",
+          batch: false,
+        },
+        facets: {
+          shell: {
+            argv: ["node", "-e", "require('node:fs').writeFileSync('/tmp/x', 'x')"],
+            command_family: "interpreter",
+          },
+        },
+        normalization: {
+          mapper: "test",
+          inferred_fields: [],
+          warnings: ["unknown_scope", "opaque_execution"],
+          normalization_confidence: 0.29,
+        },
+        confidence_assessment: makeConfidenceAssessment(0.29),
+      }),
+    );
+
+    expect(outcome.decision).toBe("ask");
+    expect(outcome.reasons[0]?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(outcome.policy_context.recoverability_class).toBe("unrecoverable_or_degraded");
+  });
+
+  it("should mark mutating shell snapshot boundaries as degraded recovery, not local exact restore", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        actor: {
+          type: "agent",
+          agent_name: "test-agent",
+          agent_framework: "test-framework",
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        operation: {
+          domain: "shell",
+          kind: "exec",
+          name: "shell.exec",
+          display_name: "Rename file via shell",
+        },
+        execution_path: {
+          surface: "governed_shell",
+          mode: "pre_execution",
+          credential_mode: "none",
+        },
+        target: {
+          primary: {
+            type: "path",
+            locator: "/workspace/project/move-me.txt",
+            label: "move-me.txt",
+          },
+          scope: {
+            breadth: "single",
+            estimated_count: 1,
+            unknowns: [],
+          },
+        },
+        risk_hints: {
+          side_effect_level: "mutating",
+          external_effects: "none",
+          reversibility_hint: "potentially_reversible",
+          sensitivity_hint: "moderate",
+          batch: false,
+        },
+        facets: {
+          shell: {
+            argv: ["mv", "/workspace/project/move-me.txt", "/workspace/project/moved.txt"],
+            command_family: "filesystem_primitive",
+            target_paths: ["/workspace/project/move-me.txt", "/workspace/project/moved.txt"],
+          },
+        },
+        normalization: {
+          mapper: "test",
+          inferred_fields: [],
+          warnings: [],
+          normalization_confidence: 0.95,
+        },
+      }),
+    );
+
+    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.policy_context.recoverability_class).toBe("unrecoverable_or_degraded");
   });
 
   it("should allow small governed writes under 256KB", () => {
@@ -1678,10 +1980,7 @@ describe("evaluatePolicy", () => {
 
     expect(outcome.decision).toBe("allow_with_snapshot");
     expect(outcome.policy_context).toMatchObject({
-      recoverability_class: "recoverable_local",
-      recovery_proof_kind: "snapshot_preimage",
-      recovery_proof_source: "snapshot-engine.preimage",
-      recovery_proof_scope: "path",
+      recoverability_class: "unrecoverable_or_degraded",
     });
   });
 

@@ -274,6 +274,12 @@ async function ensureAuthoritySession(
 export const __testables = {
   ensureAuthoritySession,
   isAddressInUseFailure,
+  deriveRestoreTargetFromStep,
+  buildRestoreCommand,
+  summarizeRestoreTarget,
+  describeRestoreBoundary,
+  explainRestoreBoundary,
+  planRestorePresentation,
 };
 
 async function suppressRuntimeNoise<T>(callback: () => Promise<T>): Promise<T> {
@@ -618,6 +624,13 @@ function deriveRestoreTargetFromStep(
     };
   }
 
+  if (!step.related.snapshot_id && step.action_id && step.reversibility_class === "review_only") {
+    return {
+      type: "action_boundary",
+      action_id: step.action_id,
+    };
+  }
+
   if (step.related.snapshot_id) {
     return {
       type: "snapshot_id",
@@ -685,9 +698,26 @@ function summarizeRestoreTarget(target: ProductRestoreTarget): string {
   }
 }
 
-function describeRestoreBoundary(target: ProductRestoreTarget): string {
+function describeRestoreBoundary(target: ProductRestoreTarget, recoveryClass: string | null = null): string {
   if (isContainedProjectionTarget(target)) {
     return "contained projection discard";
+  }
+
+  if (recoveryClass === "review_only") {
+    switch (target.type) {
+      case "path_subset":
+        return "review-only targeted path restore";
+      case "snapshot_id":
+        return "review-only snapshot boundary";
+      case "action_boundary":
+        return "review-only action boundary";
+      case "run_checkpoint":
+        return "review-only checkpoint boundary";
+      case "branch_point":
+        return "review-only branch-point boundary";
+      case "external_object":
+        return "review-only external object recovery";
+    }
   }
 
   switch (target.type) {
@@ -706,9 +736,28 @@ function describeRestoreBoundary(target: ProductRestoreTarget): string {
   }
 }
 
-function explainRestoreBoundary(target: ProductRestoreTarget): string {
+function explainRestoreBoundary(target: ProductRestoreTarget, recoveryClass: string | null = null): string {
   if (isContainedProjectionTarget(target)) {
     return "AgentGit can discard unpublished projected changes directly because they have not been applied to the real workspace.";
+  }
+
+  if (recoveryClass === "review_only") {
+    switch (target.type) {
+      case "path_subset":
+        return target.paths.length === 1
+          ? "AgentGit can point manual review at the recorded changed path, but this boundary is not trusted for exact automatic restore."
+          : "AgentGit can point manual review at the recorded changed paths, but this boundary is not trusted for exact automatic restore.";
+      case "snapshot_id":
+        return "AgentGit can inspect the captured snapshot boundary, but this restore still requires manual review instead of exact automatic replay.";
+      case "action_boundary":
+        return "AgentGit can inspect the governed action boundary, but this restore still requires manual review instead of exact automatic replay.";
+      case "run_checkpoint":
+        return "AgentGit can inspect the checkpoint boundary, but this restore still requires manual review instead of exact automatic replay.";
+      case "branch_point":
+        return "AgentGit can inspect the branch-point boundary, but this restore still requires manual review instead of exact automatic replay.";
+      case "external_object":
+        return "AgentGit can inspect the external-object boundary, but applying recovery still depends on manual review or adapter-specific compensation.";
+    }
   }
 
   switch (target.type) {
@@ -726,6 +775,45 @@ function explainRestoreBoundary(target: ProductRestoreTarget): string {
       return "AgentGit is restoring from a broader branch-point boundary captured before the run diverged.";
     case "external_object":
       return "This restore depends on adapter-specific compensation rather than a direct filesystem snapshot replay.";
+  }
+}
+
+interface RestorePresentation {
+  restore_available: boolean;
+  recovery_class: string | null;
+  restore_boundary: string | null;
+  restore_guidance: string | null;
+}
+
+async function planRestorePresentation(
+  client: AuthorityClient,
+  target: ProductRestoreTarget | null,
+): Promise<RestorePresentation> {
+  if (!target || isContainedProjectionTarget(target)) {
+    return {
+      restore_available: Boolean(target),
+      recovery_class: null,
+      restore_boundary: target ? describeRestoreBoundary(target) : null,
+      restore_guidance: target ? explainRestoreBoundary(target) : null,
+    };
+  }
+
+  try {
+    const planResult = await client.planRecovery(target);
+    const recoveryClass = planResult.recovery_plan.recovery_class;
+    return {
+      restore_available: true,
+      recovery_class: recoveryClass,
+      restore_boundary: describeRestoreBoundary(target, recoveryClass),
+      restore_guidance: explainRestoreBoundary(target, recoveryClass),
+    };
+  } catch {
+    return {
+      restore_available: false,
+      recovery_class: null,
+      restore_boundary: null,
+      restore_guidance: null,
+    };
   }
 }
 
@@ -1822,6 +1910,7 @@ export class AgentRuntimeIntegrationService {
           shortcut?.preferred_restore_target ??
           deriveRestoreTargetFromStep(step) ??
           (runCheckpoint ? { type: "run_checkpoint", run_checkpoint: runCheckpoint.run_checkpoint } : null);
+        const restorePresentation = await planRestorePresentation(client, restoreTarget);
         const restoreVsCheckpoint = describeRestoreVsCheckpoint(restoreTarget, runCheckpoint);
         if (!step || (runCheckpoint && isCheckpointPlaceholderStep(step))) {
           if (containedRun?.status === "publish_conflict" || containedRun?.status === "publish_failed") {
@@ -1911,10 +2000,10 @@ export class AgentRuntimeIntegrationService {
             action_title: fallback.action_title,
             action_status: fallback.action_status,
             changed_paths: [],
-            restore_available: Boolean(restoreTarget),
+            restore_available: restorePresentation.restore_available,
             restore_command: buildRestoreCommand(restoreTarget),
-            restore_boundary: restoreTarget ? describeRestoreBoundary(restoreTarget) : null,
-            restore_guidance: restoreTarget ? explainRestoreBoundary(restoreTarget) : null,
+            restore_boundary: restorePresentation.restore_boundary,
+            restore_guidance: restorePresentation.restore_guidance,
             default_checkpoint_policy: profile?.default_checkpoint_policy ?? null,
             checkpoint_intent: profile?.checkpoint_intent ?? null,
             checkpoint_reason_template: profile?.checkpoint_reason_template ?? null,
@@ -1939,10 +2028,10 @@ export class AgentRuntimeIntegrationService {
           action_title: step.title,
           action_status: step.status,
           changed_paths: changedPaths,
-          restore_available: Boolean(restoreTarget),
+          restore_available: restorePresentation.restore_available,
           restore_command: buildRestoreCommand(restoreTarget),
-          restore_boundary: restoreTarget ? describeRestoreBoundary(restoreTarget) : null,
-          restore_guidance: restoreTarget ? explainRestoreBoundary(restoreTarget) : null,
+          restore_boundary: restorePresentation.restore_boundary,
+          restore_guidance: restorePresentation.restore_guidance,
           default_checkpoint_policy: profile?.default_checkpoint_policy ?? null,
           checkpoint_intent: profile?.checkpoint_intent ?? null,
           checkpoint_reason_template: profile?.checkpoint_reason_template ?? null,
@@ -2141,8 +2230,8 @@ export class AgentRuntimeIntegrationService {
           Boolean(options.preview) ||
           (conflictDetected && !options.force) ||
           planResult.recovery_plan.recovery_class === "review_only";
-        const restoreBoundary = describeRestoreBoundary(target);
-        const restoreGuidance = explainRestoreBoundary(target);
+        const restoreBoundary = describeRestoreBoundary(target, planResult.recovery_plan.recovery_class);
+        const restoreGuidance = explainRestoreBoundary(target, planResult.recovery_plan.recovery_class);
         const previewReason = explainRestorePreview(
           planResult.recovery_plan.recovery_class,
           conflictDetected,

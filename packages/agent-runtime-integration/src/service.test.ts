@@ -109,3 +109,98 @@ describe("authority session hardening", () => {
     expect(sleepCalls).toBe(1);
   });
 });
+
+describe("restore presentation helpers", () => {
+  it("derives action-boundary restore targets for review-only steps without snapshots", () => {
+    const target = __testables.deriveRestoreTargetFromStep({
+      action_id: "act_review",
+      reversibility_class: "review_only",
+      related: {
+        snapshot_id: null,
+        recovery_target_type: null,
+      },
+    } as never);
+
+    expect(target).toEqual({
+      type: "action_boundary",
+      action_id: "act_review",
+    });
+  });
+
+  it("uses recorded path subsets when available", () => {
+    const target = __testables.deriveRestoreTargetFromStep({
+      action_id: "act_path",
+      reversibility_class: "reversible",
+      related: {
+        snapshot_id: "snap_path",
+        recovery_target_type: "path_subset",
+        recovery_scope_paths: ["/workspace/project/src/index.ts"],
+        target_locator: null,
+      },
+    } as never);
+
+    expect(target).toEqual({
+      type: "path_subset",
+      snapshot_id: "snap_path",
+      paths: ["/workspace/project/src/index.ts"],
+    });
+    expect(__testables.buildRestoreCommand(target)).toBe('agentgit restore --path "/workspace/project/src/index.ts"');
+  });
+
+  it("describes and summarizes review-only restore boundaries honestly", () => {
+    const target = {
+      type: "external_object",
+      external_object_id: "ext_123",
+    } as const;
+
+    expect(__testables.summarizeRestoreTarget(target)).toBe("external object ext_123");
+    expect(__testables.describeRestoreBoundary(target, "review_only")).toBe("review-only external object recovery");
+    expect(__testables.explainRestoreBoundary(target, "review_only")).toContain("manual review");
+  });
+
+  it("plans restore presentation from the daemon recovery class", async () => {
+    const presentation = await __testables.planRestorePresentation(
+      {
+        planRecovery: async () => ({
+          recovery_plan: {
+            recovery_class: "review_only",
+          },
+        }),
+      } as never,
+      {
+        type: "snapshot_id",
+        snapshot_id: "snap_review",
+      },
+    );
+
+    expect(presentation).toEqual({
+      restore_available: true,
+      recovery_class: "review_only",
+      restore_boundary: "review-only snapshot boundary",
+      restore_guidance:
+        "AgentGit can inspect the captured snapshot boundary, but this restore still requires manual review instead of exact automatic replay.",
+    });
+  });
+
+  it("surfaces restore as unavailable when recovery planning fails", async () => {
+    const presentation = await __testables.planRestorePresentation(
+      {
+        planRecovery: async () => {
+          throw new Error("plan failed");
+        },
+      } as never,
+      {
+        type: "branch_point",
+        run_id: "run_123",
+        sequence: 7,
+      },
+    );
+
+    expect(presentation).toEqual({
+      restore_available: false,
+      recovery_class: null,
+      restore_boundary: null,
+      restore_guidance: null,
+    });
+  });
+});

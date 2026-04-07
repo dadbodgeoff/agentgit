@@ -36,8 +36,8 @@ export const DEFAULT_POLICY_PACK: PolicyConfig = {
           {
             type: "field",
             field: "operation.domain",
-            operator: "eq",
-            value: "filesystem",
+            operator: "in",
+            value: ["filesystem", "shell"],
           },
           {
             type: "field",
@@ -101,6 +101,39 @@ export const DEFAULT_POLICY_PACK: PolicyConfig = {
       },
     },
     {
+      rule_id: "platform.outside-workspace-paths.deny",
+      description: "Deny governed access to explicit paths outside the governed workspace roots.",
+      rationale:
+        "Explicit access to paths outside the governed workspace roots breaks the local containment contract and must fail closed.",
+      references: ["support-architecture/10-policy-hardening-and-defaults.md"],
+      binding_scope: "platform_default",
+      decision: "deny",
+      enforcement_mode: "enforce",
+      priority: 9_950,
+      match: {
+        type: "all",
+        conditions: [
+          {
+            type: "field",
+            field: "target.primary.type",
+            operator: "eq",
+            value: "path",
+          },
+          {
+            type: "field",
+            field: "target.scope.breadth",
+            operator: "eq",
+            value: "external",
+          },
+        ],
+      },
+      reason: {
+        code: "PATH_NOT_GOVERNED",
+        severity: "critical",
+        message: "Explicit paths outside the governed workspace roots are denied.",
+      },
+    },
+    {
       rule_id: "platform.agent-config-mutation.deny",
       description: "Deny agent mutation of authority and agent configuration surfaces.",
       rationale:
@@ -116,8 +149,8 @@ export const DEFAULT_POLICY_PACK: PolicyConfig = {
           {
             type: "field",
             field: "operation.domain",
-            operator: "eq",
-            value: "filesystem",
+            operator: "in",
+            value: ["filesystem", "shell"],
           },
           {
             type: "field",

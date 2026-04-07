@@ -147,6 +147,129 @@ describe("timeline-helper", () => {
     expect(answer.evidence).toHaveLength(1);
   });
 
+  it("projects shell snapshot boundaries as review-only when policy marked recovery degraded", () => {
+    const shellReviewEvents: JournalEventRecord[] = [
+      {
+        sequence: 1,
+        event_type: "action.normalized",
+        occurred_at: "2026-03-29T12:00:00.000Z",
+        recorded_at: "2026-03-29T12:00:00.000Z",
+        payload: {
+          action_id: "act_shell_review",
+          operation: {
+            display_name: "Rename file via shell",
+          },
+        },
+      },
+      {
+        sequence: 2,
+        event_type: "policy.evaluated",
+        occurred_at: "2026-03-29T12:00:00.050Z",
+        recorded_at: "2026-03-29T12:00:00.050Z",
+        payload: {
+          action_id: "act_shell_review",
+          decision: "allow_with_snapshot",
+          recoverability_class: "unrecoverable_or_degraded",
+        },
+      },
+      {
+        sequence: 3,
+        event_type: "snapshot.created",
+        occurred_at: "2026-03-29T12:00:00.100Z",
+        recorded_at: "2026-03-29T12:00:00.100Z",
+        payload: {
+          action_id: "act_shell_review",
+          snapshot_id: "snap_shell_review",
+        },
+      },
+      {
+        sequence: 4,
+        event_type: "execution.completed",
+        occurred_at: "2026-03-29T12:00:00.150Z",
+        recorded_at: "2026-03-29T12:00:00.150Z",
+        payload: {
+          action_id: "act_shell_review",
+          execution_id: "exec_shell_review",
+        },
+      },
+    ];
+
+    const steps = projectTimelineSteps("run_shell_review", shellReviewEvents);
+    const actionStep = steps[0];
+    const reversibleAnswer = answerHelperQuery("reversible_steps", steps);
+    const detailAnswer = answerHelperQuery("step_details", steps, actionStep?.step_id);
+
+    expect(actionStep?.reversibility_class).toBe("review_only");
+    expect(reversibleAnswer.answer).toBe("No explicitly reversible steps were found in this run.");
+    expect(detailAnswer.answer).toContain("Reversibility: review_only");
+  });
+
+  it("projects compensatable action steps from policy recoverability and preserves valid artifacts", () => {
+    const compensatableEvents: JournalEventRecord[] = [
+      {
+        sequence: 1,
+        event_type: "action.normalized",
+        occurred_at: "2026-03-29T12:00:00.000Z",
+        recorded_at: "2026-03-29T12:00:00.000Z",
+        payload: {
+          action_id: "act_compensate",
+          operation: {
+            display_name: "Compensate external sync",
+          },
+        },
+      },
+      {
+        sequence: 2,
+        event_type: "policy.evaluated",
+        occurred_at: "2026-03-29T12:00:00.050Z",
+        recorded_at: "2026-03-29T12:00:00.050Z",
+        payload: {
+          action_id: "act_compensate",
+          decision: "allow",
+          recoverability_class: "recoverable_external_compensated",
+        },
+      },
+      {
+        sequence: 3,
+        event_type: "execution.completed",
+        occurred_at: "2026-03-29T12:00:00.100Z",
+        recorded_at: "2026-03-29T12:00:00.100Z",
+        payload: {
+          action_id: "act_compensate",
+          execution_id: "exec_compensate",
+          target_path: "/workspace/project/output.txt",
+          before_preview: "before-state",
+          after_preview: "after-state",
+          stdout_excerpt: "compensation applied",
+          artifacts: [
+            null,
+            {
+              artifact_id: "art_valid",
+              type: "stdout",
+              visibility: "user",
+              integrity: {
+                sha256: "abc123",
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const steps = projectTimelineSteps("run_compensate", compensatableEvents);
+    const actionStep = steps[0];
+
+    expect(actionStep?.reversibility_class).toBe("compensatable");
+    expect(
+      actionStep?.artifact_previews.some(
+        (artifact) =>
+          artifact.label === "/workspace/project/output.txt" &&
+          artifact.preview === "before: before-state | after: after-state",
+      ),
+    ).toBe(true);
+    expect(actionStep?.primary_artifacts.some((artifact) => artifact.artifact_id === "art_valid")).toBe(true);
+  });
+
   it("preserves structured recovery overlap evidence on recovery steps", () => {
     const recoveryEvents: JournalEventRecord[] = [
       {

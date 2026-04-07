@@ -47,6 +47,10 @@ interface FilesystemRawInput {
 interface ShellFacet {
   argv?: string[];
   cwd?: string;
+  target_paths?: string[];
+  protected_paths?: string[];
+  control_surface_paths?: string[];
+  outside_workspace_paths?: string[];
 }
 
 interface FunctionFacet {
@@ -3571,6 +3575,103 @@ export class FilesystemExecutionAdapter implements ExecutionAdapter {
 
 const DEFAULT_SHELL_TIMEOUT_MS = 30_000;
 const MAX_CAPTURE_BYTES = 64 * 1024;
+const SHELL_PROTECTED_SECRET_PATH_PATTERNS = [
+  /(^|\/)\.env(\.[^/]+)?$/i,
+  /(^|\/)\.npmrc$/i,
+  /(^|\/)\.netrc$/i,
+  /(^|\/)\.ssh(\/|$)/i,
+  /(^|\/)\.aws(\/|$)/i,
+  /(^|\/)\.gnupg(\/|$)/i,
+  /\.(pem|key)$/i,
+];
+const SHELL_CONTROL_SURFACE_PATH_PATTERNS = [
+  /(^|\/)\.claude(\/|$)/i,
+  /(^|\/)\.codex(\/|$)/i,
+  /(^|\/)\.agentgit(\/|$)/i,
+  /(^|\/)\.mcp\.json$/i,
+];
+
+function shellOperandLooksLikePath(value: string): boolean {
+  if (value.length === 0 || value.startsWith("-")) {
+    return false;
+  }
+
+  if (path.isAbsolute(value) || value === "." || value === ".." || value.startsWith("./") || value.startsWith("../")) {
+    return true;
+  }
+
+  if (value.startsWith("~") || value.startsWith(".")) {
+    return true;
+  }
+
+  return value.includes(path.sep) || /[./\\]/.test(value);
+}
+
+function isProtectedShellPath(targetPath: string): boolean {
+  return SHELL_PROTECTED_SECRET_PATH_PATTERNS.some((pattern) => pattern.test(targetPath));
+}
+
+function isControlSurfaceShellPath(targetPath: string): boolean {
+  return SHELL_CONTROL_SURFACE_PATH_PATTERNS.some((pattern) => pattern.test(targetPath));
+}
+
+function extractShellTargetPaths(shellFacet: ShellFacet | undefined, action: ActionRecord): string[] {
+  const explicitPaths = Array.isArray(shellFacet?.target_paths)
+    ? shellFacet.target_paths.filter((value) => typeof value === "string" && value.trim().length > 0)
+    : [];
+
+  if (explicitPaths.length > 0) {
+    return [...new Set(explicitPaths.map((entry) => path.resolve(entry)))];
+  }
+
+  if (action.target.primary.type === "path" && action.target.primary.locator.length > 0) {
+    return [path.resolve(action.target.primary.locator)];
+  }
+
+  const cwd = shellFacet?.cwd ?? action.target.primary.locator;
+  const argv = Array.isArray(shellFacet?.argv) ? shellFacet.argv.filter((value) => typeof value === "string") : [];
+  return [
+    ...new Set(
+      argv
+        .slice(1)
+        .filter((entry) => shellOperandLooksLikePath(entry))
+        .map((entry) => path.resolve(cwd, entry)),
+    ),
+  ];
+}
+
+async function verifyShellTargetPaths(
+  shellFacet: ShellFacet | undefined,
+  action: ActionRecord,
+  workspaceRoot: string,
+): Promise<void> {
+  const targetPaths = extractShellTargetPaths(shellFacet, action);
+
+  for (const targetPath of targetPaths) {
+    if (!(await isPathInsideRoot(targetPath, workspaceRoot))) {
+      throw new PreconditionError("Shell action target path is outside the governed workspace root.", {
+        action_id: action.action_id,
+        target: targetPath,
+        workspace_root: workspaceRoot,
+      });
+    }
+
+    const resolvedTargetPath = await resolvePathInsideRoot(targetPath, workspaceRoot);
+    if (isProtectedShellPath(resolvedTargetPath)) {
+      throw new PreconditionError("Shell action target path is a protected secret path.", {
+        action_id: action.action_id,
+        target: resolvedTargetPath,
+      });
+    }
+
+    if (isControlSurfaceShellPath(resolvedTargetPath)) {
+      throw new PreconditionError("Shell action target path is a protected control surface.", {
+        action_id: action.action_id,
+        target: resolvedTargetPath,
+      });
+    }
+  }
+}
 
 export class ShellExecutionAdapter implements ExecutionAdapter {
   readonly supported_domains = ["shell"];
@@ -3598,6 +3699,8 @@ export class ShellExecutionAdapter implements ExecutionAdapter {
       });
     }
 
+    await verifyShellTargetPaths(shellFacet, context.action, context.workspace_root);
+
     if (context.policy_outcome.preconditions.snapshot_required && !context.snapshot_record) {
       throw new PreconditionError("Snapshot-required action is missing a snapshot boundary.", {
         action_id: context.action.action_id,
@@ -3612,6 +3715,7 @@ export class ShellExecutionAdapter implements ExecutionAdapter {
       shellFacet?.cwd ?? context.action.target.primary.locator,
       context.workspace_root,
     );
+    await verifyShellTargetPaths(shellFacet, context.action, context.workspace_root);
     const executionId = `exec_sh_${Date.now()}`;
     const startedAt = new Date().toISOString();
 

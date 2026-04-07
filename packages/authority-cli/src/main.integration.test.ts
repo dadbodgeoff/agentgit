@@ -2015,7 +2015,7 @@ describe("authority cli MCP integration", () => {
       } | null;
     };
     expect(submitResult.approval_request?.status).toBe("pending");
-    expect(submitResult.approval_request?.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
+    expect(submitResult.approval_request?.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
     const approvalId = submitResult.approval_request?.approval_id as string;
 
     const inbox = await runCliProcess(["--json", "approval-inbox", run.run_id, "pending"], {
@@ -2030,7 +2030,7 @@ describe("authority cli MCP integration", () => {
     expect(inboxResult.counts.pending).toBe(1);
     expect(inboxResult.items[0]?.approval_id).toBe(approvalId);
     expect(inboxResult.items[0]?.status).toBe("pending");
-    expect(inboxResult.items[0]?.reason_summary ?? "").toMatch(/requires approval|automation threshold/i);
+    expect(inboxResult.items[0]?.reason_summary ?? "").toMatch(/approval is required|automation threshold/i);
 
     const approvals = await runCliProcess(["--json", "list-approvals", run.run_id, "pending"], {
       workspaceRoot: harness.workspaceRoot,
@@ -2056,7 +2056,7 @@ describe("authority cli MCP integration", () => {
         (step) =>
           step.step_type === "approval_step" &&
           step.status === "awaiting_approval" &&
-          step.primary_reason?.code === "WORKSPACE_SHELL_REQUIRES_APPROVAL",
+          step.primary_reason?.code === "OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL",
       ),
     ).toBe(true);
 
@@ -2070,7 +2070,7 @@ describe("authority cli MCP integration", () => {
       primary_reason?: { code: string } | null;
     };
     expect(helperBeforeResult.answer).toContain("waiting for approval");
-    expect(helperBeforeResult.primary_reason?.code).toBe("WORKSPACE_SHELL_REQUIRES_APPROVAL");
+    expect(helperBeforeResult.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
 
     const approve = await runCliProcess(["--json", "approve", approvalId, "cli integration approval"], {
       workspaceRoot: harness.workspaceRoot,

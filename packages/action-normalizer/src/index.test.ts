@@ -247,6 +247,64 @@ describe("normalizeActionAttempt", () => {
     );
   });
 
+  it("should extract interpreter script path operands after the script entrypoint", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["python3", "scripts/runner.py", "./src/index.ts", "/tmp/outside.txt"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.target.primary.locator).toBe("/tmp/outside.txt");
+    expect(action.target.scope.breadth).toBe("external");
+    expect(action.facets.shell?.target_paths).toEqual(["/workspace/project/src/index.ts", "/tmp/outside.txt"]);
+    expect(action.facets.shell?.outside_workspace_paths).toEqual(["/tmp/outside.txt"]);
+  });
+
+  it("should extract the root search path from find commands", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["find", "./src", "-name", "*.ts"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.target.primary.locator).toBe("/workspace/project/src");
+    expect(action.facets.shell?.target_paths).toEqual(["/workspace/project/src"]);
+    expect(action.operation.display_name).toBe("Inspect workspace with find");
+  });
+
+  it("should treat ripgrep path operands separately from the search pattern", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["rg", "TODO", "./src", "./docs"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.facets.shell?.target_paths).toEqual(["/workspace/project/src", "/workspace/project/docs"]);
+    expect(action.target.scope.breadth).toBe("set");
+    expect(action.operation.display_name).toBe("Inspect workspace with rg");
+  });
+
   it("should set sensitivity_hint to moderate for files over 256KB", () => {
     const action = normalizeActionAttempt(
       makeAttempt({
@@ -381,6 +439,103 @@ describe("normalizeActionAttempt", () => {
     expect(action.operation.display_name).toBe("Inspect git history");
     expect(action.facets.shell).toMatchObject({
       command_family: "version_control_read_only",
+    });
+  });
+
+  it("should normalize shell reads of protected files as path-targeted single scope", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["cat", "/workspace/project/.env"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.target.primary.type).toBe("path");
+    expect(action.target.primary.locator).toBe("/workspace/project/.env");
+    expect(action.target.scope.breadth).toBe("single");
+    expect(action.normalization.warnings).toContain("protected_target");
+    expect(action.facets.shell).toMatchObject({
+      target_paths: ["/workspace/project/.env"],
+      protected_paths: ["/workspace/project/.env"],
+      outside_workspace_paths: [],
+    });
+  });
+
+  it("should normalize shell reads of outside absolute paths as external scope", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["cat", "/tmp/outside.txt"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.target.primary.type).toBe("path");
+    expect(action.target.primary.locator).toBe("/tmp/outside.txt");
+    expect(action.target.scope.breadth).toBe("external");
+    expect(action.target.scope.unknowns).toEqual([]);
+    expect(action.normalization.warnings).toContain("outside_workspace");
+    expect(action.facets.shell).toMatchObject({
+      target_paths: ["/tmp/outside.txt"],
+      outside_workspace_paths: ["/tmp/outside.txt"],
+    });
+  });
+
+  it("should normalize interpreter path arguments for protected writes", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["node", "-e", "process.stdout.write('ok')", "/workspace/project/.agentgit/policy.toml"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.target.primary.type).toBe("path");
+    expect(action.target.primary.locator).toBe("/workspace/project/.agentgit/policy.toml");
+    expect(action.target.scope.breadth).toBe("single");
+    expect(action.normalization.warnings).toContain("control_surface_target");
+    expect(action.facets.shell).toMatchObject({
+      target_paths: ["/workspace/project/.agentgit/policy.toml"],
+      control_surface_paths: ["/workspace/project/.agentgit/policy.toml"],
+    });
+  });
+
+  it("should normalize interpreter path arguments for outside writes", () => {
+    const action = normalizeActionAttempt(
+      makeAttempt({
+        tool_registration: {
+          tool_name: "exec_command",
+          tool_kind: "shell",
+        },
+        raw_call: {
+          argv: ["node", "-e", "process.stdout.write('ok')", "/tmp/outside-write.txt"],
+        },
+      }),
+      "sess_test",
+    );
+
+    expect(action.target.primary.type).toBe("path");
+    expect(action.target.primary.locator).toBe("/tmp/outside-write.txt");
+    expect(action.target.scope.breadth).toBe("external");
+    expect(action.facets.shell).toMatchObject({
+      target_paths: ["/tmp/outside-write.txt"],
+      outside_workspace_paths: ["/tmp/outside-write.txt"],
     });
   });
 

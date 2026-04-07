@@ -297,6 +297,19 @@ function eventSummary(event: JournalEventRecord): string {
   }
 }
 
+function reversibilityFromPolicyRecoverability(value: string | null): TimelineStep["reversibility_class"] {
+  switch (value) {
+    case "recoverable_local":
+      return "reversible";
+    case "recoverable_external_compensated":
+      return "compensatable";
+    case "unrecoverable_or_degraded":
+      return "review_only";
+    default:
+      return null;
+  }
+}
+
 function reversibilityForEvent(eventType: string): TimelineStep["reversibility_class"] {
   if (eventType === "snapshot.created" || eventType.startsWith("recovery.")) {
     return "reversible";
@@ -744,6 +757,9 @@ function buildActionStep(
   const executionWarnings = visiblePayloadStringList(executionCompletedEvent, "warnings", visibilityScope, tracker);
   const warnings = [...policyWarnings, ...executionWarnings];
   const artifactCaptureFailedCount = payloadNumberField(executionCompletedEvent, "artifact_capture_failed_count");
+  const policyRecoverability = reversibilityFromPolicyRecoverability(
+    payloadStringField(policyEvent, "recoverability_class"),
+  );
 
   let status: TimelineStep["status"] = "completed";
   if (decision === "deny") {
@@ -988,13 +1004,15 @@ function buildActionStep(
     action_id: group.actionId,
     decision,
     primary_reason: primaryReason,
-    reversibility_class: snapshotEvent
-      ? "reversible"
-      : executionCompletedEvent
-        ? "compensatable"
-        : provenance === "governed"
-          ? null
-          : "review_only",
+    reversibility_class:
+      policyRecoverability ??
+      (snapshotEvent
+        ? "reversible"
+        : executionCompletedEvent
+          ? "compensatable"
+          : provenance === "governed"
+            ? null
+            : "review_only"),
     confidence: actionConfidenceScore(
       normalizedEvent ?? policyEvent ?? importedEvent ?? observedEvent ?? firstEvent,
       provenanceConfidence(

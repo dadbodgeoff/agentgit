@@ -1043,6 +1043,12 @@ function localSnapshotRecoveryContext(action: ActionRecord): Partial<PolicyOutco
   });
 }
 
+function shellSnapshotRecoveryContext(): Partial<PolicyOutcomeRecord["policy_context"]> {
+  return {
+    recoverability_class: "unrecoverable_or_degraded",
+  };
+}
+
 function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
   const locator = action.target.primary.locator;
   const confidenceScore = actionConfidenceScore(action);
@@ -1153,6 +1159,41 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
   );
   const confidenceTriggered = lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold;
 
+  if (action.target.scope.breadth === "external") {
+    return makeOutcome(
+      action,
+      "deny",
+      [
+        {
+          code: "PATH_NOT_GOVERNED",
+          severity: "critical",
+          message: "Shell command targets an explicit path outside the governed workspace roots.",
+        },
+      ],
+      ["shell.outside_workspace.deny"],
+    );
+  }
+
+  if (action.target.scope.unknowns.includes("scope")) {
+    return makeOutcome(
+      action,
+      "ask",
+      [
+        {
+          code: "OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL",
+          severity: "high",
+          message:
+            "Shell command scope is too opaque to verify containment, so explicit approval is required before execution.",
+        },
+      ],
+      ["shell.opaque_scope.ask"],
+      undefined,
+      makeRecoveryProofContext({
+        recoverability_class: "unrecoverable_or_degraded",
+      }),
+    );
+  }
+
   if (action.risk_hints.side_effect_level === "read_only") {
     if (confidenceTriggered) {
       return (
@@ -1167,7 +1208,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
           },
           "shell.low_confidence.snapshot",
           undefined,
-          localSnapshotRecoveryContext(action),
+          shellSnapshotRecoveryContext(),
         )
       );
     }
@@ -1219,7 +1260,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         },
         "shell.low_confidence.snapshot",
         undefined,
-        localSnapshotRecoveryContext(action),
+        shellSnapshotRecoveryContext(),
       )
     );
   }
@@ -1243,7 +1284,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         ],
         ["shell.mutating.requires_snapshot"],
         undefined,
-        localSnapshotRecoveryContext(action),
+        shellSnapshotRecoveryContext(),
       )
     );
   }
@@ -1261,7 +1302,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         },
         "shell.package_manager.snapshot",
         undefined,
-        localSnapshotRecoveryContext(action),
+        shellSnapshotRecoveryContext(),
       )
     );
   }
@@ -1278,7 +1319,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         },
         "shell.build_tool.snapshot",
         undefined,
-        localSnapshotRecoveryContext(action),
+        shellSnapshotRecoveryContext(),
       )
     );
   }
@@ -1296,7 +1337,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
         },
         "shell.interpreter.snapshot",
         undefined,
-        localSnapshotRecoveryContext(action),
+        shellSnapshotRecoveryContext(),
       )
     );
   }
@@ -1313,7 +1354,7 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
       },
       "shell.unclassified.snapshot",
       undefined,
-      localSnapshotRecoveryContext(action),
+      shellSnapshotRecoveryContext(),
     )
   );
 }
