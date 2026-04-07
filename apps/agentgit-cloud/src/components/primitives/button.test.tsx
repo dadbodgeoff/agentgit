@@ -7,6 +7,6 @@ describe("Button", () => {
     render(<Button>Approve action</Button>);
 
     const button = screen.getByRole("button", { name: "Approve action" });
-    expect(button).toHaveAttribute("type", "button");
+    expect(button.getAttribute("type")).toBe("button");
   });
 });

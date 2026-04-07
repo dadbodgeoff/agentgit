@@ -1,0 +1,217 @@
+{
+  "version": 3,
+  "pages404": true,
+  "caseSensitive": false,
+  "basePath": "",
+  "redirects": [
+    {
+      "source": "/:path+/",
+      "destination": "/:path+",
+      "internal": true,
+      "statusCode": 308,
+      "regex": "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))/$"
+    }
+  ],
+  "headers": [],
+  "rewrites": {
+    "beforeFiles": [],
+    "afterFiles": [],
+    "fallback": []
+  },
+  "dynamicRoutes": [
+    {
+      "page": "/api/v1/repos/[repoId]/calibration",
+      "regex": "^/api/v1/repos/([^/]+?)/calibration(?:/)?$",
+      "routeKeys": {
+        "nxtPrepoId": "nxtPrepoId"
+      },
+      "namedRegex": "^/api/v1/repos/(?<nxtPrepoId>[^/]+?)/calibration(?:/)?$"
+    },
+    {
+      "page": "/api/v1/runs/[runId]",
+      "regex": "^/api/v1/runs/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPrunId": "nxtPrunId"
+      },
+      "namedRegex": "^/api/v1/runs/(?<nxtPrunId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/app/repos/[owner]/[name]",
+      "regex": "^/app/repos/([^/]+?)/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPowner": "nxtPowner",
+        "nxtPname": "nxtPname"
+      },
+      "namedRegex": "^/app/repos/(?<nxtPowner>[^/]+?)/(?<nxtPname>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/app/repos/[owner]/[name]/policy",
+      "regex": "^/app/repos/([^/]+?)/([^/]+?)/policy(?:/)?$",
+      "routeKeys": {
+        "nxtPowner": "nxtPowner",
+        "nxtPname": "nxtPname"
+      },
+      "namedRegex": "^/app/repos/(?<nxtPowner>[^/]+?)/(?<nxtPname>[^/]+?)/policy(?:/)?$"
+    },
+    {
+      "page": "/app/repos/[owner]/[name]/runs",
+      "regex": "^/app/repos/([^/]+?)/([^/]+?)/runs(?:/)?$",
+      "routeKeys": {
+        "nxtPowner": "nxtPowner",
+        "nxtPname": "nxtPname"
+      },
+      "namedRegex": "^/app/repos/(?<nxtPowner>[^/]+?)/(?<nxtPname>[^/]+?)/runs(?:/)?$"
+    },
+    {
+      "page": "/app/repos/[owner]/[name]/runs/[runId]",
+      "regex": "^/app/repos/([^/]+?)/([^/]+?)/runs/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPowner": "nxtPowner",
+        "nxtPname": "nxtPname",
+        "nxtPrunId": "nxtPrunId"
+      },
+      "namedRegex": "^/app/repos/(?<nxtPowner>[^/]+?)/(?<nxtPname>[^/]+?)/runs/(?<nxtPrunId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/app/repos/[owner]/[name]/runs/[runId]/actions/[actionId]",
+      "regex": "^/app/repos/([^/]+?)/([^/]+?)/runs/([^/]+?)/actions/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPowner": "nxtPowner",
+        "nxtPname": "nxtPname",
+        "nxtPrunId": "nxtPrunId",
+        "nxtPactionId": "nxtPactionId"
+      },
+      "namedRegex": "^/app/repos/(?<nxtPowner>[^/]+?)/(?<nxtPname>[^/]+?)/runs/(?<nxtPrunId>[^/]+?)/actions/(?<nxtPactionId>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/app/repos/[owner]/[name]/snapshots",
+      "regex": "^/app/repos/([^/]+?)/([^/]+?)/snapshots(?:/)?$",
+      "routeKeys": {
+        "nxtPowner": "nxtPowner",
+        "nxtPname": "nxtPname"
+      },
+      "namedRegex": "^/app/repos/(?<nxtPowner>[^/]+?)/(?<nxtPname>[^/]+?)/snapshots(?:/)?$"
+    }
+  ],
+  "staticRoutes": [
+    {
+      "page": "/",
+      "regex": "^/(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/(?:/)?$"
+    },
+    {
+      "page": "/_not-found",
+      "regex": "^/_not\\-found(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/app",
+      "regex": "^/app(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app(?:/)?$"
+    },
+    {
+      "page": "/app/activity",
+      "regex": "^/app/activity(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/activity(?:/)?$"
+    },
+    {
+      "page": "/app/approvals",
+      "regex": "^/app/approvals(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/approvals(?:/)?$"
+    },
+    {
+      "page": "/app/audit",
+      "regex": "^/app/audit(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/audit(?:/)?$"
+    },
+    {
+      "page": "/app/calibration",
+      "regex": "^/app/calibration(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/calibration(?:/)?$"
+    },
+    {
+      "page": "/app/onboarding",
+      "regex": "^/app/onboarding(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/onboarding(?:/)?$"
+    },
+    {
+      "page": "/app/repos",
+      "regex": "^/app/repos(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/repos(?:/)?$"
+    },
+    {
+      "page": "/app/settings",
+      "regex": "^/app/settings(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/settings(?:/)?$"
+    },
+    {
+      "page": "/app/settings/billing",
+      "regex": "^/app/settings/billing(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/settings/billing(?:/)?$"
+    },
+    {
+      "page": "/app/settings/integrations",
+      "regex": "^/app/settings/integrations(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/settings/integrations(?:/)?$"
+    },
+    {
+      "page": "/app/settings/team",
+      "regex": "^/app/settings/team(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/app/settings/team(?:/)?$"
+    },
+    {
+      "page": "/docs",
+      "regex": "^/docs(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/docs(?:/)?$"
+    },
+    {
+      "page": "/pricing",
+      "regex": "^/pricing(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/pricing(?:/)?$"
+    },
+    {
+      "page": "/sign-in",
+      "regex": "^/sign\\-in(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/sign\\-in(?:/)?$"
+    },
+    {
+      "page": "/sign-in/callback",
+      "regex": "^/sign\\-in/callback(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/sign\\-in/callback(?:/)?$"
+    }
+  ],
+  "dataRoutes": [],
+  "rsc": {
+    "header": "rsc",
+    "varyHeader": "rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch",
+    "prefetchHeader": "next-router-prefetch",
+    "didPostponeHeader": "x-nextjs-postponed",
+    "contentTypeHeader": "text/x-component",
+    "suffix": ".rsc",
+    "prefetchSuffix": ".prefetch.rsc",
+    "prefetchSegmentHeader": "next-router-segment-prefetch",
+    "prefetchSegmentSuffix": ".segment.rsc",
+    "prefetchSegmentDirSuffix": ".segments"
+  },
+  "rewriteHeaders": {
+    "pathHeader": "x-nextjs-rewritten-path",
+    "queryHeader": "x-nextjs-rewritten-query"
+  }
+}
