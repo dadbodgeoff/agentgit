@@ -8,7 +8,7 @@ export function PageHeader({
   actions?: ReactNode;
   description?: string;
   title: string;
-}): JSX.Element {
+}) {
   return (
     <div className="flex flex-col gap-4 border-b border-[var(--ag-border-subtle)] pb-6 md:flex-row md:items-end md:justify-between">
       <div className="space-y-2">

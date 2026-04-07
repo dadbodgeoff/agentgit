@@ -8,7 +8,7 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   errorText?: string;
 }
 
-export function Input({ className, errorText, helpText, label, ...props }: InputProps): JSX.Element {
+export function Input({ className, errorText, helpText, label, ...props }: InputProps) {
   const describedBy = errorText ? `${props.id}-error` : helpText ? `${props.id}-help` : undefined;
 
   return (

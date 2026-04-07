@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Button, Card } from "@/components/primitives";
 
-export default function NotFound(): JSX.Element {
+export default function NotFound() {
   return (
     <main className="ag-page-shell flex min-h-screen items-center justify-center px-6 py-16">
       <Card className="w-full max-w-lg space-y-4 text-center">

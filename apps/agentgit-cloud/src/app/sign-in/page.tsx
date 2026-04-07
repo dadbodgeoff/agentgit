@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Button, Card } from "@/components/primitives";
 import { publicRoutes } from "@/lib/navigation/routes";
 
-export default function SignInPage(): JSX.Element {
+export default function SignInPage() {
   return (
     <main className="ag-page-shell flex min-h-screen items-center justify-center px-6 py-16">
       <Card className="w-full max-w-md space-y-6">

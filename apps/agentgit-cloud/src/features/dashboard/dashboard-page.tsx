@@ -9,7 +9,7 @@ import { parsePreviewState } from "@/lib/navigation/search-params";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 import { useSearchParams } from "next/navigation";
 
-export function DashboardPage(): JSX.Element {
+export function DashboardPage() {
   const searchParams = useSearchParams();
   const previewState = parsePreviewState(searchParams);
   const dashboardQuery = useDashboardQuery(previewState);

@@ -6,7 +6,7 @@ export function ErrorState({
 }: {
   message: string;
   retryLabel?: string;
-}): JSX.Element {
+}) {
   return (
     <Card className="border-[color:rgb(239_68_68_/_0.35)] bg-[var(--ag-bg-error)]">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">

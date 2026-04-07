@@ -1,11 +1,11 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function RepositoryDetailRoute({
+export default async function RepositoryDetailRoute({
   params,
 }: {
-  params: { owner: string; name: string };
-}): JSX.Element {
-  const { owner, name } = params;
+  params: Promise<{ owner: string; name: string }>;
+}) {
+  const { owner, name } = await params;
 
   return (
     <ScaffoldPage

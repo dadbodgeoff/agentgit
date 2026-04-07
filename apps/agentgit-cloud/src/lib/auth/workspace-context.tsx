@@ -26,7 +26,7 @@ export function WorkspaceProvider({
 }: {
   children: ReactNode;
   value?: WorkspaceSession;
-}): JSX.Element {
+}) {
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 

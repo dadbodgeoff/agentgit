@@ -8,7 +8,7 @@ export function ApprovalCard({
   confidence: number;
   repo: string;
   summary: string;
-}): JSX.Element {
+}) {
   return (
     <Card className="border-l-2 border-l-[var(--ag-color-accent)]">
       <div className="flex flex-col gap-4">

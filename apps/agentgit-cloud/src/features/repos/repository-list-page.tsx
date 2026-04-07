@@ -9,7 +9,7 @@ import { parsePreviewState } from "@/lib/navigation/search-params";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 import { useSearchParams } from "next/navigation";
 
-export function RepositoryListPage(): JSX.Element {
+export function RepositoryListPage() {
   const searchParams = useSearchParams();
   const previewState = parsePreviewState(searchParams);
   const repositoriesQuery = useRepositoriesQuery(previewState);

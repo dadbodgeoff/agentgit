@@ -6,7 +6,7 @@ import { Button } from "@/components/primitives";
 import { useWorkspace } from "@/lib/auth/workspace-context";
 import { authenticatedRoutes } from "@/lib/navigation/routes";
 
-export function ShellHeader(): JSX.Element {
+export function ShellHeader() {
   const { activeWorkspace, user } = useWorkspace();
 
   return (

@@ -1,5 +1,5 @@
 import { ApprovalQueuePage } from "@/features/approvals/approval-queue-page";
 
-export default function ApprovalsRoute(): JSX.Element {
+export default function ApprovalsRoute() {
   return <ApprovalQueuePage />;
 }

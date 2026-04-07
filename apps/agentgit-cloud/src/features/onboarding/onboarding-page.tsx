@@ -1,7 +1,7 @@
 import { Button } from "@/components/primitives";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export function OnboardingPage(): JSX.Element {
+export function OnboardingPage() {
   return (
     <ScaffoldPage
       actions={<Button>Launch workspace</Button>}

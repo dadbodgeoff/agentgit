@@ -1,6 +1,6 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function ActivityRoute(): JSX.Element {
+export default function ActivityRoute() {
   return (
     <ScaffoldPage
       description="Workspace-wide activity feed scaffold for recent agent and human actions."

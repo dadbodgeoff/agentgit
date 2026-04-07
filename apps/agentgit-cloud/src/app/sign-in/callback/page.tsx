@@ -1,6 +1,6 @@
 import { Card } from "@/components/primitives";
 
-export default function SignInCallbackPage(): JSX.Element {
+export default function SignInCallbackPage() {
   return (
     <main className="ag-page-shell flex min-h-screen items-center justify-center px-6 py-16">
       <Card className="w-full max-w-md text-center">

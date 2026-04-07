@@ -6,7 +6,7 @@ export function LoadingSkeleton({
 }: {
   className?: string;
   lines?: number;
-}): JSX.Element {
+}) {
   return (
     <div className={cn("flex flex-col gap-2", className)}>
       {Array.from({ length: lines }).map((_, index) => (

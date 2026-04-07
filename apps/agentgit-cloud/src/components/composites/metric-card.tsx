@@ -8,7 +8,7 @@ export function MetricCard({
   label: string;
   trend?: string;
   value: string;
-}): JSX.Element {
+}) {
   return (
     <Card className="ag-dot-grid min-h-36">
       <div className="flex h-full flex-col justify-between gap-4">

@@ -17,7 +17,7 @@ export function RunDetailPage({
   owner: string;
   name: string;
   runId: string;
-}): JSX.Element {
+}) {
   const searchParams = useSearchParams();
   const previewState = parsePreviewState(searchParams);
   const runQuery = useRunDetailQuery(runId, previewState);

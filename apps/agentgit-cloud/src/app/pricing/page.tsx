@@ -1,6 +1,6 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function PricingPage(): JSX.Element {
+export default function PricingPage() {
   return (
     <main className="ag-page-shell px-6 py-16">
       <div className="mx-auto max-w-6xl">

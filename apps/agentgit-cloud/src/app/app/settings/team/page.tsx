@@ -1,6 +1,6 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function TeamSettingsRoute(): JSX.Element {
+export default function TeamSettingsRoute() {
   return (
     <ScaffoldPage
       description="Team management scaffold for invitations, roles, and membership actions."

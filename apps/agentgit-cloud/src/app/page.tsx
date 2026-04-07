@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Button, Card } from "@/components/primitives";
 import { publicRoutes } from "@/lib/navigation/routes";
 
-export default function LandingPage(): JSX.Element {
+export default function LandingPage() {
   return (
     <main className="ag-page-shell flex min-h-screen items-center justify-center px-6 py-16">
       <div className="mx-auto grid w-full max-w-6xl gap-8 lg:grid-cols-[1.3fr_0.7fr]">

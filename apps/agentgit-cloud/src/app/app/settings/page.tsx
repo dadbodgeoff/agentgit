@@ -1,6 +1,6 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function SettingsRoute(): JSX.Element {
+export default function SettingsRoute() {
   return (
     <ScaffoldPage
       description="Workspace settings scaffold with fixed save bar and section navigation."

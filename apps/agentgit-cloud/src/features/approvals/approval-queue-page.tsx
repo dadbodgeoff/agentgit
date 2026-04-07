@@ -9,7 +9,7 @@ import { parsePreviewState } from "@/lib/navigation/search-params";
 import { formatConfidence, formatRelativeTimestamp } from "@/lib/utils/format";
 import { useSearchParams } from "next/navigation";
 
-export function ApprovalQueuePage(): JSX.Element {
+export function ApprovalQueuePage() {
   const searchParams = useSearchParams();
   const previewState = parsePreviewState(searchParams);
   const approvalsQuery = useApprovalsQuery(previewState);

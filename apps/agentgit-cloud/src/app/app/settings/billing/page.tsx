@@ -1,6 +1,6 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function BillingSettingsRoute(): JSX.Element {
+export default function BillingSettingsRoute() {
   return (
     <ScaffoldPage
       description="Billing scaffold reserved for owner-only plan and workspace billing controls."

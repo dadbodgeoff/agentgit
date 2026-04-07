@@ -1,6 +1,6 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function AuditRoute(): JSX.Element {
+export default function AuditRoute() {
   return (
     <ScaffoldPage
       description="Workspace audit log scaffold with read-only filtering and export surface."

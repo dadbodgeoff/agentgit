@@ -1,11 +1,11 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function PolicyRoute({
+export default async function PolicyRoute({
   params,
 }: {
-  params: { owner: string; name: string };
-}): JSX.Element {
-  const { owner, name } = params;
+  params: Promise<{ owner: string; name: string }>;
+}) {
+  const { owner, name } = await params;
 
   return (
     <ScaffoldPage

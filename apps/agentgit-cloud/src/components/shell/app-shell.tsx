@@ -4,7 +4,7 @@ import { ShellHeader } from "@/components/shell/shell-header";
 import { ShellSidebar } from "@/components/shell/shell-sidebar";
 import { ToastViewport } from "@/components/primitives";
 
-export function AppShell({ children }: { children: ReactNode }): JSX.Element {
+export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="ag-page-shell min-h-screen">
       <a className="ag-skip-link ag-focus-ring" href="#main-content">

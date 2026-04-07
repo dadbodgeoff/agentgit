@@ -1,6 +1,6 @@
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 
-export default function IntegrationsRoute(): JSX.Element {
+export default function IntegrationsRoute() {
   return (
     <ScaffoldPage
       description="Integration settings scaffold for GitHub app status, webhooks, and future notification channels."

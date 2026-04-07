@@ -9,7 +9,7 @@ import { parsePreviewState } from "@/lib/navigation/search-params";
 import { formatPercent } from "@/lib/utils/format";
 import { useSearchParams } from "next/navigation";
 
-export function CalibrationPage(): JSX.Element {
+export function CalibrationPage() {
   const searchParams = useSearchParams();
   const previewState = parsePreviewState(searchParams);
   const calibrationQuery = useCalibrationQuery("repo_abc123", previewState);

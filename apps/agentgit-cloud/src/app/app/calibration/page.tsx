@@ -1,5 +1,5 @@
 import { CalibrationPage } from "@/features/calibration/calibration-page";
 
-export default function CalibrationRoute(): JSX.Element {
+export default function CalibrationRoute() {
   return <CalibrationPage />;
 }

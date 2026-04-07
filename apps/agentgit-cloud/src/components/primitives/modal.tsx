@@ -6,7 +6,7 @@ export function ModalFrame({
   children,
   className,
   ...props
-}: HTMLAttributes<HTMLDivElement> & { children: ReactNode }): JSX.Element {
+}: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
   return (
     <div
       className="fixed inset-0 z-[var(--ag-z-modal)] hidden items-center justify-center bg-black/60 p-6 data-[open=true]:flex"

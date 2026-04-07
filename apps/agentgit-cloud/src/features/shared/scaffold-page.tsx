@@ -34,7 +34,7 @@ export function ScaffoldPage({
   sidePanel?: ReactNode;
   staleLabel?: string;
   title: string;
-}): JSX.Element {
+}) {
   const visibleMetrics = metrics ?? [
     { label: "Connected repositories", trend: "+4 this week", value: "18" },
     { label: "Pending approvals", trend: "1 requires review", value: "3" },

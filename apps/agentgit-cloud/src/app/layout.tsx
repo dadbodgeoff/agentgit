@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   description: "Hosted governance dashboard for autonomous development workflows.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }): JSX.Element {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html className={`${plexSans.variable} ${plexMono.variable}`} lang="en">
       <body>

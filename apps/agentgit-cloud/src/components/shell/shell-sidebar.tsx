@@ -15,7 +15,7 @@ const navItems = [
   { href: "/app/settings", label: "Settings" },
 ];
 
-export function ShellSidebar(): JSX.Element {
+export function ShellSidebar() {
   const { activeWorkspace } = useWorkspace();
 
   return (

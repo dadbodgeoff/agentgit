@@ -12,7 +12,7 @@ export function EmptyState({
   children?: ReactNode;
   description: string;
   title: string;
-}): JSX.Element {
+}) {
   return (
     <Card className="border-dashed bg-transparent text-center">
       <div className="mx-auto flex max-w-xl flex-col items-center gap-4 py-8">

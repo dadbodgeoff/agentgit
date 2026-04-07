@@ -2,7 +2,7 @@ import type { HTMLAttributes } from "react";
 
 import { cn } from "@/lib/utils/cn";
 
-export function TabList({ className, ...props }: HTMLAttributes<HTMLDivElement>): JSX.Element {
+export function TabList({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
@@ -19,7 +19,7 @@ export function TabTrigger({
   active = false,
   className,
   ...props
-}: HTMLAttributes<HTMLButtonElement> & { active?: boolean }): JSX.Element {
+}: HTMLAttributes<HTMLButtonElement> & { active?: boolean }) {
   return (
     <button
       className={cn(

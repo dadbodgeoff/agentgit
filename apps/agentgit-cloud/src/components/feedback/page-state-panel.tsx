@@ -19,7 +19,7 @@ export function PageStatePanel({
   emptyTitle?: string;
   errorMessage?: string;
   state: "loading" | "empty" | "error" | "ready";
-}): JSX.Element {
+}) {
   if (state === "loading") {
     return (
       <Card className="space-y-4">

@@ -34,7 +34,7 @@ export function Button({
   type = "button",
   variant = "primary",
   ...props
-}: ButtonProps): JSX.Element {
+}: ButtonProps) {
   return (
     <button
       className={cn(
