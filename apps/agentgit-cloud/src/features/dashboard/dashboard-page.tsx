@@ -4,14 +4,12 @@ import { Card, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, Tabl
 import { PageStatePanel, StaleIndicator } from "@/components/feedback";
 import { Button } from "@/components/primitives";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { getApiErrorMessage } from "@/lib/api/client";
 import { useDashboardQuery } from "@/lib/query/hooks";
-import { parsePreviewState } from "@/lib/navigation/search-params";
+import type { PreviewState } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
-import { useSearchParams } from "next/navigation";
 
-export function DashboardPage() {
-  const searchParams = useSearchParams();
-  const previewState = parsePreviewState(searchParams);
+export function DashboardPage({ previewState = "ready" }: { previewState?: PreviewState }) {
   const dashboardQuery = useDashboardQuery(previewState);
 
   if (dashboardQuery.isPending) {
@@ -30,6 +28,8 @@ export function DashboardPage() {
   }
 
   if (dashboardQuery.isError) {
+    const errorMessage = getApiErrorMessage(dashboardQuery.error, "Could not load dashboard data. Retry.");
+
     return (
       <ScaffoldPage
         actions={<Button>Connect repository</Button>}
@@ -37,7 +37,7 @@ export function DashboardPage() {
         sections={[]}
         title="Dashboard"
       >
-        <PageStatePanel errorMessage="Could not load dashboard data. Retry." state="error" />
+        <PageStatePanel errorMessage={errorMessage} state="error" />
       </ScaffoldPage>
     );
   }

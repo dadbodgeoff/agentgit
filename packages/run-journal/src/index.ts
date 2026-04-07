@@ -1,8 +1,8 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import crypto from "node:crypto";
 
-import Database from "better-sqlite3";
 import {
   type ActionRecord,
   AgentGitError,
@@ -34,6 +34,10 @@ import {
   type QueryHelperResponsePayload,
   type VisibilityScope,
 } from "@agentgit/schemas";
+
+const require = createRequire(import.meta.url);
+type BetterSqlite3Constructor = typeof import("better-sqlite3") extends { default: infer T } ? T : never;
+const Database = require("better-sqlite3") as BetterSqlite3Constructor;
 
 type RunEventSummary = ReturnType<typeof RunEventSummarySchema.parse>;
 type RunMaintenanceStatus = ReturnType<typeof RunMaintenanceStatusSchema.parse>;

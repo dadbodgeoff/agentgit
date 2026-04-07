@@ -1,27 +1,37 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
-import { Button, Card } from "@/components/primitives";
-import { publicRoutes } from "@/lib/navigation/routes";
+import { auth } from "@/auth";
+import { SignInCard } from "@/features/auth/sign-in-card";
+import { authFeatureFlags } from "@/lib/auth/provider-config";
+import { normalizeCallbackUrl } from "@/lib/auth/redirect";
+import { authenticatedRoutes } from "@/lib/navigation/routes";
 
-export default function SignInPage() {
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ callbackUrl?: string | string[]; error?: string | string[] }>;
+}) {
+  const session = await auth();
+  const resolvedSearchParams = await searchParams;
+
+  if (session) {
+    redirect(authenticatedRoutes.dashboard);
+  }
+
+  const callbackUrl = normalizeCallbackUrl(
+    typeof resolvedSearchParams?.callbackUrl === "string" ? resolvedSearchParams.callbackUrl : undefined,
+  );
+  const error =
+    typeof resolvedSearchParams?.error === "string" ? resolvedSearchParams.error : undefined;
+
   return (
     <main className="ag-page-shell flex min-h-screen items-center justify-center px-6 py-16">
-      <Card className="w-full max-w-md space-y-6">
-        <div className="space-y-2">
-          <h1 className="text-3xl font-semibold tracking-[-0.02em]">Sign in</h1>
-          <p className="text-sm text-[var(--ag-text-secondary)]">
-            GitHub OAuth will be the primary authentication path for AgentGit Cloud.
-          </p>
-        </div>
-        <Button className="w-full">Continue with GitHub</Button>
-        <p className="text-xs text-[var(--ag-text-tertiary)]">
-          OAuth callback route reserved at{" "}
-          <Link className="text-[var(--ag-color-brand)]" href={publicRoutes.signInCallback}>
-            {publicRoutes.signInCallback}
-          </Link>
-          .
-        </p>
-      </Card>
+      <SignInCard
+        callbackUrl={callbackUrl}
+        enableDevelopmentCredentials={authFeatureFlags.enableDevelopmentCredentials}
+        enableGitHub={authFeatureFlags.hasGitHubProvider}
+        errorMessage={error}
+      />
     </main>
   );
 }

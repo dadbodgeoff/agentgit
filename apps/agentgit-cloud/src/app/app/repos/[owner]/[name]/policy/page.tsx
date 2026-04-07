@@ -1,20 +1,37 @@
-import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { redirect } from "next/navigation";
 
-export default async function PolicyRoute({
+import { AccessDeniedState } from "@/components/feedback";
+import { RepositoryPolicyPage } from "@/features/repos/repository-policy-page";
+import { publicRoutes, repositoryPolicyRoute } from "@/lib/navigation/routes";
+import { parsePreviewStateValue } from "@/lib/navigation/search-params";
+import { getRoleAccess } from "@/lib/rbac/access";
+
+export default async function RepositoryPolicyRoute({
   params,
+  searchParams,
 }: {
   params: Promise<{ owner: string; name: string }>;
+  searchParams?: Promise<{ state?: string | string[] }>;
 }) {
   const { owner, name } = await params;
+  const access = await getRoleAccess("admin");
 
-  return (
-    <ScaffoldPage
-      description={`Policy editor scaffold for ${owner}/${name} with rule editing, conflict handling, and dangerous-change warnings.`}
-      sections={[
-        { title: "Policy rules", description: "Form surface for thresholds, rule scopes, and defaults." },
-        { title: "Conflict handling", description: "State rail for concurrent policy edits.", kind: "status" },
-      ]}
-      title="Policy editor"
-    />
-  );
+  if (!access.session) {
+    redirect(`${publicRoutes.signIn}?callbackUrl=${encodeURIComponent(repositoryPolicyRoute(owner, name))}`);
+  }
+
+  if (!access.allowed) {
+    return (
+      <AccessDeniedState
+        currentRole={access.session.activeWorkspace.role}
+        requiredRole={access.requiredRole}
+        resourceLabel="repository policy"
+      />
+    );
+  }
+
+  const resolvedSearchParams = await searchParams;
+  const previewState = parsePreviewStateValue(resolvedSearchParams?.state);
+
+  return <RepositoryPolicyPage name={name} owner={owner} previewState={previewState} />;
 }

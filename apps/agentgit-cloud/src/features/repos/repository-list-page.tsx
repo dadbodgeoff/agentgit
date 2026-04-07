@@ -1,17 +1,18 @@
 "use client";
 
+import Link from "next/link";
+
 import { Card, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow } from "@/components/primitives";
 import { PageStatePanel } from "@/components/feedback";
 import { Button } from "@/components/primitives";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { getApiErrorMessage } from "@/lib/api/client";
+import { repositoryRoute } from "@/lib/navigation/routes";
 import { useRepositoriesQuery } from "@/lib/query/hooks";
-import { parsePreviewState } from "@/lib/navigation/search-params";
+import type { PreviewState } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
-import { useSearchParams } from "next/navigation";
 
-export function RepositoryListPage() {
-  const searchParams = useSearchParams();
-  const previewState = parsePreviewState(searchParams);
+export function RepositoryListPage({ previewState = "ready" }: { previewState?: PreviewState }) {
   const repositoriesQuery = useRepositoriesQuery(previewState);
 
   if (repositoriesQuery.isPending) {
@@ -23,9 +24,11 @@ export function RepositoryListPage() {
   }
 
   if (repositoriesQuery.isError) {
+    const errorMessage = getApiErrorMessage(repositoriesQuery.error, "Could not load repositories. Retry.");
+
     return (
       <ScaffoldPage actions={<Button>Connect repository</Button>} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
-        <PageStatePanel errorMessage="Could not load repositories. Retry." state="error" />
+        <PageStatePanel errorMessage={errorMessage} state="error" />
       </ScaffoldPage>
     );
   }
@@ -85,7 +88,12 @@ export function RepositoryListPage() {
             {repositories.items.map((repo) => (
               <TableRow key={repo.id}>
                 <TableCell className="font-medium">
-                  {repo.owner}/{repo.name}
+                  <Link
+                    className="ag-focus-ring rounded-sm text-[var(--ag-text-primary)] underline-offset-4 hover:text-[var(--ag-color-brand)] hover:underline"
+                    href={repositoryRoute(repo.owner, repo.name)}
+                  >
+                    {repo.owner}/{repo.name}
+                  </Link>
                 </TableCell>
                 <TableCell>{repo.defaultBranch}</TableCell>
                 <TableCell className="capitalize">{repo.lastRunStatus}</TableCell>

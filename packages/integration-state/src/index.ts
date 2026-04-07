@@ -1,11 +1,14 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-
-import Database from "better-sqlite3";
 
 import { AgentGitError, InternalError } from "@agentgit/schemas";
 
-type BetterSqliteDatabase = InstanceType<typeof Database>;
+const require = createRequire(import.meta.url);
+type BetterSqlite3Constructor = typeof import("better-sqlite3") extends { default: infer T } ? T : never;
+const Database = require("better-sqlite3") as BetterSqlite3Constructor;
+
+type BetterSqliteDatabase = InstanceType<BetterSqlite3Constructor>;
 type SqliteJournalMode = "WAL" | "DELETE";
 
 function storageErrorCode(error: unknown): string | null {

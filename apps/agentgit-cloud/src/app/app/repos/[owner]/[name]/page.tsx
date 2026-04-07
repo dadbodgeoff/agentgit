@@ -1,21 +1,16 @@
-import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { RepositoryDetailPage } from "@/features/repos/repository-detail-page";
+import { parsePreviewStateValue } from "@/lib/navigation/search-params";
 
 export default async function RepositoryDetailRoute({
   params,
+  searchParams,
 }: {
   params: Promise<{ owner: string; name: string }>;
+  searchParams?: Promise<{ state?: string | string[] }>;
 }) {
   const { owner, name } = await params;
+  const resolvedSearchParams = await searchParams;
+  const previewState = parsePreviewStateValue(resolvedSearchParams?.state);
 
-  return (
-    <ScaffoldPage
-      description={`Repository detail scaffold for ${owner}/${name}, including overview, pipelines, branches, activity, and settings tabs.`}
-      sections={[
-        { title: "Overview", description: "Weighted grid for run health and summary cards." },
-        { title: "Pipelines", description: "Table scaffold with drawer-ready row interactions.", kind: "table" },
-        { title: "Agent activity", description: "Filterable timeline for autonomous actions.", kind: "status" },
-      ]}
-      title={`${owner}/${name}`}
-    />
-  );
+  return <RepositoryDetailPage name={name} owner={owner} previewState={previewState} />;
 }

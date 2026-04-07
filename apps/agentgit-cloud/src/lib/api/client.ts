@@ -31,3 +31,23 @@ export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit)
 
   return (await response.json()) as T;
 }
+
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiClientError) {
+    if (typeof error.details === "string" && error.details.trim().length > 0) {
+      return error.details;
+    }
+
+    if (
+      typeof error.details === "object" &&
+      error.details !== null &&
+      "message" in error.details &&
+      typeof error.details.message === "string" &&
+      error.details.message.trim().length > 0
+    ) {
+      return error.details.message;
+    }
+  }
+
+  return fallback;
+}

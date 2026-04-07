@@ -20,6 +20,12 @@ export function parsePreviewState(searchParams: SearchParamReader): PreviewState
   return parsed.success ? parsed.data : "ready";
 }
 
+export function parsePreviewStateValue(candidate?: string | string[]): PreviewState {
+  const normalized = Array.isArray(candidate) ? candidate[0] : candidate;
+  const parsed = PreviewStateSchema.safeParse(normalized ?? "ready");
+  return parsed.success ? parsed.data : "ready";
+}
+
 export function parseRouteListState(searchParams: SearchParamReader): RouteListState {
   const page = Number(searchParams.get("page") ?? "1");
   const perPage = Number(searchParams.get("per_page") ?? "25");

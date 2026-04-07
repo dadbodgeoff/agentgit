@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { requireApiSession } from "@/lib/auth/api-session";
+import { withAuthorityClient } from "@/lib/backend/authority/client";
+import { mapApprovalInboxToCloud } from "@/lib/backend/authority/contracts";
+import { toAuthorityRouteErrorResponse } from "@/lib/backend/authority/route-errors";
 import { getApprovalsFixture } from "@/mocks/fixtures";
+import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
@@ -8,6 +13,13 @@ async function sleep(ms: number): Promise<void> {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
+  const requestId = createRequestId(request);
+  const { unauthorized } = await requireApiSession();
+
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   const url = new URL(request.url);
   const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
   const previewState = parsed.success ? parsed.data : "ready";
@@ -17,8 +29,20 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   if (previewState === "error") {
-    return NextResponse.json({ message: "Could not load approvals. Retry." }, { status: 500 });
+    return jsonWithRequestId({ message: "Could not load approvals. Retry." }, { status: 500 }, requestId);
   }
 
-  return NextResponse.json(getApprovalsFixture(previewState));
+  if (previewState !== "ready") {
+    return jsonWithRequestId(getApprovalsFixture(previewState), undefined, requestId);
+  }
+
+  try {
+    const approvals = await withAuthorityClient((client) => client.queryApprovalInbox());
+    return jsonWithRequestId(mapApprovalInboxToCloud(approvals), undefined, requestId);
+  } catch (error) {
+    return toAuthorityRouteErrorResponse(error, "Could not load approvals. Retry.", {
+      requestId,
+      route: "approval_inbox",
+    });
+  }
 }

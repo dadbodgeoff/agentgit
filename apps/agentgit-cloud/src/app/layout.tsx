@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 
-import { AppProviders } from "@/components/providers/app-providers";
 import "@/styles/globals.css";
 
 const plexSans = IBM_Plex_Sans({
@@ -26,7 +26,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html className={`${plexSans.variable} ${plexMono.variable}`} lang="en">
       <body>
-        <AppProviders>{children}</AppProviders>
+        {children}
+        <Analytics />
       </body>
     </html>
   );

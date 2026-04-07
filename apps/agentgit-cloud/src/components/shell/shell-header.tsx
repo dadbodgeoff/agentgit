@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { signOut } from "next-auth/react";
 
 import { Button } from "@/components/primitives";
 import { useWorkspace } from "@/lib/auth/workspace-context";
-import { authenticatedRoutes } from "@/lib/navigation/routes";
+import { authenticatedRoutes, publicRoutes } from "@/lib/navigation/routes";
+import { hasAtLeastRole } from "@/lib/rbac/roles";
 
 export function ShellHeader() {
   const { activeWorkspace, user } = useWorkspace();
@@ -27,13 +29,25 @@ export function ShellHeader() {
         </div>
         <div className="flex items-center gap-2">
           <span className="hidden text-xs text-[var(--ag-text-tertiary)] lg:inline">
-            {activeWorkspace.name} · {user.name}
+            {activeWorkspace.name} · {user.name} · {activeWorkspace.role}
           </span>
           <Button size="sm" variant="ghost">
             Notifications
           </Button>
-          <Button size="sm" variant="secondary">
-            Settings
+          {hasAtLeastRole(activeWorkspace.role, "admin") ? (
+            <Link
+              className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+              href={authenticatedRoutes.settings}
+            >
+              Settings
+            </Link>
+          ) : null}
+          <Button
+            onClick={() => void signOut({ redirectTo: publicRoutes.signIn })}
+            size="sm"
+            variant="ghost"
+          >
+            Sign out
           </Button>
         </div>
       </div>

@@ -1,20 +1,16 @@
-import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { RepositoryRunsPage } from "@/features/repos/repository-runs-page";
+import { parsePreviewStateValue } from "@/lib/navigation/search-params";
 
 export default async function RepositoryRunsRoute({
   params,
+  searchParams,
 }: {
   params: Promise<{ owner: string; name: string }>;
+  searchParams?: Promise<{ state?: string | string[] }>;
 }) {
   const { owner, name } = await params;
+  const resolvedSearchParams = await searchParams;
+  const previewState = parsePreviewStateValue(resolvedSearchParams?.state);
 
-  return (
-    <ScaffoldPage
-      description={`Run inventory for ${owner}/${name} with filtering, sorting, and future live updates.`}
-      sections={[
-        { title: "Run filters", description: "Search, status, branch, and sort query controls." },
-        { title: "Run table", description: "Run list with route-based navigation into detail.", kind: "table" },
-      ]}
-      title={`${owner}/${name} runs`}
-    />
-  );
+  return <RepositoryRunsPage name={name} owner={owner} previewState={previewState} />;
 }

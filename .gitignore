@@ -1,6 +1,7 @@
 node_modules
 dist
 .turbo
+.tmp
 .DS_Store
 .agentgit
 *.tsbuildinfo
@@ -11,6 +12,9 @@ coverage
 packages/*/coverage
 apps/*/coverage
 apps/*/.next
+apps/*/playwright-report
+apps/*/test-results
+output/playwright
 packages/authority-sdk-py/build
 packages/authority-sdk-py/dist
 packages/authority-sdk-py/*.egg-info

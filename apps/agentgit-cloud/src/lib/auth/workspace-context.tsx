@@ -1,35 +1,32 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
+import { useSession } from "next-auth/react";
 
-import { WorkspaceSessionSchema, type WorkspaceSession } from "@/schemas/cloud";
+import { toWorkspaceSession } from "@/lib/auth/session-mapper";
+import type { WorkspaceSession } from "@/schemas/cloud";
 
-const defaultWorkspaceSession = WorkspaceSessionSchema.parse({
-  user: {
-    id: "user_jsmith",
-    name: "Jordan Smith",
-    email: "jordan@acme.dev",
-  },
-  activeWorkspace: {
-    id: "ws_acme_01",
-    name: "Acme platform",
-    slug: "acme-platform",
-    role: "admin",
-  },
-});
-
-const WorkspaceContext = createContext<WorkspaceSession>(defaultWorkspaceSession);
+const WorkspaceContext = createContext<WorkspaceSession | null>(null);
 
 export function WorkspaceProvider({
   children,
-  value = defaultWorkspaceSession,
+  value = null,
 }: {
   children: ReactNode;
-  value?: WorkspaceSession;
+  value?: WorkspaceSession | null;
 }) {
-  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+  const { data } = useSession();
+  const derivedValue = toWorkspaceSession(data);
+
+  return <WorkspaceContext.Provider value={value ?? derivedValue}>{children}</WorkspaceContext.Provider>;
 }
 
 export function useWorkspace(): WorkspaceSession {
-  return useContext(WorkspaceContext);
+  const context = useContext(WorkspaceContext);
+
+  if (!context) {
+    throw new Error("useWorkspace must be used within an authenticated workspace provider.");
+  }
+
+  return context;
 }

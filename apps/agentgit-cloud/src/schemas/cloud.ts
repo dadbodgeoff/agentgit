@@ -1,4 +1,13 @@
-import { TimestampStringSchema } from "@agentgit/schemas";
+import {
+  PolicyConfigSchema,
+  PolicyDecisionSchema,
+  PolicyLoadedSourceSchema,
+  PolicySummarySchema,
+  PolicyThresholdRecommendationSchema,
+  RecoveryPlanSchema,
+  SideEffectLevelSchema,
+  TimestampStringSchema,
+} from "@agentgit/schemas";
 import { z } from "zod";
 
 export const WorkspaceRoleSchema = z.enum(["member", "admin", "owner"]);
@@ -6,6 +15,12 @@ export type WorkspaceRole = z.infer<typeof WorkspaceRoleSchema>;
 
 export const ApprovalStatusSchema = z.enum(["pending", "approved", "rejected", "expired"]);
 export type ApprovalStatus = z.infer<typeof ApprovalStatusSchema>;
+
+export const ApprovalResolvedStatusSchema = z.enum(["approved", "rejected", "expired"]);
+export type ApprovalResolvedStatus = z.infer<typeof ApprovalResolvedStatusSchema>;
+
+export const ApprovalDomainSchema = z.enum(["shell", "git", "filesystem", "network", "deploy", "policy"]);
+export type ApprovalDomain = z.infer<typeof ApprovalDomainSchema>;
 
 export const RunStatusSchema = z.enum(["queued", "running", "completed", "failed", "canceled"]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
@@ -26,12 +41,20 @@ export type DashboardMetric = z.infer<typeof DashboardMetricSchema>;
 export const ApprovalListItemSchema = z
   .object({
     id: z.string().min(1),
-    repo: z.string().min(1),
-    branch: z.string().min(1),
+    runId: z.string().min(1),
+    actionId: z.string().min(1),
+    workflowName: z.string().min(1),
+    domain: ApprovalDomainSchema,
+    sideEffectLevel: SideEffectLevelSchema,
     status: ApprovalStatusSchema,
     requestedAt: TimestampStringSchema,
-    confidence: z.number().min(0).max(1),
+    resolvedAt: TimestampStringSchema.optional(),
+    resolutionNote: z.string().min(1).optional(),
     actionSummary: z.string().min(1),
+    reasonSummary: z.string().min(1).nullable(),
+    targetLocator: z.string().min(1),
+    targetLabel: z.string().min(1).optional(),
+    snapshotRequired: z.boolean(),
   })
   .strict();
 export type ApprovalListItem = z.infer<typeof ApprovalListItemSchema>;
@@ -77,6 +100,12 @@ export const ActiveWorkspaceSchema = z
   .strict();
 export type ActiveWorkspace = z.infer<typeof ActiveWorkspaceSchema>;
 
+export const NotificationChannelSchema = z.enum(["in_app", "email", "slack"]);
+export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
+
+export const PolicyPackSchema = z.enum(["balanced", "guarded", "strict"]);
+export type PolicyPack = z.infer<typeof PolicyPackSchema>;
+
 export const WorkspaceSessionSchema = z
   .object({
     user: SessionUserSchema,
@@ -84,6 +113,299 @@ export const WorkspaceSessionSchema = z
   })
   .strict();
 export type WorkspaceSession = z.infer<typeof WorkspaceSessionSchema>;
+
+export const WorkspaceSettingsSchema = z
+  .object({
+    workspaceName: z.string().trim().min(3).max(48),
+    workspaceSlug: z
+      .string()
+      .trim()
+      .min(3)
+      .max(48)
+      .regex(/^[a-z0-9-]+$/),
+    defaultNotificationChannel: NotificationChannelSchema,
+    approvalTtlMinutes: z.number().int().min(15).max(120),
+    requireRejectComment: z.boolean(),
+    freezeDeploysOutsideBusinessHours: z.boolean(),
+  })
+  .strict();
+export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
+
+export const WorkspaceSettingsSaveResponseSchema = z
+  .object({
+    settings: WorkspaceSettingsSchema,
+    savedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type WorkspaceSettingsSaveResponse = z.infer<typeof WorkspaceSettingsSaveResponseSchema>;
+
+export const BillingPlanTierSchema = z.enum(["starter", "team", "enterprise"]);
+export type BillingPlanTier = z.infer<typeof BillingPlanTierSchema>;
+
+export const BillingCycleSchema = z.enum(["monthly", "yearly"]);
+export type BillingCycle = z.infer<typeof BillingCycleSchema>;
+
+export const BillingInvoiceStatusSchema = z.enum(["paid", "open", "void"]);
+export type BillingInvoiceStatus = z.infer<typeof BillingInvoiceStatusSchema>;
+
+export const BillingPaymentMethodStatusSchema = z.enum(["active", "expiring", "update_required"]);
+export type BillingPaymentMethodStatus = z.infer<typeof BillingPaymentMethodStatusSchema>;
+
+export const BillingInvoiceSchema = z
+  .object({
+    id: z.string().min(1),
+    periodLabel: z.string().min(1),
+    amountUsd: z.number().nonnegative(),
+    status: BillingInvoiceStatusSchema,
+    issuedAt: TimestampStringSchema,
+    dueAt: TimestampStringSchema.optional(),
+  })
+  .strict();
+export type BillingInvoice = z.infer<typeof BillingInvoiceSchema>;
+
+export const WorkspaceBillingSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    workspaceName: z.string().min(1),
+    planTier: BillingPlanTierSchema,
+    billingCycle: BillingCycleSchema,
+    billingEmail: z.string().email(),
+    invoiceEmail: z.string().email(),
+    taxId: z.string().trim().max(32).optional(),
+    seatsIncluded: z.number().int().positive(),
+    seatsUsed: z.number().int().nonnegative(),
+    repositoriesIncluded: z.number().int().positive(),
+    repositoriesConnected: z.number().int().nonnegative(),
+    approvalsIncluded: z.number().int().positive(),
+    approvalsUsed: z.number().int().nonnegative(),
+    monthlyEstimateUsd: z.number().nonnegative(),
+    nextInvoiceDate: TimestampStringSchema,
+    paymentMethodLabel: z.string().min(1),
+    paymentMethodStatus: BillingPaymentMethodStatusSchema,
+    invoices: z.array(BillingInvoiceSchema),
+  })
+  .strict();
+export type WorkspaceBilling = z.infer<typeof WorkspaceBillingSchema>;
+
+export const BillingUpdateSchema = z
+  .object({
+    planTier: BillingPlanTierSchema,
+    billingCycle: BillingCycleSchema,
+    billingEmail: z.string().email("Enter a valid billing email."),
+    invoiceEmail: z.string().email("Enter a valid invoice email."),
+    taxId: z.string().trim().max(32).optional().or(z.literal("")),
+  })
+  .strict();
+export type BillingUpdate = z.infer<typeof BillingUpdateSchema>;
+
+export const BillingSaveResponseSchema = z
+  .object({
+    billing: WorkspaceBillingSchema,
+    savedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type BillingSaveResponse = z.infer<typeof BillingSaveResponseSchema>;
+
+export const IntegrationHealthStatusSchema = z.enum(["healthy", "warning", "degraded"]);
+export type IntegrationHealthStatus = z.infer<typeof IntegrationHealthStatusSchema>;
+
+export const SlackDeliveryModeSchema = z.enum(["all", "approvals_only", "disabled"]);
+export type SlackDeliveryMode = z.infer<typeof SlackDeliveryModeSchema>;
+
+export const NotificationEventSchema = z.enum(["approval_requested", "run_failed", "policy_changed", "snapshot_restored"]);
+export type NotificationEvent = z.infer<typeof NotificationEventSchema>;
+
+export const WorkspaceIntegrationSnapshotSchema = z
+  .object({
+    githubAppInstalled: z.boolean(),
+    githubAppStatus: IntegrationHealthStatusSchema,
+    githubOrgName: z.string().min(1),
+    webhookStatus: IntegrationHealthStatusSchema,
+    webhookLastDeliveryAt: TimestampStringSchema,
+    webhookFailureCount24h: z.number().int().nonnegative(),
+    slackConnected: z.boolean(),
+    slackWorkspaceName: z.string().min(1).optional(),
+    slackChannelName: z.string().min(1).optional(),
+    slackDeliveryMode: SlackDeliveryModeSchema,
+    emailNotificationsEnabled: z.boolean(),
+    digestCadence: z.enum(["realtime", "daily", "weekly"]),
+    notificationEvents: z.array(NotificationEventSchema),
+  })
+  .strict();
+export type WorkspaceIntegrationSnapshot = z.infer<typeof WorkspaceIntegrationSnapshotSchema>;
+
+export const WorkspaceIntegrationUpdateSchema = z
+  .object({
+    slackConnected: z.boolean(),
+    slackWorkspaceName: z.string().trim().max(48).optional().or(z.literal("")),
+    slackChannelName: z.string().trim().max(48).optional().or(z.literal("")),
+    slackDeliveryMode: SlackDeliveryModeSchema,
+    emailNotificationsEnabled: z.boolean(),
+    digestCadence: z.enum(["realtime", "daily", "weekly"]),
+    notificationEvents: z.array(NotificationEventSchema).min(1, "Select at least one notification event."),
+  })
+  .strict()
+  .superRefine((values, context) => {
+    if (values.slackConnected && !values.slackChannelName) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter a Slack channel when Slack delivery is enabled.",
+        path: ["slackChannelName"],
+      });
+    }
+  });
+export type WorkspaceIntegrationUpdate = z.infer<typeof WorkspaceIntegrationUpdateSchema>;
+
+export const WorkspaceIntegrationSaveResponseSchema = z
+  .object({
+    integrations: WorkspaceIntegrationSnapshotSchema,
+    savedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type WorkspaceIntegrationSaveResponse = z.infer<typeof WorkspaceIntegrationSaveResponseSchema>;
+
+export const IntegrationTestChannelSchema = z.enum(["slack", "email", "in_app"]);
+export type IntegrationTestChannel = z.infer<typeof IntegrationTestChannelSchema>;
+
+export const IntegrationTestRequestSchema = z
+  .object({
+    channel: IntegrationTestChannelSchema,
+  })
+  .strict();
+export type IntegrationTestRequest = z.infer<typeof IntegrationTestRequestSchema>;
+
+export const IntegrationTestResponseSchema = z
+  .object({
+    channel: IntegrationTestChannelSchema,
+    deliveredAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type IntegrationTestResponse = z.infer<typeof IntegrationTestResponseSchema>;
+
+export const OnboardingRepositoryOptionSchema = z
+  .object({
+    id: z.string().min(1),
+    owner: z.string().min(1),
+    name: z.string().min(1),
+    defaultBranch: z.string().min(1),
+    description: z.string().min(1),
+    requiresOrgApproval: z.boolean().default(false),
+  })
+  .strict();
+export type OnboardingRepositoryOption = z.infer<typeof OnboardingRepositoryOptionSchema>;
+
+export const OnboardingTeamInviteSchema = z
+  .object({
+    name: z.string().trim().min(1, "Invite name is required."),
+    email: z.string().email("Enter a valid email address."),
+    role: WorkspaceRoleSchema,
+  })
+  .strict();
+export type OnboardingTeamInvite = z.infer<typeof OnboardingTeamInviteSchema>;
+
+export const OnboardingBootstrapSchema = z
+  .object({
+    suggestedWorkspaceName: z.string().min(1),
+    suggestedWorkspaceSlug: z.string().min(1),
+    availableRepositories: z.array(OnboardingRepositoryOptionSchema),
+    connectedRepositoryIds: z.array(z.string().min(1)),
+    invites: z.array(OnboardingTeamInviteSchema),
+    defaultNotificationChannel: NotificationChannelSchema,
+    recommendedPolicyPack: PolicyPackSchema,
+    launchedAt: TimestampStringSchema.optional(),
+  })
+  .strict();
+export type OnboardingBootstrap = z.infer<typeof OnboardingBootstrapSchema>;
+
+export const OnboardingFormValuesSchema = z
+  .object({
+    workspaceName: z.string().trim().min(3, "Workspace name must be at least 3 characters.").max(48),
+    workspaceSlug: z
+      .string()
+      .trim()
+      .min(3, "Workspace slug must be at least 3 characters.")
+      .max(48)
+      .regex(/^[a-z0-9-]+$/, "Use lowercase letters, numbers, and hyphens only."),
+    repositoryIds: z.array(z.string().min(1)).min(1, "Select at least one repository."),
+    invites: z.array(OnboardingTeamInviteSchema).max(5, "Limit invites to 5 during onboarding."),
+    defaultNotificationChannel: NotificationChannelSchema,
+    policyPack: PolicyPackSchema,
+    confirmLaunch: z.boolean().refine((value) => value, {
+      message: "Confirm the launch checklist before continuing.",
+    }),
+  })
+  .strict();
+export type OnboardingFormValues = z.infer<typeof OnboardingFormValuesSchema>;
+
+export const OnboardingLaunchResponseSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    launchedAt: TimestampStringSchema,
+    connectedRepositoryCount: z.number().int().nonnegative(),
+    invitedTeamCount: z.number().int().nonnegative(),
+    message: z.string().min(1),
+  })
+  .strict();
+export type OnboardingLaunchResponse = z.infer<typeof OnboardingLaunchResponseSchema>;
+
+export const WorkspaceConnectionStateSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    workspaceName: z.string().min(1),
+    workspaceSlug: z.string().min(1),
+    repositoryIds: z.array(z.string().min(1)),
+    invites: z.array(OnboardingTeamInviteSchema),
+    defaultNotificationChannel: NotificationChannelSchema,
+    policyPack: PolicyPackSchema,
+    launchedAt: TimestampStringSchema,
+  })
+  .strict();
+export type WorkspaceConnectionState = z.infer<typeof WorkspaceConnectionStateSchema>;
+
+export const WorkspaceTeamMemberStatusSchema = z.enum(["active", "invited"]);
+export type WorkspaceTeamMemberStatus = z.infer<typeof WorkspaceTeamMemberStatusSchema>;
+
+export const WorkspaceTeamMemberSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    email: z.string().email(),
+    role: WorkspaceRoleSchema,
+    status: WorkspaceTeamMemberStatusSchema,
+  })
+  .strict();
+export type WorkspaceTeamMember = z.infer<typeof WorkspaceTeamMemberSchema>;
+
+export const WorkspaceTeamSnapshotSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    workspaceName: z.string().min(1),
+    workspaceSlug: z.string().min(1),
+    members: z.array(WorkspaceTeamMemberSchema),
+    inviteLimit: z.number().int().positive(),
+  })
+  .strict();
+export type WorkspaceTeamSnapshot = z.infer<typeof WorkspaceTeamSnapshotSchema>;
+
+export const WorkspaceTeamUpdateSchema = z
+  .object({
+    invites: z.array(OnboardingTeamInviteSchema).max(20, "Limit invites to 20 workspace invites."),
+  })
+  .strict();
+export type WorkspaceTeamUpdate = z.infer<typeof WorkspaceTeamUpdateSchema>;
+
+export const WorkspaceTeamSaveResponseSchema = z
+  .object({
+    team: WorkspaceTeamSnapshotSchema,
+    savedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type WorkspaceTeamSaveResponse = z.infer<typeof WorkspaceTeamSaveResponseSchema>;
 
 export const RepositoryStatusSchema = z.enum(["active", "archived"]);
 export type RepositoryStatus = z.infer<typeof RepositoryStatusSchema>;
@@ -107,6 +429,93 @@ export type RepositoryListItem = z.infer<typeof RepositoryListItemSchema>;
 
 export const RepositoryListResponseSchema = PaginatedEnvelopeSchema(RepositoryListItemSchema);
 export type RepositoryListResponse = z.infer<typeof RepositoryListResponseSchema>;
+
+export const RepositoryRunListItemSchema = z
+  .object({
+    id: z.string().min(1),
+    workflowName: z.string().min(1),
+    agentName: z.string().min(1),
+    status: RunStatusSchema,
+    startedAt: TimestampStringSchema,
+    updatedAt: TimestampStringSchema,
+    eventCount: z.number().int().nonnegative(),
+    summary: z.string().min(1),
+  })
+  .strict();
+export type RepositoryRunListItem = z.infer<typeof RepositoryRunListItemSchema>;
+
+export const RepositoryRunsResponseSchema = PaginatedEnvelopeSchema(RepositoryRunListItemSchema);
+export type RepositoryRunsResponse = z.infer<typeof RepositoryRunsResponseSchema>;
+
+export const RepositoryDetailSchema = z
+  .object({
+    id: z.string().min(1),
+    owner: z.string().min(1),
+    name: z.string().min(1),
+    defaultBranch: z.string().min(1),
+    rootPath: z.string().min(1),
+    repositoryStatus: RepositoryStatusSchema,
+    lastRunStatus: RunStatusSchema,
+    lastUpdatedAt: TimestampStringSchema,
+    agentStatus: AgentStatusSchema,
+    latestRunId: z.string().min(1).optional(),
+    latestWorkflowName: z.string().min(1).optional(),
+    pendingApprovalCount: z.number().int().nonnegative(),
+    totalRuns: z.number().int().nonnegative(),
+    failedRuns24h: z.number().int().nonnegative(),
+    recentActivity: z.array(z.lazy(() => ActivityEventSchema)),
+  })
+  .strict();
+export type RepositoryDetail = z.infer<typeof RepositoryDetailSchema>;
+
+export const SnapshotIntegrityStatusSchema = z.enum(["verified", "missing"]);
+export type SnapshotIntegrityStatus = z.infer<typeof SnapshotIntegrityStatusSchema>;
+
+export const SnapshotRestoreOutcomeSchema = z.enum(["restored", "compensated"]);
+export type SnapshotRestoreOutcome = z.infer<typeof SnapshotRestoreOutcomeSchema>;
+
+export const RepositorySnapshotRecoverySchema = z
+  .object({
+    executedAt: TimestampStringSchema,
+    outcome: SnapshotRestoreOutcomeSchema,
+    recoveryClass: z.string().min(1),
+    strategy: z.string().min(1),
+  })
+  .strict();
+export type RepositorySnapshotRecovery = z.infer<typeof RepositorySnapshotRecoverySchema>;
+
+export const RepositorySnapshotListItemSchema = z
+  .object({
+    snapshotId: z.string().min(1),
+    runId: z.string().min(1),
+    actionId: z.string().min(1),
+    workflowName: z.string().min(1),
+    actionSummary: z.string().min(1),
+    targetLocator: z.string().min(1),
+    snapshotClass: z.string().min(1),
+    fidelity: z.string().min(1),
+    scopePaths: z.array(z.string().min(1)),
+    integrityStatus: SnapshotIntegrityStatusSchema,
+    storageBytes: z.number().int().nonnegative().nullable(),
+    createdAt: TimestampStringSchema,
+    latestRecovery: RepositorySnapshotRecoverySchema.optional(),
+  })
+  .strict();
+export type RepositorySnapshotListItem = z.infer<typeof RepositorySnapshotListItemSchema>;
+
+export const RepositorySnapshotsResponseSchema = z
+  .object({
+    items: z.array(RepositorySnapshotListItemSchema),
+    total: z.number().int().nonnegative(),
+    page: z.number().int().positive(),
+    per_page: z.number().int().positive(),
+    has_more: z.boolean(),
+    authorityReachable: z.boolean(),
+    restorableCount: z.number().int().nonnegative(),
+    restoredCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type RepositorySnapshotsResponse = z.infer<typeof RepositorySnapshotsResponseSchema>;
 
 export const RecentRunSchema = z
   .object({
@@ -144,10 +553,54 @@ export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;
 export const ApprovalListResponseSchema = PaginatedEnvelopeSchema(ApprovalListItemSchema);
 export type ApprovalListResponse = z.infer<typeof ApprovalListResponseSchema>;
 
+export const ApprovalDecisionRequestSchema = z
+  .object({
+    comment: z.string().trim().max(280).optional(),
+  })
+  .strict();
+export type ApprovalDecisionRequest = z.infer<typeof ApprovalDecisionRequestSchema>;
+
+export const ApprovalDecisionResponseSchema = z
+  .object({
+    id: z.string().min(1),
+    status: ApprovalResolvedStatusSchema,
+    resolvedByName: z.string().min(1),
+    resolvedAt: TimestampStringSchema,
+    message: z.string().min(1),
+    comment: z.string().trim().max(280).optional(),
+  })
+  .strict();
+export type ApprovalDecisionResponse = z.infer<typeof ApprovalDecisionResponseSchema>;
+
+export const RunStepTypeSchema = z.enum(["action_step", "approval_step", "recovery_step", "analysis_step", "system_step"]);
+export type RunStepType = z.infer<typeof RunStepTypeSchema>;
+
+export const RunStepStatusSchema = z.enum(["completed", "failed", "partial", "blocked", "awaiting_approval", "cancelled"]);
+export type RunStepStatus = z.infer<typeof RunStepStatusSchema>;
+
+export const RunStepSchema = z
+  .object({
+    id: z.string().min(1),
+    sequence: z.number().int().positive(),
+    title: z.string().min(1),
+    stepType: RunStepTypeSchema,
+    status: RunStepStatusSchema,
+    decision: PolicyDecisionSchema.nullable(),
+    summary: z.string().min(1),
+    occurredAt: TimestampStringSchema,
+    snapshotId: z.string().min(1).optional(),
+  })
+  .strict();
+export type RunStep = z.infer<typeof RunStepSchema>;
+
 export const RunDetailSchema = z
   .object({
     id: z.string().min(1),
-    repoId: z.string().min(1),
+    workflowName: z.string().min(1),
+    agentName: z.string().min(1),
+    agentFramework: z.string().min(1),
+    workspaceRoots: z.array(z.string().min(1)),
+    projectionStatus: z.enum(["fresh", "rebuilt"]),
     runtime: z.string().min(1),
     status: RunStatusSchema,
     startedAt: TimestampStringSchema,
@@ -158,6 +611,7 @@ export const RunDetailSchema = z
     actionsAsked: z.number().int().nonnegative(),
     snapshotsTaken: z.number().int().nonnegative(),
     summary: z.string().min(1),
+    steps: z.array(RunStepSchema),
   })
   .strict();
 export type RunDetail = z.infer<typeof RunDetailSchema>;
@@ -199,3 +653,81 @@ export const CalibrationReportSchema = z
   })
   .strict();
 export type CalibrationReport = z.infer<typeof CalibrationReportSchema>;
+
+export const RepositoryPolicyValidationSchema = z
+  .object({
+    valid: z.boolean(),
+    issues: z.array(z.string().min(1)),
+    compiledProfileName: z.string().min(1).nullable(),
+    compiledRuleCount: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+export type RepositoryPolicyValidation = z.infer<typeof RepositoryPolicyValidationSchema>;
+
+export const RepositoryPolicySnapshotSchema = z
+  .object({
+    repoId: z.string().min(1),
+    owner: z.string().min(1),
+    name: z.string().min(1),
+    policyPath: z.string().min(1),
+    authorityReachable: z.boolean(),
+    hasWorkspaceOverride: z.boolean(),
+    effectivePolicy: z
+      .object({
+        policy: PolicyConfigSchema,
+        summary: PolicySummarySchema,
+      })
+      .strict(),
+    workspaceConfig: PolicyConfigSchema,
+    validation: RepositoryPolicyValidationSchema,
+    recommendations: z.array(PolicyThresholdRecommendationSchema),
+    loadedSources: z.array(PolicyLoadedSourceSchema),
+  })
+  .strict();
+export type RepositoryPolicySnapshot = z.infer<typeof RepositoryPolicySnapshotSchema>;
+
+export const RepositoryPolicySaveResponseSchema = z
+  .object({
+    policy: RepositoryPolicySnapshotSchema,
+    savedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type RepositoryPolicySaveResponse = z.infer<typeof RepositoryPolicySaveResponseSchema>;
+
+export const RepositoryPolicyDocumentInputSchema = z
+  .object({
+    document: z.string().trim().min(1, "Policy document is required."),
+  })
+  .strict();
+export type RepositoryPolicyDocumentInput = z.infer<typeof RepositoryPolicyDocumentInputSchema>;
+
+export const SnapshotRestoreIntentSchema = z.enum(["plan", "execute"]);
+export type SnapshotRestoreIntent = z.infer<typeof SnapshotRestoreIntentSchema>;
+
+export const SnapshotRestoreRequestSchema = z
+  .object({
+    intent: SnapshotRestoreIntentSchema,
+  })
+  .strict();
+export type SnapshotRestoreRequest = z.infer<typeof SnapshotRestoreRequestSchema>;
+
+export const SnapshotRestorePreviewSchema = z
+  .object({
+    snapshotId: z.string().min(1),
+    plan: RecoveryPlanSchema,
+  })
+  .strict();
+export type SnapshotRestorePreview = z.infer<typeof SnapshotRestorePreviewSchema>;
+
+export const SnapshotRestoreExecuteResponseSchema = z
+  .object({
+    snapshotId: z.string().min(1),
+    plan: RecoveryPlanSchema,
+    restored: z.boolean(),
+    outcome: SnapshotRestoreOutcomeSchema,
+    executedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type SnapshotRestoreExecuteResponse = z.infer<typeof SnapshotRestoreExecuteResponseSchema>;

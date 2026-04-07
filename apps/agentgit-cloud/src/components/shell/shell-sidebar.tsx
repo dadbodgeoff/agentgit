@@ -1,22 +1,27 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { useWorkspace } from "@/lib/auth/workspace-context";
+import { authenticatedRoutes } from "@/lib/navigation/routes";
+import { hasAtLeastRole } from "@/lib/rbac/roles";
 import { cn } from "@/lib/utils/cn";
 
 const navItems = [
-  { href: "/app", label: "Dashboard", active: true },
-  { href: "/app/repos", label: "Repositories" },
-  { href: "/app/approvals", label: "Approvals" },
-  { href: "/app/activity", label: "Activity" },
-  { href: "/app/audit", label: "Audit log" },
-  { href: "/app/calibration", label: "Calibration" },
-  { href: "/app/settings", label: "Settings" },
+  { href: authenticatedRoutes.dashboard, label: "Dashboard", minRole: "member" as const },
+  { href: authenticatedRoutes.repositories, label: "Repositories", minRole: "member" as const },
+  { href: authenticatedRoutes.approvals, label: "Approvals", minRole: "member" as const },
+  { href: authenticatedRoutes.activity, label: "Activity", minRole: "member" as const },
+  { href: authenticatedRoutes.audit, label: "Audit log", minRole: "member" as const },
+  { href: authenticatedRoutes.calibration, label: "Calibration", minRole: "admin" as const },
+  { href: authenticatedRoutes.settings, label: "Settings", minRole: "admin" as const },
 ];
 
 export function ShellSidebar() {
   const { activeWorkspace } = useWorkspace();
+  const pathname = usePathname();
+  const visibleItems = navItems.filter((item) => hasAtLeastRole(activeWorkspace.role, item.minRole));
 
   return (
     <aside className="sticky top-12 hidden h-[calc(100vh-48px)] w-60 shrink-0 border-r border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-4 lg:block">
@@ -24,11 +29,14 @@ export function ShellSidebar() {
         {activeWorkspace.name}
       </div>
       <nav className="space-y-1">
-        {navItems.map((item) => (
+        {visibleItems.map((item) => {
+          const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+
+          return (
           <Link
             className={cn(
               "ag-focus-ring flex min-h-9 items-center rounded-[var(--ag-radius-md)] border-l-2 px-3 text-sm transition-colors",
-              item.active
+              active
                 ? "border-l-[var(--ag-color-brand)] bg-[var(--ag-bg-hover)] text-[var(--ag-text-primary)]"
                 : "border-l-transparent text-[var(--ag-text-secondary)] hover:bg-[var(--ag-bg-hover)] hover:text-[var(--ag-text-primary)]",
             )}
@@ -37,7 +45,8 @@ export function ShellSidebar() {
           >
             {item.label}
           </Link>
-        ))}
+          );
+        })}
       </nav>
     </aside>
   );

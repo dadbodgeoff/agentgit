@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { requireApiSession } from "@/lib/auth/api-session";
+import { withAuthorityClient } from "@/lib/backend/authority/client";
+import { mapTimelineToRunDetail } from "@/lib/backend/authority/contracts";
+import { toAuthorityRouteErrorResponse } from "@/lib/backend/authority/route-errors";
 import { getRunFixture } from "@/mocks/fixtures";
+import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
@@ -11,6 +16,13 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ runId: string }> },
 ): Promise<NextResponse> {
+  const requestId = createRequestId(request);
+  const { unauthorized } = await requireApiSession();
+
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   const url = new URL(request.url);
   const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
   const previewState = parsed.success ? parsed.data : "ready";
@@ -21,8 +33,20 @@ export async function GET(
   }
 
   if (previewState === "error") {
-    return NextResponse.json({ message: "Could not load run detail. Retry." }, { status: 500 });
+    return jsonWithRequestId({ message: "Could not load run detail. Retry." }, { status: 500 }, requestId);
   }
 
-  return NextResponse.json(getRunFixture(runId, previewState));
+  if (previewState !== "ready") {
+    return jsonWithRequestId(getRunFixture(runId, previewState), undefined, requestId);
+  }
+
+  try {
+    const runDetail = await withAuthorityClient((client) => client.queryTimeline(runId));
+    return jsonWithRequestId(mapTimelineToRunDetail(runDetail), undefined, requestId);
+  } catch (error) {
+    return toAuthorityRouteErrorResponse(error, "Could not load run detail. Retry.", {
+      requestId,
+      route: "run_detail",
+    });
+  }
 }

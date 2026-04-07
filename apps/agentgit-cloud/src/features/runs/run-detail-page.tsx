@@ -1,25 +1,24 @@
 "use client";
 
-import { Card, CodeBlock } from "@/components/primitives";
+import { Button, Card, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow } from "@/components/primitives";
 import { PageStatePanel } from "@/components/feedback";
-import { Button } from "@/components/primitives";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { getApiErrorMessage } from "@/lib/api/client";
 import { useRunDetailQuery } from "@/lib/query/hooks";
-import { parsePreviewState } from "@/lib/navigation/search-params";
-import { formatRelativeTimestamp } from "@/lib/utils/format";
-import { useSearchParams } from "next/navigation";
+import type { PreviewState } from "@/schemas/cloud";
+import { formatAbsoluteDate, formatRelativeTimestamp } from "@/lib/utils/format";
 
 export function RunDetailPage({
   owner,
   name,
   runId,
+  previewState = "ready",
 }: {
   owner: string;
   name: string;
   runId: string;
+  previewState?: PreviewState;
 }) {
-  const searchParams = useSearchParams();
-  const previewState = parsePreviewState(searchParams);
   const runQuery = useRunDetailQuery(runId, previewState);
 
   if (runQuery.isPending) {
@@ -31,9 +30,11 @@ export function RunDetailPage({
   }
 
   if (runQuery.isError) {
+    const errorMessage = getApiErrorMessage(runQuery.error, "Could not load run detail. Retry.");
+
     return (
       <ScaffoldPage actions={<Button variant="secondary">Restore snapshot</Button>} description={`Detailed run timeline for ${owner}/${name} run ${runId}, including action ordering, policy outcomes, and recovery context.`} sections={[]} title="Run detail">
-        <PageStatePanel errorMessage="Could not load run detail. Retry." state="error" />
+        <PageStatePanel errorMessage={errorMessage} state="error" />
       </ScaffoldPage>
     );
   }
@@ -50,16 +51,85 @@ export function RunDetailPage({
         { label: "Started", value: formatRelativeTimestamp(run.startedAt), trend: run.runtime },
       ]}
       sections={[
-        { title: "Run summary", description: "Header, status badge, duration, and snapshot availability." },
-        { title: "Action timeline", description: "Paginated timeline with sticky jump-to-error behavior.", kind: "table" },
-        { title: "Execution log viewer", description: "Monospace log surface with download fallback for large output.", kind: "code" },
+        { title: "Run summary", description: "Authority-backed workflow metadata, status, and execution totals." },
+        { title: "Timeline steps", description: "Projected step list from the daemon timeline query.", kind: "table" },
+        { title: "Authority context", description: "Workspace roots and projection freshness for operator debugging.", kind: "code" },
       ]}
       title="Run detail"
     >
-      <Card className="space-y-4">
-        <h2 className="text-lg font-semibold">Run payload</h2>
-        <CodeBlock>{JSON.stringify(run, null, 2)}</CodeBlock>
-      </Card>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
+        <Card className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Timeline steps</h2>
+            <span className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+              {run.projectionStatus}
+            </span>
+          </div>
+          <TableRoot>
+            <TableHead>
+              <TableRow>
+                <TableHeaderCell>Step</TableHeaderCell>
+                <TableHeaderCell>Type</TableHeaderCell>
+                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>Decision</TableHeaderCell>
+                <TableHeaderCell>Occurred</TableHeaderCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {run.steps.map((step) => (
+                <TableRow key={step.id}>
+                  <TableCell>
+                    <div className="space-y-1">
+                      <div className="font-medium">{step.title}</div>
+                      <div className="text-xs text-[var(--ag-text-secondary)]">{step.summary}</div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="capitalize">{step.stepType.replaceAll("_", " ")}</TableCell>
+                  <TableCell className="capitalize">{step.status.replaceAll("_", " ")}</TableCell>
+                  <TableCell className="capitalize">
+                    {step.decision ? step.decision.replaceAll("_", " ") : "n/a"}
+                  </TableCell>
+                  <TableCell className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(step.occurredAt)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </TableRoot>
+        </Card>
+
+        <Card className="space-y-4">
+          <h2 className="text-lg font-semibold">Authority context</h2>
+          <div className="space-y-3 text-sm">
+            <div>
+              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Workflow</div>
+              <div className="mt-1 font-medium">{run.workflowName}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Agent runtime</div>
+              <div className="mt-1 font-medium">
+                {run.agentFramework} / {run.agentName}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Completed at</div>
+              <div className="mt-1 font-medium">{formatAbsoluteDate(run.endedAt)}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Summary</div>
+              <div className="mt-1 text-[var(--ag-text-secondary)]">{run.summary}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Workspace roots</div>
+              <div className="mt-1 space-y-1">
+                {run.workspaceRoots.map((workspaceRoot) => (
+                  <div className="font-mono text-xs text-[var(--ag-text-secondary)]" key={workspaceRoot}>
+                    {workspaceRoot}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
     </ScaffoldPage>
   );
 }
