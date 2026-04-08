@@ -39,7 +39,11 @@ export async function POST(
     return jsonWithRequestId({ message: "Approval request was not found." }, { status: 404 }, requestId);
   }
 
-  if (approval.commandStatus === "pending" || approval.commandStatus === "acked" || approval.commandStatus === "completed") {
+  if (
+    approval.decisionCommandStatus === "pending" ||
+    approval.decisionCommandStatus === "acked" ||
+    approval.decisionCommandStatus === "completed"
+  ) {
     return jsonWithRequestId(
       {
         id,

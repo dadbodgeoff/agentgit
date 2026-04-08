@@ -10,7 +10,8 @@ import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { saveStoredWorkspaceSettings } from "@/lib/backend/workspace/cloud-state";
 import { listWorkspaceApprovalProjections, listWorkspaceApprovalQueue } from "@/lib/backend/workspace/workspace-approvals";
 
-function seedApprovalRequestedEvent() {
+function seedApprovalRequestedEvent(requestedAt = new Date().toISOString()) {
+  const ingestedAt = new Date(new Date(requestedAt).getTime() + 5_000).toISOString();
   withControlPlaneState((store) => {
     store.appendEvent({
       event: {
@@ -23,7 +24,7 @@ function seedApprovalRequestedEvent() {
           name: "platform-ui",
         },
         sequence: 1,
-        occurredAt: "2026-04-07T19:00:00Z",
+        occurredAt: requestedAt,
         type: "approval.requested",
         payload: {
           approval_id: "appr_01",
@@ -34,7 +35,7 @@ function seedApprovalRequestedEvent() {
           action_domain: "deploy",
           side_effect_level: "mutating",
           status: "pending",
-          requested_at: "2026-04-07T19:00:00Z",
+          requested_at: requestedAt,
           resolved_at: null,
           resolution_note: null,
           decision_requested: "approve_or_deny",
@@ -48,7 +49,7 @@ function seedApprovalRequestedEvent() {
           target_label: "Preview environment",
         },
       },
-      ingestedAt: "2026-04-07T19:00:05Z",
+      ingestedAt,
     });
   });
 }
@@ -154,7 +155,7 @@ describe("workspace approval projection", () => {
       freezeDeploysOutsideBusinessHours: false,
     });
 
-    seedApprovalRequestedEvent();
+    seedApprovalRequestedEvent("2026-04-07T19:00:00Z");
     withControlPlaneState((store) => {
       store.putConnector({
         id: "conn_01",

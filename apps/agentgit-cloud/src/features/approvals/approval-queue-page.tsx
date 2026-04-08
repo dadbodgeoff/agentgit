@@ -130,7 +130,6 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
   const pendingApprovals = approvalItems.filter((item) => item.status === "pending");
   const resolvedApprovals = approvalItems.filter((item) => item.status !== "pending");
   const oldestPendingApproval = getOldestApproval(pendingApprovals);
-  const snapshotRequiredCount = pendingApprovals.filter((item) => item.snapshotRequired).length;
   const expiringSoonCount = pendingApprovals.filter((item) => item.expiresSoon).length;
   const selectedApproval =
     approvalItems.find((item) => item.id === selectedApprovalId) ?? pendingApprovals[0] ?? resolvedApprovals[0] ?? null;
