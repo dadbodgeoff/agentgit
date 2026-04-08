@@ -19,6 +19,7 @@ import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import { type ServiceDependencies, type ServiceOptions } from "../app/types.js";
 import { HostedExecutionQueue } from "../hosted-execution-queue.js";
 import { HostedMcpWorkerClient } from "../hosted-worker-client.js";
+import { LatencyMetricsStore } from "../latency-metrics.js";
 import { loadPolicyRuntime } from "../policy-runtime.js";
 import { AuthorityState } from "../state.js";
 import { executeHostedDelegatedJobAttempt } from "../app/handlers/mcp.js";
@@ -68,6 +69,7 @@ export async function createLocalStores(options: StartServerOptions): Promise<Lo
   const snapshotEngine = new LocalSnapshotEngine({
     rootDir: options.snapshotRootPath,
   });
+  const latencyMetrics = new LatencyMetricsStore();
   const integrationsDbPath = path.join(path.dirname(options.snapshotRootPath), "integrations", "state.db");
   const mcpRegistryPath =
     options.mcpRegistryPath ?? path.join(path.dirname(options.snapshotRootPath), "mcp", "registry.db");
@@ -189,6 +191,7 @@ export async function createLocalStores(options: StartServerOptions): Promise<Lo
       publicHostPolicyRegistry,
       hostedWorkerClient,
       hostedExecutionQueue,
+      latencyMetrics,
       policyRuntime,
       draftStore,
       noteStore,
@@ -208,10 +211,13 @@ export async function createLocalStores(options: StartServerOptions): Promise<Lo
     cleanup: async () => {
       hostedExecutionQueue.close();
       await hostedWorkerClient.close();
+      latencyMetrics.reset();
       draftStore.close();
       noteStore.close();
       ticketStore.close();
       mcpRegistry.close();
+      publicHostPolicyRegistry.close();
+      credentialBroker.close();
       journal.close();
     },
   };

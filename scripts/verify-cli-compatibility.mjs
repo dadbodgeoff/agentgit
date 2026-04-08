@@ -7,12 +7,16 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
 import {
   authorityCliCompatibilityPackageNames as publishablePackageNames,
   authorityCliCompatibilityPackages,
 } from "./release-package-config.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const NPM = resolveCommandPath("npm");
+const PNPM = resolveCommandPath("pnpm");
+const TAR = resolveCommandPath("tar");
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -115,18 +119,18 @@ function canonicalPathForComparison(value) {
 
 async function initInstallRoot(installRoot) {
   await fsp.mkdir(installRoot, { recursive: true });
-  await runCommand("npm", ["init", "-y"], { cwd: installRoot });
+  await runCommand(NPM, ["init", "-y"], { cwd: installRoot });
 }
 
 async function installTarballs(installRoot, tarballs) {
-  await runCommand("npm", ["install", "--no-package-lock", "--force", ...tarballs], {
+  await runCommand(NPM, ["install", "--no-package-lock", "--force", ...tarballs], {
     cwd: installRoot,
   });
 }
 
 async function buildCompatibilityTargets(targetRepoRoot) {
   await runCommand(
-    "pnpm",
+    PNPM,
     [
       "--filter",
       "@agentgit/schemas...",
@@ -151,7 +155,7 @@ async function packRepoArtifacts(targetRepoRoot, outDir) {
   for (const pkg of authorityCliCompatibilityPackages) {
     const packageDir = path.join(targetRepoRoot, pkg.relativeDir);
     const before = new Set(await fsp.readdir(outDir));
-    await runCommand("pnpm", ["pack", "--pack-destination", outDir], {
+    await runCommand(PNPM, ["pack", "--pack-destination", outDir], {
       cwd: packageDir,
       env: {
         npm_config_ignore_scripts: "true",
@@ -190,7 +194,7 @@ async function packPublishedArtifacts(outDir) {
   for (const pkg of authorityCliCompatibilityPackages) {
     const before = new Set(await fsp.readdir(outDir));
     try {
-      await runCommand("npm", ["pack", `${pkg.name}@latest`, "--pack-destination", outDir], {
+      await runCommand(NPM, ["pack", `${pkg.name}@latest`, "--pack-destination", outDir], {
         cwd: outDir,
       });
     } catch {
@@ -253,7 +257,7 @@ async function createSyntheticUpgradeTarballs(currentManifest, outDir) {
   for (const pkg of currentManifest.packages) {
     const extractRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "agcli-compat-unpack-"));
     extractedRoots.push(extractRoot);
-    await runCommand("tar", ["-xzf", pkg.tarball_path, "-C", extractRoot]);
+    await runCommand(TAR, ["-xzf", pkg.tarball_path, "-C", extractRoot]);
     const packageJsonPath = path.join(extractRoot, "package", "package.json");
     const packageJson = JSON.parse(await fsp.readFile(packageJsonPath, "utf8"));
     versionMap.set(packageJson.name, bumpPatchVersion(packageJson.version));
@@ -283,7 +287,7 @@ async function createSyntheticUpgradeTarballs(currentManifest, outDir) {
     await fsp.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2), "utf8");
     const tarballFilename = packageTarballFilename(packageJson.name, packageJson.version);
     const tarballPath = path.join(outDir, tarballFilename);
-    await runCommand("tar", ["-czf", tarballPath, "-C", extractRoot, "package"]);
+    await runCommand(TAR, ["-czf", tarballPath, "-C", extractRoot, "package"]);
     const stats = await fsp.stat(tarballPath);
     packages.push({
       name: packageJson.name,

@@ -4,9 +4,8 @@ import { requireApiSession } from "@/lib/auth/api-session";
 import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
 import { mapTimelineToRunDetail } from "@/lib/backend/authority/contracts";
 import { toAuthorityRouteErrorResponse } from "@/lib/backend/authority/route-errors";
-import { getRunFixture } from "@/mocks/fixtures";
+import { loadPreviewFixture, resolvePreviewState } from "@/lib/dev/preview-fixtures";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
-import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,9 +19,7 @@ export async function GET(request: Request, context: { params: Promise<{ runId: 
     return unauthorized;
   }
 
-  const url = new URL(request.url);
-  const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
-  const previewState = parsed.success ? parsed.data : "ready";
+  const previewState = resolvePreviewState(request);
   const { runId } = await context.params;
 
   if (previewState === "loading") {
@@ -34,7 +31,10 @@ export async function GET(request: Request, context: { params: Promise<{ runId: 
   }
 
   if (previewState !== "ready") {
-    return jsonWithRequestId(getRunFixture(runId, previewState), undefined, requestId);
+    const fixture = await loadPreviewFixture("runDetail", previewState, runId);
+    if (fixture) {
+      return jsonWithRequestId(fixture, undefined, requestId);
+    }
   }
 
   try {

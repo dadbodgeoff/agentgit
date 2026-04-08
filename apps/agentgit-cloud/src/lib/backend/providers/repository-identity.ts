@@ -27,6 +27,30 @@ type GitHubRepositoryResponse = {
   message?: string;
 };
 
+function parseGitHubRepositoryResponse(value: unknown): GitHubRepositoryResponse | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const ownerRecord = record.owner && typeof record.owner === "object" ? (record.owner as Record<string, unknown>) : null;
+
+  return {
+    id: typeof record.id === "number" ? record.id : undefined,
+    node_id: typeof record.node_id === "string" ? record.node_id : undefined,
+    html_url: typeof record.html_url === "string" ? record.html_url : undefined,
+    private: typeof record.private === "boolean" ? record.private : undefined,
+    visibility:
+      record.visibility === "public" || record.visibility === "private" || record.visibility === "internal"
+        ? record.visibility
+        : undefined,
+    default_branch: typeof record.default_branch === "string" ? record.default_branch : undefined,
+    name: typeof record.name === "string" ? record.name : undefined,
+    owner: ownerRecord && typeof ownerRecord.login === "string" ? { login: ownerRecord.login } : undefined,
+    message: typeof record.message === "string" ? record.message : undefined,
+  };
+}
+
 const PROVIDER_IDENTITY_CACHE_TTL_MS = 60_000;
 const providerIdentityCache = new Map<string, { expiresAt: number; value: ProviderRepositoryIdentity }>();
 
@@ -88,8 +112,7 @@ async function resolveGitHubIdentity(input: RepositoryIdentityInput): Promise<Pr
   if (!response.ok) {
     let details: string | null = null;
     try {
-      const parsed = (await response.json()) as GitHubRepositoryResponse;
-      details = parsed.message ?? null;
+      details = parseGitHubRepositoryResponse(await response.json())?.message ?? null;
     } catch {
       details = null;
     }
@@ -104,7 +127,14 @@ async function resolveGitHubIdentity(input: RepositoryIdentityInput): Promise<Pr
     });
   }
 
-  const parsed = (await response.json()) as GitHubRepositoryResponse;
+  const parsed = parseGitHubRepositoryResponse(await response.json());
+  if (!parsed) {
+    return buildLocalProviderRepositoryIdentity(input, {
+      status: "unreachable",
+      verifiedAt,
+      statusReason: "GitHub repository verification returned an unexpected payload.",
+    });
+  }
   const providerOwner = parsed.owner?.login ?? input.owner;
   const providerName = parsed.name ?? input.name;
   const providerDefaultBranch = parsed.default_branch ?? input.defaultBranch;

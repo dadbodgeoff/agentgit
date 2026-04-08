@@ -4,6 +4,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { AgentGitError } from "@agentgit/schemas";
+
 import { ControlPlaneStateStore } from "./index.js";
 
 describe("control plane state store", () => {
@@ -75,25 +77,32 @@ describe("control plane state store", () => {
         },
       });
 
-      store.appendEvent({
-        ingestedAt: "2026-04-07T18:01:01Z",
-        event: {
-          schemaVersion: "cloud-sync.v1",
-          eventId: "evt_01",
-          connectorId: "conn_01",
-          workspaceId: "ws_acme_01",
-          repository: {
-            owner: "acme",
-            name: "platform-ui",
+      expect(() =>
+        store.appendEvent({
+          ingestedAt: "2026-04-07T18:01:01Z",
+          event: {
+            schemaVersion: "cloud-sync.v1",
+            eventId: "evt_01",
+            connectorId: "conn_01",
+            workspaceId: "ws_acme_01",
+            repository: {
+              owner: "acme",
+              name: "platform-ui",
+            },
+            sequence: 1,
+            occurredAt: "2026-04-07T18:01:00Z",
+            type: "repo_state.snapshot",
+            payload: {
+              headSha: "abcdef1234567",
+            },
           },
-          sequence: 1,
-          occurredAt: "2026-04-07T18:01:00Z",
-          type: "repo_state.snapshot",
-          payload: {
-            headSha: "abcdef1234567",
-          },
-        },
-      });
+        }),
+      ).toThrowError(
+        new AgentGitError("Connector event already exists and cannot be appended twice.", "CONFLICT", {
+          event_id: "evt_01",
+          connector_id: "conn_01",
+        }),
+      );
 
       expect(store.getConnector("conn_01")?.machineName).toBe("geoffrey-mbp");
       expect(store.listEvents("conn_01")).toHaveLength(1);

@@ -28,6 +28,7 @@ import { getApiErrorMessage } from "@/lib/api/client";
 import { downloadWorkspaceAuditLog } from "@/lib/api/endpoints/audit";
 import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { useAuditQuery } from "@/lib/query/hooks";
+import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import type { AuditExportFormat } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 
@@ -121,7 +122,7 @@ export function AuditPage() {
     return (
       <>
         <PageHeader
-          description="Immutable-ish operator-facing trail across approvals, recoveries, connector commands, and policy sync."
+          description="Append-only operator-facing trail across approvals, recoveries, connector commands, and policy sync."
           title="Audit log"
         />
         <PageStatePanel state="loading" />
@@ -133,7 +134,7 @@ export function AuditPage() {
     return (
       <>
         <PageHeader
-          description="Immutable-ish operator-facing trail across approvals, recoveries, connector commands, and policy sync."
+          description="Append-only operator-facing trail across approvals, recoveries, connector commands, and policy sync."
           title="Audit log"
         />
         <PageStatePanel
@@ -189,7 +190,7 @@ export function AuditPage() {
     return (
       <>
         <PageHeader
-          description="Immutable-ish operator-facing trail across approvals, recoveries, connector commands, and policy sync."
+          description="Append-only operator-facing trail across approvals, recoveries, connector commands, and policy sync."
           title="Audit log"
         />
         <PageStatePanel
@@ -204,7 +205,7 @@ export function AuditPage() {
   return (
     <>
       <PageHeader
-        description="Immutable-ish operator-facing trail across approvals, recoveries, connector commands, and policy sync."
+        description="Append-only operator-facing trail across approvals, recoveries, connector commands, and policy sync."
         title="Audit log"
       />
       <div className="space-y-6">
@@ -378,11 +379,11 @@ export function AuditPage() {
                               Detail
                             </Link>
                           ) : null}
-                          {entry.externalUrl ? (
+                          {sanitizeExternalUrl(entry.externalUrl) ? (
                             <a
                               className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                              href={entry.externalUrl}
-                              rel="noreferrer"
+                              href={sanitizeExternalUrl(entry.externalUrl)!}
+                              rel="noopener noreferrer"
                               target="_blank"
                             >
                               Provider

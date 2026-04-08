@@ -301,6 +301,76 @@ describe("cloud connector runtime", () => {
     });
   });
 
+  it("rejects cloud-driven commit messages with embedded control characters", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-connector-"));
+    tempDirs.push(tempDir);
+    const repoRoot = path.join(tempDir, "repo");
+    fs.mkdirSync(repoRoot, { recursive: true });
+    initGitRepo(repoRoot);
+    seedJournal(repoRoot);
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "# Connector Test\n\nUpdated by connector.\n", "utf8");
+
+    await withServer(
+      async ({ baseUrl, acknowledgements }) => {
+        const stateDbPath = path.join(tempDir, "connector.db");
+        const store = new CloudConnectorStateStore(stateDbPath);
+        const service = new CloudConnectorService(store, new CloudSyncClient(baseUrl));
+        const runtime = new CloudConnectorRuntime({
+          stateStore: store,
+          service,
+          workspaceRoot: repoRoot,
+          connectorVersion: "0.1.0",
+          now: () => "2026-04-07T19:00:10Z",
+        });
+
+        try {
+          await runtime.bootstrapRegister({
+            cloudBaseUrl: baseUrl,
+            workspaceId: "ws_acme_01",
+            bootstrapToken: "agcbt_test",
+            connectorName: "MacBook connector",
+            machineName: "geoffrey-mbp",
+          });
+
+          const result = await runtime.syncOnce();
+
+          expect(result.commands).toHaveLength(1);
+          expect(result.commands[0]?.status).toBe("failed");
+          expect(result.commands[0]?.message).toContain("single line");
+          expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim()).toBe(
+            "1",
+          );
+          expect(acknowledgements.map((entry) => entry.status)).toEqual(["acked", "failed"]);
+        } finally {
+          store.close();
+        }
+      },
+      {
+        commandBatches: [
+          [
+            {
+              schemaVersion: "cloud-sync.v1",
+              commandId: "cmd_test_invalid_commit_message",
+              connectorId: "conn_test_01",
+              workspaceId: "ws_acme_01",
+              repository: {
+                owner: "acme",
+                name: "platform-ui",
+              },
+              issuedAt: "2026-04-07T19:00:12Z",
+              expiresAt: "2026-04-08T19:00:12Z",
+              type: "create_commit",
+              payload: {
+                message: "chore: connector sync commit\n--amend",
+                stageAll: true,
+              },
+            },
+          ],
+        ],
+      },
+    );
+  });
+
   it("opens a provider-backed GitHub pull request through the connector command path", async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-connector-"));
     tempDirs.push(tempDir);

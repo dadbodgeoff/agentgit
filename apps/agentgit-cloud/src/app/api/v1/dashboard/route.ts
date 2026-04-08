@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 
 import { requireApiSession } from "@/lib/auth/api-session";
 import { getDashboardSummaryFromWorkspace } from "@/lib/backend/workspace/dashboard-aggregation";
-import { getDashboardFixture } from "@/mocks/fixtures";
+import { loadPreviewFixture, resolvePreviewState } from "@/lib/dev/preview-fixtures";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
-import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -18,9 +17,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return unauthorized;
   }
 
-  const url = new URL(request.url);
-  const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
-  const previewState = parsed.success ? parsed.data : "ready";
+  const previewState = resolvePreviewState(request);
 
   if (previewState === "loading") {
     await sleep(1200);
@@ -31,7 +28,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   if (previewState !== "ready") {
-    return jsonWithRequestId(getDashboardFixture(previewState), undefined, requestId);
+    const fixture = await loadPreviewFixture("dashboard", previewState);
+    if (fixture) {
+      return jsonWithRequestId(fixture, undefined, requestId);
+    }
   }
 
   try {
@@ -44,8 +44,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     logRouteError("dashboard_summary", requestId, error);
     return jsonWithRequestId(
       {
-        message:
-          error instanceof Error && error.message.length > 0 ? error.message : "Could not load dashboard data. Retry.",
+        message: "Could not load dashboard data. Retry.",
       },
       { status: 500 },
       requestId,

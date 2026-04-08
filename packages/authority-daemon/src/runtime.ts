@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { bootstrapLocalDaemon } from "./app/bootstrap.js";
 import { type StartServerOptions } from "./stores/local-store-factory.js";
-import { UnixSocketTransport } from "./transports/unix-socket.js";
+import { UnixSocketTransport, resolveUnixSocketAuthTokenPath } from "./transports/unix-socket.js";
 
 export interface AuthorityDaemonRuntimeConfig {
   projectRoot: string;
@@ -209,6 +209,15 @@ export async function runAuthorityDaemon(
   options.onListening?.(summary);
 
   let shuttingDown = false;
+  const removeFileIfExists = (filePath: string) => {
+    try {
+      fs.rmSync(filePath, { force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  };
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) {
       return;
@@ -224,9 +233,8 @@ export async function runAuthorityDaemon(
       });
     });
     await runCleanup();
-    if (fs.existsSync(config.socketPath)) {
-      fs.rmSync(config.socketPath, { force: true });
-    }
+    removeFileIfExists(config.socketPath);
+    removeFileIfExists(resolveUnixSocketAuthTokenPath(config.socketPath));
   };
 
   if (options.registerSignalHandlers) {

@@ -1,5 +1,6 @@
 import { requireApiRole } from "@/lib/auth/api-session";
 import { replayRepositoryCalibrationThresholds } from "@/lib/backend/authority/calibration";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { CalibrationReplayRequestSchema } from "@/schemas/cloud";
 
@@ -14,7 +15,18 @@ export async function POST(
     return access.denied;
   }
 
-  const payload = CalibrationReplayRequestSchema.safeParse(await request.json().catch(() => ({})));
+  let rawPayload: unknown;
+  try {
+    rawPayload = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  const payload = CalibrationReplayRequestSchema.safeParse(rawPayload);
   if (!payload.success) {
     return jsonWithRequestId({ message: "Calibration replay payload is invalid." }, { status: 400 }, requestId);
   }

@@ -45,6 +45,8 @@ type RunSummary = ReturnType<typeof RunSummarySchema.parse>;
 type PolicyCalibrationQuality = GetPolicyCalibrationReportResponsePayload["report"]["totals"]["calibration"];
 type PolicyCalibrationBin = PolicyCalibrationQuality["bins"][number];
 
+const IDEMPOTENT_MUTATION_PENDING_TTL_MS = 5 * 60 * 1000;
+
 export interface PolicyReplayRecord {
   run_id: string;
   action_id: string;
@@ -185,6 +187,10 @@ export type ClaimIdempotentMutationResult =
 const ARTIFACT_INTEGRITY_SCHEMA_VERSION = "artifact-integrity.v1" as const;
 const ARTIFACT_INTEGRITY_DIGEST_ALGORITHM = "sha256" as const;
 const HELPER_FACT_CACHE_VERSION = "helper-fact-cache.v1" as const;
+const SQLITE_WAL_AUTOCHECKPOINT_BYTES = 64 * 1024 * 1024;
+const SQLITE_WAL_HARD_LIMIT_BYTES = 256 * 1024 * 1024;
+const SQLITE_WAL_CHECKPOINT_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_STORED_ARTIFACT_BYTES = 16 * 1024 * 1024;
 
 function stableJsonStringify(value: unknown): string {
   if (Array.isArray(value)) {
@@ -207,6 +213,11 @@ function payloadDigestForIdempotency(payload: unknown): string {
 
 type BetterSqliteDatabase = InstanceType<typeof Database>;
 type SqliteJournalMode = "WAL" | "DELETE";
+interface TypedSqliteStatement<BindParameters extends unknown[], Result> {
+  get(...params: BindParameters): Result | undefined;
+  all(...params: BindParameters): Result[];
+  run(...params: BindParameters): unknown;
+}
 
 function isSqliteBusyError(error: unknown): boolean {
   const code = storageErrorCode(error);
@@ -239,7 +250,7 @@ function storageErrorCode(error: unknown): string | null {
     return null;
   }
 
-  const candidate = (error as { code?: unknown }).code;
+  const candidate = Reflect.get(error, "code");
   return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
 }
 
@@ -549,6 +560,7 @@ export class RunJournal {
   private readonly db: BetterSqliteDatabase;
   private readonly artifactRootPath: string;
   private readonly artifactRetentionMs: number | null;
+  private readonly walCheckpointTimer: NodeJS.Timeout | null = null;
 
   constructor(options: RunJournalOptions) {
     try {
@@ -570,6 +582,8 @@ export class RunJournal {
       this.db.pragma(`journal_mode = ${resolveSqliteJournalMode()}`);
       this.db.pragma(`busy_timeout = ${resolveSqliteBusyTimeoutMs()}`);
       this.db.pragma("foreign_keys = ON");
+      this.configureWalBounds();
+      this.walCheckpointTimer = this.startWalCheckpointTimer();
       this.migrate();
       this.enforceArtifactRetention();
     } catch (error) {
@@ -581,6 +595,42 @@ export class RunJournal {
         cause: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private typedStatement<BindParameters extends unknown[], Result>(source: string): TypedSqliteStatement<BindParameters, Result> {
+    return this.db.prepare(source) as unknown as TypedSqliteStatement<BindParameters, Result>;
+  }
+
+  private configureWalBounds(): void {
+    const modeRow = this.typedStatement<[], { journal_mode?: string }>("PRAGMA journal_mode").get();
+    const journalMode = (modeRow?.journal_mode?.toUpperCase() ?? resolveSqliteJournalMode()) as SqliteJournalMode;
+    if (journalMode !== "WAL") {
+      return;
+    }
+
+    const pageSizeRow = this.typedStatement<[], { page_size?: number }>("PRAGMA page_size").get();
+    const pageSize = pageSizeRow?.page_size && pageSizeRow.page_size > 0 ? pageSizeRow.page_size : 4096;
+    const walAutocheckpointPages = Math.max(1, Math.floor(SQLITE_WAL_AUTOCHECKPOINT_BYTES / pageSize));
+    this.db.pragma(`wal_autocheckpoint = ${walAutocheckpointPages}`);
+    this.db.pragma(`journal_size_limit = ${SQLITE_WAL_HARD_LIMIT_BYTES}`);
+  }
+
+  private startWalCheckpointTimer(): NodeJS.Timeout | null {
+    const modeRow = this.typedStatement<[], { journal_mode?: string }>("PRAGMA journal_mode").get();
+    const journalMode = (modeRow?.journal_mode?.toUpperCase() ?? resolveSqliteJournalMode()) as SqliteJournalMode;
+    if (journalMode !== "WAL") {
+      return null;
+    }
+
+    const timer = setInterval(() => {
+      try {
+        this.checkpointWal();
+      } catch {
+        // Best-effort checkpointing; foreground mutations surface their own storage failures.
+      }
+    }, SQLITE_WAL_CHECKPOINT_INTERVAL_MS);
+    timer.unref?.();
+    return timer;
   }
 
   private migrate(): void {
@@ -711,14 +761,34 @@ export class RunJournal {
   }
 
   private ensureColumn(tableName: string, columnName: string, columnDefinition: string): void {
-    const pragmaStatement = this.db.prepare(`PRAGMA table_info(${tableName})`) as unknown as {
-      all(): Array<{ name: string }>;
-    };
+    const pragmaStatement = this.typedStatement<[], { name: string }>(`PRAGMA table_info(${tableName})`);
     const columns = pragmaStatement.all();
 
-    if (!columns.some((column) => column.name === columnName)) {
+    if (!columns.some((column: { name: string }) => column.name === columnName)) {
       this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition}`);
     }
+  }
+
+  private reserveServerEventTimestamps(runId: string, count: number): string[] {
+    const lastRecordedRow = this.typedStatement<[string], { recorded_at: string }>(
+        `
+          SELECT recorded_at
+          FROM run_events
+          WHERE run_id = ?
+          ORDER BY sequence DESC
+          LIMIT 1
+        `,
+      )
+      .get(runId);
+    const nowMs = Date.now();
+    const lastRecordedAtMs = lastRecordedRow ? Date.parse(lastRecordedRow.recorded_at) : Number.NaN;
+    let nextMs = Number.isFinite(lastRecordedAtMs) && lastRecordedAtMs >= nowMs ? lastRecordedAtMs + 1 : nowMs;
+
+    return Array.from({ length: count }, () => {
+      const timestamp = new Date(nextMs).toISOString();
+      nextMs += 1;
+      return timestamp;
+    });
   }
 
   private helperFactCacheKey(input: {
@@ -753,9 +823,9 @@ export class RunJournal {
     }
   }
 
-  private artifactRelativePath(artifactId: string): string {
-    const digest = crypto.createHash("sha256").update(artifactId).digest("hex");
-    return path.join(digest.slice(0, 2), digest.slice(2, 4), `${artifactId}.txt`);
+  private artifactRelativePath(runId: string, artifactId: string): string {
+    const digest = crypto.createHash("sha256").update(`${runId}:${artifactId}`).digest("hex");
+    return path.join(runId, digest.slice(0, 2), digest.slice(2, 4), `${artifactId}.txt`);
   }
 
   private normalizeTimestampToMillis(value: string, field: string, artifactId?: string): number {
@@ -850,7 +920,7 @@ export class RunJournal {
     }
 
     try {
-      const selectExpiredArtifacts = this.db.prepare(
+      const selectExpiredArtifacts = this.typedStatement<[string], { artifact_id: string; storage_relpath: string }>(
         `
           SELECT artifact_id, storage_relpath
           FROM artifacts
@@ -858,9 +928,7 @@ export class RunJournal {
             AND expires_at IS NOT NULL
             AND expires_at <= ?
         `,
-      ) as unknown as {
-        all(expirationCutoff: string): Array<{ artifact_id: string; storage_relpath: string }>;
-      };
+      );
       const rows = selectExpiredArtifacts.all(now);
 
       if (rows.length === 0) {
@@ -909,14 +977,12 @@ export class RunJournal {
 
     try {
       const rows = (
-        this.db.prepare(
+        this.typedStatement<[], { storage_relpath: string }>(
           `
             SELECT storage_relpath
             FROM artifacts
           `,
-        ) as unknown as {
-          all(): Array<{ storage_relpath: string }>;
-        }
+        )
       ).all();
 
       for (const row of rows) {
@@ -1009,7 +1075,20 @@ export class RunJournal {
   getRunArtifactStateDigest(runId: string): string {
     try {
       const rows = (
-        this.db.prepare(
+        this.typedStatement<
+          [string],
+          {
+            artifact_id: string;
+            storage_relpath: string;
+            byte_size: number;
+            integrity_schema_version: string | null;
+            content_digest_algorithm: string | null;
+            content_digest: string | null;
+            content_sha256: string | null;
+            expires_at: string | null;
+            expired_at: string | null;
+          }
+        >(
           `
             SELECT
               artifact_id,
@@ -1025,19 +1104,7 @@ export class RunJournal {
             WHERE run_id = ?
             ORDER BY artifact_id ASC
           `,
-        ) as unknown as {
-          all(boundRunId: string): Array<{
-            artifact_id: string;
-            storage_relpath: string;
-            byte_size: number;
-            integrity_schema_version: string | null;
-            content_digest_algorithm: string | null;
-            content_digest: string | null;
-            content_sha256: string | null;
-            expires_at: string | null;
-            expired_at: string | null;
-          }>;
-        }
+        )
       ).all(runId);
 
       const digestInput = rows.map((row) => ({
@@ -1062,8 +1129,21 @@ export class RunJournal {
     visibility_scope: VisibilityScope;
   }): HelperFactCacheRecord | null {
     try {
-      const row = this.db
-        .prepare(
+      const row = this.typedStatement<
+          [string],
+          {
+            run_id: string;
+            question_type: HelperQuestionType;
+            focus_step_id: string | null;
+            compare_step_id: string | null;
+            visibility_scope: VisibilityScope;
+            event_count: number;
+            latest_sequence: number;
+            artifact_state_digest: string;
+            response_json: string;
+            warmed_at: string;
+          }
+        >(
           `
             SELECT
               run_id,
@@ -1088,20 +1168,7 @@ export class RunJournal {
             compare_step_id: input.compare_step_id ?? null,
             visibility_scope: input.visibility_scope,
           }),
-        ) as
-        | {
-            run_id: string;
-            question_type: HelperQuestionType;
-            focus_step_id: string | null;
-            compare_step_id: string | null;
-            visibility_scope: VisibilityScope;
-            event_count: number;
-            latest_sequence: number;
-            artifact_state_digest: string;
-            response_json: string;
-            warmed_at: string;
-          }
-        | undefined;
+        );
 
       if (!row) {
         return null;
@@ -1289,6 +1356,33 @@ export class RunJournal {
           } satisfies ClaimIdempotentMutationResult;
         }
 
+        const storedAtMs = Date.parse(existing.stored_at);
+        if (
+          existing.state === "pending" &&
+          Number.isFinite(storedAtMs) &&
+          Date.now() - storedAtMs >= IDEMPOTENT_MUTATION_PENDING_TTL_MS
+        ) {
+          this.db
+            .prepare(
+              `
+                UPDATE idempotent_mutations
+                SET method = ?,
+                    payload_digest = ?,
+                    state = 'pending',
+                    response_json = NULL,
+                    stored_at = ?,
+                    completed_at = NULL
+                WHERE session_id = ? AND idempotency_key = ?
+              `,
+            )
+            .run(input.method, payloadDigest, input.stored_at, input.session_id, input.idempotency_key);
+
+          return {
+            status: "claimed",
+            payload_digest: payloadDigest,
+          } satisfies ClaimIdempotentMutationResult;
+        }
+
         return {
           status: "in_progress",
           session_id: existing.session_id,
@@ -1432,7 +1526,16 @@ export class RunJournal {
     },
   ): StoredArtifactRecord["integrity"] {
     const attemptStore = (): StoredArtifactRecord["integrity"] => {
-      const storageRelpath = this.artifactRelativePath(input.artifact_id);
+      const contentBytes = Buffer.byteLength(input.content, "utf8");
+      if (contentBytes > MAX_STORED_ARTIFACT_BYTES) {
+        throw new AgentGitError("Execution artifact exceeds the maximum allowed size.", "PRECONDITION_FAILED", {
+          artifact_id: input.artifact_id,
+          max_bytes: MAX_STORED_ARTIFACT_BYTES,
+          actual_bytes: contentBytes,
+        });
+      }
+
+      const storageRelpath = this.artifactRelativePath(input.run_id, input.artifact_id);
       const storagePath = path.join(this.artifactRootPath, storageRelpath);
       const expiresAt = this.computeArtifactExpiresAt(input.created_at, input.artifact_id);
       const contentDigest = crypto
@@ -1445,52 +1548,65 @@ export class RunJournal {
         digest: contentDigest,
       };
       fs.mkdirSync(path.dirname(storagePath), { recursive: true });
-      const tempPath = `${storagePath}.tmp`;
+      const tempPath = `${storagePath}.${crypto.randomUUID()}.tmp`;
       fs.writeFileSync(tempPath, input.content, "utf8");
-      fs.renameSync(tempPath, storagePath);
 
-      this.db
-        .prepare(
-          `
-            INSERT OR REPLACE INTO artifacts (
-              artifact_id,
-              run_id,
-              action_id,
-              execution_id,
-              type,
-              content_ref,
-              byte_size,
-              integrity_schema_version,
-              content_digest_algorithm,
-              content_digest,
-              content_sha256,
-              visibility,
-              storage_relpath,
-              expires_at,
-              expired_at,
-              created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `,
-        )
-        .run(
-          input.artifact_id,
-          input.run_id,
-          input.action_id,
-          input.execution_id,
-          input.type,
-          input.content_ref,
-          input.byte_size,
-          ARTIFACT_INTEGRITY_SCHEMA_VERSION,
-          ARTIFACT_INTEGRITY_DIGEST_ALGORITHM,
-          contentDigest,
-          contentDigest,
-          input.visibility,
-          storageRelpath,
-          expiresAt,
-          null,
-          input.created_at,
-        );
-      this.clearHelperFactCache(input.run_id);
+      this.db.transaction(() => {
+        this.db
+          .prepare(
+            `
+              INSERT OR REPLACE INTO artifacts (
+                artifact_id,
+                run_id,
+                action_id,
+                execution_id,
+                type,
+                content_ref,
+                byte_size,
+                integrity_schema_version,
+                content_digest_algorithm,
+                content_digest,
+                content_sha256,
+                visibility,
+                storage_relpath,
+                expires_at,
+                expired_at,
+                created_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+          )
+          .run(
+            input.artifact_id,
+            input.run_id,
+            input.action_id,
+            input.execution_id,
+            input.type,
+            input.content_ref,
+            input.byte_size,
+            ARTIFACT_INTEGRITY_SCHEMA_VERSION,
+            ARTIFACT_INTEGRITY_DIGEST_ALGORITHM,
+            contentDigest,
+            contentDigest,
+            input.visibility,
+            storageRelpath,
+            expiresAt,
+            null,
+            input.created_at,
+          );
+        this.clearHelperFactCache(input.run_id);
+      })();
+
+      try {
+        fs.renameSync(tempPath, storagePath);
+      } catch (error) {
+        try {
+          this.db.prepare("DELETE FROM artifacts WHERE artifact_id = ?").run(input.artifact_id);
+        } catch {
+          // Best effort cleanup after a failed post-commit file move.
+        }
+        throw error;
+      }
+
       this.enforceArtifactRetention(input.created_at);
       return integrity;
     };
@@ -1658,6 +1774,7 @@ export class RunJournal {
       `);
 
       const transaction = this.db.transaction((runRecord: RunRecordInput) => {
+        const [createdAt, startedAt] = this.reserveServerEventTimestamps(runRecord.run_id, 2);
         insertRun.run(
           runRecord.run_id,
           runRecord.session_id,
@@ -1667,15 +1784,15 @@ export class RunJournal {
           JSON.stringify(runRecord.workspace_roots),
           JSON.stringify(runRecord.client_metadata),
           JSON.stringify(runRecord.budget_config),
-          runRecord.created_at,
-          runRecord.created_at,
+          createdAt,
+          startedAt,
         );
 
         const lifecycleEvents: RunJournalEventInput[] = [
           {
             event_type: "run.created",
-            occurred_at: runRecord.created_at,
-            recorded_at: runRecord.created_at,
+            occurred_at: createdAt,
+            recorded_at: createdAt,
             payload: {
               workflow_name: runRecord.workflow_name,
               agent_framework: runRecord.agent_framework,
@@ -1685,8 +1802,8 @@ export class RunJournal {
           },
           {
             event_type: "run.started",
-            occurred_at: runRecord.created_at,
-            recorded_at: runRecord.created_at,
+            occurred_at: startedAt,
+            recorded_at: startedAt,
             payload: {
               session_id: runRecord.session_id,
               workspace_roots: runRecord.workspace_roots,
@@ -1717,15 +1834,32 @@ export class RunJournal {
   private getMaintenanceStatus(runId?: string): RunMaintenanceStatus {
     const artifactRows = runId
       ? (
-          this.db.prepare(
+          this.typedStatement<
+            [string],
+            {
+              artifact_id: string;
+              storage_relpath: string;
+              byte_size: number;
+              integrity_schema_version: string | null;
+              content_digest_algorithm: string | null;
+              content_digest: string | null;
+              content_sha256: string | null;
+              expires_at: string | null;
+              expired_at: string | null;
+            }
+          >(
             `
               SELECT artifact_id, storage_relpath, byte_size, content_sha256, expires_at, expired_at
                    , integrity_schema_version, content_digest_algorithm, content_digest
                 FROM artifacts
                 WHERE run_id = ?
             `,
-          ) as unknown as {
-            all(runId: string): Array<{
+          )
+        ).all(runId)
+      : (
+          this.typedStatement<
+            [],
+            {
               artifact_id: string;
               storage_relpath: string;
               byte_size: number;
@@ -1735,29 +1869,14 @@ export class RunJournal {
               content_sha256: string | null;
               expires_at: string | null;
               expired_at: string | null;
-            }>;
-          }
-        ).all(runId)
-      : (
-          this.db.prepare(
+            }
+          >(
             `
               SELECT artifact_id, storage_relpath, byte_size, content_sha256, expires_at, expired_at
                    , integrity_schema_version, content_digest_algorithm, content_digest
                 FROM artifacts
             `,
-          ) as unknown as {
-            all(): Array<{
-              artifact_id: string;
-              storage_relpath: string;
-              byte_size: number;
-              integrity_schema_version: string | null;
-              content_digest_algorithm: string | null;
-              content_digest: string | null;
-              content_sha256: string | null;
-              expires_at: string | null;
-              expired_at: string | null;
-            }>;
-          }
+          )
         ).all();
 
     const artifactHealth: RunMaintenanceStatus["artifact_health"] = {
@@ -1776,27 +1895,23 @@ export class RunJournal {
 
     const degradedRows = runId
       ? (
-          this.db.prepare(
+          this.typedStatement<[string], { payload_json: string }>(
             `
               SELECT payload_json
               FROM run_events
               WHERE run_id = ?
                 AND event_type IN ('execution.completed', 'execution.simulated')
             `,
-          ) as unknown as {
-            all(runId: string): Array<{ payload_json: string }>;
-          }
+          )
         ).all(runId)
       : (
-          this.db.prepare(
+          this.typedStatement<[], { payload_json: string }>(
             `
               SELECT payload_json
               FROM run_events
               WHERE event_type IN ('execution.completed', 'execution.simulated')
             `,
-          ) as unknown as {
-            all(): Array<{ payload_json: string }>;
-          }
+          )
         ).all();
 
     let degradedArtifactCaptureActions = 0;
@@ -1839,16 +1954,16 @@ export class RunJournal {
 
   getDiagnosticsOverview(): RunJournalDiagnosticsOverview {
     try {
-      const totalRunsRow = this.db.prepare("SELECT COUNT(*) AS count FROM runs").get() as { count: number };
-      const totalEventsRow = this.db.prepare("SELECT COUNT(*) AS count FROM run_events").get() as { count: number };
-      const pendingApprovalsRow = this.db
-        .prepare("SELECT COUNT(*) AS count FROM approval_requests WHERE status = 'pending'")
-        .get() as { count: number };
+      const totalRunsRow = this.typedStatement<[], { count: number }>("SELECT COUNT(*) AS count FROM runs").get();
+      const totalEventsRow = this.typedStatement<[], { count: number }>("SELECT COUNT(*) AS count FROM run_events").get();
+      const pendingApprovalsRow = this
+        .typedStatement<[], { count: number }>("SELECT COUNT(*) AS count FROM approval_requests WHERE status = 'pending'")
+        .get();
 
       return {
-        total_runs: totalRunsRow.count,
-        total_events: totalEventsRow.count,
-        pending_approvals: pendingApprovalsRow.count,
+        total_runs: totalRunsRow?.count ?? 0,
+        total_events: totalEventsRow?.count ?? 0,
+        pending_approvals: pendingApprovalsRow?.count ?? 0,
         maintenance_status: this.getMaintenanceStatus(),
         capability_snapshot: this.getCapabilitySnapshot(),
       };
@@ -1861,7 +1976,7 @@ export class RunJournal {
 
   checkpointWal(): SqliteCheckpointResult {
     try {
-      const modeRow = this.db.prepare("PRAGMA journal_mode").get() as { journal_mode?: string } | undefined;
+      const modeRow = this.typedStatement<[], { journal_mode?: string }>("PRAGMA journal_mode").get();
       const journalMode = (modeRow?.journal_mode?.toUpperCase() ?? resolveSqliteJournalMode()) as SqliteJournalMode;
 
       if (journalMode !== "WAL") {
@@ -1874,9 +1989,9 @@ export class RunJournal {
         };
       }
 
-      const row = this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as
-        | { busy?: number; log?: number; checkpointed?: number }
-        | undefined;
+      const row = this
+        .typedStatement<[], { busy?: number; log?: number; checkpointed?: number }>("PRAGMA wal_checkpoint(TRUNCATE)")
+        .get();
 
       return {
         journal_mode: "WAL",
@@ -1898,8 +2013,20 @@ export class RunJournal {
 
   getRunSummary(runId: string): RunSummary | null {
     try {
-      const runRow = this.db
-        .prepare(
+      const runRow = this.typedStatement<
+          [string],
+          {
+            run_id: string;
+            session_id: string;
+            workflow_name: string;
+            agent_framework: string;
+            agent_name: string;
+            workspace_roots_json: string;
+            budget_config_json: string;
+            created_at: string;
+            started_at: string;
+          }
+        >(
           `
             SELECT
               run_id,
@@ -1915,36 +2042,24 @@ export class RunJournal {
             WHERE run_id = ?
           `,
         )
-        .get(runId) as
-        | {
-            run_id: string;
-            session_id: string;
-            workflow_name: string;
-            agent_framework: string;
-            agent_name: string;
-            workspace_roots_json: string;
-            budget_config_json: string;
-            created_at: string;
-            started_at: string;
-          }
-        | undefined;
+        .get(runId);
 
       if (!runRow) {
         return null;
       }
 
-      const eventCountRow = this.db
-        .prepare(
+      const eventCountRow = this
+        .typedStatement<[string], { event_count: number }>(
           `
             SELECT COUNT(*) AS event_count
             FROM run_events
             WHERE run_id = ?
           `,
         )
-        .get(runId) as { event_count: number };
+        .get(runId);
 
-      const latestEventRow = this.db
-        .prepare(
+      const latestEventRow = this
+        .typedStatement<[string], RunEventSummary>(
           `
             SELECT sequence, event_type, occurred_at, recorded_at
             FROM run_events
@@ -1953,7 +2068,7 @@ export class RunJournal {
             LIMIT 1
           `,
         )
-        .get(runId) as RunEventSummary | undefined;
+        .get(runId);
 
       return {
         run_id: runRow.run_id,
@@ -1962,7 +2077,7 @@ export class RunJournal {
         agent_framework: runRow.agent_framework,
         agent_name: runRow.agent_name,
         workspace_roots: JSON.parse(runRow.workspace_roots_json) as string[],
-        event_count: eventCountRow.event_count,
+        event_count: eventCountRow?.event_count ?? 0,
         latest_event: latestEventRow ?? null,
         budget_config: normalizeBudgetConfig(JSON.parse(runRow.budget_config_json) as Record<string, unknown>),
         budget_usage: this.getRunBudgetUsage(runId),
@@ -1984,15 +2099,15 @@ export class RunJournal {
         throw new NotFoundError(`No run found for ${runId}.`, { run_id: runId });
       }
 
-      const nextSequenceRow = this.db
-        .prepare(
+      const nextSequenceRow = this
+        .typedStatement<[string], { next_sequence: number }>(
           `
             SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
             FROM run_events
             WHERE run_id = ?
           `,
         )
-        .get(runId) as { next_sequence: number };
+        .get(runId);
 
       const insertEvent = this.db.prepare(`
         INSERT INTO run_events (
@@ -2004,18 +2119,19 @@ export class RunJournal {
           payload_json
         ) VALUES (?, ?, ?, ?, ?, ?)
       `);
+      const [serverTimestamp] = this.reserveServerEventTimestamps(runId, 1);
 
       insertEvent.run(
         runId,
-        nextSequenceRow.next_sequence,
+        nextSequenceRow?.next_sequence ?? 1,
         event.event_type,
-        event.occurred_at,
-        event.recorded_at,
+        serverTimestamp,
+        serverTimestamp,
         JSON.stringify(event.payload ?? {}),
       );
       this.clearHelperFactCache(runId);
 
-      return nextSequenceRow.next_sequence;
+      return nextSequenceRow?.next_sequence ?? 1;
     } catch (error) {
       if (error instanceof NotFoundError) {
         throw error;
@@ -2121,13 +2237,11 @@ export class RunJournal {
 
   listAllRuns(): RunSummary[] {
     try {
-      const selectRunIds = this.db.prepare(`
+      const selectRunIds = this.typedStatement<[], { run_id: string }>(`
         SELECT run_id
         FROM runs
         ORDER BY created_at ASC
-      `) as unknown as {
-        all(): Array<{ run_id: string }>;
-      };
+      `);
       const runIds = selectRunIds.all();
 
       return runIds
@@ -2146,25 +2260,26 @@ export class RunJournal {
         throw new NotFoundError(`No run found for ${runId}.`, { run_id: runId });
       }
 
-      const selectEvents = this.db.prepare(
+      const selectEvents = this.typedStatement<
+        [string],
+        {
+          sequence: number;
+          event_type: string;
+          occurred_at: string;
+          recorded_at: string;
+          payload_json: string;
+        }
+      >(
         `
           SELECT sequence, event_type, occurred_at, recorded_at, payload_json
           FROM run_events
           WHERE run_id = ?
           ORDER BY sequence ASC
         `,
-      ) as unknown as {
-        all(boundRunId: string): Array<{
-          sequence: number;
-          event_type: string;
-          occurred_at: string;
-          recorded_at: string;
-          payload_json: string;
-        }>;
-      };
+      );
       const rows = selectEvents.all(runId);
 
-      return rows.map((row) => ({
+      return rows.map((row: { sequence: number; event_type: string; occurred_at: string; recorded_at: string; payload_json: string }) => ({
         sequence: row.sequence,
         event_type: row.event_type,
         occurred_at: row.occurred_at,
@@ -2185,15 +2300,13 @@ export class RunJournal {
 
   getRunBudgetUsage(runId: string): RunSummary["budget_usage"] {
     try {
-      const selectEvents = this.db.prepare(
+      const selectEvents = this.typedStatement<[string], { payload_json: string }>(
         `
           SELECT payload_json
           FROM run_events
           WHERE run_id = ? AND event_type = 'execution.completed'
         `,
-      ) as unknown as {
-        all(boundRunId: string): Array<{ payload_json: string }>;
-      };
+      );
       const rows = selectEvents.all(runId);
 
       let mutatingActions = 0;
@@ -2312,7 +2425,12 @@ export class RunJournal {
       }
 
       const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-      const statement = this.db.prepare(
+      const statement = this.typedStatement<
+        string[],
+        ApprovalRequest & {
+          policy_outcome_json: string;
+        }
+      >(
         `
           SELECT
             approval_id,
@@ -2329,15 +2447,9 @@ export class RunJournal {
           ${whereClause}
           ORDER BY requested_at ASC
         `,
-      ) as unknown as {
-        all(...params: Array<string>): Array<
-          ApprovalRequest & {
-            policy_outcome_json: string;
-          }
-        >;
-      };
+      );
 
-      return statement.all(...values).map((row) => {
+      return statement.all(...values).map((row: ApprovalRequest & { policy_outcome_json: string }) => {
         const policyOutcome = JSON.parse(row.policy_outcome_json) as PolicyOutcomeRecord;
         return {
           approval_id: row.approval_id,
@@ -2362,8 +2474,23 @@ export class RunJournal {
 
   getStoredApproval(approvalId: string): StoredApprovalRecord | null {
     try {
-      const row = this.db
-        .prepare(
+      const row = this.typedStatement<
+          [string],
+          {
+            approval_id: string;
+            run_id: string;
+            action_id: string;
+            status: ApprovalRequest["status"];
+            requested_at: string;
+            resolved_at: string | null;
+            resolution_note: string | null;
+            decision_requested: "approve_or_deny";
+            action_summary: string;
+            action_json: string;
+            policy_outcome_json: string;
+            snapshot_record_json: string | null;
+          }
+        >(
           `
             SELECT
               approval_id,
@@ -2382,22 +2509,7 @@ export class RunJournal {
             WHERE approval_id = ?
           `,
         )
-        .get(approvalId) as
-        | {
-            approval_id: string;
-            run_id: string;
-            action_id: string;
-            status: ApprovalRequest["status"];
-            requested_at: string;
-            resolved_at: string | null;
-            resolution_note: string | null;
-            decision_requested: "approve_or_deny";
-            action_summary: string;
-            action_json: string;
-            policy_outcome_json: string;
-            snapshot_record_json: string | null;
-          }
-        | undefined;
+        .get(approvalId);
 
       if (!row) {
         return null;
@@ -2493,75 +2605,79 @@ export class RunJournal {
     const runClause = filters.run_id ? "AND run_id = ?" : "";
 
     const policyRows = (
-      this.db.prepare(
+      this.typedStatement<
+        string[],
+        {
+          run_id: string;
+          occurred_at: string;
+          payload_json: string;
+        }
+      >(
         `
           SELECT run_id, occurred_at, payload_json
           FROM run_events
           WHERE event_type = 'policy.evaluated'
           ${runClause}
-          ORDER BY occurred_at ASC, sequence ASC
+          ORDER BY recorded_at ASC, sequence ASC
         `,
-      ) as unknown as {
-        all(...boundParams: string[]): Array<{
-          run_id: string;
-          occurred_at: string;
-          payload_json: string;
-        }>;
-      }
+      )
     ).all(...params);
 
     const approvalRows = (
-      this.db.prepare(
+      this.typedStatement<
+        string[],
+        {
+          run_id: string;
+          approval_id: string;
+          action_id: string;
+          status: ApprovalRequest["status"];
+          resolved_at: string | null;
+        }
+      >(
         `
           SELECT run_id, approval_id, action_id, status, resolved_at
           FROM approval_requests
           ${filters.run_id ? "WHERE run_id = ?" : ""}
           ORDER BY requested_at ASC
         `,
-      ) as unknown as {
-        all(...boundParams: string[]): Array<{
-          run_id: string;
-          approval_id: string;
-          action_id: string;
-          status: ApprovalRequest["status"];
-          resolved_at: string | null;
-        }>;
-      }
+      )
     ).all(...params);
 
     const recoveryRows = (
-      this.db.prepare(
+      this.typedStatement<
+        string[],
+        {
+          run_id: string;
+          payload_json: string;
+        }
+      >(
         `
           SELECT run_id, payload_json
           FROM run_events
           WHERE event_type = 'recovery.executed'
           ${runClause}
-          ORDER BY occurred_at ASC, sequence ASC
+          ORDER BY recorded_at ASC, sequence ASC
         `,
-      ) as unknown as {
-        all(...boundParams: string[]): Array<{
-          run_id: string;
-          payload_json: string;
-        }>;
-      }
+      )
     ).all(...params);
 
     const normalizedRows = (
-      this.db.prepare(
+      this.typedStatement<
+        string[],
+        {
+          run_id: string;
+          occurred_at: string;
+          payload_json: string;
+        }
+      >(
         `
           SELECT run_id, occurred_at, payload_json
           FROM run_events
           WHERE event_type = 'action.normalized'
           ${runClause}
-          ORDER BY occurred_at ASC, sequence ASC
+          ORDER BY recorded_at ASC, sequence ASC
         `,
-      ) as unknown as {
-        all(...boundParams: string[]): Array<{
-          run_id: string;
-          occurred_at: string;
-          payload_json: string;
-        }>;
-      }
+      )
     ).all(...params);
 
     const approvalByActionKey = new Map<
@@ -2653,8 +2769,11 @@ export class RunJournal {
           : "deny";
       const reasons = Array.isArray(payload.reasons) ? payload.reasons : [];
       const reasonCodes = reasons.flatMap((reason) =>
-        reason && typeof reason === "object" && typeof (reason as { code?: unknown }).code === "string"
-          ? [(reason as { code: string }).code]
+        reason && typeof reason === "object"
+          ? (() => {
+              const code = Reflect.get(reason, "code");
+              return typeof code === "string" ? [code] : [];
+            })()
           : [],
       );
       const snapshotSelection =
@@ -2943,6 +3062,10 @@ export class RunJournal {
 
   close(): void {
     try {
+      this.walCheckpointTimer?.unref?.();
+      if (this.walCheckpointTimer) {
+        clearInterval(this.walCheckpointTimer);
+      }
       this.db.close();
     } catch (error) {
       throw new InternalError("Failed to close run journal.", {

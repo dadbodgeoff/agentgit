@@ -22,15 +22,13 @@ export function AppProviders({
   useEffect(() => {
     if (!workspaceSession) {
       Sentry.setUser(null);
+      Sentry.setTag("workspace_role", null);
+      Sentry.setTag("auth_state", "anonymous");
       return;
     }
 
-    Sentry.setUser({
-      id: workspaceSession.user.id,
-      email: workspaceSession.user.email,
-      username: workspaceSession.user.name,
-    });
-    Sentry.setTag("workspace_id", workspaceSession.activeWorkspace.id);
+    Sentry.setUser(null);
+    Sentry.setTag("auth_state", "authenticated");
     Sentry.setTag("workspace_role", workspaceSession.activeWorkspace.role);
   }, [workspaceSession]);
 

@@ -210,4 +210,52 @@ describe("hosted MCP worker", () => {
     expect(execution.attestation.payload.lease_id).toBe("mcplease_test");
     expect(execution.attestation.payload.worker_runtime_id).toBe(hello.worker_runtime_id);
   });
+
+  it("rejects malformed attestation key material on startup", async () => {
+    fs.mkdirSync(TEMP_ROOT, { recursive: true });
+    const socketPath = path.join(TEMP_ROOT, "worker.sock");
+    const keyPath = path.join(TEMP_ROOT, "worker-key.json");
+    fs.writeFileSync(keyPath, "{not-json", "utf8");
+
+    expect(() =>
+      startHostedMcpWorkerServer({
+        endpoint: `unix:${socketPath}`,
+        attestationKeyPath: keyPath,
+      }),
+    ).toThrow(/attestation key material could not be loaded/i);
+  });
+
+  it(
+    "caps oversized control-plane requests before buffering them indefinitely",
+    async () => {
+    fs.mkdirSync(TEMP_ROOT, { recursive: true });
+    const socketPath = path.join(TEMP_ROOT, "worker.sock");
+    const keyPath = path.join(TEMP_ROOT, "worker-key.json");
+    const server = await startHostedMcpWorkerServer({
+      endpoint: `unix:${socketPath}`,
+      attestationKeyPath: keyPath,
+    });
+    closers.push(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        }),
+    );
+
+    const response = validate(
+      HostedMcpWorkerResponseEnvelopeSchema,
+      await sendLine(socketPath, "x".repeat(16 * 1024 * 1024 + 1)),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe("BAD_REQUEST");
+    },
+    20_000,
+  );
 });

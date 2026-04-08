@@ -6,7 +6,9 @@ const DEFAULT_API_CORS_HEADERS = [
   "sentry-trace",
   "baggage",
   "x-requested-with",
+  "x-agentgit-csrf-token",
 ] as const;
+const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function parseCommaSeparatedEnv(value: string | undefined): string[] {
   return (value ?? "")
@@ -15,19 +17,23 @@ function parseCommaSeparatedEnv(value: string | undefined): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-export function getAllowedCorsOrigins(requestOrigin: string): string[] {
+function isStateChangingMethod(method: string): boolean {
+  return STATE_CHANGING_METHODS.has(method.toUpperCase());
+}
+
+export function getAllowedCorsOrigins(): string[] {
   const configuredOrigins = parseCommaSeparatedEnv(process.env.AGENTGIT_CLOUD_ALLOWED_ORIGINS);
 
   if (process.env.NODE_ENV !== "production") {
-    return [...new Set([requestOrigin, ...configuredOrigins, "http://localhost:3000", "http://127.0.0.1:3000"])];
+    return [...new Set([...configuredOrigins, "http://localhost:3000", "http://127.0.0.1:3000"])];
   }
 
-  return [...new Set([requestOrigin, ...configuredOrigins])];
+  return [...new Set(configuredOrigins)];
 }
 
 export function isAllowedCorsOrigin(request: NextRequest, origin: string | null): boolean {
   if (!origin) {
-    return true;
+    return !isStateChangingMethod(request.method);
   }
 
   const requestOrigin = request.nextUrl.origin;
@@ -35,7 +41,7 @@ export function isAllowedCorsOrigin(request: NextRequest, origin: string | null)
     return true;
   }
 
-  return getAllowedCorsOrigins(requestOrigin).includes(origin);
+  return getAllowedCorsOrigins().includes(origin);
 }
 
 function setVaryHeader(response: NextResponse) {
@@ -65,8 +71,14 @@ export function applyApiCors(request: NextRequest, response: NextResponse): Next
   return setCorsHeaders(response, request, origin);
 }
 
-export function buildApiCorsResponse(request: NextRequest): NextResponse {
+export function buildApiCorsResponse(request: NextRequest, forwardedRequestHeaders?: Headers): NextResponse {
   const origin = request.headers.get("origin");
+
+  if (!origin && isStateChangingMethod(request.method)) {
+    const denied = NextResponse.json({ message: "Origin header is required for state-changing API requests." }, { status: 403 });
+    setVaryHeader(denied);
+    return denied;
+  }
 
   if (!isAllowedCorsOrigin(request, origin)) {
     const denied = NextResponse.json({ message: "CORS origin is not allowed." }, { status: 403 });
@@ -78,16 +90,24 @@ export function buildApiCorsResponse(request: NextRequest): NextResponse {
     return setCorsHeaders(new NextResponse(null, { status: 204 }), request, origin);
   }
 
-  return applyApiCors(request, NextResponse.next());
+  return applyApiCors(
+    request,
+    forwardedRequestHeaders ? NextResponse.next({ request: { headers: forwardedRequestHeaders } }) : NextResponse.next(),
+  );
 }
 
-export function buildContentSecurityPolicy(): string {
+export function buildContentSecurityPolicy(nonce?: string): string {
   const connectSources = [
     "'self'",
     "https://*.ingest.sentry.io",
     "https://*.sentry.io",
     "https://vitals.vercel-insights.com",
     "https://vitals.vercel-analytics.com",
+  ];
+  const scriptSources = [
+    "'self'",
+    ...(nonce ? [`'nonce-${nonce}'`, "'strict-dynamic'"] : []),
+    "https://va.vercel-scripts.com",
   ];
 
   return [
@@ -96,8 +116,8 @@ export function buildContentSecurityPolicy(): string {
     "frame-ancestors 'none'",
     "form-action 'self'",
     "object-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com",
-    "style-src 'self' 'unsafe-inline'",
+    `script-src ${scriptSources.join(" ")}`,
+    "style-src 'self'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     `connect-src ${connectSources.join(" ")}`,
@@ -111,7 +131,6 @@ export function buildContentSecurityPolicy(): string {
 
 export function buildSecurityHeaders() {
   return [
-    { key: "Content-Security-Policy", value: buildContentSecurityPolicy() },
     { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
     { key: "X-Frame-Options", value: "DENY" },
     { key: "X-Content-Type-Options", value: "nosniff" },
@@ -120,4 +139,14 @@ export function buildSecurityHeaders() {
     { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
     { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
   ];
+}
+
+export function applySecurityHeaders(response: NextResponse, options: { nonce?: string } = {}): NextResponse {
+  response.headers.set("Content-Security-Policy", buildContentSecurityPolicy(options.nonce));
+
+  for (const header of buildSecurityHeaders()) {
+    response.headers.set(header.key, header.value);
+  }
+
+  return response;
 }

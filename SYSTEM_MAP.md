@@ -36,7 +36,7 @@ Agents should not have unmediated access to the OS. AgentGit provides:
 
 - **Policy enforcement**: Deterministic rules decide allow/deny/ask/simulate/snapshot for every action
 - **Recovery boundaries**: Snapshots capture state before risky operations, enabling rollback
-- **Audit trail**: Every action is journaled with cryptographic integrity (SHA256 content digests)
+- **Audit trail**: Every action is journaled with cryptographic integrity checks. Artifact and content integrity use SHA-256 digests; auxiliary workspace keys use truncated SHA-256 identifiers.
 - **Credential isolation**: Secrets are encrypted at rest (AES-256-GCM) and brokered per-session
 - **MCP supply-chain security**: OCI digest pinning, cosign signature verification, SLSA provenance
 
@@ -219,10 +219,10 @@ The `RunJournal` class writes to an **append-only SQLite database** (WAL mode):
 - `runs`: One row per agent session (run_id, runtime, start/end times)
 - `run_events`: Immutable event log (action, outcome, timing, artifacts)
 - `approval_requests`: Human approval requests and responses
-- `artifacts`: Binary/text artifacts with SHA256 integrity
+- `artifacts`: Binary/text artifacts with SHA-256 integrity
 
 **Integrity guarantees:**
-- SHA256 content digests on all artifacts
+- SHA-256 content digests on all artifacts
 - 2-level directory sharding for artifact storage (`ab/cd/abcdef...`)
 - Append-only: events cannot be modified or deleted
 - WAL mode for crash-safe writes

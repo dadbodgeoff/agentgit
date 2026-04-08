@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import shlex
 
 from .types import JSONObject
 
@@ -19,6 +20,9 @@ def build_action_attempt(
     agent_name: str = "agentgit-py",
     agent_framework: str = "python",
 ) -> JSONObject:
+    if not workspace_roots and cwd is None:
+        raise ValueError("workspace_roots must include at least one entry when cwd is not provided.")
+
     return {
         "run_id": run_id,
         "tool_registration": {
@@ -110,7 +114,7 @@ def build_shell_attempt(
         tool_kind="shell",
         raw_call={
             "command": command,
-            "argv": argv or command.split(),
+            "argv": argv or shlex.split(command),
         },
         workspace_roots=workspace_roots,
         cwd=cwd,

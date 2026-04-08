@@ -7,6 +7,7 @@ import type { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 
 import type { HostedExecutionQueue } from "../hosted-execution-queue.js";
 import type { HostedMcpWorkerClient } from "../hosted-worker-client.js";
+import type { LatencyMetricsStore } from "../latency-metrics.js";
 import type { PolicyRuntimeState } from "../policy-runtime.js";
 import type { AuthorityState } from "../state.js";
 
@@ -21,6 +22,7 @@ export interface ServiceDependencies {
   publicHostPolicyRegistry: McpPublicHostPolicyRegistry;
   hostedWorkerClient: HostedMcpWorkerClient;
   hostedExecutionQueue: HostedExecutionQueue;
+  latencyMetrics: LatencyMetricsStore;
   policyRuntime: PolicyRuntimeState;
   draftStore: OwnedDraftStore;
   noteStore: OwnedNoteStore;

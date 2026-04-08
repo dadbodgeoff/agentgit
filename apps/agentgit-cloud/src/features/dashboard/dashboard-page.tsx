@@ -22,6 +22,7 @@ import { useLiveUpdateStatus } from "@/components/providers/live-update-context"
 import { getApiErrorMessage } from "@/lib/api/client";
 import { authenticatedRoutes, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { useDashboardQuery } from "@/lib/query/hooks";
+import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import type { ActivityEvent, RecentRun } from "@/schemas/cloud";
 import type { PreviewState } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
@@ -559,11 +560,11 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
                             Open detail
                           </Link>
                         ) : null}
-                        {activity.externalUrl ? (
+                        {sanitizeExternalUrl(activity.externalUrl) ? (
                           <a
                             className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                            href={activity.externalUrl}
-                            rel="noreferrer"
+                            href={sanitizeExternalUrl(activity.externalUrl)!}
+                            rel="noopener noreferrer"
                             target="_blank"
                           >
                             Open provider

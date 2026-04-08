@@ -1,8 +1,9 @@
 import net from "node:net";
+import fs from "node:fs";
 
 import { bootstrapLocalDaemon } from "./app/bootstrap.js";
 import { type StartServerOptions } from "./stores/local-store-factory.js";
-import { UnixSocketTransport } from "./transports/unix-socket.js";
+import { UnixSocketTransport, resolveUnixSocketAuthTokenPath } from "./transports/unix-socket.js";
 
 export type { StartServerOptions };
 
@@ -21,6 +22,15 @@ export async function startServer(options: StartServerOptions): Promise<net.Serv
     }
     return cleanupPromise;
   };
+  const removeAuthTokenFile = () => {
+    try {
+      fs.rmSync(resolveUnixSocketAuthTokenPath(options.socketPath), { force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  };
   const originalClose = server.close.bind(server);
   server.close = ((callback?: (error?: Error) => void) => {
     return originalClose((error?: Error) => {
@@ -30,7 +40,10 @@ export async function startServer(options: StartServerOptions): Promise<net.Serv
       }
 
       void runCleanup()
-        .then(() => callback?.())
+        .then(() => {
+          removeAuthTokenFile();
+          callback?.();
+        })
         .catch((cleanupError) =>
           callback?.(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError))),
         );

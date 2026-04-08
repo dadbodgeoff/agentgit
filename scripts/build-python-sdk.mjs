@@ -6,8 +6,11 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageRoot = path.join(repoRoot, "packages", "authority-sdk-py");
+const PYTHON3 = resolveCommandPath("python3");
 
 function venvBinDir(root) {
   return process.platform === "win32" ? path.join(root, "Scripts") : path.join(root, "bin");
@@ -62,7 +65,7 @@ async function main() {
   const distDir = path.join(tempRoot, "dist");
 
   try {
-    await runCommand("python3", ["-m", "venv", buildVenv]);
+    await runCommand(PYTHON3, ["-m", "venv", buildVenv]);
     await runCommand(path.join(venvBinDir(buildVenv), process.platform === "win32" ? "python.exe" : "python"), [
       "-m",
       "pip",
@@ -86,7 +89,7 @@ async function main() {
       throw new Error(`Expected both wheel and sdist artifacts, found: ${artifacts.join(", ")}`);
     }
 
-    await runCommand("python3", ["-m", "venv", installVenv]);
+    await runCommand(PYTHON3, ["-m", "venv", installVenv]);
     const installPython = path.join(venvBinDir(installVenv), process.platform === "win32" ? "python.exe" : "python");
     await runCommand(installPython, ["-m", "pip", "install", "--upgrade", "pip"]);
     await runCommand(installPython, ["-m", "pip", "install", path.join(distDir, wheel)]);

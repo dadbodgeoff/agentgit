@@ -21,6 +21,7 @@ import {
   type SubmitActionAttemptResponsePayload,
 } from "@agentgit/schemas";
 import { type SnapshotSelectionResult, type LocalSnapshotEngine } from "@agentgit/snapshot-engine";
+import type { LatencyMetricsStore } from "../latency-metrics.js";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
@@ -161,6 +162,7 @@ export interface ExecuteGovernedActionParams {
   draftStore: OwnedDraftStore;
   noteStore: OwnedNoteStore;
   ticketStore: OwnedTicketStore;
+  latencyMetrics: LatencyMetricsStore;
   executeHostedDelegatedAction: (
     action: ActionRecord,
   ) => Promise<SubmitActionAttemptResponsePayload["execution_result"]>;
@@ -219,6 +221,9 @@ export async function executeGovernedAction(params: ExecuteGovernedActionParams)
       );
     }
 
+    const localAdapter = executionModeRequested === "hosted_delegated" ? null : adapter;
+    let fastActionStartedAt: number | null = null;
+
     if (
       snapshotRecord &&
       params.action.operation.domain === "filesystem" &&
@@ -234,12 +239,30 @@ export async function executeGovernedAction(params: ExecuteGovernedActionParams)
     }
 
     if (executionModeRequested !== "hosted_delegated") {
-      await adapter!.verifyPreconditions({
-        action: params.action,
-        policy_outcome: params.policyOutcome,
-        snapshot_record: snapshotRecord,
-        workspace_root: workspaceRoot,
-      });
+      if (!localAdapter) {
+        throw new AgentGitError(
+          "No governed execution adapter is available for this action domain.",
+          "CAPABILITY_UNAVAILABLE",
+          {
+            requested_domain: params.action.operation.domain,
+            requested_operation: params.action.operation.name,
+            supported_domains: params.adapterRegistry.supportedDomains(),
+          },
+        );
+      }
+
+      fastActionStartedAt = performance.now();
+      try {
+        await localAdapter.verifyPreconditions({
+          action: params.action,
+          policy_outcome: params.policyOutcome,
+          snapshot_record: snapshotRecord,
+          workspace_root: workspaceRoot,
+        });
+      } catch (error) {
+        params.latencyMetrics.recordFastAction(performance.now() - fastActionStartedAt);
+        throw error;
+      }
     }
 
     const executionStartedAt = new Date().toISOString();
@@ -257,15 +280,28 @@ export async function executeGovernedAction(params: ExecuteGovernedActionParams)
     });
 
     try {
-      executionResult =
-        executionModeRequested === "hosted_delegated"
-          ? await params.executeHostedDelegatedAction(params.action)
-          : await adapter!.execute({
-              action: params.action,
-              policy_outcome: params.policyOutcome,
-              snapshot_record: snapshotRecord,
-              workspace_root: workspaceRoot,
-            });
+      if (executionModeRequested === "hosted_delegated") {
+        executionResult = await params.executeHostedDelegatedAction(params.action);
+      } else {
+        const nonHostedAdapter = localAdapter;
+        if (!nonHostedAdapter) {
+          throw new InternalError("Execution adapter disappeared after precondition verification.", {
+            action_id: params.action.action_id,
+            requested_domain: params.action.operation.domain,
+          });
+        }
+        const localActionStartedAt = fastActionStartedAt ?? performance.now();
+        try {
+          executionResult = await nonHostedAdapter.execute({
+            action: params.action,
+            policy_outcome: params.policyOutcome,
+            snapshot_record: snapshotRecord,
+            workspace_root: workspaceRoot,
+          });
+        } finally {
+          params.latencyMetrics.recordFastAction(performance.now() - localActionStartedAt);
+        }
+      }
       if (!executionResult) {
         throw new InternalError("Execution adapter returned no execution result after an allow decision.", {
           action_id: params.action.action_id,

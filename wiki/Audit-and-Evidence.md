@@ -152,7 +152,7 @@ Shows: daemon reachability, storage health, security posture (OS keychain/Secret
 
 The audit bundle includes SHA256 hashes of every file in `manifest.json`. `run-audit-verify` recomputes hashes and exits non-zero if any discrepancy is found.
 
-The underlying journal is SQLite append-only — records are never updated after being written. Tamper detection is an additional verification layer on top of this structural property.
+The underlying journal is logically append-only for audit reconstruction, but some SQLite rows are updated for operational bookkeeping. Tamper detection is the stronger integrity guarantee and should be treated as the source of truth for evidence validation.
 
 ---
 

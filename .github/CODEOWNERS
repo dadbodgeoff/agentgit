@@ -1,24 +1,32 @@
 # CODEOWNERS — auto-request reviews for changes in these paths.
 # Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-# Default owner for everything not matched below
-* @dadbodgeoff
+# Default owners for everything not matched below
+* @dadbodgeoff @GeoffreyFernald
+
+# Release and supply chain controls
+/.github/workflows/                 @dadbodgeoff @GeoffreyFernald
+/.changeset/                        @dadbodgeoff @GeoffreyFernald
+/scripts/pack-release-artifacts.mjs @dadbodgeoff @GeoffreyFernald
+/scripts/verify-release-artifacts.mjs @dadbodgeoff @GeoffreyFernald
+/scripts/verify-release-scope-claims.mjs @dadbodgeoff @GeoffreyFernald
+/package.json                       @dadbodgeoff @GeoffreyFernald
 
 # Core runtime
-/packages/authority-daemon/       @dadbodgeoff
-/packages/authority-sdk-ts/       @dadbodgeoff
-/packages/authority-sdk-py/       @dadbodgeoff
-/packages/policy-engine/          @dadbodgeoff
-/packages/snapshot-engine/        @dadbodgeoff
-/packages/recovery-engine/        @dadbodgeoff
-/packages/run-journal/            @dadbodgeoff
-/packages/action-normalizer/      @dadbodgeoff
-/packages/execution-adapters/     @dadbodgeoff
+/packages/authority-daemon/       @dadbodgeoff @GeoffreyFernald
+/packages/authority-sdk-ts/       @dadbodgeoff @GeoffreyFernald
+/packages/authority-sdk-py/       @dadbodgeoff @GeoffreyFernald
+/packages/policy-engine/          @dadbodgeoff @GeoffreyFernald
+/packages/snapshot-engine/        @dadbodgeoff @GeoffreyFernald
+/packages/recovery-engine/        @dadbodgeoff @GeoffreyFernald
+/packages/run-journal/            @dadbodgeoff @GeoffreyFernald
+/packages/action-normalizer/      @dadbodgeoff @GeoffreyFernald
+/packages/execution-adapters/     @dadbodgeoff @GeoffreyFernald
 
 # Public surface
-/packages/authority-cli/          @dadbodgeoff
-/packages/schemas/                @dadbodgeoff
+/packages/authority-cli/          @dadbodgeoff @GeoffreyFernald
+/packages/schemas/                @dadbodgeoff @GeoffreyFernald
 
 # Documentation
-/wiki/                            @dadbodgeoff
-*.md                              @dadbodgeoff
+/wiki/                            @dadbodgeoff @GeoffreyFernald
+*.md                              @dadbodgeoff @GeoffreyFernald

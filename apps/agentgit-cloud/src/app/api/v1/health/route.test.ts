@@ -63,6 +63,6 @@ describe("health route", () => {
     expect(ensureLocalCloudStateInitialized).toHaveBeenCalled();
     expect(ensureLocalControlPlaneStateInitialized).toHaveBeenCalled();
     expect(ensureLocalRateLimitStoreInitialized).toHaveBeenCalled();
-    expect(body.workspaceId).toBe("ws_acme_01");
+    expect(body.workspaceId).toBeUndefined();
   });
 });

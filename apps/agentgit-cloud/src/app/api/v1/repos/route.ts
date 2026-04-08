@@ -2,10 +2,9 @@ import { NextResponse } from "next/server";
 
 import { requireApiSession } from "@/lib/auth/api-session";
 import { listRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
-import { getRepositoriesFixture } from "@/mocks/fixtures";
+import { loadPreviewFixture, resolvePreviewState } from "@/lib/dev/preview-fixtures";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { isPaginationQueryError, paginateItems, parseCursorPaginationQuery } from "@/lib/pagination/cursor";
-import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -19,9 +18,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return unauthorized;
   }
 
-  const url = new URL(request.url);
-  const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
-  const previewState = parsed.success ? parsed.data : "ready";
+  const previewState = resolvePreviewState(request);
   let pagination;
 
   try {
@@ -43,8 +40,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   if (previewState !== "ready") {
-    const fixture = getRepositoriesFixture(previewState);
-    return jsonWithRequestId({ ...fixture, ...paginateItems(fixture.items, pagination) }, undefined, requestId);
+    const fixture = await loadPreviewFixture("repositories", previewState);
+    if (fixture) {
+      return jsonWithRequestId({ ...fixture, ...paginateItems(fixture.items, pagination) }, undefined, requestId);
+    }
   }
 
   try {
@@ -57,8 +56,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     logRouteError("repository_inventory", requestId, error);
     return jsonWithRequestId(
       {
-        message:
-          error instanceof Error && error.message.length > 0 ? error.message : "Could not load repositories. Retry.",
+        message: "Could not load repositories. Retry.",
       },
       { status: 500 },
       requestId,

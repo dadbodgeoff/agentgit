@@ -42,6 +42,8 @@ interface ClosableStore {
   close(): void;
 }
 
+const TEST_SERVER_CLOSE_TIMEOUT_MS = 2_000;
+
 let requestSequence = 0;
 let harnessSequence = 0;
 const harnesses: TestHarness[] = [];
@@ -204,6 +206,10 @@ async function createHarness(
       capabilityRefreshStaleMs,
       ...effectiveStartServerOptions,
     });
+    server.on("connection", (socket) => {
+      socket.unref();
+    });
+    server.unref();
   } catch (error) {
     if (error instanceof AgentGitError) {
       throw new Error(
@@ -238,16 +244,7 @@ async function createHarness(
 }
 
 async function closeHarness(harness: TestHarness): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    harness.server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    });
-  });
+  await closeNetServer(harness.server, "authority harness");
 
   if (fs.existsSync(harness.socketPath)) {
     fs.rmSync(harness.socketPath, { force: true });
@@ -255,10 +252,23 @@ async function closeHarness(harness: TestHarness): Promise<void> {
 }
 
 async function closeTicketServer(server: http.Server): Promise<void> {
+  server.closeIdleConnections?.();
+  server.closeAllConnections?.();
+  await closeNetServer(server, "test MCP HTTP service");
+}
+
+async function closeNetServer(server: net.Server, label: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      server.unref?.();
+      resolve();
+    }, TEST_SERVER_CLOSE_TIMEOUT_MS);
+    timeout.unref?.();
+
     server.close((error) => {
+      clearTimeout(timeout);
       if (error) {
-        reject(error);
+        reject(new Error(`${label} close failed: ${error.message}`));
         return;
       }
 
@@ -278,6 +288,7 @@ async function startMcpHttpService(
   url: string;
   close: () => Promise<void>;
 }> {
+  const sockets = new Set<import("node:net").Socket>();
   const server = http.createServer(async (req, res) => {
     const chunks: Buffer[] = [];
     if (req.method === "POST") {
@@ -401,11 +412,20 @@ async function startMcpHttpService(
       });
     }
   });
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.unref();
+    socket.on("close", () => {
+      sockets.delete(socket);
+    });
+  });
+  server.keepAliveTimeout = 1;
 
   await new Promise<void>((resolve, reject) => {
     server.listen(0, "127.0.0.1", () => resolve());
     server.once("error", reject);
   });
+  server.unref();
   ticketServers.add(server);
 
   const address = server.address();
@@ -416,6 +436,13 @@ async function startMcpHttpService(
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     close: async () => {
+      for (const socket of sockets) {
+        socket.end();
+        socket.destroySoon?.();
+        if (!socket.destroyed) {
+          socket.destroy();
+        }
+      }
       await closeTicketServer(server);
       ticketServers.delete(server);
     },
@@ -483,11 +510,24 @@ async function sendRawLine(socketPath: string, line: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(socketPath);
     let buffer = "";
+    let settled = false;
+    const authTokenPath = `${socketPath}.token`;
+    const authToken = fs.existsSync(authTokenPath) ? fs.readFileSync(authTokenPath, "utf8").trim() : null;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      reject(new Error(`Timed out waiting for authority response on ${socketPath}`));
+    }, 5_000);
+    timeout.unref?.();
 
     socket.setEncoding("utf8");
 
     socket.once("connect", () => {
-      socket.write(line.endsWith("\n") ? line : `${line}\n`);
+      const payload = line.endsWith("\n") ? line : `${line}\n`;
+      socket.write(`${authToken ? `${authToken}\n` : ""}${payload}`);
     });
 
     socket.on("data", (chunk) => {
@@ -497,6 +537,8 @@ async function sendRawLine(socketPath: string, line: string): Promise<unknown> {
         return;
       }
 
+      settled = true;
+      clearTimeout(timeout);
       const responseLine = buffer.slice(0, newlineIndex).trim();
       socket.end();
 
@@ -507,7 +549,22 @@ async function sendRawLine(socketPath: string, line: string): Promise<unknown> {
       }
     });
 
-    socket.once("error", reject);
+    socket.once("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    socket.once("close", () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error(`Authority socket closed before returning a response from ${socketPath}`));
+    });
   });
 }
 
@@ -4081,6 +4138,10 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       attestationKeyPath: path.join(tempRoot, "worker-key.json"),
       controlToken: workerToken,
     });
+    worker.on("connection", (socket) => {
+      socket.unref();
+    });
+    worker.unref();
     const harness = await createHarness(tempRoot, null, null, {
       mcpHostedWorkerEndpoint: `unix:${workerSocketPath}`,
       mcpHostedWorkerAutostart: false,
@@ -4254,15 +4315,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       });
     } finally {
       await service.close();
-      await new Promise<void>((resolve, reject) => {
-        worker.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
+      await closeNetServer(worker, "external hosted MCP worker");
     }
   });
 
@@ -4426,6 +4479,10 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
         attestationKeyPath: path.join(tempRoot, "worker-key.json"),
         controlToken: workerToken,
       });
+      worker.on("connection", (socket) => {
+        socket.unref();
+      });
+      worker.unref();
 
       const submitActionResponse = await submitActionPromise;
       expect(submitActionResponse.ok).toBe(true);
@@ -4466,15 +4523,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     } finally {
       await service.close();
       if (worker) {
-        await new Promise<void>((resolve, reject) => {
-          worker.close((error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve();
-          });
-        });
+        await closeNetServer(worker, "retry hosted MCP worker");
       }
     }
   }, 20_000);
@@ -4699,6 +4748,10 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
         attestationKeyPath: path.join(tempRoot, "worker-key.json"),
         controlToken: workerToken,
       });
+      worker.on("connection", (socket) => {
+        socket.unref();
+      });
+      worker.unref();
 
       const requeueResponse = await sendRequest<{
         job: {
@@ -4815,15 +4868,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     } finally {
       await service.close();
       if (worker) {
-        await new Promise<void>((resolve, reject) => {
-          worker.close((error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve();
-          });
-        });
+        await closeNetServer(worker, "operator hosted MCP worker");
       }
     }
   }, 25_000);
@@ -4932,6 +4977,10 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       attestationKeyPath: path.join(tempRoot, "worker-key.json"),
       controlToken: workerToken,
     });
+    worker.on("connection", (socket) => {
+      socket.unref();
+    });
+    worker.unref();
 
     try {
       const candidateResponse = await sendRequest<{ candidate: { candidate_id: string } }>(
@@ -5142,15 +5191,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       }
     } finally {
       await service.close();
-      await new Promise<void>((resolve, reject) => {
-        worker.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
+      await closeNetServer(worker, "managed hosted MCP worker");
     }
   }, 25_000);
 

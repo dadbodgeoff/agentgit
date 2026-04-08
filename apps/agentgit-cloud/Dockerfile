@@ -26,6 +26,10 @@ ENV PORT=3000
 
 COPY --from=builder /app /app
 
+RUN chown -R node:node /app
+
+USER node
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

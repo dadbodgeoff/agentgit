@@ -37,6 +37,7 @@ import { type HostedExecutionQueue } from "../hosted-execution-queue.js";
 import { type PolicyRuntimeState } from "../policy-runtime.js";
 import { type AuthorityState } from "../state.js";
 import { executeGovernedAction } from "../services/action-execution.js";
+import type { LatencyMetricsStore } from "../latency-metrics.js";
 import { deriveSnapshotCapabilityState, deriveSnapshotRunRiskContext } from "../services/snapshot-risk.js";
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -204,6 +205,7 @@ export interface SubmitActionRuntimeOptions {
 export interface PrepareActionAttemptEvaluationParams {
   journal: RunJournal;
   mcpRegistry: McpServerRegistry;
+  latencyMetrics: LatencyMetricsStore;
   policyRuntime: PolicyRuntimeState;
   runtimeOptions: SubmitActionRuntimeOptions;
   buildCachedCapabilityState: (
@@ -235,8 +237,10 @@ export function prepareActionAttemptEvaluation(
   const action = validateActionRecord(normalizeActionAttempt(hydratedAttempt, params.sessionId));
   const cachedCapabilityState = params.buildCachedCapabilityState(params.journal, params.runtimeOptions);
   const runRiskContext = deriveSnapshotRunRiskContext(params.journal, params.attempt.run_id);
-  const policyOutcome = validatePolicyOutcomeRecord(
-    evaluatePolicy(action, {
+  let rawPolicyOutcome: ReturnType<typeof evaluatePolicy>;
+  const policyEvaluationStartedAt = performance.now();
+  try {
+    rawPolicyOutcome = evaluatePolicy(action, {
       run_summary: {
         budget_config: runSummary.budget_config,
         budget_usage: runSummary.budget_usage,
@@ -246,8 +250,11 @@ export function prepareActionAttemptEvaluation(
       },
       cached_capability_state: cachedCapabilityState,
       compiled_policy: params.policyRuntime.compiled_policy,
-    }),
-  );
+    });
+  } finally {
+    params.latencyMetrics.recordPolicyEvaluation(performance.now() - policyEvaluationStartedAt);
+  }
+  const policyOutcome = validatePolicyOutcomeRecord(rawPolicyOutcome);
   const snapshotSelection = policyOutcome.preconditions.snapshot_required
     ? selectSnapshotClass({
         action,
@@ -282,6 +289,7 @@ export interface HandleSubmitActionAttemptParams {
   ticketStore: OwnedTicketStore;
   mcpRegistry: McpServerRegistry;
   hostedExecutionQueue: HostedExecutionQueue;
+  latencyMetrics: LatencyMetricsStore;
   policyRuntime: PolicyRuntimeState;
   runtimeOptions: SubmitActionRuntimeOptions;
   buildCachedCapabilityState: (
@@ -313,6 +321,7 @@ export async function handleSubmitActionAttempt(
   const prepared = prepareActionAttemptEvaluation({
     journal: params.journal,
     mcpRegistry: params.mcpRegistry,
+    latencyMetrics: params.latencyMetrics,
     policyRuntime: params.policyRuntime,
     runtimeOptions: params.runtimeOptions,
     buildCachedCapabilityState: params.buildCachedCapabilityState,
@@ -389,6 +398,7 @@ export async function handleSubmitActionAttempt(
       draftStore: params.draftStore,
       noteStore: params.noteStore,
       ticketStore: params.ticketStore,
+      latencyMetrics: params.latencyMetrics,
       executeHostedDelegatedAction: (action) =>
         params.executeHostedDelegatedAction({
           action,

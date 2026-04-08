@@ -51,6 +51,7 @@ describe("sync events route", () => {
           authorization: "Bearer agcs_test",
         },
         body: JSON.stringify({
+          requestId: "req_events_01",
           connectorId: "conn_01",
           sentAt: "2026-04-07T18:06:00Z",
           events: [

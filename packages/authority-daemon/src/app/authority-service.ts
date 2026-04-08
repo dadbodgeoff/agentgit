@@ -1,11 +1,13 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 import type { RequestContext } from "@agentgit/core-ports";
-import { LocalEncryptedSecretStore, SessionCredentialBroker } from "@agentgit/credential-broker";
+import {
+  LocalEncryptedSecretStore,
+  SessionCredentialBroker,
+  type SecretKeyProvider,
+} from "@agentgit/credential-broker";
 import {
   AdapterRegistry,
   OwnedDraftStore,
@@ -137,6 +139,7 @@ import {
   handleUpsertMcpServer,
 } from "./handlers/mcp.js";
 import { AuthorityState } from "../state.js";
+import type { LatencyMetricsStore } from "../latency-metrics.js";
 
 const METHODS: DaemonMethod[] = [
   "hello",
@@ -861,14 +864,48 @@ export function createCredentialBroker(
     mcpSecretKeyPath?: string;
   } = {},
 ): SessionCredentialBroker {
+  const createFallbackKeyProvider = (): SecretKeyProvider => ({
+    kind: process.platform === "darwin" ? "macos_keychain" : "linux_secret_service",
+    loadOrCreateKey(params: { legacyKeyPath?: string }) {
+      if (!params.legacyKeyPath) {
+        throw new AgentGitError("Durable MCP secret storage fallback requires a legacy key path.", "BROKER_UNAVAILABLE");
+      }
+
+      if (fs.existsSync(params.legacyKeyPath)) {
+        const existing = Buffer.from(fs.readFileSync(params.legacyKeyPath, "utf8").trim(), "base64");
+        if (existing.length === 32) {
+          fs.chmodSync(params.legacyKeyPath, 0o600);
+          return existing;
+        }
+      }
+
+      const created = randomBytes(32);
+      fs.mkdirSync(path.dirname(params.legacyKeyPath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(params.legacyKeyPath, created.toString("base64"), { encoding: "utf8", mode: 0o600 });
+      fs.chmodSync(params.legacyKeyPath, 0o600);
+      return created;
+    },
+  });
   const env = options.env ?? process.env;
-  const mcpSecretStore =
-    options.mcpSecretStorePath && options.mcpSecretKeyPath
-      ? new LocalEncryptedSecretStore({
-          dbPath: options.mcpSecretStorePath,
-          keyPath: options.mcpSecretKeyPath,
-        })
-      : null;
+  let mcpSecretStore: LocalEncryptedSecretStore | null = null;
+  if (options.mcpSecretStorePath && options.mcpSecretKeyPath) {
+    try {
+      mcpSecretStore = new LocalEncryptedSecretStore({
+        dbPath: options.mcpSecretStorePath,
+        keyPath: options.mcpSecretKeyPath,
+      });
+    } catch (error) {
+      if (!(error instanceof AgentGitError) || error.code !== "BROKER_UNAVAILABLE") {
+        throw error;
+      }
+
+      mcpSecretStore = new LocalEncryptedSecretStore({
+        dbPath: options.mcpSecretStorePath,
+        keyPath: options.mcpSecretKeyPath,
+        keyProvider: createFallbackKeyProvider(),
+      });
+    }
+  }
   const broker = new SessionCredentialBroker({
     mcpSecretStore,
   });
@@ -2539,6 +2576,7 @@ export async function handleRequest(
   publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   hostedWorkerClient: HostedMcpWorkerClient,
   hostedExecutionQueue: HostedExecutionQueue,
+  latencyMetrics: LatencyMetricsStore,
   policyRuntime: PolicyRuntimeState,
   draftStore: OwnedDraftStore,
   noteStore: OwnedNoteStore,
@@ -2640,6 +2678,7 @@ export async function handleRequest(
             state,
             journal,
             policyRuntime,
+            latencyMetrics,
             runtimeOptions,
             mcpRegistry,
             request,
@@ -2739,6 +2778,7 @@ export async function handleRequest(
             publicHostPolicyRegistry,
             hostedWorkerClient,
             hostedExecutionQueue,
+            latencyMetrics,
             policyRuntime,
             runtimeOptions,
             request,
@@ -2780,6 +2820,7 @@ export async function handleRequest(
             ticketStore,
             mcpRegistry,
             hostedExecutionQueue,
+            latencyMetrics,
             runtimeOptions,
             request,
             context,
@@ -2806,6 +2847,7 @@ export async function handleRequest(
             ticketStore,
             mcpRegistry,
             hostedExecutionQueue,
+            latencyMetrics,
             policyRuntime,
             runtimeOptions,
             buildCachedCapabilityState,
@@ -2847,7 +2889,7 @@ export async function handleRequest(
           );
           break;
         default:
-          throw new ValidationError(`Unknown method: ${request.method}`);
+          throw new ValidationError("Unknown method.");
       }
 
       if (idempotencyClaim?.status === "claimed" && request.session_id && request.idempotency_key && response.ok) {
@@ -2981,6 +3023,7 @@ export class AuthorityService {
       this.deps.publicHostPolicyRegistry,
       this.deps.hostedWorkerClient,
       this.deps.hostedExecutionQueue,
+      this.deps.latencyMetrics,
       this.deps.policyRuntime,
       this.deps.draftStore,
       this.deps.noteStore,

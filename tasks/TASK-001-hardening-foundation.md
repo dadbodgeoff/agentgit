@@ -1,5 +1,7 @@
 # TASK-001: Harden Foundation Layer Before Next Subsystem
 
+> Status note recorded on 2026-04-08: this task document is historical planning material. Several packages called out below are no longer empty scaffolds in the live tree, so treat this file as a backlog/reference artifact rather than an accurate implementation-status report.
+
 ## Context
 
 You are working on **agentgit** — a local-first execution control system for autonomous coding agents. It is a TypeScript monorepo at `/Users/geoffreyfernald/Documents/agentgit` using pnpm workspaces + turborepo.

@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createInspectorServer } from "./server.js";
 
+const TEST_AUTH_TOKEN = "inspector-test-token";
+
 interface RunningServer {
   close(): Promise<void>;
 }
@@ -145,10 +147,14 @@ async function connectInspectorWebSocket(app: RunningHttpServer, requestPath: st
     host: "127.0.0.1",
     port: address.port,
   });
+  const requestUrl = new URL(requestPath, app.origin);
+  requestUrl.searchParams.set("token", TEST_AUTH_TOKEN);
+  requestUrl.searchParams.set("client_id", "test-client");
   const secWebSocketKey = Buffer.from(`agentgit-inspector-ws-test:${requestPath}`, "utf8").toString("base64");
   const requestLines = [
-    `GET ${requestPath} HTTP/1.1`,
+    `GET ${requestUrl.pathname}${requestUrl.search} HTTP/1.1`,
     `Host: 127.0.0.1:${address.port}`,
+    `Origin: ${app.origin}`,
     "Upgrade: websocket",
     "Connection: Upgrade",
     `Sec-WebSocket-Key: ${secWebSocketKey}`,
@@ -312,6 +318,12 @@ async function connectInspectorWebSocket(app: RunningHttpServer, requestPath: st
   };
 }
 
+function authedInspectorUrl(app: RunningHttpServer, pathName = "/"): string {
+  const url = new URL(pathName, app.origin);
+  url.searchParams.set("token", TEST_AUTH_TOKEN);
+  return url.toString();
+}
+
 function successEnvelope(request: Record<string, unknown>, result: unknown): Record<string, unknown> {
   return {
     api_version: "authority.v1",
@@ -326,12 +338,13 @@ describe("inspector ui", () => {
   it("renders the local inspector shell without leaking the daemon socket path", async () => {
     const app = await listenHttp(
       createInspectorServer({
+        authToken: TEST_AUTH_TOKEN,
         title: "AgentGit Inspector",
         socketPath: "/tmp/private-authority.sock",
       }),
     );
 
-    const response = await fetch(`${app.origin}/`);
+    const response = await fetch(authedInspectorUrl(app));
     const html = await response.text();
 
     expect(response.status).toBe(200);
@@ -343,11 +356,12 @@ describe("inspector ui", () => {
   it("escapes custom page titles before rendering HTML", async () => {
     const app = await listenHttp(
       createInspectorServer({
+        authToken: TEST_AUTH_TOKEN,
         title: "<img src=x onerror=alert('xss')>",
       }),
     );
 
-    const response = await fetch(`${app.origin}/`);
+    const response = await fetch(authedInspectorUrl(app));
     const html = await response.text();
 
     expect(response.status).toBe(200);
@@ -356,8 +370,8 @@ describe("inspector ui", () => {
   });
 
   it("ships client-side escaping for daemon-provided content before any innerHTML render", async () => {
-    const app = await listenHttp(createInspectorServer());
-    const response = await fetch(`${app.origin}/`);
+    const app = await listenHttp(createInspectorServer({ authToken: TEST_AUTH_TOKEN }));
+    const response = await fetch(authedInspectorUrl(app));
     const html = await response.text();
 
     expect(response.status).toBe(200);
@@ -538,8 +552,10 @@ describe("inspector ui", () => {
       }
     });
 
-    const app = await listenHttp(createInspectorServer({ socketPath: daemon.socketPath }));
-    const response = await fetch(`${app.origin}/api/run-view?run_id=run_ui&visibility_scope=internal`);
+    const app = await listenHttp(createInspectorServer({ authToken: TEST_AUTH_TOKEN, socketPath: daemon.socketPath }));
+    const response = await fetch(
+      authedInspectorUrl(app, "/api/run-view?run_id=run_ui&visibility_scope=internal"),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -785,7 +801,7 @@ describe("inspector ui", () => {
       }
     });
 
-    const app = await listenHttp(createInspectorServer({ socketPath: daemon.socketPath }));
+    const app = await listenHttp(createInspectorServer({ authToken: TEST_AUTH_TOKEN, socketPath: daemon.socketPath }));
     const first = await connectInspectorWebSocket(app, "/ws?run_id=run_ws&visibility_scope=internal");
     const hello = await first.waitFor((message) => message.type === "hello");
     const overview = await first.waitFor((message) => message.type === "overview");
@@ -833,8 +849,8 @@ describe("inspector ui", () => {
       throw new Error("The inspector should not proxy malformed maintenance payloads.");
     });
 
-    const app = await listenHttp(createInspectorServer({ socketPath: daemon.socketPath }));
-    const response = await fetch(`${app.origin}/api/maintenance`, {
+    const app = await listenHttp(createInspectorServer({ authToken: TEST_AUTH_TOKEN, socketPath: daemon.socketPath }));
+    const response = await fetch(authedInspectorUrl(app, "/api/maintenance"), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -851,8 +867,8 @@ describe("inspector ui", () => {
 
   it("surfaces daemon transport failure honestly instead of returning an empty inspector view", async () => {
     const missingSocketPath = path.join(os.tmpdir(), `agentgit-missing-${Date.now()}.sock`);
-    const app = await listenHttp(createInspectorServer({ socketPath: missingSocketPath }));
-    const response = await fetch(`${app.origin}/api/overview`);
+    const app = await listenHttp(createInspectorServer({ authToken: TEST_AUTH_TOKEN, socketPath: missingSocketPath }));
+    const response = await fetch(authedInspectorUrl(app, "/api/overview"));
     const body = await response.json();
 
     expect(response.status).toBe(502);

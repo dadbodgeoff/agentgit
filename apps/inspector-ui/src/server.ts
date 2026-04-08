@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { type Duplex } from "node:stream";
 import { URL } from "node:url";
@@ -10,17 +10,20 @@ type HelperQuestionType = Parameters<AuthorityClient["queryHelper"]>[1];
 type MaintenanceJobType = Parameters<AuthorityClient["runMaintenance"]>[0][number];
 
 export interface InspectorServerOptions {
+  authToken?: string;
   socketPath?: string;
   title?: string;
 }
 
-const DEFAULT_PORT = Number(process.env.AGENTGIT_INSPECTOR_PORT ?? "4317");
-const DEFAULT_HOST = process.env.AGENTGIT_INSPECTOR_HOST ?? "127.0.0.1";
 const WS_POLL_INTERVAL_MS = 2_000;
 const WS_HEARTBEAT_INTERVAL_MS = 2_000;
 const WS_MAX_PENDING_BYTES = 512 * 1024;
+const WS_MAX_SERIALIZED_BYTES = 256 * 1024;
 const WS_REPLAY_BUFFER_LIMIT = 128;
+const WS_MAX_CLIENTS = 64;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const RUN_ID_PATTERN = /^[A-Za-z0-9._:-]{1,160}$/u;
+const STEP_ID_PATTERN = /^[A-Za-z0-9._:-]{1,160}$/u;
 const VISIBILITY_SCOPES = new Set<VisibilityScope>(["user", "model", "internal", "sensitive_internal"]);
 const HELPER_QUESTION_TYPES = new Set<HelperQuestionType>([
   "run_summary",
@@ -63,6 +66,87 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function resolveInspectorPort(): number {
+  const parsed = Number.parseInt(process.env.AGENTGIT_INSPECTOR_PORT ?? "4317", 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 65_535) {
+    throw new Error("AGENTGIT_INSPECTOR_PORT must be an integer between 1 and 65535.");
+  }
+
+  return parsed;
+}
+
+function resolveInspectorHost(): string {
+  const candidate = (process.env.AGENTGIT_INSPECTOR_HOST ?? "127.0.0.1").trim().toLowerCase();
+  if (candidate === "127.0.0.1" || candidate === "localhost" || candidate === "::1") {
+    return candidate;
+  }
+
+  throw new Error("AGENTGIT_INSPECTOR_HOST must resolve to a loopback address.");
+}
+
+function isValidOpaqueId(value: string | null | undefined, pattern: RegExp): value is string {
+  return typeof value === "string" && pattern.test(value);
+}
+
+function resolveInspectorAuthToken(options: InspectorServerOptions): string {
+  const configured = options.authToken ?? process.env.AGENTGIT_INSPECTOR_TOKEN ?? "";
+  const trimmed = configured.trim();
+  if (trimmed.length > 0) {
+    return trimmed;
+  }
+
+  return randomBytes(24).toString("hex");
+}
+
+function extractBearerToken(request: IncomingMessage): string | null {
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string") {
+    return null;
+  }
+
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function extractInspectorToken(request: IncomingMessage, url: URL): string | null {
+  const queryToken = url.searchParams.get("token")?.trim() ?? "";
+  if (queryToken.length > 0) {
+    return queryToken;
+  }
+
+  return extractBearerToken(request);
+}
+
+function isAuthorizedInspectorRequest(request: IncomingMessage, url: URL, authToken: string): boolean {
+  return extractInspectorToken(request, url) === authToken;
+}
+
+function getListeningPort(server: http.Server): number | null {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    return null;
+  }
+
+  return address.port;
+}
+
+function isAllowedInspectorOrigin(origin: string | null, server: http.Server): boolean {
+  if (!origin) {
+    return false;
+  }
+
+  const port = getListeningPort(server);
+  if (port === null) {
+    return false;
+  }
+
+  return (
+    origin === `http://127.0.0.1:${port}` ||
+    origin === `http://localhost:${port}` ||
+    origin === `http://[::1]:${port}`
+  );
 }
 
 function renderInspectorHtml(title: string): string {
@@ -612,6 +696,9 @@ function renderInspectorHtml(title: string): string {
         refreshHealth: document.getElementById("refresh-health")
       };
       const streamState = {
+        clientId: self.crypto && typeof self.crypto.randomUUID === 'function'
+          ? self.crypto.randomUUID()
+          : 'client-' + String(Date.now()),
         socket: null,
         reconnectTimer: null,
         reconnectAttempt: 0,
@@ -621,9 +708,14 @@ function renderInspectorHtml(title: string): string {
         lastOverviewDigest: null,
         lastRunViewDigest: null
       };
+      const inspectorAuthToken = new URLSearchParams(window.location.search).get('token') || '';
 
       async function fetchJson(url, options) {
-        const response = await fetch(url, options);
+        const headers = new Headers(options && options.headers ? options.headers : undefined);
+        if (inspectorAuthToken) {
+          headers.set('authorization', 'Bearer ' + inspectorAuthToken);
+        }
+        const response = await fetch(url, { ...(options || {}), headers });
         const data = await response.json();
         if (!response.ok) {
           throw new Error(data.message || "Inspector request failed");
@@ -857,6 +949,10 @@ function renderInspectorHtml(title: string): string {
         if (streamState.lastSequence > 0) {
           base.searchParams.set('last_sequence', String(streamState.lastSequence));
         }
+        if (inspectorAuthToken) {
+          base.searchParams.set('token', inspectorAuthToken);
+        }
+        base.searchParams.set('client_id', streamState.clientId);
         base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
         return base.toString();
       }
@@ -907,7 +1003,8 @@ function renderInspectorHtml(title: string): string {
           let message;
           try {
             message = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data));
-          } catch {
+          } catch (error) {
+            setBanner((error && error.message) || 'Inspector websocket delivered an invalid frame.', true);
             return;
           }
 
@@ -1171,7 +1268,6 @@ function handleInspectorError(response: ServerResponse, error: unknown): void {
       message: error.message,
       code: error.code,
       retryable: error.retryable,
-      details: error.details ?? null,
     });
     return;
   }
@@ -1182,7 +1278,6 @@ function handleInspectorError(response: ServerResponse, error: unknown): void {
       code: error.code,
       error_class: error.errorClass,
       retryable: error.retryable,
-      details: error.details ?? null,
     });
     return;
   }
@@ -1281,6 +1376,7 @@ function payloadDigest(payload: unknown): string {
 }
 
 interface InspectorWebSocketClientState {
+  clientId: string;
   socket: Duplex;
   runId: string | null;
   visibilityScope: VisibilityScope | undefined;
@@ -1305,6 +1401,7 @@ interface InspectorWebSocketEventEnvelope {
 }
 
 interface InspectorWebSocketHistoryEntry {
+  clientId: string;
   envelope: InspectorWebSocketEventEnvelope;
   runId: string | null;
   visibilityScope: VisibilityScope | undefined;
@@ -1312,6 +1409,7 @@ interface InspectorWebSocketHistoryEntry {
 
 export function createInspectorServer(options: InspectorServerOptions = {}): http.Server {
   const socketPath = options.socketPath ?? process.env.AGENTGIT_SOCKET_PATH;
+  const authToken = resolveInspectorAuthToken(options);
   const title = options.title ?? "AgentGit Inspector";
   const wsClients = new Set<InspectorWebSocketClientState>();
   const wsHistory: InspectorWebSocketHistoryEntry[] = [];
@@ -1325,6 +1423,10 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       }
 
       const url = new URL(request.url, "http://inspector.local");
+      if (!isAuthorizedInspectorRequest(request, url, authToken)) {
+        json(response, 401, { message: "Inspector token is required." });
+        return;
+      }
 
       if (request.method === "GET" && url.pathname === "/") {
         html(response, 200, renderInspectorHtml(title));
@@ -1345,8 +1447,8 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
 
       if (request.method === "GET" && url.pathname === "/api/run-view") {
         const runId = url.searchParams.get("run_id");
-        if (!runId) {
-          json(response, 400, { message: "run_id is required." });
+        if (!isValidOpaqueId(runId, RUN_ID_PATTERN)) {
+          json(response, 400, { message: "run_id is required and must be a supported identifier." });
           return;
         }
 
@@ -1362,8 +1464,8 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
         const runId = url.searchParams.get("run_id");
         const questionType = url.searchParams.get("question_type");
 
-        if (!runId) {
-          json(response, 400, { message: "run_id is required." });
+        if (!isValidOpaqueId(runId, RUN_ID_PATTERN)) {
+          json(response, 400, { message: "run_id is required and must be a supported identifier." });
           return;
         }
 
@@ -1374,10 +1476,18 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
 
         const visibilityScopeParam = url.searchParams.get("visibility_scope");
         const visibilityScope = isVisibilityScope(visibilityScopeParam) ? visibilityScopeParam : undefined;
-        const focusStepId = url.searchParams.get("focus_step_id") ?? undefined;
-        const compareStepId = url.searchParams.get("compare_step_id") ?? undefined;
+        const focusStepId = url.searchParams.get("focus_step_id");
+        const compareStepId = url.searchParams.get("compare_step_id");
+        if (focusStepId && !isValidOpaqueId(focusStepId, STEP_ID_PATTERN)) {
+          json(response, 400, { message: "focus_step_id must be a supported identifier." });
+          return;
+        }
+        if (compareStepId && !isValidOpaqueId(compareStepId, STEP_ID_PATTERN)) {
+          json(response, 400, { message: "compare_step_id must be a supported identifier." });
+          return;
+        }
         const result = await withClient(socketPath, (client) =>
-          client.queryHelper(runId, questionType, focusStepId, compareStepId, visibilityScope),
+          client.queryHelper(runId, questionType, focusStepId ?? undefined, compareStepId ?? undefined, visibilityScope),
         );
         json(response, 200, result);
         return;
@@ -1444,6 +1554,12 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
     }
 
     try {
+      const serialized = JSON.stringify(payload);
+      if (Buffer.byteLength(serialized, "utf8") > WS_MAX_SERIALIZED_BYTES) {
+        closeWsClient(client);
+        return;
+      }
+
       if (
         client.socket.destroyed ||
         client.socket.writableEnded ||
@@ -1453,7 +1569,7 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
         return;
       }
 
-      const frame = encodeWebSocketTextFrame(JSON.stringify(payload));
+      const frame = encodeWebSocketTextFrame(serialized);
       const accepted = client.socket.write(frame);
       client.lastSentAt = Date.now();
       if (!accepted && client.socket.writableLength > WS_MAX_PENDING_BYTES) {
@@ -1477,6 +1593,7 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
 
     if (recordHistory) {
       wsHistory.push({
+        clientId: client.clientId,
         envelope,
         runId: client.runId,
         visibilityScope: client.visibilityScope,
@@ -1497,6 +1614,9 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
     let replayedCount = 0;
     for (const entry of wsHistory) {
       if (entry.envelope.sequence <= lastSequence) {
+        continue;
+      }
+      if (entry.clientId !== client.clientId) {
         continue;
       }
       if (entry.envelope.type === "run_view") {
@@ -1599,6 +1719,18 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
         rejectUpgrade(socket, "404 Not Found", "Unknown websocket endpoint.");
         return;
       }
+      if (!isAuthorizedInspectorRequest(request, url, authToken)) {
+        rejectUpgrade(socket, "401 Unauthorized", "Inspector token is required.");
+        return;
+      }
+      if (!isAllowedInspectorOrigin(request.headers.origin ?? null, server)) {
+        rejectUpgrade(socket, "403 Forbidden", "Inspector websocket origin is not allowed.");
+        return;
+      }
+      if (wsClients.size >= WS_MAX_CLIENTS) {
+        rejectUpgrade(socket, "503 Service Unavailable", "Inspector client capacity reached.");
+        return;
+      }
 
       const upgradeHeader = request.headers.upgrade;
       const connectionHeader = request.headers.connection;
@@ -1625,9 +1757,19 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
       }
 
       const runIdParam = url.searchParams.get("run_id");
-      const runId = runIdParam && runIdParam.trim().length > 0 ? runIdParam.trim() : null;
+      const trimmedRunId = runIdParam?.trim() ?? null;
+      if (trimmedRunId && !isValidOpaqueId(trimmedRunId, RUN_ID_PATTERN)) {
+        rejectUpgrade(socket, "400 Bad Request", "run_id must be a supported identifier.");
+        return;
+      }
+      const runId = trimmedRunId;
       const visibilityScopeParam = url.searchParams.get("visibility_scope");
       const visibilityScope = isVisibilityScope(visibilityScopeParam) ? visibilityScopeParam : undefined;
+      const clientId = url.searchParams.get("client_id")?.trim() ?? null;
+      if (!isValidOpaqueId(clientId, STEP_ID_PATTERN)) {
+        rejectUpgrade(socket, "400 Bad Request", "client_id is required.");
+        return;
+      }
       const lastSequenceParam = url.searchParams.get("last_sequence");
       const lastSequence =
         typeof lastSequenceParam === "string" && /^\d+$/.test(lastSequenceParam) ? Number(lastSequenceParam) : null;
@@ -1658,6 +1800,7 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
         void publishWsSnapshot(clientState);
       }, WS_POLL_INTERVAL_MS);
       const clientState: InspectorWebSocketClientState = {
+        clientId,
         socket,
         runId,
         visibilityScope,
@@ -1709,10 +1852,13 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
 }
 
 export async function startInspectorServer(options: InspectorServerOptions = {}): Promise<http.Server> {
-  const server = createInspectorServer(options);
+  const authToken = resolveInspectorAuthToken(options);
+  const host = resolveInspectorHost();
+  const port = resolveInspectorPort();
+  const server = createInspectorServer({ ...options, authToken });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(DEFAULT_PORT, DEFAULT_HOST, () => {
+    server.listen(port, host, () => {
       server.off("error", reject);
       resolve();
     });
@@ -1721,12 +1867,16 @@ export async function startInspectorServer(options: InspectorServerOptions = {})
 }
 
 if (import.meta.url === new URL(process.argv[1] ?? "", "file:").href) {
-  startInspectorServer()
+  const authToken = resolveInspectorAuthToken({});
+  startInspectorServer({ authToken })
     .then(() => {
-      process.stdout.write(`agentgit inspector listening on http://${DEFAULT_HOST}:${DEFAULT_PORT}\n`);
+      const url = new URL(`http://${resolveInspectorHost()}:${resolveInspectorPort()}/`);
+      url.searchParams.set("token", authToken);
+      process.stdout.write(`agentgit inspector listening on ${url.toString()}\n`);
     })
     .catch((error) => {
-      process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${message.replaceAll(/\r?\n/g, " ")}\n`);
       process.exitCode = 1;
     });
 }

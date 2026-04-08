@@ -6,11 +6,13 @@ export const DEVELOPMENT_PROVIDER_ID = "development";
 export const ENTERPRISE_PROVIDER_PREFIX = "enterprise-";
 export const isProductionAuth = process.env.NODE_ENV === "production";
 
+if (isProductionAuth && process.env.AUTH_ALLOW_DEV_CREDENTIALS_IN_PRODUCTION === "true") {
+  throw new Error("AUTH_ALLOW_DEV_CREDENTIALS_IN_PRODUCTION may not be enabled in production.");
+}
+
 export const authFeatureFlags = {
   hasGitHubProvider: Boolean(process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET),
-  enableDevelopmentCredentials:
-    (process.env.AUTH_ENABLE_DEV_CREDENTIALS !== "false" && !isProductionAuth) ||
-    process.env.AUTH_ALLOW_DEV_CREDENTIALS_IN_PRODUCTION === "true",
+  enableDevelopmentCredentials: process.env.AUTH_ENABLE_DEV_CREDENTIALS !== "false" && !isProductionAuth,
 } as const;
 
 export function getDefaultWorkspaceRole(): WorkspaceRole {

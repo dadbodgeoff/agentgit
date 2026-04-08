@@ -37,14 +37,14 @@
     "/tmp/agentgit-adversarial-c0-DJUg5C/outside/outside.txt": {
       "exists": true,
       "kind": "file",
-      "content": "outside-campaign-zero-secret\n"
+      "content": "[REDACTED_EXTERNAL_SECRET]\n"
     }
   },
   "after": {
     "/tmp/agentgit-adversarial-c0-DJUg5C/outside/outside.txt": {
       "exists": true,
       "kind": "file",
-      "content": "outside-campaign-zero-secret\n"
+      "content": "[REDACTED_EXTERNAL_SECRET]\n"
     }
   },
   "passed": true,

@@ -386,7 +386,11 @@ export function writeUserConfig(configPath: string, config: CliConfigFileRecord)
     ...(config.defaults ? { defaults: config.defaults } : {}),
     ...(config.profiles && Object.keys(config.profiles).length > 0 ? { profiles: config.profiles } : {}),
   } as never);
-  fs.writeFileSync(configPath, serialized, "utf8");
+  fs.writeFileSync(configPath, serialized, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  fs.chmodSync(configPath, 0o600);
 }
 
 export function listProfileNames(

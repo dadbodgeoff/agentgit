@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   AgentGitError,
   InternalError,
+  NotFoundError,
   type ActionRecord,
   type PolicyOutcomeRecord,
   type SnapshotClass,
@@ -244,7 +245,136 @@ function createMetadataManifest(request: SnapshotRequest, snapshotId: string, cr
 }
 
 function workspaceKey(workspaceRoot: string): string {
-  return createHash("sha1").update(path.resolve(workspaceRoot)).digest("hex").slice(0, 16);
+  return createHash("sha256").update(path.resolve(workspaceRoot)).digest("hex");
+}
+
+function assertPathWithinRoot(rootPath: string, candidatePath: string, details?: Record<string, unknown>): string {
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedCandidate = path.resolve(resolvedRoot, candidatePath);
+  if (resolvedCandidate !== resolvedRoot && !resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new InternalError("Snapshot manifest referenced a path outside the workspace root.", {
+      workspace_root: resolvedRoot,
+      candidate_path: candidatePath,
+      resolved_candidate_path: resolvedCandidate,
+      ...details,
+    });
+  }
+
+  return resolvedCandidate;
+}
+
+async function fsyncDirectory(directoryPath: string): Promise<void> {
+  const handle = await fs.open(directoryPath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeJsonFileAtomically(targetPath: string, value: unknown): Promise<void> {
+  const directoryPath = path.dirname(targetPath);
+  await fs.mkdir(directoryPath, { recursive: true });
+  const tempPath = path.join(directoryPath, `${path.basename(targetPath)}.${randomUUID()}.tmp`);
+  const handle = await fs.open(tempPath, "w", 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(value, null, 2), "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+
+  await fs.rename(tempPath, targetPath);
+  await fsyncDirectory(directoryPath);
+}
+
+async function removePathIfSafe(targetPath: string, details?: Record<string, unknown>): Promise<boolean> {
+  try {
+    const stats = await fs.lstat(targetPath);
+    if (stats.isSymbolicLink()) {
+      throw new InternalError("Snapshot restore refused to remove a symlinked target path.", {
+        target_path: targetPath,
+        ...details,
+      });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+
+  await fs.rm(targetPath, { recursive: true, force: true });
+  return true;
+}
+
+async function copyRegularFileNoFollow(sourcePath: string, destinationPath: string, details?: Record<string, unknown>) {
+  const sourceStats = await fs.lstat(sourcePath);
+  if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
+    throw new InternalError("Snapshot restore refused to copy a non-regular file.", {
+      source_path: sourcePath,
+      destination_path: destinationPath,
+      ...details,
+    });
+  }
+
+  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+  await fs.cp(sourcePath, destinationPath, {
+    force: true,
+    recursive: false,
+    dereference: false,
+    verbatimSymlinks: true,
+  });
+
+  const destinationStats = await fs.lstat(destinationPath);
+  if (destinationStats.isSymbolicLink() || !destinationStats.isFile()) {
+    await fs.rm(destinationPath, { force: true }).catch(() => undefined);
+    throw new InternalError("Snapshot restore detected a symlink while copying a regular file.", {
+      source_path: sourcePath,
+      destination_path: destinationPath,
+      ...details,
+    });
+  }
+}
+
+async function copyDirectoryNoFollow(sourcePath: string, destinationPath: string, details?: Record<string, unknown>) {
+  const sourceStats = await fs.lstat(sourcePath);
+  if (sourceStats.isSymbolicLink() || !sourceStats.isDirectory()) {
+    throw new InternalError("Snapshot restore refused to copy a non-directory snapshot preimage.", {
+      source_path: sourcePath,
+      destination_path: destinationPath,
+      ...details,
+    });
+  }
+
+  await fs.mkdir(destinationPath, { recursive: true });
+  const entries = await fs.readdir(sourcePath, { withFileTypes: true });
+  for (const entry of entries) {
+    const childSourcePath = path.join(sourcePath, entry.name);
+    const childDestinationPath = path.join(destinationPath, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new InternalError("Snapshot restore refused to traverse a symlinked snapshot preimage.", {
+        source_path: childSourcePath,
+        destination_path: childDestinationPath,
+        ...details,
+      });
+    }
+
+    if (entry.isDirectory()) {
+      await copyDirectoryNoFollow(childSourcePath, childDestinationPath, details);
+      continue;
+    }
+
+    if (!entry.isFile()) {
+      throw new InternalError("Snapshot restore encountered an unsupported preimage entry.", {
+        source_path: childSourcePath,
+        destination_path: childDestinationPath,
+        ...details,
+      });
+    }
+
+    await copyRegularFileNoFollow(childSourcePath, childDestinationPath, details);
+  }
 }
 
 function snapshotOperationFamily(action: ActionRecord): string {
@@ -421,17 +551,25 @@ export function selectSnapshotClass(input: SnapshotSelectionInput): SnapshotSele
 }
 
 export class MetadataOnlySnapshotEngine implements SnapshotEngine {
+  private readonly createdSnapshotIds = new Set<string>();
+
   async createSnapshot(request: SnapshotRequest): Promise<SnapshotRecord> {
-    return createMetadataSnapshot(request);
+    const snapshot = createMetadataSnapshot(request);
+    this.createdSnapshotIds.add(snapshot.snapshot_id);
+    return snapshot;
   }
 
-  async verifyIntegrity(_snapshotId: string): Promise<boolean> {
-    return true;
+  async verifyIntegrity(snapshotId: string): Promise<boolean> {
+    return this.createdSnapshotIds.has(snapshotId);
   }
 
   async restore(_snapshotId: string): Promise<boolean> {
     return false;
   }
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  return createHash("sha256").update(await fs.readFile(filePath)).digest("hex");
 }
 
 export interface LocalSnapshotEngineOptions {
@@ -480,8 +618,24 @@ function createLayeredMetadataManifest(request: SnapshotRequest, layered: Layere
 
 export class LocalSnapshotEngine implements SnapshotEngine {
   private readonly workspaceIndexes = new Map<string, WorkspaceIndex>();
+  private mutationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: LocalSnapshotEngineOptions) {}
+
+  private async withMutationLock<T>(run: () => Promise<T>): Promise<T> {
+    const previous = this.mutationQueue;
+    let release!: () => void;
+    this.mutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  }
 
   private resolveWorkspaceRoots(workspaceRoots?: string[]): string[] {
     if (!workspaceRoots || workspaceRoots.length === 0) {
@@ -588,84 +742,86 @@ export class LocalSnapshotEngine implements SnapshotEngine {
   }
 
   async garbageCollectSnapshots(workspaceRoots?: string[]): Promise<SnapshotGcSummary> {
-    const { workspaces_considered, snapshot_ids } = await this.collectReferencedLayeredSnapshotIds(workspaceRoots);
-    const summary: SnapshotGcSummary = {
-      workspaces_considered,
-      referenced_layered_snapshots: snapshot_ids.size,
-      layered_snapshots_removed: 0,
-      legacy_snapshots_removed: 0,
-      stray_entries_removed: 0,
-      bytes_freed: 0,
-      empty_directories_removed: 0,
-    };
+    return this.withMutationLock(async () => {
+      const { workspaces_considered, snapshot_ids } = await this.collectReferencedLayeredSnapshotIds(workspaceRoots);
+      const summary: SnapshotGcSummary = {
+        workspaces_considered,
+        referenced_layered_snapshots: snapshot_ids.size,
+        layered_snapshots_removed: 0,
+        legacy_snapshots_removed: 0,
+        stray_entries_removed: 0,
+        bytes_freed: 0,
+        empty_directories_removed: 0,
+      };
 
-    try {
-      const snapsRoot = this.snapsRootDir();
-      if (await pathExists(snapsRoot)) {
-        const snapEntries = await fs.readdir(snapsRoot, { withFileTypes: true });
+      try {
+        const snapsRoot = this.snapsRootDir();
+        if (await pathExists(snapsRoot)) {
+          const snapEntries = await fs.readdir(snapsRoot, { withFileTypes: true });
 
-        for (const entry of snapEntries) {
-          const entryPath = path.join(snapsRoot, entry.name);
+          for (const entry of snapEntries) {
+            const entryPath = path.join(snapsRoot, entry.name);
 
-          if (entry.isDirectory()) {
-            if (snapshot_ids.has(entry.name)) {
+            if (entry.isDirectory()) {
+              if (snapshot_ids.has(entry.name)) {
+                continue;
+              }
+
+              summary.bytes_freed += await measurePathBytes(entryPath);
+              await removePathIfSafe(entryPath, { workspace_root: this.options.rootDir, entry_name: entry.name });
+              summary.layered_snapshots_removed += 1;
               continue;
             }
 
-            summary.bytes_freed += await measurePathBytes(entryPath);
-            await fs.rm(entryPath, { recursive: true, force: true });
-            summary.layered_snapshots_removed += 1;
+            let bytesFreed = 0;
+            try {
+              bytesFreed = (await fs.stat(entryPath)).size;
+            } catch {
+              bytesFreed = 0;
+            }
+            await removePathIfSafe(entryPath, { workspace_root: this.options.rootDir, entry_name: entry.name });
+            summary.bytes_freed += bytesFreed;
+            summary.stray_entries_removed += 1;
+          }
+
+          const remainingSnapEntries = await fs.readdir(snapsRoot);
+          if (remainingSnapEntries.length === 0) {
+            await fs.rmdir(snapsRoot);
+            summary.empty_directories_removed += 1;
+          }
+        }
+
+        const rootEntries = await fs.readdir(this.options.rootDir, { withFileTypes: true });
+        for (const entry of rootEntries) {
+          if (!entry.isDirectory() || !entry.name.startsWith("snap_")) {
             continue;
           }
 
-          let bytesFreed = 0;
-          try {
-            bytesFreed = (await fs.stat(entryPath)).size;
-          } catch {
-            bytesFreed = 0;
+          const entryPath = path.join(this.options.rootDir, entry.name);
+          const manifestPath = path.join(entryPath, "manifest.json");
+          if (await pathExists(manifestPath)) {
+            continue;
           }
-          await fs.rm(entryPath, { force: true });
-          summary.bytes_freed += bytesFreed;
-          summary.stray_entries_removed += 1;
+
+          summary.bytes_freed += await measurePathBytes(entryPath);
+          await removePathIfSafe(entryPath, { workspace_root: this.options.rootDir, entry_name: entry.name });
+          summary.legacy_snapshots_removed += 1;
         }
 
-        const remainingSnapEntries = await fs.readdir(snapsRoot);
-        if (remainingSnapEntries.length === 0) {
-          await fs.rmdir(snapsRoot);
-          summary.empty_directories_removed += 1;
-        }
-      }
-
-      const rootEntries = await fs.readdir(this.options.rootDir, { withFileTypes: true });
-      for (const entry of rootEntries) {
-        if (!entry.isDirectory() || !entry.name.startsWith("snap_")) {
-          continue;
+        return summary;
+      } catch (error) {
+        if (isLowDiskPressureError(error)) {
+          throw storageUnavailableError("Failed to garbage collect orphaned snapshots.", error, {
+            workspaces_considered: summary.workspaces_considered,
+          });
         }
 
-        const entryPath = path.join(this.options.rootDir, entry.name);
-        const manifestPath = path.join(entryPath, "manifest.json");
-        if (await pathExists(manifestPath)) {
-          continue;
-        }
-
-        summary.bytes_freed += await measurePathBytes(entryPath);
-        await fs.rm(entryPath, { recursive: true, force: true });
-        summary.legacy_snapshots_removed += 1;
-      }
-
-      return summary;
-    } catch (error) {
-      if (isLowDiskPressureError(error)) {
-        throw storageUnavailableError("Failed to garbage collect orphaned snapshots.", error, {
+        throw new InternalError("Failed to garbage collect orphaned snapshots.", {
+          cause: error instanceof Error ? error.message : String(error),
           workspaces_considered: summary.workspaces_considered,
         });
       }
-
-      throw new InternalError("Failed to garbage collect orphaned snapshots.", {
-        cause: error instanceof Error ? error.message : String(error),
-        workspaces_considered: summary.workspaces_considered,
-      });
-    }
+    });
   }
 
   private getWorkspaceIndex(workspaceRoot: string): WorkspaceIndex {
@@ -722,9 +878,7 @@ export class LocalSnapshotEngine implements SnapshotEngine {
     try {
       const snapshot = createMetadataSnapshot(request);
       const manifest = createMetadataManifest(request, snapshot.snapshot_id, snapshot.created_at);
-
-      await fs.mkdir(path.dirname(this.metadataManifestPath(snapshot.snapshot_id)), { recursive: true });
-      await fs.writeFile(this.metadataManifestPath(snapshot.snapshot_id), JSON.stringify(manifest, null, 2), "utf8");
+      await writeJsonFileAtomically(this.metadataManifestPath(snapshot.snapshot_id), manifest);
 
       return snapshot;
     } catch (error) {
@@ -741,64 +895,64 @@ export class LocalSnapshotEngine implements SnapshotEngine {
   }
 
   async createSnapshot(request: SnapshotRequest): Promise<SnapshotRecord> {
-    const usesWorkspaceSnapshot =
-      request.action.operation.domain === "filesystem" ||
-      (request.action.operation.domain === "shell" && request.requested_class !== "metadata_only");
+    return this.withMutationLock(async () => {
+      const usesWorkspaceSnapshot =
+        request.action.operation.domain === "filesystem" ||
+        (request.action.operation.domain === "shell" && request.requested_class !== "metadata_only");
 
-    if (!usesWorkspaceSnapshot) {
-      return this.createPersistedMetadataSnapshot(request);
-    }
-
-    const targetPath = request.action.target.primary.locator;
-    const workspaceIndex = this.getWorkspaceIndex(request.workspace_root);
-
-    try {
-      const prepared = await workspaceIndex.prepareScan();
-      const layered = await workspaceIndex.commitSnapshot({
-        preparedSet: prepared,
-        trigger_reason: `action:${request.action.operation.kind}`,
-        action_id: request.action.action_id,
-        run_id: request.action.run_id,
-        anchor_path: targetPath,
-      });
-
-      const scopePaths =
-        layered.dirty_files.length > 0
-          ? layered.dirty_files.map((file: { path: string }) => path.join(request.workspace_root, file.path))
-          : [targetPath];
-      const metadataManifest = createLayeredMetadataManifest(request, layered);
-
-      await fs.mkdir(path.dirname(this.metadataManifestPath(layered.snap_id)), { recursive: true });
-      await fs.writeFile(this.metadataManifestPath(layered.snap_id), JSON.stringify(metadataManifest, null, 2), "utf8");
-
-      return {
-        snapshot_id: layered.snap_id,
-        action_id: request.action.action_id,
-        snapshot_class: request.requested_class,
-        fidelity: "full",
-        scope_paths: scopePaths,
-        storage_bytes: layered.total_bytes,
-        created_at: layered.created_at,
-      };
-    } catch (error) {
-      if (error instanceof AgentGitError) {
-        throw error;
+      if (!usesWorkspaceSnapshot) {
+        return this.createPersistedMetadataSnapshot(request);
       }
 
-      if (isLowDiskPressureError(error)) {
-        throw storageUnavailableError("Failed to create workspace snapshot.", error, {
-          target_path: targetPath,
+      const targetPath = request.action.target.primary.locator;
+      const workspaceIndex = this.getWorkspaceIndex(request.workspace_root);
+
+      try {
+        const prepared = await workspaceIndex.prepareScan();
+        const layered = await workspaceIndex.commitSnapshot({
+          preparedSet: prepared,
+          trigger_reason: `action:${request.action.operation.kind}`,
           action_id: request.action.action_id,
           run_id: request.action.run_id,
-          workspace_root: request.workspace_root,
+          anchor_path: targetPath,
+        });
+
+        const scopePaths =
+          layered.dirty_files.length > 0
+            ? layered.dirty_files.map((file: { path: string }) => path.join(request.workspace_root, file.path))
+            : [targetPath];
+        const metadataManifest = createLayeredMetadataManifest(request, layered);
+        await writeJsonFileAtomically(this.metadataManifestPath(layered.snap_id), metadataManifest);
+
+        return {
+          snapshot_id: layered.snap_id,
+          action_id: request.action.action_id,
+          snapshot_class: request.requested_class,
+          fidelity: "full",
+          scope_paths: scopePaths,
+          storage_bytes: layered.total_bytes,
+          created_at: layered.created_at,
+        };
+      } catch (error) {
+        if (error instanceof AgentGitError) {
+          throw error;
+        }
+
+        if (isLowDiskPressureError(error)) {
+          throw storageUnavailableError("Failed to create workspace snapshot.", error, {
+            target_path: targetPath,
+            action_id: request.action.action_id,
+            run_id: request.action.run_id,
+            workspace_root: request.workspace_root,
+          });
+        }
+
+        throw new InternalError("Failed to create workspace snapshot.", {
+          cause: error instanceof Error ? error.message : String(error),
+          target_path: targetPath,
         });
       }
-
-      throw new InternalError("Failed to create workspace snapshot.", {
-        cause: error instanceof Error ? error.message : String(error),
-        target_path: targetPath,
-      });
-    }
+    });
   }
 
   async verifyIntegrity(snapshotId: string): Promise<boolean> {
@@ -807,8 +961,11 @@ export class LocalSnapshotEngine implements SnapshotEngine {
       try {
         const workspaceIndex = this.getWorkspaceIndex(layeredManifest.workspace_root);
         return workspaceIndex.getSnapshotManifest(snapshotId) !== null;
-      } catch {
-        return false;
+      } catch (error) {
+        throw new InternalError("Failed to verify layered snapshot integrity.", {
+          snapshot_id: snapshotId,
+          cause: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -828,8 +985,11 @@ export class LocalSnapshotEngine implements SnapshotEngine {
       }
 
       return pathExists(this.preimagePath(snapshotId));
-    } catch {
-      return false;
+    } catch (error) {
+      throw new InternalError("Failed to verify snapshot integrity.", {
+        snapshot_id: snapshotId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -840,8 +1000,14 @@ export class LocalSnapshotEngine implements SnapshotEngine {
         const workspaceIndex = this.getWorkspaceIndex(layeredManifest.workspace_root);
         await workspaceIndex.restore(snapshotId);
         return true;
-      } catch {
-        return false;
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          return false;
+        }
+        throw new InternalError("Failed to restore layered snapshot.", {
+          snapshot_id: snapshotId,
+          cause: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -857,11 +1023,15 @@ export class LocalSnapshotEngine implements SnapshotEngine {
         return false;
       }
 
-      const targetPath = manifest.target_path;
+      const targetPath = assertPathWithinRoot(manifest.workspace_root, manifest.target_path, {
+        snapshot_id: snapshotId,
+      });
       const preimagePath = this.preimagePath(snapshotId);
 
       if (!manifest.existed_before || manifest.entry_kind === "missing") {
-        await fs.rm(targetPath, { recursive: true, force: true });
+        await removePathIfSafe(targetPath, {
+          snapshot_id: snapshotId,
+        });
         return true;
       }
 
@@ -869,18 +1039,41 @@ export class LocalSnapshotEngine implements SnapshotEngine {
         return false;
       }
 
-      await fs.rm(targetPath, { recursive: true, force: true });
+      if (manifest.entry_kind !== "directory" && manifest.anchor_content_hash) {
+        const preimageHash = await sha256File(preimagePath);
+        if (preimageHash !== manifest.anchor_content_hash) {
+          throw new InternalError("Snapshot preimage failed integrity verification.", {
+            snapshot_id: snapshotId,
+            expected_hash: manifest.anchor_content_hash,
+            actual_hash: preimageHash,
+          });
+        }
+      }
+
+      await removePathIfSafe(targetPath, {
+        snapshot_id: snapshotId,
+      });
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
 
       if (manifest.entry_kind === "directory") {
-        await fs.cp(preimagePath, targetPath, { recursive: true });
+        await copyDirectoryNoFollow(preimagePath, targetPath, {
+          snapshot_id: snapshotId,
+        });
       } else {
-        await fs.copyFile(preimagePath, targetPath);
+        await copyRegularFileNoFollow(preimagePath, targetPath, {
+          snapshot_id: snapshotId,
+        });
       }
 
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return false;
+      }
+      throw new InternalError("Failed to restore snapshot.", {
+        snapshot_id: snapshotId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -894,18 +1087,50 @@ export class LocalSnapshotEngine implements SnapshotEngine {
           restored: true,
           paths: subsetPaths,
         };
-      } catch {
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          return {
+            restored: false,
+            paths: subsetPaths,
+          };
+        }
+        throw new InternalError("Failed to restore snapshot path subset.", {
+          snapshot_id: snapshotId,
+          paths: subsetPaths,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const metadataManifest = await this.loadMetadataManifest(snapshotId);
+    if (metadataManifest) {
+      return {
+        restored: false,
+        paths: subsetPaths,
+      };
+    }
+
+    try {
+      const manifest = await this.getSnapshotManifest(snapshotId);
+      if (!manifest) {
         return {
           restored: false,
           paths: subsetPaths,
         };
       }
+      throw new InternalError("Snapshot path-subset restore is unsupported for this snapshot type.", {
+        snapshot_id: snapshotId,
+        paths: subsetPaths,
+      });
+    } catch (error) {
+      if (error instanceof NotFoundError) {
+        return {
+          restored: false,
+          paths: subsetPaths,
+        };
+      }
+      throw error;
     }
-
-    return {
-      restored: false,
-      paths: subsetPaths,
-    };
   }
 
   async previewRestore(snapshotId: string): Promise<RestorePreview> {
@@ -990,7 +1215,9 @@ export class LocalSnapshotEngine implements SnapshotEngine {
     if (layeredManifest) {
       const metadataManifest = await this.loadMetadataManifest(snapshotId);
       const targetPath = layeredManifest.anchor_path
-        ? path.join(layeredManifest.workspace_root, layeredManifest.anchor_path)
+        ? assertPathWithinRoot(layeredManifest.workspace_root, layeredManifest.anchor_path, {
+            snapshot_id: snapshotId,
+          })
         : layeredManifest.workspace_root;
 
       return {

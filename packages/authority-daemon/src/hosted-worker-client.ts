@@ -39,6 +39,22 @@ interface HostedMcpWorkerLaunchSpec {
 
 type AgentGitErrorCode = ConstructorParameters<typeof AgentGitError>[1];
 
+const MANAGED_WORKER_ENV_KEYS = [
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "USERNAME",
+] as const;
+
 export interface HostedMcpWorkerClientOptions {
   endpoint: string;
   autostart: boolean;
@@ -127,6 +143,26 @@ function resolveManagedLaunchSpec(options: HostedMcpWorkerClientOptions): Hosted
   }
 
   throw new Error("Unable to resolve a hosted MCP worker entrypoint.");
+}
+
+function buildManagedWorkerEnvironment(options: HostedMcpWorkerClientOptions): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    AGENTGIT_HOSTED_MCP_WORKER_ENDPOINT: options.endpoint,
+    AGENTGIT_HOSTED_MCP_WORKER_ATTESTATION_KEY_PATH: options.attestationKeyPath,
+  };
+
+  for (const key of MANAGED_WORKER_ENV_KEYS) {
+    const value = process.env[key];
+    if (typeof value === "string" && value.length > 0) {
+      env[key] = value;
+    }
+  }
+
+  if (options.controlToken) {
+    env.AGENTGIT_HOSTED_MCP_WORKER_CONTROL_TOKEN = options.controlToken;
+  }
+
+  return env;
 }
 
 async function connectAndExchange(
@@ -386,20 +422,9 @@ export class HostedMcpWorkerClient {
     }
 
     const launchSpec = resolveManagedLaunchSpec(this.options);
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      AGENTGIT_HOSTED_MCP_WORKER_ENDPOINT: this.options.endpoint,
-      AGENTGIT_HOSTED_MCP_WORKER_ATTESTATION_KEY_PATH: this.options.attestationKeyPath,
-    };
-    if (this.controlToken) {
-      env.AGENTGIT_HOSTED_MCP_WORKER_CONTROL_TOKEN = this.controlToken;
-    } else {
-      delete env.AGENTGIT_HOSTED_MCP_WORKER_CONTROL_TOKEN;
-    }
-
     const child = spawn(launchSpec.command, launchSpec.args, {
       cwd: launchSpec.cwd,
-      env,
+      env: buildManagedWorkerEnvironment(this.options),
       stdio: ["ignore", "pipe", "pipe"],
     });
     this.child = child;

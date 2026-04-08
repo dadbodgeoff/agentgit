@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -17,6 +18,33 @@ function makeTempDir(): string {
   );
   fs.mkdirSync(root, { recursive: true });
   return root;
+}
+
+function computeDocumentHmac(store: ProductStateStore, collection: string, key: string, bodyJson: string): string {
+  const keyPath = path.join(path.dirname(store.paths.db_path), ".state-integrity.key");
+  const integrityKey = Buffer.from(fs.readFileSync(keyPath, "utf8").trim(), "base64");
+  return createHmac("sha256", integrityKey)
+    .update(collection, "utf8")
+    .update("\0", "utf8")
+    .update(key, "utf8")
+    .update("\0", "utf8")
+    .update(bodyJson, "utf8")
+    .digest("hex");
+}
+
+function insertRuntimeProfileFixture(
+  db: Database.Database,
+  store: ProductStateStore,
+  workspaceRoot: string,
+  body: Record<string, unknown>,
+) {
+  const key = buildWorkspaceProfileId(workspaceRoot);
+  const bodyJson = JSON.stringify(body);
+  const bodyHmac = computeDocumentHmac(store, "runtime_profiles", key, bodyJson);
+  db.prepare("DELETE FROM documents WHERE collection = ? AND key = ?").run("runtime_profiles", key);
+  db.prepare(
+    "INSERT INTO documents (collection, key, body_json, body_hmac, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run("runtime_profiles", key, bodyJson, bodyHmac, "2026-04-02T00:00:00.000Z", "2026-04-02T00:00:00.000Z");
 }
 
 afterEach(() => {
@@ -43,21 +71,11 @@ describe("ProductStateStore", () => {
     const profileFixture = JSON.parse(
       fs.readFileSync(new URL("./test-fixtures/runtime-profile.v0.json", import.meta.url), "utf8"),
     ) as Record<string, unknown>;
-    db.prepare("DELETE FROM documents WHERE collection = ? AND key = ?").run(
-      "runtime_profiles",
-      buildWorkspaceProfileId(workspaceRoot),
-    );
-    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
-      "runtime_profiles",
-      buildWorkspaceProfileId(workspaceRoot),
-      JSON.stringify({
+    insertRuntimeProfileFixture(db, store, workspaceRoot, {
         ...profileFixture,
         profile_id: buildWorkspaceProfileId(workspaceRoot),
         workspace_root: workspaceRoot,
-      }),
-      "2026-04-02T00:00:00.000Z",
-      "2026-04-02T00:00:00.000Z",
-    );
+      });
 
     const profile = store.getProfileForWorkspace(workspaceRoot);
     expect(profile).toMatchObject({
@@ -89,14 +107,7 @@ describe("ProductStateStore", () => {
     const workspaceRoot = "/tmp/workspace";
     const store = new ProductStateStore(process.env);
     const db = new Database(store.paths.db_path);
-    db.prepare("DELETE FROM documents WHERE collection = ? AND key = ?").run(
-      "runtime_profiles",
-      buildWorkspaceProfileId(workspaceRoot),
-    );
-    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
-      "runtime_profiles",
-      buildWorkspaceProfileId(workspaceRoot),
-      JSON.stringify({
+    insertRuntimeProfileFixture(db, store, workspaceRoot, {
         schema_version: 7,
         profile_id: buildWorkspaceProfileId(workspaceRoot),
         workspace_root: workspaceRoot,
@@ -125,10 +136,7 @@ describe("ProductStateStore", () => {
         },
         created_at: "2026-04-02T00:00:00.000Z",
         updated_at: "2026-04-02T00:00:00.000Z",
-      }),
-      "2026-04-02T00:00:00.000Z",
-      "2026-04-02T00:00:00.000Z",
-    );
+      });
 
     const profile = store.getProfileForWorkspace(workspaceRoot);
     expect(profile?.capability_snapshot).toMatchObject({
@@ -168,14 +176,7 @@ describe("ProductStateStore", () => {
     const workspaceRoot = "/tmp/workspace";
     const store = new ProductStateStore(process.env);
     const db = new Database(store.paths.db_path);
-    db.prepare("DELETE FROM documents WHERE collection = ? AND key = ?").run(
-      "runtime_profiles",
-      buildWorkspaceProfileId(workspaceRoot),
-    );
-    db.prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(
-      "runtime_profiles",
-      buildWorkspaceProfileId(workspaceRoot),
-      JSON.stringify({
+    insertRuntimeProfileFixture(db, store, workspaceRoot, {
         schema_version: 99,
         profile_id: buildWorkspaceProfileId(workspaceRoot),
         workspace_root: workspaceRoot,
@@ -186,10 +187,7 @@ describe("ProductStateStore", () => {
         governed_surfaces: ["launch boundary"],
         created_at: "2026-04-02T00:00:00.000Z",
         updated_at: "2026-04-02T00:00:00.000Z",
-      }),
-      "2026-04-02T00:00:00.000Z",
-      "2026-04-02T00:00:00.000Z",
-    );
+      });
 
     expect(() => store.getProfileForWorkspace(workspaceRoot)).toThrow(/future schema version 99/);
     db.close();

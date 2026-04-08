@@ -9,8 +9,11 @@ import {
   saveRepositoryPolicy,
   validateRepositoryPolicyDocument,
 } from "@/lib/backend/workspace/repository-policy";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { PreviewStateSchema, RepositoryPolicyDocumentInputSchema } from "@/schemas/cloud";
+
+const POLICY_VERSION_ID_PATTERN = /^polver_[a-z0-9]+$/u;
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,8 +68,16 @@ export async function POST(
     return access.denied;
   }
 
-  const body = await request.json().catch(() => null);
-  const parsed = RepositoryPolicyDocumentInputSchema.safeParse(body);
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+    throw error;
+  }
+  const parsed = RepositoryPolicyDocumentInputSchema.safeParse(rawBody);
 
   if (!parsed.success) {
     return jsonWithRequestId(
@@ -90,8 +101,16 @@ export async function PUT(
     return access.denied;
   }
 
-  const body = await request.json().catch(() => null);
-  const parsed = RepositoryPolicyDocumentInputSchema.safeParse(body);
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+    throw error;
+  }
+  const parsed = RepositoryPolicyDocumentInputSchema.safeParse(rawBody);
 
   if (!parsed.success) {
     return jsonWithRequestId(
@@ -141,13 +160,21 @@ export async function PATCH(
     return access.denied;
   }
 
-  const body = await request.json().catch(() => null);
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+    throw error;
+  }
   const versionId =
-    body && typeof body === "object" && "versionId" in body && typeof body.versionId === "string"
-      ? body.versionId.trim()
+    rawBody && typeof rawBody === "object" && "versionId" in rawBody && typeof rawBody.versionId === "string"
+      ? rawBody.versionId.trim()
       : "";
 
-  if (versionId.length === 0) {
+  if (versionId.length === 0 || !POLICY_VERSION_ID_PATTERN.test(versionId)) {
     return jsonWithRequestId({ message: "Policy rollback payload is invalid." }, { status: 400 }, requestId);
   }
 

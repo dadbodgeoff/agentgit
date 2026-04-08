@@ -1,5 +1,16 @@
 import { relations, sql } from "drizzle-orm";
-import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 import type {
   RepositoryPolicyChangeSource,
@@ -62,6 +73,11 @@ export const cloudWorkspaceMemberships = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.workspaceId, table.userId], name: "cloud_workspace_memberships_pk" }),
+    userIdx: index("cloud_workspace_memberships_user_idx").on(table.userId),
+    roleCheck: check(
+      "cloud_workspace_memberships_role_check",
+      sql`${table.role} in ('member', 'admin', 'owner')`,
+    ),
   }),
 );
 
@@ -75,13 +91,15 @@ export const cloudWorkspaceInvites = pgTable(
     email: text("email").notNull(),
     name: text("name").notNull(),
     role: text("role").$type<WorkspaceRole>().notNull(),
-    invitedByUserId: text("invited_by_user_id").references(() => cloudUsers.id, { onDelete: "set null" }),
+    invitedByUserId: text("invited_by_user_id").references(() => cloudUsers.id),
     invitedAt: timestamp("invited_at", { withTimezone: true }).notNull().defaultNow(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (table) => ({
     workspaceEmailUnique: uniqueIndex("cloud_workspace_invites_workspace_email_idx").on(table.workspaceId, table.email),
+    emailIdx: index("cloud_workspace_invites_email_idx").on(table.email),
+    roleCheck: check("cloud_workspace_invites_role_check", sql`${table.role} in ('member', 'admin', 'owner')`),
   }),
 );
 
@@ -96,32 +114,75 @@ export const cloudWorkspaceRepositories = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.workspaceId, table.repositoryId], name: "cloud_workspace_repositories_pk" }),
+    workspaceIdx: index("cloud_workspace_repositories_workspace_idx").on(table.workspaceId),
   }),
 );
 
-export const cloudWorkspaceSettings = pgTable("cloud_workspace_settings", {
-  workspaceId: text("workspace_id")
-    .primaryKey()
-    .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
-  settings: jsonb("settings").$type<WorkspaceSettings>().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const cloudWorkspaceSettings = pgTable(
+  "cloud_workspace_settings",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+    settings: jsonb("settings").$type<WorkspaceSettings>().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    settingsShapeCheck: check(
+      "cloud_workspace_settings_shape_check",
+      sql`jsonb_typeof(${table.settings}) = 'object'
+        and ${table.settings} ? 'workspaceName'
+        and ${table.settings} ? 'workspaceSlug'
+        and ${table.settings} ? 'defaultNotificationChannel'
+        and ${table.settings} ? 'approvalTtlMinutes'
+        and ${table.settings} ? 'enterpriseSso'`,
+    ),
+  }),
+);
 
-export const cloudWorkspaceBilling = pgTable("cloud_workspace_billing", {
-  workspaceId: text("workspace_id")
-    .primaryKey()
-    .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
-  billing: jsonb("billing").$type<WorkspaceBilling>().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const cloudWorkspaceBilling = pgTable(
+  "cloud_workspace_billing",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+    billing: jsonb("billing").$type<WorkspaceBilling>().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    billingShapeCheck: check(
+      "cloud_workspace_billing_shape_check",
+      sql`jsonb_typeof(${table.billing}) = 'object'
+        and ${table.billing} ? 'workspaceId'
+        and ${table.billing} ? 'planTier'
+        and ${table.billing} ? 'billingCycle'
+        and ${table.billing} ? 'billingProvider'
+        and ${table.billing} ? 'billingAccessStatus'`,
+    ),
+  }),
+);
 
-export const cloudWorkspaceIntegrations = pgTable("cloud_workspace_integrations", {
-  workspaceId: text("workspace_id")
-    .primaryKey()
-    .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
-  integrations: jsonb("integrations").$type<WorkspaceIntegrationSnapshot>().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const cloudWorkspaceIntegrations = pgTable(
+  "cloud_workspace_integrations",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+    integrations: jsonb("integrations").$type<WorkspaceIntegrationSnapshot>().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    integrationsShapeCheck: check(
+      "cloud_workspace_integrations_shape_check",
+      sql`jsonb_typeof(${table.integrations}) = 'object'
+        and ${table.integrations} ? 'githubAppInstalled'
+        and ${table.integrations} ? 'githubAppStatus'
+        and ${table.integrations} ? 'webhookStatus'
+        and ${table.integrations} ? 'notificationEvents'
+        and ${table.integrations} ? 'notificationRules'`,
+    ),
+  }),
+);
 
 export const cloudWorkspaceIntegrationSecrets = pgTable("cloud_workspace_integration_secrets", {
   workspaceId: text("workspace_id")
@@ -157,16 +218,25 @@ export const cloudRepositoryPolicyVersions = pgTable(
     ruleCount: integer("rule_count").notNull(),
     thresholdCount: integer("threshold_count").notNull(),
     changeSource: text("change_source").$type<RepositoryPolicyChangeSource>().notNull(),
-    actorUserId: text("actor_user_id").references(() => cloudUsers.id, { onDelete: "set null" }),
+    actorUserId: text("actor_user_id").references(() => cloudUsers.id),
     actorName: text("actor_name").notNull(),
     actorEmail: text("actor_email").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    workspaceIdx: index("cloud_repository_policy_versions_workspace_idx").on(table.workspaceId),
     workspaceRepoCreatedIdx: index("cloud_repository_policy_versions_workspace_repo_created_idx").on(
       table.workspaceId,
       table.repositoryId,
       table.createdAt,
+    ),
+    changeSourceCheck: check(
+      "cloud_repository_policy_versions_change_source_check",
+      sql`${table.changeSource} in ('save', 'rollback', 'seed')`,
+    ),
+    documentShapeCheck: check(
+      "cloud_repository_policy_versions_document_shape_check",
+      sql`jsonb_typeof(${table.document}) = 'string'`,
     ),
   }),
 );
@@ -183,6 +253,59 @@ export const cloudRateLimitBuckets = pgTable(
   },
   (table) => ({
     resetAtIdx: index("cloud_rate_limit_buckets_reset_at_idx").on(table.resetAt),
+  }),
+);
+
+export const cloudProcessedStripeEvents = pgTable(
+  "cloud_processed_stripe_events",
+  {
+    eventId: text("event_id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    stripeCustomerId: text("stripe_customer_id"),
+    eventCreatedAt: timestamp("event_created_at", { withTimezone: true }).notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    workspaceCreatedIdx: index("cloud_processed_stripe_events_workspace_created_idx").on(
+      table.workspaceId,
+      table.eventCreatedAt,
+    ),
+  }),
+);
+
+export const cloudAuditEvents = pgTable(
+  "cloud_audit_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    actorLabel: text("actor_label").notNull(),
+    actorType: text("actor_type").notNull(),
+    category: text("category").notNull(),
+    action: text("action").notNull(),
+    target: text("target").notNull(),
+    outcome: text("outcome").notNull(),
+    repo: text("repo"),
+    runId: text("run_id"),
+    actionId: text("action_id"),
+    detailPath: text("detail_path"),
+    externalUrl: text("external_url"),
+    details: text("details").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    workspaceOccurredIdx: index("cloud_audit_events_workspace_occurred_idx").on(table.workspaceId, table.occurredAt),
+    actorTypeCheck: check("cloud_audit_events_actor_type_check", sql`${table.actorType} in ('human', 'agent', 'system')`),
+    categoryCheck: check(
+      "cloud_audit_events_category_check",
+      sql`${table.category} in ('approval', 'connector', 'run', 'recovery', 'policy', 'fleet')`,
+    ),
+    outcomeCheck: check("cloud_audit_events_outcome_check", sql`${table.outcome} in ('success', 'warning', 'failure', 'info')`),
   }),
 );
 
@@ -268,6 +391,20 @@ export const cloudRepositoryPolicyVersionRelations = relations(cloudRepositoryPo
 export const cloudWorkspaceBillingRelations = relations(cloudWorkspaceBilling, ({ one }) => ({
   workspace: one(cloudWorkspaces, {
     fields: [cloudWorkspaceBilling.workspaceId],
+    references: [cloudWorkspaces.id],
+  }),
+}));
+
+export const cloudProcessedStripeEventRelations = relations(cloudProcessedStripeEvents, ({ one }) => ({
+  workspace: one(cloudWorkspaces, {
+    fields: [cloudProcessedStripeEvents.workspaceId],
+    references: [cloudWorkspaces.id],
+  }),
+}));
+
+export const cloudAuditEventRelations = relations(cloudAuditEvents, ({ one }) => ({
+  workspace: one(cloudWorkspaces, {
+    fields: [cloudAuditEvents.workspaceId],
     references: [cloudWorkspaces.id],
   }),
 }));

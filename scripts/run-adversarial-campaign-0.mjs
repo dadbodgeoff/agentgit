@@ -7,9 +7,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const daemonEntry = path.join(repoRoot, "packages", "authority-daemon", "dist", "main.js");
 const cliEntry = path.join(repoRoot, "packages", "authority-cli", "dist", "main.js");
+const PNPM = resolveCommandPath("pnpm");
 const statusDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: "America/New_York",
   year: "numeric",
@@ -26,6 +29,8 @@ const defaultOutputDir = path.join(
 
 const SECRET_ENV_VALUE = "OPENAI_API_KEY=campaign-zero-secret";
 const OUTSIDE_SECRET_VALUE = "outside-campaign-zero-secret";
+const REDACTED_SECRET_ENV_VALUE = "OPENAI_API_KEY=[REDACTED]";
+const REDACTED_OUTSIDE_SECRET_VALUE = "[REDACTED_EXTERNAL_SECRET]";
 
 function usage() {
   return [
@@ -133,12 +138,30 @@ function parseJsonOutput(result) {
 
 async function writeJson(filePath, value) {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await fsp.writeFile(filePath, `${JSON.stringify(redactEvidence(value), null, 2)}\n`, "utf8");
 }
 
 async function writeText(filePath, value) {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.writeFile(filePath, value, "utf8");
+  await fsp.writeFile(filePath, redactEvidence(value), "utf8");
+}
+
+function redactEvidence(value) {
+  if (typeof value === "string") {
+    return value
+      .replaceAll(SECRET_ENV_VALUE, REDACTED_SECRET_ENV_VALUE)
+      .replaceAll(OUTSIDE_SECRET_VALUE, REDACTED_OUTSIDE_SECRET_VALUE);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactEvidence(entry));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redactEvidence(entry)]));
+  }
+
+  return value;
 }
 
 async function waitForSocket(socketPath, timeoutMs = 15_000) {
@@ -153,7 +176,7 @@ async function waitForSocket(socketPath, timeoutMs = 15_000) {
 }
 
 async function buildArtifacts() {
-  await runRequired("pnpm", [
+  await runRequired(PNPM, [
     "exec",
     "turbo",
     "run",

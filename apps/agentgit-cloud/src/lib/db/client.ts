@@ -42,6 +42,19 @@ export function hasDatabaseUrl(): boolean {
   return getDatabaseUrl() !== null;
 }
 
+function getDatabasePoolMax(): number {
+  const raw = Number.parseInt(process.env.AGENTGIT_DB_POOL_MAX ?? "10", 10);
+  if (!Number.isFinite(raw) || raw < 2) {
+    return 10;
+  }
+
+  return Math.min(raw, 50);
+}
+
+function shouldUsePreparedStatements(): boolean {
+  return process.env.AGENTGIT_DB_PREPARE !== "false";
+}
+
 export function getCloudDatabase(): PostgresJsDatabase<typeof schema> {
   if (dbInstance) {
     return dbInstance;
@@ -54,8 +67,8 @@ export function getCloudDatabase(): PostgresJsDatabase<typeof schema> {
 
   sqlInstance = postgres(databaseUrl, {
     connect_timeout: 5,
-    max: 1,
-    prepare: false,
+    max: getDatabasePoolMax(),
+    prepare: shouldUsePreparedStatements(),
   });
   dbInstance = drizzle(sqlInstance, { schema });
   return dbInstance;
@@ -67,7 +80,13 @@ export async function pingCloudDatabase(): Promise<void> {
     throw new Error("DATABASE_URL is not configured.");
   }
 
-  const sql = sqlInstance ?? postgres(databaseUrl, { connect_timeout: 5, max: 1, prepare: false });
+  const sql =
+    sqlInstance ??
+    postgres(databaseUrl, {
+      connect_timeout: 5,
+      max: Math.max(2, getDatabasePoolMax()),
+      prepare: shouldUsePreparedStatements(),
+    });
   try {
     await withConnectionRetry(async () => {
       await sql`select 1`;

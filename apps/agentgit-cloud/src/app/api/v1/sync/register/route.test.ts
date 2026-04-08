@@ -5,6 +5,15 @@ const requireApiRole = vi.fn();
 const registerConnector = vi.fn();
 const enforceConnectorRegistrationRateLimits = vi.fn();
 
+class MockConnectorAccessError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+  ) {
+    super(message);
+  }
+}
+
 vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/auth/api-session", () => ({
@@ -16,6 +25,8 @@ vi.mock("@/lib/security/rate-limit", () => ({
 }));
 
 vi.mock("@/lib/backend/control-plane/connectors", () => ({
+  CONNECTOR_ACCESS_TOKEN_HEADER: "x-agentgit-connector-access-token",
+  ConnectorAccessError: MockConnectorAccessError,
   registerConnector,
 }));
 
@@ -95,7 +106,8 @@ describe("sync register route", () => {
       }),
       expect.any(String),
     );
-    expect(body.accessToken).toBe("agcs_test");
+    expect(body.accessToken).toBeUndefined();
+    expect(response.headers.get("x-agentgit-connector-access-token")).toBe("agcs_test");
   });
 
   it("returns 429 when connector registration is rate limited", async () => {

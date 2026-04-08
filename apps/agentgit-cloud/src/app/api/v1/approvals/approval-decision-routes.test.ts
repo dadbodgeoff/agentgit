@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME } from "@/lib/security/csrf";
+
 const requireApiSession = vi.fn();
 const findConnectorForRepository = vi.fn();
 const getWorkspaceApprovalProjection = vi.fn();
@@ -28,6 +30,18 @@ vi.mock("@/lib/backend/workspace/workspace-approvals", () => ({
 }));
 
 describe("approval decision routes", () => {
+  const csrfToken = "csrf-token-test";
+  const buildRequest = (url: string, body: string) =>
+    new Request(url, {
+      body,
+      method: "POST",
+      headers: {
+        cookie: `${CSRF_COOKIE_NAME}=${csrfToken}`,
+        origin: "http://localhost",
+        [CSRF_HEADER_NAME]: csrfToken,
+      },
+    });
+
   beforeEach(() => {
     vi.clearAllMocks();
     requireApiSession.mockResolvedValue({
@@ -73,10 +87,7 @@ describe("approval decision routes", () => {
   it("returns 400 for malformed approval payloads instead of queuing a connector command", async () => {
     const { POST } = await import("./[id]/approve/route");
     const response = await POST(
-      new Request("http://localhost/api/v1/approvals/appr_01/approve", {
-        body: JSON.stringify({ comment: 42 }),
-        method: "POST",
-      }),
+      buildRequest("http://localhost/api/v1/approvals/appr_01/approve", JSON.stringify({ comment: 42 })),
       { params: Promise.resolve({ id: "appr_01" }) },
     );
     const body = await response.json();
@@ -86,13 +97,41 @@ describe("approval decision routes", () => {
     expect(queueConnectorCommand).not.toHaveBeenCalled();
   });
 
+  it("returns 400 for invalid JSON bodies instead of treating them as empty payloads", async () => {
+    const { POST } = await import("./[id]/approve/route");
+    const response = await POST(buildRequest("http://localhost/api/v1/approvals/appr_01/approve", "{"), {
+      params: Promise.resolve({ id: "appr_01" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.message).toContain("valid JSON");
+    expect(queueConnectorCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects approval decisions that are missing CSRF protection", async () => {
+    const { POST } = await import("./[id]/approve/route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/approvals/appr_01/approve", {
+        body: JSON.stringify({ comment: "Ship it" }),
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+        },
+      }),
+      { params: Promise.resolve({ id: "appr_01" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.message).toContain("CSRF");
+    expect(queueConnectorCommand).not.toHaveBeenCalled();
+  });
+
   it("scopes rejection decisions to the active workspace and queues a connector command", async () => {
     const { POST } = await import("./[id]/reject/route");
     const response = await POST(
-      new Request("http://localhost/api/v1/approvals/appr_01/reject", {
-        body: JSON.stringify({ comment: "Too risky" }),
-        method: "POST",
-      }),
+      buildRequest("http://localhost/api/v1/approvals/appr_01/reject", JSON.stringify({ comment: "Too risky" })),
       { params: Promise.resolve({ id: "appr_01" }) },
     );
     const body = await response.json();
@@ -139,10 +178,7 @@ describe("approval decision routes", () => {
 
     const { POST } = await import("./[id]/approve/route");
     const response = await POST(
-      new Request("http://localhost/api/v1/approvals/appr_01/approve", {
-        body: JSON.stringify({ comment: "Too late" }),
-        method: "POST",
-      }),
+      buildRequest("http://localhost/api/v1/approvals/appr_01/approve", JSON.stringify({ comment: "Too late" })),
       { params: Promise.resolve({ id: "appr_01" }) },
     );
     const body = await response.json();

@@ -7,11 +7,15 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
 import { releaseNpmPackages } from "./release-package-config.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutDir = path.join(repoRoot, ".release-artifacts", "packed");
 const signingModes = new Set(["if-key", "required", "none"]);
+const NPM = resolveCommandPath("npm");
+const PNPM = resolveCommandPath("pnpm");
+const TAR = resolveCommandPath("tar");
 
 function parseArgs(argv) {
   const parsed = {
@@ -142,7 +146,7 @@ function signManifest(manifestJson, privateKeyPem) {
 
 async function packPackage(pkg, outDir) {
   const before = new Set(await fsp.readdir(outDir));
-  await runCommand("pnpm", ["pack", "--pack-destination", outDir], {
+  await runCommand(PNPM, ["pack", "--pack-destination", outDir], {
     cwd: pkg.dir,
     env: {
       npm_config_ignore_scripts: "true",
@@ -168,7 +172,7 @@ async function packPackage(pkg, outDir) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const outDir = args.outDir;
-  await runCommand("pnpm", ["build"], {
+  await runCommand(PNPM, ["build"], {
     cwd: repoRoot,
   });
   await fsp.rm(outDir, { recursive: true, force: true });

@@ -38,6 +38,48 @@ const ORIGINAL_AGENTGIT_ROOT = process.env.AGENTGIT_ROOT;
 const ORIGINAL_INIT_CWD = process.env.INIT_CWD;
 const FALLBACK_TEST_PINNED_OCI_IMAGE =
   "docker.io/library/node@sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const SAFE_CHILD_PROCESS_ENV_KEYS = [
+  "CI",
+  "FORCE_COLOR",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LOGNAME",
+  "NO_COLOR",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TERM",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+  "USER",
+] as const;
+
+function createSanitizedChildProcessEnv(
+  runtimeEnv: NodeJS.ProcessEnv,
+  overrides: NodeJS.ProcessEnv = {},
+): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_CHILD_PROCESS_ENV_KEYS) {
+    const value = process.env[key];
+    if (typeof value === "string") {
+      sanitized[key] = value;
+    }
+  }
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if ((key.startsWith("AGENTGIT_") || key === "INIT_CWD") && typeof value === "string") {
+      sanitized[key] = value;
+    }
+  }
+
+  return {
+    ...sanitized,
+    ...runtimeEnv,
+    ...overrides,
+  };
+}
 const TEST_OCI_BUILD_IMAGE = `agentgit/authority-cli-stdio:${process.pid}`;
 
 function pnpmCommand(): string {
@@ -404,11 +446,7 @@ async function runCliProcess(
           };
     const child = spawn(process.execPath, [CLI_DIST_ENTRY, ...argv], {
       cwd: options.workspaceRoot,
-      env: {
-        ...process.env,
-        ...runtimeEnv,
-        ...(options.env ?? {}),
-      },
+      env: createSanitizedChildProcessEnv(runtimeEnv, options.env ?? {}),
       stdio: ["pipe", "pipe", "pipe"],
     });
 

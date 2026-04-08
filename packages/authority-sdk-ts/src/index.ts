@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
@@ -161,6 +162,20 @@ interface TransportOptions {
   responseTimeoutMs: number;
   maxConnectRetries: number;
   connectRetryDelayMs: number;
+}
+
+function resolveSocketAuthTokenPath(socketPath: string): string {
+  return `${socketPath}.token`;
+}
+
+function readSocketAuthToken(socketPath: string): string | null {
+  const tokenPath = resolveSocketAuthTokenPath(socketPath);
+  if (!fs.existsSync(tokenPath)) {
+    return null;
+  }
+
+  const token = fs.readFileSync(tokenPath, "utf8").trim();
+  return token.length > 0 ? token : null;
 }
 
 export interface MutatingRequestOptions {
@@ -1132,7 +1147,8 @@ async function writeAndReadLineOnce(
     let settled = false;
     let connected = false;
     let responseTimer: NodeJS.Timeout | undefined;
-    const requestBody = `${JSON.stringify(payload)}\n`;
+    const authToken = readSocketAuthToken(socketPath);
+    const requestBody = `${authToken ? `${authToken}\n` : ""}${JSON.stringify(payload)}\n`;
 
     const connectTimer = setTimeout(() => {
       if (settled || connected) {

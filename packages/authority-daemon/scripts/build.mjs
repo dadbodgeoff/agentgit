@@ -6,6 +6,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
+import { resolveCommandPath } from "../../../scripts/command-paths.mjs";
+
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(packageRoot, "..", "..");
 const distDir = path.join(packageRoot, "dist");
@@ -14,6 +16,7 @@ const hostedWorkerDistDir = path.join(hostedWorkerRoot, "dist");
 const embeddedHostedWorkerDistDir = path.join(distDir, "hosted-mcp-worker");
 const esmRequireBanner =
   'import { createRequire as __agentgitCreateRequire } from "node:module"; const require = __agentgitCreateRequire(import.meta.url);';
+const PNPM = resolveCommandPath("pnpm");
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -35,12 +38,12 @@ function runCommand(command, args, options = {}) {
   });
 }
 
-await runCommand("pnpm", ["exec", "turbo", "run", "build", "--filter=@agentgit/authority-daemon^..."], {
+await runCommand(PNPM, ["exec", "turbo", "run", "build", "--filter=@agentgit/authority-daemon^..."], {
   cwd: repoRoot,
 });
 await fsp.rm(distDir, { recursive: true, force: true });
-await runCommand("pnpm", ["exec", "tsc", "-p", "tsconfig.json", "--emitDeclarationOnly"]);
-await runCommand("pnpm", ["build"], {
+await runCommand(PNPM, ["exec", "tsc", "-p", "tsconfig.json", "--emitDeclarationOnly"]);
+await runCommand(PNPM, ["build"], {
   cwd: hostedWorkerRoot,
 });
 await esbuild.build({

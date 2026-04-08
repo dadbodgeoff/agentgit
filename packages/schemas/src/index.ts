@@ -5,7 +5,25 @@ export const SCHEMA_PACK_VERSION = "v1" as const;
 
 export const ApiVersionSchema = z.literal(API_VERSION);
 export const SchemaPackVersionSchema = z.literal(SCHEMA_PACK_VERSION);
-export const TimestampStringSchema = z.string().min(1);
+const RESERVED_RECORD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+export const TimestampStringSchema = z
+  .string()
+  .min(1)
+  .refine((value) => Number.isFinite(Date.parse(value)), "Timestamp must be a valid date-time string.");
+export const SafeRecordKeySchema = z
+  .string()
+  .min(1)
+  .refine((value) => !RESERVED_RECORD_KEYS.has(value), "Reserved object keys are not allowed.");
+export const UnknownRecordSchema = z.record(SafeRecordKeySchema, z.unknown());
+export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+export const JsonValueSchema: ZodType<JsonValue> = z.lazy(() =>
+  z.union([z.string(), z.number(), z.boolean(), z.null(), z.array(JsonValueSchema), JsonObjectSchema]),
+);
+export const JsonObjectSchema: ZodType<JsonObject> = z.lazy(() => z.record(SafeRecordKeySchema, JsonValueSchema));
 
 export type ApiVersion = z.infer<typeof ApiVersionSchema>;
 export type SchemaPackVersion = z.infer<typeof SchemaPackVersionSchema>;
@@ -94,7 +112,7 @@ export const ErrorEnvelopeSchema = z
     code: ErrorCodeSchema,
     error_class: z.string().min(1),
     message: z.string().min(1),
-    details: z.record(z.string(), z.unknown()).optional(),
+    details: UnknownRecordSchema.optional(),
     retryable: z.boolean(),
   })
   .strict();
@@ -111,7 +129,6 @@ const RequestEnvelopeBaseSchema = z
     payload: z.unknown(),
   })
   .strict();
-export const RequestEnvelopeSchema = RequestEnvelopeBaseSchema;
 type RequestEnvelopeBase = z.infer<typeof RequestEnvelopeBaseSchema>;
 export type RequestEnvelope<TPayload = unknown> = Omit<RequestEnvelopeBase, "payload"> & { payload: TPayload };
 
@@ -163,7 +180,7 @@ export const RegisterRunRequestPayloadSchema = z
     agent_framework: z.string().min(1),
     agent_name: z.string().min(1),
     workspace_roots: z.array(z.string().min(1)).min(1),
-    client_metadata: z.record(z.string(), z.unknown()).optional(),
+    client_metadata: UnknownRecordSchema.optional(),
     budget_config: z
       .object({
         max_mutating_actions: z.number().int().nonnegative().nullable().optional(),
@@ -273,7 +290,7 @@ export const CapabilityRecordSchema = z
     scope: z.enum(["host", "workspace", "adapter"]),
     detected_at: TimestampStringSchema,
     source: z.string().min(1),
-    details: z.record(z.string(), z.unknown()),
+    details: UnknownRecordSchema,
   })
   .strict();
 export type CapabilityRecord = z.infer<typeof CapabilityRecordSchema>;
@@ -517,6 +534,33 @@ export const DiagnosticsResponsePayloadSchema = z
         profile_name: z.string().min(1),
         policy_versions: z.array(z.string().min(1)),
         compiled_rule_count: z.number().int().nonnegative(),
+        latency_metrics: z
+          .object({
+            policy_eval_ms: z
+              .object({
+                count: z.number().int().nonnegative(),
+                sample_window: z.number().int().nonnegative(),
+                p50_ms: z.number().nonnegative().nullable(),
+                p95_ms: z.number().nonnegative().nullable(),
+                max_ms: z.number().nonnegative().nullable(),
+                target_ms: z.number().nonnegative(),
+                within_target: z.boolean().nullable(),
+              })
+              .strict(),
+            fast_action_ms: z
+              .object({
+                count: z.number().int().nonnegative(),
+                sample_window: z.number().int().nonnegative(),
+                p50_ms: z.number().nonnegative().nullable(),
+                p95_ms: z.number().nonnegative().nullable(),
+                max_ms: z.number().nonnegative().nullable(),
+                target_ms: z.number().nonnegative(),
+                within_target: z.boolean().nullable(),
+              })
+              .strict(),
+          })
+          .strict()
+          .optional(),
         loaded_sources: z.array(
           z
             .object({
@@ -580,7 +624,7 @@ export const RunMaintenanceJobResultSchema = z
     status: z.enum(["completed", "not_supported", "failed"]),
     performed_inline: z.boolean(),
     summary: z.string().min(1),
-    stats: z.record(z.string(), z.unknown()).optional(),
+    stats: UnknownRecordSchema.optional(),
   })
   .strict();
 export type RunMaintenanceJobResult = z.infer<typeof RunMaintenanceJobResultSchema>;
@@ -651,7 +695,7 @@ export const RuntimeCredentialBindingRecordSchema = z
     kind: RuntimeCredentialBindingKindSchema,
     target: RuntimeCredentialBindingTargetSchema,
     broker_source_ref: z.string().min(1),
-    redacted_delivery_metadata: z.record(z.string(), z.unknown()),
+    redacted_delivery_metadata: UnknownRecordSchema,
     expires_at: TimestampStringSchema.optional(),
     rotates: z.boolean(),
   })
@@ -679,7 +723,7 @@ export const RawActionAttemptSchema = z
   .object({
     run_id: z.string().min(1),
     tool_registration: ToolRegistrationSchema,
-    raw_call: z.record(z.string(), z.unknown()),
+    raw_call: UnknownRecordSchema,
     environment_context: EnvironmentContextSchema,
     framework_context: FrameworkContextSchema.optional(),
     trace: TraceContextSchema.optional(),
@@ -1520,8 +1564,8 @@ export const ActionRecordSchema = z
       .strict(),
     input: z
       .object({
-        raw: z.record(z.string(), z.unknown()),
-        redacted: z.record(z.string(), z.unknown()),
+        raw: UnknownRecordSchema,
+        redacted: UnknownRecordSchema,
         schema_ref: z.string().min(1).nullable(),
         contains_sensitive_data: z.boolean(),
       })
@@ -1535,7 +1579,7 @@ export const ActionRecordSchema = z
         batch: z.boolean(),
       })
       .strict(),
-    facets: z.record(z.string(), z.unknown()),
+    facets: UnknownRecordSchema,
     normalization: z
       .object({
         mapper: z.string().min(1),
@@ -1693,6 +1737,46 @@ export type PolicyPredicate =
       condition: PolicyPredicate;
     };
 
+const POLICY_REGEX_NESTED_QUANTIFIER_PATTERN =
+  /\((?:\?:)?(?:(?:\\.|[^\\()[\]])|\[[^\]]*\])*(?:\*|\+|\{\d+(?:,\d*)?\})(?:(?:\\.|[^\\()[\]])|\[[^\]]*\])*\)(?:\*|\+|\{\d+(?:,\d*)?\})/u;
+
+function validatePolicyRegexPattern(pattern: string): string[] {
+  const issues: string[] = [];
+
+  if (!pattern.startsWith("^") || !pattern.endsWith("$")) {
+    issues.push("Regex match predicates must be anchored with ^ at the start and $ at the end.");
+  }
+
+  try {
+    new RegExp(pattern, "u");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    issues.push(`Invalid regex syntax: ${message}`);
+  }
+
+  if (POLICY_REGEX_NESTED_QUANTIFIER_PATTERN.test(pattern)) {
+    issues.push("Regex match predicates cannot contain nested quantifiers.");
+  }
+
+  return issues;
+}
+
+const MAX_POLICY_PREDICATE_DEPTH = 5;
+
+function policyPredicateDepth(predicate: PolicyPredicate): number {
+  switch (predicate.type) {
+    case "field":
+      return 1;
+    case "all":
+    case "any":
+      return 1 + Math.max(...predicate.conditions.map((condition) => policyPredicateDepth(condition)));
+    case "not":
+      return 1 + policyPredicateDepth(predicate.condition);
+    default:
+      return 1;
+  }
+}
+
 export const PolicyPredicateSchema: z.ZodType<PolicyPredicate> = z.lazy(() =>
   z.discriminatedUnion("type", [
     z
@@ -1701,6 +1785,28 @@ export const PolicyPredicateSchema: z.ZodType<PolicyPredicate> = z.lazy(() =>
         field: z.string().min(1),
         operator: PolicyPredicateOperatorSchema,
         value: z.unknown().optional(),
+      })
+      .superRefine((predicate, ctx) => {
+        if (predicate.operator !== "matches") {
+          return;
+        }
+
+        if (typeof predicate.value !== "string" || predicate.value.length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["value"],
+            message: "Regex match predicates require a non-empty string value.",
+          });
+          return;
+        }
+
+        for (const issue of validatePolicyRegexPattern(predicate.value)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["value"],
+            message: issue,
+          });
+        }
       })
       .strict(),
     z
@@ -1721,7 +1827,15 @@ export const PolicyPredicateSchema: z.ZodType<PolicyPredicate> = z.lazy(() =>
         condition: PolicyPredicateSchema,
       })
       .strict(),
-  ]),
+  ]).superRefine((predicate, ctx) => {
+    const depth = policyPredicateDepth(predicate);
+    if (depth > MAX_POLICY_PREDICATE_DEPTH) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Policy predicates may not exceed nesting depth ${MAX_POLICY_PREDICATE_DEPTH}.`,
+      });
+    }
+  }),
 );
 
 export const PolicyRuleSchema = z
@@ -1809,7 +1923,7 @@ export type GetEffectivePolicyResponsePayload = z.infer<typeof GetEffectivePolic
 
 export const ValidatePolicyConfigRequestPayloadSchema = z
   .object({
-    config: z.unknown(),
+    config: JsonValueSchema,
   })
   .strict();
 export type ValidatePolicyConfigRequestPayload = z.infer<typeof ValidatePolicyConfigRequestPayloadSchema>;
@@ -2046,7 +2160,7 @@ export const ExecutionResultSchema = z
     action_id: z.string().min(1),
     mode: z.enum(["executed", "simulated"]),
     success: z.boolean(),
-    output: z.record(z.string(), z.unknown()),
+    output: UnknownRecordSchema,
     artifacts: z.array(ExecutionArtifactSchema),
     error: z
       .object({
@@ -2096,7 +2210,7 @@ export const HostedMcpExecutionJobErrorSchema = z
     code: z.string().min(1),
     message: z.string().min(1),
     retryable: z.boolean(),
-    details: z.record(z.string(), z.unknown()).optional(),
+    details: UnknownRecordSchema.optional(),
   })
   .strict();
 export type HostedMcpExecutionJobError = z.infer<typeof HostedMcpExecutionJobErrorSchema>;
@@ -2113,7 +2227,7 @@ export const HostedMcpExecutionJobRecordSchema = z
     network_scope: McpNetworkScopeSchema,
     allowed_hosts: z.array(z.string().min(1)).min(1),
     auth_context_ref: z.string().min(1),
-    arguments: z.record(z.string(), z.unknown()),
+    arguments: JsonObjectSchema,
     status: HostedMcpExecutionJobStatusSchema,
     attempt_count: z.number().int().nonnegative(),
     max_attempts: z.number().int().positive(),
@@ -2162,7 +2276,7 @@ export const HostedMcpJobEventRecordSchema = z
     event_type: z.string().min(1),
     occurred_at: TimestampStringSchema,
     recorded_at: TimestampStringSchema,
-    payload: z.record(z.string(), z.unknown()).nullable(),
+    payload: UnknownRecordSchema.nullable(),
   })
   .strict();
 export type HostedMcpJobEventRecord = z.infer<typeof HostedMcpJobEventRecordSchema>;
@@ -2273,7 +2387,7 @@ export const HostedMcpWorkerErrorSchema = z
     code: z.string().min(1),
     message: z.string().min(1),
     retryable: z.boolean().optional(),
-    details: z.record(z.string(), z.unknown()).optional(),
+    details: UnknownRecordSchema.optional(),
   })
   .strict();
 export type HostedMcpWorkerError = z.infer<typeof HostedMcpWorkerErrorSchema>;
@@ -2328,7 +2442,7 @@ export const HostedMcpWorkerExecuteRequestPayloadSchema = z
     network_scope: McpNetworkScopeSchema,
     max_concurrent_calls: z.number().int().positive(),
     tool_name: z.string().min(1),
-    arguments: z.record(z.string(), z.unknown()),
+    arguments: JsonObjectSchema,
     auth: HostedMcpWorkerAuthSchema,
   })
   .strict();
@@ -3070,6 +3184,75 @@ export const QueryHelperRequestPayloadSchema = z
   })
   .strict();
 export type QueryHelperRequestPayload = z.infer<typeof QueryHelperRequestPayloadSchema>;
+
+function requestEnvelopeWithPayload<TMethod extends DaemonMethod, TPayloadSchema extends z.ZodTypeAny>(
+  method: TMethod,
+  payloadSchema: TPayloadSchema,
+) {
+  return RequestEnvelopeBaseSchema.extend({
+    method: z.literal(method),
+    payload: payloadSchema,
+  });
+}
+
+const RequestEnvelopeMethodSchemas = [
+  requestEnvelopeWithPayload("hello", HelloRequestPayloadSchema),
+  requestEnvelopeWithPayload("register_run", RegisterRunRequestPayloadSchema),
+  requestEnvelopeWithPayload("get_run_summary", GetRunSummaryRequestPayloadSchema),
+  requestEnvelopeWithPayload("get_capabilities", GetCapabilitiesRequestPayloadSchema),
+  requestEnvelopeWithPayload("get_effective_policy", GetEffectivePolicyRequestPayloadSchema),
+  requestEnvelopeWithPayload("validate_policy_config", ValidatePolicyConfigRequestPayloadSchema),
+  requestEnvelopeWithPayload("get_policy_calibration_report", GetPolicyCalibrationReportRequestPayloadSchema),
+  requestEnvelopeWithPayload("explain_policy_action", ExplainPolicyActionRequestPayloadSchema),
+  requestEnvelopeWithPayload(
+    "get_policy_threshold_recommendations",
+    GetPolicyThresholdRecommendationsRequestPayloadSchema,
+  ),
+  requestEnvelopeWithPayload("replay_policy_thresholds", GetPolicyThresholdReplayRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_mcp_servers", ListMcpServersRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_mcp_server_candidates", ListMcpServerCandidatesRequestPayloadSchema),
+  requestEnvelopeWithPayload("submit_mcp_server_candidate", SubmitMcpServerCandidateRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_mcp_server_profiles", ListMcpServerProfilesRequestPayloadSchema),
+  requestEnvelopeWithPayload("resolve_mcp_server_candidate", ResolveMcpServerCandidateRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_mcp_server_trust_decisions", ListMcpServerTrustDecisionsRequestPayloadSchema),
+  requestEnvelopeWithPayload("approve_mcp_server_profile", ApproveMcpServerProfileRequestPayloadSchema),
+  requestEnvelopeWithPayload(
+    "list_mcp_server_credential_bindings",
+    ListMcpServerCredentialBindingsRequestPayloadSchema,
+  ),
+  requestEnvelopeWithPayload("bind_mcp_server_credentials", BindMcpServerCredentialsRequestPayloadSchema),
+  requestEnvelopeWithPayload("revoke_mcp_server_credentials", RevokeMcpServerCredentialsRequestPayloadSchema),
+  requestEnvelopeWithPayload("activate_mcp_server_profile", ActivateMcpServerProfileRequestPayloadSchema),
+  requestEnvelopeWithPayload("quarantine_mcp_server_profile", QuarantineMcpServerProfileRequestPayloadSchema),
+  requestEnvelopeWithPayload("revoke_mcp_server_profile", RevokeMcpServerProfileRequestPayloadSchema),
+  requestEnvelopeWithPayload("upsert_mcp_server", UpsertMcpServerRequestPayloadSchema),
+  requestEnvelopeWithPayload("remove_mcp_server", RemoveMcpServerRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_mcp_secrets", ListMcpSecretsRequestPayloadSchema),
+  requestEnvelopeWithPayload("upsert_mcp_secret", UpsertMcpSecretRequestPayloadSchema),
+  requestEnvelopeWithPayload("remove_mcp_secret", RemoveMcpSecretRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_mcp_host_policies", ListMcpHostPoliciesRequestPayloadSchema),
+  requestEnvelopeWithPayload("upsert_mcp_host_policy", UpsertMcpHostPolicyRequestPayloadSchema),
+  requestEnvelopeWithPayload("remove_mcp_host_policy", RemoveMcpHostPolicyRequestPayloadSchema),
+  requestEnvelopeWithPayload("get_hosted_mcp_job", GetHostedMcpJobRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_hosted_mcp_jobs", ListHostedMcpJobsRequestPayloadSchema),
+  requestEnvelopeWithPayload("requeue_hosted_mcp_job", RequeueHostedMcpJobRequestPayloadSchema),
+  requestEnvelopeWithPayload("cancel_hosted_mcp_job", CancelHostedMcpJobRequestPayloadSchema),
+  requestEnvelopeWithPayload("get_mcp_server_review", GetMcpServerReviewRequestPayloadSchema),
+  requestEnvelopeWithPayload("diagnostics", DiagnosticsRequestPayloadSchema),
+  requestEnvelopeWithPayload("run_maintenance", RunMaintenanceRequestPayloadSchema),
+  requestEnvelopeWithPayload("submit_action_attempt", SubmitActionAttemptRequestPayloadSchema),
+  requestEnvelopeWithPayload("create_run_checkpoint", CreateRunCheckpointRequestPayloadSchema),
+  requestEnvelopeWithPayload("list_approvals", ListApprovalsRequestPayloadSchema),
+  requestEnvelopeWithPayload("query_approval_inbox", QueryApprovalInboxRequestPayloadSchema),
+  requestEnvelopeWithPayload("resolve_approval", ResolveApprovalRequestPayloadSchema),
+  requestEnvelopeWithPayload("query_timeline", QueryTimelineRequestPayloadSchema),
+  requestEnvelopeWithPayload("query_helper", QueryHelperRequestPayloadSchema),
+  requestEnvelopeWithPayload("query_artifact", QueryArtifactRequestPayloadSchema),
+  requestEnvelopeWithPayload("plan_recovery", PlanRecoveryRequestPayloadSchema),
+  requestEnvelopeWithPayload("execute_recovery", ExecuteRecoveryRequestPayloadSchema),
+] as const;
+
+export const RequestEnvelopeSchema = z.discriminatedUnion("method", RequestEnvelopeMethodSchemas);
 
 export const QueryHelperResponsePayloadSchema = z
   .object({

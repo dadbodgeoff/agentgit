@@ -16,10 +16,7 @@ function buildServerOptions() {
     dsn,
     enabled: Boolean(dsn),
     environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
-    tracesSampleRate: parseSampleRate(
-      process.env.SENTRY_TRACES_SAMPLE_RATE,
-      process.env.NODE_ENV === "production" ? 0.1 : 1,
-    ),
+    tracesSampleRate: parseSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE, 0.1),
   };
 }
 

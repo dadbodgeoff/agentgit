@@ -7,8 +7,11 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const productCli = path.join(repoRoot, "packages", "agent-runtime-integration", "dist", "main.js");
+const NODE = resolveCommandPath("node");
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,7 +62,7 @@ async function runRequired(command, args, options = {}) {
 }
 
 async function runAgentGit(workspaceRoot, args, options = {}) {
-  return runCommand("node", [productCli, "--workspace-root", workspaceRoot, ...args], options);
+  return runCommand(NODE, [productCli, "--workspace-root", workspaceRoot, ...args], options);
 }
 
 async function runAgentGitRequired(workspaceRoot, args, options = {}) {
@@ -98,7 +101,7 @@ async function pathExists(targetPath) {
 }
 
 async function detectDocker() {
-  const result = await runCommand("docker", ["info"]);
+  const result = await runCommand(resolveCommandPath("docker"), ["info"]);
   return result.code === 0;
 }
 
@@ -131,7 +134,7 @@ async function main() {
 
   try {
     printStep("Build product CLI");
-    await runRequired("pnpm", [
+    await runRequired(resolveCommandPath("pnpm"), [
       "exec",
       "turbo",
       "run",

@@ -27,6 +27,7 @@ import { authenticatedRoutes, repositoryRoute } from "@/lib/navigation/routes";
 import { dispatchConnectorCommand, retryConnectorCommand, revokeConnector } from "@/lib/api/endpoints/connectors";
 import { useWorkspaceConnectorsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
+import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import { formatAbsoluteDate, formatNumber, formatRelativeTimestamp } from "@/lib/utils/format";
 import type { WorkspaceConnectorCommandSummary, WorkspaceConnectorSummary } from "@/schemas/cloud";
 import { ConnectorInstallGuide } from "@/features/shared/connector-install-guide";
@@ -107,39 +108,28 @@ function commandTone(
 }
 
 function commandSummary(command: WorkspaceConnectorCommandSummary): string | null {
-  if (command.result?.type === "replay_run" && typeof command.result.replayRunId === "string") {
-    return `Replay created run ${command.result.replayRunId} from ${command.result.sourceRunId}.`;
+  if (command.message) {
+    return command.message;
   }
 
-  if (command.type === "replay_run" && command.result?.type === "replay_run") {
-    return `Replay processed for ${command.result.sourceRunId}.`;
+  switch (command.type) {
+    case "replay_run":
+      return "Run replay updated through the local connector.";
+    case "create_commit":
+      return "Commit creation completed through the local connector.";
+    case "push_branch":
+      return "Branch push completed through the local connector.";
+    case "open_pull_request":
+      return "Pull request creation completed through the local connector.";
+    case "execute_restore":
+      return "Snapshot restore command finished on the local connector.";
+    case "refresh_repo_state":
+      return "Repository state refresh completed.";
+    case "sync_run_history":
+      return "Run history synchronization completed.";
+    default:
+      return null;
   }
-
-  if (command.result?.type === "create_commit" && typeof command.result.commitSha === "string") {
-    return `Commit ${command.result.commitSha.slice(0, 12)} created.`;
-  }
-
-  if (command.result?.type === "push_branch" && typeof command.result.branch === "string") {
-    return `Pushed ${command.result.branch} to ${command.result.remoteName ?? "origin"}.`;
-  }
-
-  if (command.result?.type === "open_pull_request" && typeof command.result.pullRequestUrl === "string") {
-    return `PR opened: ${command.result.pullRequestUrl}`;
-  }
-
-  if (command.result?.type === "execute_restore" && typeof command.result.snapshotId === "string") {
-    return `Restore processed for snapshot ${command.result.snapshotId}.`;
-  }
-
-  if (command.result?.type === "refresh_repo_state") {
-    return "Repository state refresh was published to the control plane.";
-  }
-
-  if (command.result?.type === "sync_run_history") {
-    return "Run history synchronization completed.";
-  }
-
-  return command.message;
 }
 
 function commandDisplayState(command: WorkspaceConnectorCommandSummary): string {
@@ -385,8 +375,7 @@ export function ConnectorsFleetPage() {
     return (
       connector.connectorName.toLowerCase().includes(normalizedSearch) ||
       connector.machineName.toLowerCase().includes(normalizedSearch) ||
-      `${connector.repositoryOwner}/${connector.repositoryName}`.toLowerCase().includes(normalizedSearch) ||
-      connector.workspaceRoot.toLowerCase().includes(normalizedSearch)
+      `${connector.repositoryOwner}/${connector.repositoryName}`.toLowerCase().includes(normalizedSearch)
     );
   });
   const selectedConnector = items.find((connector) => connector.id === selectedConnectorId) ?? items[0] ?? null;
@@ -662,11 +651,11 @@ export function ConnectorsFleetPage() {
                   </Link>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-2 text-sm">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
-                    Workspace root
-                  </div>
-                  <div className="mt-1 break-all font-mono text-xs text-[var(--ag-text-secondary)]">
-                    {selectedConnector.workspaceRoot}
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Sync state</div>
+                  <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
+                    {selectedConnector.daemonReachable
+                      ? "Local daemon heartbeat is healthy."
+                      : "Local daemon heartbeat is unavailable."}
                   </div>
                 </div>
               </div>
@@ -675,11 +664,11 @@ export function ConnectorsFleetPage() {
                 <div>
                   <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Provider URL</div>
                   <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
-                    {selectedConnector.providerIdentity.repositoryUrl ? (
+                    {sanitizeExternalUrl(selectedConnector.providerIdentity.repositoryUrl) ? (
                       <a
                         className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                        href={selectedConnector.providerIdentity.repositoryUrl}
-                        rel="noreferrer"
+                        href={sanitizeExternalUrl(selectedConnector.providerIdentity.repositoryUrl)!}
+                        rel="noopener noreferrer"
                         target="_blank"
                       >
                         {selectedConnector.providerIdentity.repositoryUrl}
@@ -699,7 +688,7 @@ export function ConnectorsFleetPage() {
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
                 <div>
                   <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
                     Default branch
@@ -709,14 +698,6 @@ export function ConnectorsFleetPage() {
                 <div>
                   <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Visibility</div>
                   <div className="mt-1 font-medium capitalize">{selectedConnector.providerIdentity.visibility}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Head SHA</div>
-                  <div className="mt-1 font-mono text-xs">{selectedConnector.headSha.slice(0, 12)}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Branch</div>
-                  <div className="mt-1 font-medium">{selectedConnector.currentBranch}</div>
                 </div>
               </div>
 
@@ -847,11 +828,11 @@ export function ConnectorsFleetPage() {
                         >
                           Open context
                         </Link>
-                        {entry.externalUrl ? (
+                        {sanitizeExternalUrl(entry.externalUrl) ? (
                           <a
                             className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                            href={entry.externalUrl}
-                            rel="noreferrer"
+                            href={sanitizeExternalUrl(entry.externalUrl)!}
+                            rel="noopener noreferrer"
                             target="_blank"
                           >
                             Open provider
@@ -956,11 +937,11 @@ export function ConnectorsFleetPage() {
                               Open context
                             </Link>
                           ) : null}
-                          {command.externalUrl ? (
+                          {sanitizeExternalUrl(command.externalUrl) ? (
                             <a
                               className="text-xs font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                              href={command.externalUrl}
-                              rel="noreferrer"
+                              href={sanitizeExternalUrl(command.externalUrl)!}
+                              rel="noopener noreferrer"
                               target="_blank"
                             >
                               Open provider

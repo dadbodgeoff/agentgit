@@ -48,6 +48,7 @@ describe("sync connector command ack route", () => {
       new Request("http://localhost/api/v1/sync/commands/cmd_01/ack", {
         method: "POST",
         body: JSON.stringify({
+          requestId: "req_ack_01",
           connectorId: "conn_01",
           commandId: "cmd_01",
           acknowledgedAt: "2026-04-07T19:00:00Z",

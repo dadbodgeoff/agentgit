@@ -190,4 +190,53 @@ describe("workspace settings backend", () => {
       }),
     ).rejects.toThrow("Could not load OIDC discovery metadata");
   });
+
+  it("applies a bounded timeout to enterprise issuer discovery", async () => {
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: ["repo_platform"],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "admin" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    globalThis.fetch = vi.fn(async () => new Response("missing", { status: 404 })) as typeof fetch;
+
+    await expect(
+      saveWorkspaceSettings(buildWorkspaceSession(), {
+        workspaceName: "Platform control",
+        workspaceSlug: "platform-control",
+        defaultNotificationChannel: "in_app",
+        approvalTtlMinutes: 45,
+        requireRejectComment: false,
+        freezeDeploysOutsideBusinessHours: true,
+        enterpriseSso: {
+          enabled: true,
+          providerType: "oidc",
+          providerLabel: "Acme Okta",
+          issuerUrl: "https://acme.okta.com/oauth2/default",
+          clientId: "agentgit-cloud",
+          clientSecret: "super-secret",
+          emailDomains: ["acme.dev"],
+          autoProvisionMembers: true,
+          defaultRole: "member",
+        },
+      }),
+    ).rejects.toThrow("Could not load OIDC discovery metadata");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://acme.okta.com/oauth2/default/.well-known/openid-configuration",
+      expect.objectContaining({
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
 });

@@ -163,6 +163,23 @@ describe("cli config", () => {
     expect(removed.active_profile).toBe("local");
   });
 
+  it("writes the user config with owner-only permissions", () => {
+    const root = createTempRoot();
+    const userConfigPath = path.join(root, "config", "authority-cli.toml");
+
+    writeUserConfig(userConfigPath, {
+      schema_version: CLI_CONFIG_SCHEMA_VERSION,
+      profiles: {
+        local: {
+          workspace_root: "/tmp/workspace",
+          socket_path: "/tmp/authority.sock",
+        },
+      },
+    });
+
+    expect(fs.statSync(userConfigPath).mode & 0o777).toBe(0o600);
+  });
+
   it("keeps the active profile workspace when INIT_CWD is present", () => {
     const root = createTempRoot();
     const cwd = path.join(root, "cwd");

@@ -7,7 +7,10 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const NPM = resolveCommandPath("npm");
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -94,7 +97,7 @@ async function main() {
 
   try {
     const packed = await runCommand(
-      "node",
+      process.execPath,
       [path.join(repoRoot, "scripts", "pack-release-artifacts.mjs"), "--out-dir", tarballDir],
       {
         cwd: repoRoot,
@@ -103,8 +106,8 @@ async function main() {
     const packManifest = JSON.parse(packed.stdout);
     const tarballs = packManifest.packages.map((pkg) => pkg.tarball_path);
 
-    await runCommand("npm", ["init", "-y"], { cwd: installRoot });
-    await runCommand("npm", ["install", "--no-package-lock", ...tarballs], { cwd: installRoot });
+    await runCommand(NPM, ["init", "-y"], { cwd: installRoot });
+    await runCommand(NPM, ["install", "--no-package-lock", ...tarballs], { cwd: installRoot });
 
     const installedCli = path.join(
       installRoot,

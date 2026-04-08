@@ -32,6 +32,25 @@ export async function GET(request: Request) {
           return;
         }
 
+        const refreshedAccess = await requireApiSession(request);
+        if (
+          refreshedAccess.unauthorized ||
+          refreshedAccess.workspaceSession.activeWorkspace.id !== workspaceId
+        ) {
+          closed = true;
+          if (interval) {
+            clearInterval(interval);
+          }
+          controller.enqueue(
+            encodeEvent("disconnect", {
+              workspaceId,
+              reason: "authorization_changed",
+            }),
+          );
+          controller.close();
+          return;
+        }
+
         const nextSignature = await getWorkspaceLiveSignature(workspaceId);
         if (nextSignature !== lastSignature) {
           lastSignature = nextSignature;

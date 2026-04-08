@@ -1,7 +1,5 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import { getWorkspaceConnectionState, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { assertWorkspaceUsageWithinBillingLimits } from "@/lib/backend/workspace/workspace-billing";
 import {
@@ -17,9 +15,8 @@ import {
 
 export const WORKSPACE_TEAM_INVITE_LIMIT = 20;
 
-function buildMemberId(email: string, status: "active" | "invited"): string {
-  const digest = createHash("sha256").update(`${status}:${email}`, "utf8").digest("hex");
-  return `member_${digest.slice(0, 12)}`;
+function buildMemberId(status: "active" | "invited", index: number): string {
+  return `member_${status}_${index + 1}`;
 }
 
 async function buildFallbackWorkspaceState(workspaceSession: WorkspaceSession): Promise<WorkspaceConnectionState> {
@@ -70,15 +67,15 @@ function toWorkspaceTeamSnapshot(
     workspaceSlug: workspaceState.workspaceSlug,
     inviteLimit: WORKSPACE_TEAM_INVITE_LIMIT,
     members: [
-      ...members.map((member) => ({
-        id: buildMemberId(member.email, "active"),
+      ...members.map((member, index) => ({
+        id: buildMemberId("active", index),
         name: member.name,
         email: member.email,
         role: member.role,
         status: "active" as const,
       })),
-      ...invites.map((invite) => ({
-        id: buildMemberId(invite.email, "invited"),
+      ...invites.map((invite, index) => ({
+        id: buildMemberId("invited", index),
         name: invite.name,
         email: invite.email,
         role: invite.role,

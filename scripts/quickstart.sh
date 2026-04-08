@@ -16,7 +16,7 @@ NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")" || fail "Could not
 WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 echo "Using workspace root: $WORKSPACE_ROOT"
 echo "Installing @agentgit/cloud-connector globally..."
-npm install -g @agentgit/cloud-connector >/dev/null 2>&1 || fail "Global install failed. Retry with npm configured for global installs."
+npm install -g @agentgit/cloud-connector@0.1.0 >/dev/null 2>&1 || fail "Global install failed. Retry with npm configured for global installs."
 need agentgit-cloud-connector "The connector binary is not on PATH after install. Re-open your shell and retry."
 
 read -r -p "Cloud URL [http://localhost:3000]: " CLOUD_URL

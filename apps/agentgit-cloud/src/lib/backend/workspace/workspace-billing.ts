@@ -15,6 +15,8 @@ import {
   listStoredWorkspaceBillings,
   saveStoredWorkspaceBilling,
 } from "@/lib/backend/workspace/cloud-state";
+import { getCloudDatabase, hasDatabaseUrl } from "@/lib/db/client";
+import { cloudProcessedStripeEvents } from "@/lib/db/schema";
 import {
   constructStripeWebhookEvent,
   createWorkspaceStripeCheckoutSession,
@@ -27,6 +29,8 @@ const DEFAULT_PAYMENT_METHOD_LABEL = "Beta access granted";
 const DEFAULT_PAYMENT_METHOD_STATUS = "active" as const;
 const DEFAULT_INVOICES: WorkspaceBilling["invoices"] = [];
 const APPROVAL_USAGE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const STRIPE_EVENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const STRIPE_SYNC_COOLDOWN_MS = 15_000;
 
 type WorkspaceUsageSnapshot = {
   repositoriesConnected: number;
@@ -375,16 +379,48 @@ export async function createWorkspaceStripePortal(
   });
 }
 
-async function findWorkspaceBillingByStripeCustomerId(customerId: string): Promise<WorkspaceBilling | null> {
-  const billings = await listStoredWorkspaceBillings();
-  return billings.find((billing) => billing.stripeCustomerId === customerId) ?? null;
+async function findWorkspaceBillingsByStripeCustomerId(customerId: string): Promise<WorkspaceBilling[]> {
+  return (await listStoredWorkspaceBillings()).filter((billing) => billing.stripeCustomerId === customerId);
+}
+
+async function markStripeEventProcessed(params: {
+  eventId: string;
+  workspaceId: string;
+  eventType: string;
+  stripeCustomerId: string | null;
+  eventCreatedAt: Date;
+}): Promise<boolean> {
+  if (!hasDatabaseUrl()) {
+    return true;
+  }
+
+  const db = getCloudDatabase();
+  const inserted = await db
+    .insert(cloudProcessedStripeEvents)
+    .values({
+      eventId: params.eventId,
+      workspaceId: params.workspaceId,
+      eventType: params.eventType,
+      stripeCustomerId: params.stripeCustomerId ?? null,
+      eventCreatedAt: params.eventCreatedAt,
+      processedAt: new Date(),
+    })
+    .onConflictDoNothing()
+    .returning({ eventId: cloudProcessedStripeEvents.eventId });
+
+  return inserted.length > 0;
 }
 
 export async function handleWorkspaceStripeWebhook(body: string, signature: string): Promise<void> {
   const event = constructStripeWebhookEvent(body, signature);
+  const eventCreatedAt = new Date(event.created * 1000);
+  if (Date.now() - eventCreatedAt.getTime() > STRIPE_EVENT_MAX_AGE_MS) {
+    return;
+  }
 
   let workspaceBilling: WorkspaceBilling | null = null;
   let workspaceId: string | null = null;
+  let stripeCustomerId: string | null = null;
 
   switch (event.type) {
     case "checkout.session.completed": {
@@ -395,15 +431,20 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
       }
 
       workspaceId = metadataWorkspaceId;
+      stripeCustomerId = typeof session.customer === "string" ? session.customer : null;
       const existingBilling = await getStoredWorkspaceBilling(workspaceId);
       if (!existingBilling) {
+        return;
+      }
+
+      if (existingBilling.stripeCustomerId && stripeCustomerId && existingBilling.stripeCustomerId !== stripeCustomerId) {
         return;
       }
 
       workspaceBilling = {
         ...existingBilling,
         billingProvider: "stripe",
-        stripeCustomerId: typeof session.customer === "string" ? session.customer : existingBilling.stripeCustomerId,
+        stripeCustomerId: stripeCustomerId ?? existingBilling.stripeCustomerId,
         stripeSubscriptionId:
           typeof session.subscription === "string" ? session.subscription : existingBilling.stripeSubscriptionId,
       };
@@ -415,6 +456,7 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
       const subscription = event.data.object;
       workspaceId =
         typeof subscription.metadata?.workspaceId === "string" ? subscription.metadata.workspaceId : null;
+      stripeCustomerId = typeof subscription.customer === "string" ? subscription.customer : null;
 
       if (workspaceId) {
         const existingBilling = await getStoredWorkspaceBilling(workspaceId);
@@ -422,22 +464,27 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
           return;
         }
 
+        if (existingBilling.stripeCustomerId && stripeCustomerId && existingBilling.stripeCustomerId !== stripeCustomerId) {
+          return;
+        }
+
+        const lastCreatedAt = existingBilling.lastStripeEventCreatedAt
+          ? new Date(existingBilling.lastStripeEventCreatedAt).getTime()
+          : null;
+        if (lastCreatedAt !== null && eventCreatedAt.getTime() < lastCreatedAt) {
+          return;
+        }
+
         workspaceBilling = {
           ...existingBilling,
           billingProvider: "stripe",
-          stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : existingBilling.stripeCustomerId,
+          stripeCustomerId: stripeCustomerId ?? existingBilling.stripeCustomerId,
           stripeSubscriptionId: subscription.id,
+          lastStripeEventId: event.id,
+          lastStripeEventCreatedAt: eventCreatedAt.toISOString(),
         };
-      } else if (typeof subscription.customer === "string") {
-        workspaceBilling = await findWorkspaceBillingByStripeCustomerId(subscription.customer);
-        workspaceId = workspaceBilling?.workspaceId ?? null;
-        if (workspaceBilling) {
-          workspaceBilling = {
-            ...workspaceBilling,
-            billingProvider: "stripe",
-            stripeSubscriptionId: subscription.id,
-          };
-        }
+      } else {
+        return;
       }
       break;
     }
@@ -446,8 +493,20 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
     case "invoice.voided": {
       const invoice = event.data.object;
       if (typeof invoice.customer === "string") {
-        workspaceBilling = await findWorkspaceBillingByStripeCustomerId(invoice.customer);
+        stripeCustomerId = invoice.customer;
+        const matches = await findWorkspaceBillingsByStripeCustomerId(invoice.customer);
+        if (matches.length !== 1) {
+          return;
+        }
+
+        workspaceBilling = matches[0] ?? null;
         workspaceId = workspaceBilling?.workspaceId ?? null;
+        if (workspaceBilling?.lastStripeEventCreatedAt) {
+          const lastCreatedAt = new Date(workspaceBilling.lastStripeEventCreatedAt).getTime();
+          if (eventCreatedAt.getTime() < lastCreatedAt) {
+            return;
+          }
+        }
       }
       break;
     }
@@ -459,9 +518,39 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
     return;
   }
 
+  const processed = await markStripeEventProcessed({
+    eventId: event.id,
+    workspaceId,
+    eventType: event.type,
+    stripeCustomerId,
+    eventCreatedAt,
+  });
+  if (!processed) {
+    return;
+  }
+
+  const syncReferenceAt = new Date().toISOString();
+  const lastSyncedAt = workspaceBilling.lastStripeSyncedAt
+    ? new Date(workspaceBilling.lastStripeSyncedAt).getTime()
+    : null;
+  if (lastSyncedAt !== null && Date.now() - lastSyncedAt < STRIPE_SYNC_COOLDOWN_MS) {
+    await saveStoredWorkspaceBilling(workspaceId, {
+      ...workspaceBilling,
+      lastStripeEventId: event.id,
+      lastStripeEventCreatedAt: eventCreatedAt.toISOString(),
+      lastStripeSyncedAt: syncReferenceAt,
+    });
+    return;
+  }
+
   const workspaceState = await getWorkspaceConnectionState(workspaceId);
   const syncedBilling = await syncWorkspaceBillingFromStripe({
-    billing: workspaceBilling,
+    billing: {
+      ...workspaceBilling,
+      lastStripeEventId: event.id,
+      lastStripeEventCreatedAt: eventCreatedAt.toISOString(),
+      lastStripeSyncedAt: syncReferenceAt,
+    },
     workspaceName: workspaceState?.workspaceName ?? workspaceBilling.workspaceName,
   });
   const mergedBilling = await mergeDerivedUsage(workspaceId, syncedBilling);

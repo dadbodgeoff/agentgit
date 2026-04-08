@@ -26,6 +26,7 @@ import { DEFAULT_POLICY_PACK } from "./default-policy-pack.js";
 export { DEFAULT_POLICY_PACK } from "./default-policy-pack.js";
 
 const SAFE_FS_WRITE_BYTES = 256 * 1024;
+const MAX_POLICY_PREDICATE_DEPTH = 5;
 
 const POLICY_DECISION_STRENGTH: Record<PolicyOutcomeRecord["decision"], number> = {
   deny: 4,
@@ -81,6 +82,23 @@ export interface PolicyConfigValidationResult {
   issues: string[];
   normalized_config: PolicyConfig | null;
   compiled_policy: CompiledPolicyPack | null;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (!value || (typeof value !== "object" && typeof value !== "function") || Object.isFrozen(value)) {
+    return value;
+  }
+
+  Object.freeze(value);
+
+  for (const key of Reflect.ownKeys(value)) {
+    const nested = value[key as keyof typeof value];
+    if (nested && (typeof nested === "object" || typeof nested === "function")) {
+      deepFreeze(nested);
+    }
+  }
+
+  return value;
 }
 
 type ReplayChangeKind =
@@ -285,6 +303,25 @@ function matchesPolicyPredicate(predicate: PolicyPredicate, action: ActionRecord
       return !matchesPolicyPredicate(predicate.condition, action);
     default:
       return false;
+  }
+}
+
+function assertPolicyPredicateDepth(predicate: PolicyPredicate, depth = 1): void {
+  if (depth > MAX_POLICY_PREDICATE_DEPTH) {
+    throw new InternalError("Policy predicate exceeded the maximum supported nesting depth.", {
+      max_depth: MAX_POLICY_PREDICATE_DEPTH,
+    });
+  }
+
+  if (predicate.type === "all" || predicate.type === "any") {
+    for (const condition of predicate.conditions) {
+      assertPolicyPredicateDepth(condition, depth + 1);
+    }
+    return;
+  }
+
+  if (predicate.type === "not") {
+    assertPolicyPredicateDepth(predicate.condition, depth + 1);
   }
 }
 
@@ -779,10 +816,11 @@ function applyPolicyOverlay(
 }
 
 export function compilePolicyPack(configs: PolicyConfig[]): CompiledPolicyPack {
+  const normalizedConfigs = configs.map((config) => PolicyConfigSchema.parse(config));
   const rules: CompiledPolicyRule[] = [];
   const lowConfidenceThresholds: Record<string, number> = {};
 
-  configs.forEach((config, sourceIndex) => {
+  normalizedConfigs.forEach((config, sourceIndex) => {
     for (const threshold of config.thresholds?.low_confidence ?? []) {
       if (!Object.hasOwn(lowConfidenceThresholds, threshold.action_family)) {
         lowConfidenceThresholds[threshold.action_family] = threshold.ask_below;
@@ -790,24 +828,25 @@ export function compilePolicyPack(configs: PolicyConfig[]): CompiledPolicyPack {
     }
 
     config.rules.forEach((rule, ruleIndex) => {
+      assertPolicyPredicateDepth(rule.match);
       rules.push({
         profile_name: config.profile_name,
         policy_version: config.policy_version,
         source_index: sourceIndex,
         rule_index: ruleIndex,
-        rule,
+        rule: structuredClone(rule),
       });
     });
   });
 
-  return {
-    profile_name: configs[0]?.profile_name ?? "empty",
-    policy_versions: [...new Set(configs.map((config) => config.policy_version))],
+  return deepFreeze({
+    profile_name: normalizedConfigs[0]?.profile_name ?? "empty",
+    policy_versions: [...new Set(normalizedConfigs.map((config) => config.policy_version))],
     rules,
     thresholds: {
       low_confidence: lowConfidenceThresholds,
     },
-  };
+  });
 }
 
 export function validatePolicyConfigDocument(document: unknown): PolicyConfigValidationResult {
@@ -824,12 +863,22 @@ export function validatePolicyConfigDocument(document: unknown): PolicyConfigVal
     };
   }
 
-  return {
-    valid: true,
-    issues: [],
-    normalized_config: parsed.data,
-    compiled_policy: compilePolicyPack([parsed.data]),
-  };
+  try {
+    return {
+      valid: true,
+      issues: [],
+      normalized_config: parsed.data,
+      compiled_policy: compilePolicyPack([parsed.data]),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      valid: false,
+      issues: [message],
+      normalized_config: null,
+      compiled_policy: null,
+    };
+  }
 }
 
 function actionTargetPath(action: ActionRecord): string | null {
@@ -1984,12 +2033,12 @@ export function evaluatePolicy(action: ActionRecord, context: PolicyEvaluationCo
               ? evaluateFunction(action, context)
               : makeOutcome(
                   action,
-                  "ask",
+                  "deny",
                   [
                     {
-                      code: "CAPABILITY_UNAVAILABLE",
+                      code: "POLICY_DOMAIN_UNSUPPORTED",
                       severity: "high",
-                      message: "No policy evaluator exists for this action domain yet.",
+                      message: "No policy evaluator exists for this action domain; automatic execution is denied.",
                     },
                   ],
                   ["policy.domain.unsupported"],
