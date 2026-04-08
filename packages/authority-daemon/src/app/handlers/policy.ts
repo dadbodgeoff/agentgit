@@ -1,6 +1,10 @@
 import type { RequestContext } from "@agentgit/core-ports";
 import type { McpServerRegistry } from "@agentgit/mcp-registry";
-import { replayPolicyThresholds, recommendPolicyThresholds, validatePolicyConfigDocument } from "@agentgit/policy-engine";
+import {
+  replayPolicyThresholds,
+  recommendPolicyThresholds,
+  validatePolicyConfigDocument,
+} from "@agentgit/policy-engine";
 import type { RunJournal } from "@agentgit/run-journal";
 import {
   API_VERSION,
@@ -28,10 +32,7 @@ import {
   validate,
 } from "@agentgit/schemas";
 
-import {
-  requireAuthorizedRunSummary,
-  requireValidSession,
-} from "../authorization.js";
+import { requireAuthorizedRunSummary, requireValidSession } from "../authorization.js";
 import { buildCachedCapabilityState } from "../capabilities.js";
 import { makeSuccessResponse } from "../response-helpers.js";
 import type { ServiceOptions } from "../types.js";

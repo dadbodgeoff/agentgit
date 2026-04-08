@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiRole = vi.fn();
+const rollbackRepositoryPolicyVersion = vi.fn();
 const resolveRepositoryPolicy = vi.fn();
 const saveRepositoryPolicy = vi.fn();
 const validateRepositoryPolicyDocument = vi.fn();
@@ -20,6 +21,12 @@ vi.mock("@/lib/backend/workspace/repository-policy", () => ({
       super(message);
     }
   },
+  RepositoryPolicyVersionNotFoundError: class RepositoryPolicyVersionNotFoundError extends Error {
+    constructor(message = "Repository policy version was not found.") {
+      super(message);
+    }
+  },
+  rollbackRepositoryPolicyVersion,
   resolveRepositoryPolicy,
   saveRepositoryPolicy,
   validateRepositoryPolicyDocument,
@@ -34,6 +41,7 @@ describe("repository policy route", () => {
     requireApiRole.mockResolvedValue({
       denied: null,
       workspaceSession: {
+        user: { id: "usr_01", name: "Jordan Smith", email: "jordan@acme.dev" },
         activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
       },
     });
@@ -73,6 +81,8 @@ describe("repository policy route", () => {
       },
       recommendations: [],
       loadedSources: [],
+      currentVersionId: "polver_current",
+      history: [],
     });
 
     const { GET } = await import("./route");
@@ -90,6 +100,7 @@ describe("repository policy route", () => {
     requireApiRole.mockResolvedValue({
       denied: null,
       workspaceSession: {
+        user: { id: "usr_01", name: "Jordan Smith", email: "jordan@acme.dev" },
         activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
       },
     });
@@ -104,7 +115,7 @@ describe("repository policy route", () => {
     const response = await POST(
       new Request("http://localhost/api/v1/repositories/acme/platform-ui/policy", {
         method: "POST",
-        body: JSON.stringify({ document: "{\"policy_version\":1}" }),
+        body: JSON.stringify({ document: '{"policy_version":1}' }),
       }),
       {
         params: Promise.resolve({ owner: "acme", name: "platform-ui" }),
@@ -120,6 +131,7 @@ describe("repository policy route", () => {
     requireApiRole.mockResolvedValue({
       denied: null,
       workspaceSession: {
+        user: { id: "usr_01", name: "Jordan Smith", email: "jordan@acme.dev" },
         activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
       },
     });
@@ -160,6 +172,8 @@ describe("repository policy route", () => {
         },
         recommendations: [],
         loadedSources: [],
+        currentVersionId: "polver_current",
+        history: [],
       },
       savedAt: "2026-04-07T12:00:00Z",
       message: "Policy saved.",
@@ -185,12 +199,84 @@ describe("repository policy route", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(saveRepositoryPolicy).toHaveBeenCalledWith(
-      "acme",
-      "platform-ui",
-      expect.any(String),
-      "ws_acme_01",
-    );
+    expect(saveRepositoryPolicy).toHaveBeenCalledWith("acme", "platform-ui", expect.any(String), "ws_acme_01", {
+      userId: "usr_01",
+      name: "Jordan Smith",
+      email: "jordan@acme.dev",
+    });
     expect(body.message).toBe("Policy saved.");
+  });
+
+  it("rolls back to a selected policy version", async () => {
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        user: { id: "usr_01", name: "Jordan Smith", email: "jordan@acme.dev" },
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+    rollbackRepositoryPolicyVersion.mockResolvedValue({
+      policy: {
+        repoId: "repo_01",
+        owner: "acme",
+        name: "platform-ui",
+        policyPath: "/tmp/repo/.agentgit/policy.toml",
+        authorityReachable: false,
+        hasWorkspaceOverride: true,
+        effectivePolicy: {
+          policy: {
+            profile_name: "workspace-override",
+            policy_version: "2026-04-01",
+            thresholds: { low_confidence: [] },
+            rules: [],
+          },
+          summary: {
+            profile_name: "workspace-override",
+            policy_versions: ["2026-04-01"],
+            compiled_rule_count: 0,
+            loaded_sources: [],
+            warnings: [],
+          },
+        },
+        workspaceConfig: {
+          profile_name: "workspace-override",
+          policy_version: "2026-04-01",
+          thresholds: { low_confidence: [] },
+          rules: [],
+        },
+        validation: {
+          valid: true,
+          issues: [],
+          compiledProfileName: "workspace-override",
+          compiledRuleCount: 0,
+        },
+        recommendations: [],
+        loadedSources: [],
+        currentVersionId: "polver_rollback",
+        history: [],
+      },
+      savedAt: "2026-04-07T12:05:00Z",
+      message: "Policy rolled back.",
+    });
+
+    const { PATCH } = await import("./route");
+    const response = await PATCH(
+      new Request("http://localhost/api/v1/repositories/acme/platform-ui/policy", {
+        method: "PATCH",
+        body: JSON.stringify({ versionId: "polver_prev" }),
+      }),
+      {
+        params: Promise.resolve({ owner: "acme", name: "platform-ui" }),
+      },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(rollbackRepositoryPolicyVersion).toHaveBeenCalledWith("acme", "platform-ui", "polver_prev", "ws_acme_01", {
+      userId: "usr_01",
+      name: "Jordan Smith",
+      email: "jordan@acme.dev",
+    });
+    expect(body.message).toBe("Policy rolled back.");
   });
 });

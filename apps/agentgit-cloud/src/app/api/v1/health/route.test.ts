@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiRole = vi.fn();
 const withWorkspaceAuthorityClient = vi.fn();
+const pingCloudDatabase = vi.fn(async () => undefined);
+const hasDatabaseUrl = vi.fn(() => false);
+const ensureLocalCloudStateInitialized = vi.fn();
+const ensureLocalControlPlaneStateInitialized = vi.fn();
+const ensureLocalRateLimitStoreInitialized = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
@@ -13,9 +18,26 @@ vi.mock("@/lib/backend/authority/client", () => ({
   withWorkspaceAuthorityClient,
 }));
 
+vi.mock("@/lib/db/client", () => ({
+  hasDatabaseUrl,
+  pingCloudDatabase,
+}));
+
+vi.mock("@/lib/backend/workspace/cloud-state.local", () => ({
+  ensureLocalCloudStateInitialized,
+}));
+
+vi.mock("@/lib/backend/control-plane/state", () => ({
+  ensureLocalControlPlaneStateInitialized,
+}));
+
+vi.mock("@/lib/security/rate-limit", () => ({
+  ensureLocalRateLimitStoreInitialized,
+}));
+
 vi.mock("@/lib/release/readiness", () => ({
   getCloudReadinessChecks: vi.fn(() => []),
-  summarizeReadiness: vi.fn(() => "ok"),
+  summarizeOperationalHealth: vi.fn(() => "ok"),
 }));
 
 describe("health route", () => {
@@ -38,6 +60,9 @@ describe("health route", () => {
 
     expect(response.status).toBe(200);
     expect(withWorkspaceAuthorityClient).toHaveBeenCalledWith("ws_acme_01", expect.any(Function));
+    expect(ensureLocalCloudStateInitialized).toHaveBeenCalled();
+    expect(ensureLocalControlPlaneStateInitialized).toHaveBeenCalled();
+    expect(ensureLocalRateLimitStoreInitialized).toHaveBeenCalled();
     expect(body.workspaceId).toBe("ws_acme_01");
   });
 });

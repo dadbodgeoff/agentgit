@@ -34,6 +34,7 @@ Public-route expectations:
 - `/` must explain the hosted control-plane value proposition without implying that execution moved out of the local daemon
 - `/pricing` must clearly separate the open-source local runtime from the hosted cloud product and must describe the current billing mode truthfully
 - `/docs` must provide a real connector bootstrap and first-run validation quickstart rather than a placeholder documentation landing page
+- `/sign-in` must support both GitHub OAuth and workspace-scoped enterprise SSO entry, with the enterprise path keyed by workspace slug instead of a global tenant picker hidden elsewhere
 
 Authenticated routes:
 
@@ -77,6 +78,11 @@ These journeys are the primary E2E and UX acceptance baseline and should drive i
 - Session stored with httpOnly cookie handling
 - Active workspace scoped by header or route context
 - GitHub OAuth sessions must resolve workspace identity and role from persisted workspace membership data or an explicitly configured bootstrap identity; unresolved or ambiguous identities must be denied instead of falling back to a shared workspace
+- Enterprise SSO must be workspace-managed rather than globally configured, using a provider id derived from the workspace slug so each workspace can connect its own IdP without affecting other tenants
+- The initial enterprise identity path is OIDC for Okta and Microsoft Entra ID style providers; if generic SAML is added later, it must be documented as an additional contract rather than implied by the existing OIDC flow
+- Enterprise SSO configuration must store issuer URL, client id, provider label, allowed email domains, auto-provision rules, and default role in workspace settings, while client secrets remain server-side only and are never echoed through the settings read API
+- Enterprise SSO sign-in must deny access when workspace membership cannot be resolved and auto-provision is disabled, or when the asserted email domain falls outside the workspace allowlist for auto-provisioned members
+- If an invited or existing member signs in through enterprise SSO, the hosted app must attach them to that workspace deterministically even when domain-based auto-provision would otherwise be denied
 - bootstrap identity environment variables may only seed the first persisted owner and workspace; after bootstrap, hosted auth must resolve from persisted cloud data rather than a shared env-defined workspace
 - Production auth must never assign a shared default workspace or elevated role when provider claims are incomplete
 - Session TTL: 24 hours with silent refresh when appropriate
@@ -99,6 +105,7 @@ Core endpoints include:
 Rules:
 
 - list endpoints use a consistent pagination envelope
+- list endpoints must use cursor pagination with the envelope `{ items, total, page_size, next_cursor, has_more }`; page-number contracts are not allowed on hosted list APIs
 - request and response shapes should be validated against shared Zod schemas
 - invalid payloads return `400` with field-level information
 - hosted approval queue reads must come from connector-synced control-plane state rather than direct cloud-to-daemon socket access
@@ -123,6 +130,15 @@ Rules:
 - approval queue projections must derive expiry from the workspace approval TTL and mark timed-out requests as `expired` without pretending a reviewer decision was delivered
 - approval queue responses must surface connector availability and decision-delivery retry state so operators can distinguish between policy review, connector outage, and failed local delivery
 - when the connector is missing, stale, revoked, or the latest heartbeat reports the local daemon offline, approval UX must warn before submission and mutating routes must return the specific recovery reason instead of a generic failure
+- repository policy saves must create durable, workspace-scoped version snapshots with actor attribution and timestamped history rather than overwrite-only state
+- the policy route must expose diffable version history and a rollback mutation so teams can recover from a bad policy change without touching the repository control files by hand
+- when policy history is first introduced to a repository that already has a workspace override on disk, the current override must be seeded into version history as an explicit baseline entry instead of leaving the page with an empty history panel
+- run detail must expose a replay preview built from journaled governed action inputs, with clear counts for replayable vs skipped steps and an honest connector availability state
+- hosted run replay must queue a real connector command and re-execute the recorded governed inputs locally, producing a new run rather than pretending the old run itself was restarted in place
+- replay preview may skip imported or observed steps, but the UI and API must label those gaps explicitly instead of implying an exact replay when the journal does not support one
+- the connector CLI must expose a long-lived `run` mode that keeps heartbeats, event publish, and command polling active after bootstrap without requiring operators to re-run `sync-once` by hand
+- connector run mode must apply exponential backoff on sync failures, return to the normal poll cadence after a successful recovery, and reuse the durable local outbox so pending events survive process restarts and transient network outages
+- the audit surface must expose `/api/v1/audit/export` with CSV and JSON output plus explicit date-range filtering, and the exported records must come from the same workspace-scoped audit source that powers the on-screen table
 
 ### WebSocket
 
@@ -167,7 +183,7 @@ The normative frontend stack is:
 - TanStack Query for server state
 - React state for local UI state
 - React Hook Form plus Zod for forms
-- NextAuth.js with GitHub provider
+- NextAuth.js with GitHub and dynamically resolved workspace-scoped OIDC enterprise providers
 - PostgreSQL plus Drizzle for cloud-owned state
 - local filesystem persistence may remain available only as a development fallback when `DATABASE_URL` is absent; production readiness requires the PostgreSQL path
 
@@ -193,6 +209,7 @@ Rules:
 - URL owns shareable filter/sort/tab/pagination state
 - local React state owns component-local UI state
 - WebSocket updates flow into query invalidation and targeted refresh
+- large hosted list surfaces must use TanStack Query infinite pagination and flatten loaded pages in the feature layer rather than pulling the full dataset into a single request
 
 ## Shared Types
 
@@ -247,7 +264,7 @@ The cloud product is not production-ready until the deployment and first-run pat
 - `AGENTGIT_ROOT` and `AGENTGIT_CLOUD_WORKSPACE_ROOTS` point at the workspace roots the control plane should own
 - the health endpoint reports `ok` for auth, provider, workspace roots, Sentry, source maps, Vercel analytics, and authority daemon readiness
 - at least one admin or owner can sign in and generate a connector bootstrap token
-- the connector CLI can bootstrap against the cloud endpoint and register the first workspace connector
+- the connector CLI can bootstrap against the cloud endpoint, register the first workspace connector, and stay alive in daemon mode for ongoing sync
 - smoke coverage passes for sign-in, approvals, settings, fleet, snapshots, restore, and writeback flows
 
 The authoritative deployment and first-run checklist lives in:

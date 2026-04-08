@@ -198,7 +198,9 @@ export function buildSyntheticCheckpointAction(params: {
   });
 }
 
-export function canonicalExternalObject(locator: string): { externalObjectId: string; canonicalLocator: string } | null {
+export function canonicalExternalObject(
+  locator: string,
+): { externalObjectId: string; canonicalLocator: string } | null {
   const draftLabel = parseDraftLabelLocator(locator);
   if (draftLabel) {
     return {
@@ -356,7 +358,10 @@ export function findActionBoundaryContext(journal: RunJournal, actionId: string)
   });
 }
 
-export function findExternalObjectBoundaryContext(journal: RunJournal, externalObjectId: string): ActionBoundaryContext {
+export function findExternalObjectBoundaryContext(
+  journal: RunJournal,
+  externalObjectId: string,
+): ActionBoundaryContext {
   let latestMatch: {
     actionId: string;
     occurredAtMillis: number;

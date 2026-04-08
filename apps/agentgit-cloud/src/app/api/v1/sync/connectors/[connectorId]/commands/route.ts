@@ -3,10 +3,7 @@ import { ConnectorAccessError, queueConnectorCommand } from "@/lib/backend/contr
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { ConnectorCommandDispatchRequestSchema } from "@/schemas/cloud";
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ connectorId: string }> },
-) {
+export async function POST(request: Request, context: { params: Promise<{ connectorId: string }> }) {
   const requestId = createRequestId(request);
   const access = await requireApiRole("admin", request);
 

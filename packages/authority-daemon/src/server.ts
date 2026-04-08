@@ -31,7 +31,9 @@ export async function startServer(options: StartServerOptions): Promise<net.Serv
 
       void runCleanup()
         .then(() => callback?.())
-        .catch((cleanupError) => callback?.(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError))));
+        .catch((cleanupError) =>
+          callback?.(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError))),
+        );
     });
   }) as typeof server.close;
   server.on("close", () => {

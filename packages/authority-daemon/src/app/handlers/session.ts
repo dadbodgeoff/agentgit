@@ -3,8 +3,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { SessionCredentialBroker } from "@agentgit/credential-broker";
 import {
   extractContainerRegistryHost,
@@ -283,10 +281,7 @@ function detectMcpSecurityState(
 
 export function detectCapabilities(
   broker: SessionCredentialBroker,
-  runtimeOptions: Pick<
-    ServiceOptions,
-    "socketPath" | "journalPath" | "snapshotRootPath" | "mcpConcurrencyLeasePath"
-  >,
+  runtimeOptions: Pick<ServiceOptions, "socketPath" | "journalPath" | "snapshotRootPath" | "mcpConcurrencyLeasePath">,
   mcpRegistry: McpServerRegistry,
   publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   hostedWorkerClient: HostedMcpWorkerClient,
@@ -634,10 +629,7 @@ export function detectCapabilities(
 
 export function handleGetCapabilities(
   broker: SessionCredentialBroker,
-  runtimeOptions: Pick<
-    ServiceOptions,
-    "socketPath" | "journalPath" | "snapshotRootPath" | "mcpConcurrencyLeasePath"
-  >,
+  runtimeOptions: Pick<ServiceOptions, "socketPath" | "journalPath" | "snapshotRootPath" | "mcpConcurrencyLeasePath">,
   mcpRegistry: McpServerRegistry,
   publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   hostedWorkerClient: HostedMcpWorkerClient,

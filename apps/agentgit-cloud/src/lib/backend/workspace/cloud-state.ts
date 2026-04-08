@@ -14,6 +14,7 @@ import {
   cloudWorkspaceInvites,
   cloudWorkspaceMemberships,
   cloudWorkspaceRepositories,
+  cloudWorkspaceSsoSecrets,
   cloudWorkspaceSettings,
 } from "@/lib/db/schema";
 import {
@@ -23,17 +24,21 @@ import {
   getStoredWorkspaceIntegrationsLocal,
   getStoredWorkspaceSettingsLocal,
   getWorkspaceIntegrationSecretsLocal,
+  getWorkspaceSsoSecretsLocal,
   getWorkspaceConnectionStateLocal,
   listWorkspaceConnectionStatesLocal,
   saveStoredWorkspaceBillingLocal,
   saveStoredWorkspaceIntegrationsLocal,
   saveStoredWorkspaceSettingsLocal,
   saveWorkspaceIntegrationSecretsLocal,
+  saveWorkspaceSsoSecretsLocal,
   saveWorkspaceConnectionStateLocal,
   type WorkspaceIntegrationSecrets,
+  type WorkspaceSsoSecrets,
 } from "@/lib/backend/workspace/cloud-state.local";
 import {
   WorkspaceConnectionStateSchema,
+  WorkspaceSettingsSchema,
   type OnboardingTeamInvite,
   type WorkspaceBilling,
   type WorkspaceConnectionState,
@@ -58,6 +63,8 @@ export type PersistedCloudUser = {
   githubLogin: string | null;
   imageUrl: string | null;
 };
+
+export type { WorkspaceSsoSecrets } from "@/lib/backend/workspace/cloud-state.local";
 
 function normalizeEmail(value?: string | null): string | null {
   const normalized = value?.trim().toLowerCase() ?? "";
@@ -161,7 +168,9 @@ export async function listWorkspaceConnectionStates(): Promise<WorkspaceConnecti
   return listWorkspaceConnectionStatesFromDatabase();
 }
 
-export async function findWorkspaceConnectionStateBySlug(workspaceSlug: string): Promise<WorkspaceConnectionState | null> {
+export async function findWorkspaceConnectionStateBySlug(
+  workspaceSlug: string,
+): Promise<WorkspaceConnectionState | null> {
   if (!hasDatabaseUrl()) {
     return findWorkspaceConnectionStateBySlugLocal(workspaceSlug);
   }
@@ -309,7 +318,9 @@ export async function findWorkspaceAccessMatchesForIdentity(identity: {
     })
     .from(cloudUsers)
     .where(
-      login ? or(eq(cloudUsers.email, email ?? ""), eq(cloudUsers.githubLogin, login)) : eq(cloudUsers.email, email ?? ""),
+      login
+        ? or(eq(cloudUsers.email, email ?? ""), eq(cloudUsers.githubLogin, login))
+        : eq(cloudUsers.email, email ?? ""),
     );
 
   const userIds = users.map((user) => user.id);
@@ -500,7 +511,11 @@ export async function getStoredWorkspaceSettings(workspaceId: string): Promise<W
     columns: { settings: true },
     where: eq(cloudWorkspaceSettings.workspaceId, workspaceId),
   });
-  return row?.settings ?? null;
+  if (!row) {
+    return null;
+  }
+
+  return WorkspaceSettingsSchema.parse(row.settings);
 }
 
 export async function saveStoredWorkspaceSettings(
@@ -560,6 +575,125 @@ export async function findStoredWorkspaceSettingsBySlug(workspaceSlug: string): 
   };
 }
 
+export async function provisionWorkspaceMembershipForIdentity(params: {
+  workspaceId: string;
+  email: string;
+  name: string;
+  fallbackRole: WorkspaceRole;
+  githubLogin?: string | null;
+  imageUrl?: string | null;
+}): Promise<PersistedWorkspaceAccessMatch | null> {
+  const email = normalizeEmail(params.email);
+  if (!email) {
+    return null;
+  }
+
+  if (!hasDatabaseUrl()) {
+    const workspace = getWorkspaceConnectionStateLocal(params.workspaceId);
+    if (!workspace) {
+      return null;
+    }
+
+    const existingMember = workspace.members.find((member) => normalizeEmail(member.email) === email);
+    if (existingMember) {
+      return {
+        workspaceId: workspace.workspaceId,
+        workspaceName: workspace.workspaceName,
+        workspaceSlug: workspace.workspaceSlug,
+        role: existingMember.role,
+        source: "member",
+      };
+    }
+
+    const invite = workspace.invites.find((entry) => normalizeEmail(entry.email) === email);
+    const role = invite?.role ?? params.fallbackRole;
+    saveWorkspaceConnectionStateLocal({
+      ...workspace,
+      members: [
+        ...workspace.members,
+        {
+          name: params.name,
+          email,
+          role,
+        },
+      ],
+      invites: workspace.invites.filter((entry) => normalizeEmail(entry.email) !== email),
+    });
+
+    return {
+      workspaceId: workspace.workspaceId,
+      workspaceName: workspace.workspaceName,
+      workspaceSlug: workspace.workspaceSlug,
+      role,
+      source: invite ? "invite" : "member",
+    };
+  }
+
+  const db = getCloudDatabase();
+  const workspace = await db.query.cloudWorkspaces.findFirst({
+    where: eq(cloudWorkspaces.id, params.workspaceId),
+  });
+
+  if (!workspace) {
+    return null;
+  }
+
+  const user = await upsertCloudUser({
+    email,
+    name: params.name,
+    githubLogin: params.githubLogin,
+    imageUrl: params.imageUrl,
+    lastSignedInAt: new Date().toISOString(),
+  });
+
+  const [existingMembership, invite] = await Promise.all([
+    db.query.cloudWorkspaceMemberships.findFirst({
+      where: and(
+        eq(cloudWorkspaceMemberships.workspaceId, params.workspaceId),
+        eq(cloudWorkspaceMemberships.userId, user.id),
+      ),
+    }),
+    db.query.cloudWorkspaceInvites.findFirst({
+      where: and(
+        eq(cloudWorkspaceInvites.workspaceId, params.workspaceId),
+        eq(cloudWorkspaceInvites.email, email),
+        isNull(cloudWorkspaceInvites.acceptedAt),
+        isNull(cloudWorkspaceInvites.revokedAt),
+      ),
+    }),
+  ]);
+
+  const role = existingMembership?.role ?? invite?.role ?? params.fallbackRole;
+  const now = new Date();
+
+  if (!existingMembership) {
+    await db.insert(cloudWorkspaceMemberships).values({
+      workspaceId: params.workspaceId,
+      userId: user.id,
+      role,
+      joinedAt: now,
+      updatedAt: now,
+    });
+  }
+
+  if (invite) {
+    await db
+      .update(cloudWorkspaceInvites)
+      .set({
+        acceptedAt: now,
+      })
+      .where(eq(cloudWorkspaceInvites.id, invite.id));
+  }
+
+  return {
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    workspaceSlug: workspace.slug,
+    role,
+    source: invite ? "invite" : "member",
+  };
+}
+
 export async function getStoredWorkspaceBilling(workspaceId: string): Promise<WorkspaceBilling | null> {
   if (!hasDatabaseUrl()) {
     return getStoredWorkspaceBillingLocal(workspaceId);
@@ -601,7 +735,9 @@ export async function saveStoredWorkspaceBilling(
   return billing;
 }
 
-export async function getStoredWorkspaceIntegrations(workspaceId: string): Promise<WorkspaceIntegrationSnapshot | null> {
+export async function getStoredWorkspaceIntegrations(
+  workspaceId: string,
+): Promise<WorkspaceIntegrationSnapshot | null> {
   if (!hasDatabaseUrl()) {
     return getStoredWorkspaceIntegrationsLocal(workspaceId);
   }
@@ -683,6 +819,54 @@ export async function saveWorkspaceIntegrationSecrets(
       target: cloudWorkspaceIntegrationSecrets.workspaceId,
       set: {
         slackWebhookUrl: secrets.slackWebhookUrl,
+        updatedAt: now,
+      },
+    });
+
+  return secrets;
+}
+
+export async function getWorkspaceSsoSecrets(workspaceId: string): Promise<WorkspaceSsoSecrets | null> {
+  if (!hasDatabaseUrl()) {
+    return getWorkspaceSsoSecretsLocal(workspaceId);
+  }
+
+  const db = getCloudDatabase();
+  const row = await db.query.cloudWorkspaceSsoSecrets.findFirst({
+    columns: { clientSecret: true },
+    where: eq(cloudWorkspaceSsoSecrets.workspaceId, workspaceId),
+  });
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    clientSecret: row.clientSecret,
+  };
+}
+
+export async function saveWorkspaceSsoSecrets(
+  workspaceId: string,
+  secrets: WorkspaceSsoSecrets,
+): Promise<WorkspaceSsoSecrets> {
+  if (!hasDatabaseUrl()) {
+    return saveWorkspaceSsoSecretsLocal(workspaceId, secrets);
+  }
+
+  const db = getCloudDatabase();
+  const now = new Date();
+  await db
+    .insert(cloudWorkspaceSsoSecrets)
+    .values({
+      workspaceId,
+      clientSecret: secrets.clientSecret,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: cloudWorkspaceSsoSecrets.workspaceId,
+      set: {
+        clientSecret: secrets.clientSecret,
         updatedAt: now,
       },
     });

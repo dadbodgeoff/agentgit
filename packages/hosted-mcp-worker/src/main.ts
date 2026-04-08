@@ -20,11 +20,11 @@ const server = await startHostedMcpWorkerServer({
   workerImageDigest,
 });
 
-console.log(
-  JSON.stringify({
+process.stdout.write(
+  `${JSON.stringify({
     status: "listening",
     endpoint,
-  }),
+  })}\n`,
 );
 
 const shutdown = () => {

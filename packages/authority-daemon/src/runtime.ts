@@ -259,7 +259,7 @@ export async function runAuthorityDaemonFromEnv(
   return runAuthorityDaemon(config, {
     ...options,
     onListening(summary) {
-      console.log(JSON.stringify(summary));
+      process.stdout.write(`${JSON.stringify(summary)}\n`);
       options.onListening?.(summary);
     },
   });

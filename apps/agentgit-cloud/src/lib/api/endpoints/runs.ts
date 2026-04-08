@@ -1,5 +1,11 @@
 import { fetchJson } from "@/lib/api/client";
-import { ActionDetailSchema, RunDetailSchema, type ActionDetail, type PreviewState, type RunDetail } from "@/schemas/cloud";
+import {
+  ActionDetailSchema,
+  RunDetailSchema,
+  type ActionDetail,
+  type PreviewState,
+  type RunDetail,
+} from "@/schemas/cloud";
 
 export async function getRunDetail(runId: string, previewState: PreviewState = "ready"): Promise<RunDetail> {
   const url = new URL(`/api/v1/runs/${runId}`, "http://localhost");

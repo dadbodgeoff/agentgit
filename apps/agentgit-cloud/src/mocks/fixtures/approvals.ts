@@ -67,16 +67,16 @@ const approvalsReadyFixture = ApprovalListResponseSchema.parse({
     },
   ],
   total: 3,
-  page: 1,
-  per_page: 25,
+  page_size: 25,
+  next_cursor: null,
   has_more: false,
 });
 
 const approvalsEmptyFixture = ApprovalListResponseSchema.parse({
   items: [],
   total: 0,
-  page: 1,
-  per_page: 25,
+  page_size: 25,
+  next_cursor: null,
   has_more: false,
 });
 
@@ -151,9 +151,7 @@ export function resolveApprovalFixtureDecision({
 
   const status: ApprovalResolvedStatus = decision === "approve" ? "approved" : "rejected";
   const message =
-    status === "approved"
-      ? "Action approved. The agent is continuing."
-      : "Action rejected. The agent has been paused.";
+    status === "approved" ? "Action approved. The agent is continuing." : "Action rejected. The agent has been paused.";
 
   return {
     status: 200,

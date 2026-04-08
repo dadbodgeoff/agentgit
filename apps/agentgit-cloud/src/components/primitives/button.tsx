@@ -17,24 +17,17 @@ const sizeClasses: Record<ButtonSize, string> = {
 };
 
 const variantClasses: Record<ButtonVariant, string> = {
-  primary:
-    "border-transparent bg-[var(--ag-color-brand)] text-[#0b0f14] hover:bg-[var(--ag-color-brand-hover)]",
+  primary: "border-transparent bg-[var(--ag-color-brand)] text-[#0b0f14] hover:bg-[var(--ag-color-brand-hover)]",
   secondary:
     "border-[var(--ag-border-default)] bg-transparent text-[var(--ag-text-primary)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]",
-  ghost: "border-transparent bg-transparent text-[var(--ag-text-secondary)] hover:bg-[var(--ag-bg-hover)] hover:text-[var(--ag-text-primary)]",
-  accent:
-    "border-transparent bg-[var(--ag-color-accent)] text-[#0b0f14] hover:bg-[var(--ag-color-accent-hover)]",
+  ghost:
+    "border-transparent bg-transparent text-[var(--ag-text-secondary)] hover:bg-[var(--ag-bg-hover)] hover:text-[var(--ag-text-primary)]",
+  accent: "border-transparent bg-[var(--ag-color-accent)] text-[#0b0f14] hover:bg-[var(--ag-color-accent-hover)]",
   destructive:
     "border-[color:rgb(239_68_68_/_0.25)] bg-transparent text-[var(--ag-color-error)] hover:bg-[color:rgb(239_68_68_/_0.08)]",
 };
 
-export function Button({
-  className,
-  size = "md",
-  type = "button",
-  variant = "primary",
-  ...props
-}: ButtonProps) {
+export function Button({ className, size = "md", type = "button", variant = "primary", ...props }: ButtonProps) {
   return (
     <button
       className={cn(

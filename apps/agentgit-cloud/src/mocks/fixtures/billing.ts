@@ -69,7 +69,10 @@ export function saveWorkspaceBillingFixture(update: BillingUpdate): BillingSaveR
     ...update,
     taxId: update.taxId || undefined,
     ...planLimits,
-    monthlyEstimateUsd: update.billingCycle === "yearly" ? Math.round(planLimits.monthlyEstimateUsd * 0.85) : planLimits.monthlyEstimateUsd,
+    monthlyEstimateUsd:
+      update.billingCycle === "yearly"
+        ? Math.round(planLimits.monthlyEstimateUsd * 0.85)
+        : planLimits.monthlyEstimateUsd,
   });
 
   return BillingSaveResponseSchema.parse({

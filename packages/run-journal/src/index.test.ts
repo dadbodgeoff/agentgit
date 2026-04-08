@@ -1285,4 +1285,88 @@ describe("RunJournal", () => {
       }),
     ]);
   });
+
+  it("migrates legacy schemas by adding newer columns and configures sqlite pragmas", () => {
+    const migrationDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-run-journal-migrate-"));
+    const dbPath = path.join(migrationDir, "authority.db");
+    const rawDb = new Database(dbPath);
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS runs (
+        run_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        workflow_name TEXT NOT NULL,
+        agent_framework TEXT NOT NULL,
+        agent_name TEXT NOT NULL,
+        workspace_roots_json TEXT NOT NULL,
+        client_metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS artifacts (
+        artifact_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        action_id TEXT NOT NULL,
+        execution_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        content_ref TEXT NOT NULL,
+        byte_size INTEGER NOT NULL,
+        visibility TEXT NOT NULL,
+        storage_relpath TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS capability_snapshots (
+        snapshot_key TEXT PRIMARY KEY,
+        capabilities_json TEXT NOT NULL,
+        degraded_mode_warnings_json TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL
+      );
+    `);
+    rawDb.close();
+
+    const journal = makeJournal({ dbPath });
+    const internals = journal as unknown as {
+      db: {
+        pragma(statement: string, options?: { simple: boolean }): unknown;
+        prepare(sql: string): { all(): Array<{ name: string }> };
+      };
+    };
+
+    expect(internals.db.pragma("journal_mode", { simple: true })).toBe("wal");
+    expect(internals.db.pragma("foreign_keys", { simple: true })).toBe(1);
+    expect(internals.db.pragma("busy_timeout", { simple: true })).toBe(5000);
+    expect(
+      new Set(
+        internals.db
+          .prepare("PRAGMA table_info(runs)")
+          .all()
+          .map((column) => column.name),
+      ).has("budget_config_json"),
+    ).toBe(true);
+    expect(
+      new Set(
+        internals.db
+          .prepare("PRAGMA table_info(artifacts)")
+          .all()
+          .map((column) => column.name),
+      ).has("expires_at"),
+    ).toBe(true);
+    expect(
+      new Set(
+        internals.db
+          .prepare("PRAGMA table_info(capability_snapshots)")
+          .all()
+          .map((column) => column.name),
+      ).has("refreshed_at"),
+    ).toBe(true);
+    expect(journal.checkpointWal()).toMatchObject({
+      journal_mode: "WAL",
+      checkpointed: true,
+    });
+
+    journal.close();
+    fs.rmSync(migrationDir, { recursive: true, force: true });
+  });
 });

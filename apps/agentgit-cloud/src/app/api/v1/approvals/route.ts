@@ -4,6 +4,7 @@ import { requireApiSession } from "@/lib/auth/api-session";
 import { listWorkspaceApprovalQueue } from "@/lib/backend/workspace/workspace-approvals";
 import { getApprovalsFixture } from "@/mocks/fixtures";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
+import { isPaginationQueryError, paginateItems, parseCursorPaginationQuery } from "@/lib/pagination/cursor";
 import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
@@ -21,6 +22,17 @@ export async function GET(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
   const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
   const previewState = parsed.success ? parsed.data : "ready";
+  let pagination;
+
+  try {
+    pagination = parseCursorPaginationQuery(request);
+  } catch (error) {
+    if (isPaginationQueryError(error)) {
+      return jsonWithRequestId({ message: "Pagination parameters are invalid." }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
 
   if (previewState === "loading") {
     await sleep(1200);
@@ -31,11 +43,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   if (previewState !== "ready") {
-    return jsonWithRequestId(getApprovalsFixture(previewState), undefined, requestId);
+    const fixture = getApprovalsFixture(previewState);
+    return jsonWithRequestId({ ...fixture, ...paginateItems(fixture.items, pagination) }, undefined, requestId);
   }
 
   try {
-    return jsonWithRequestId(await listWorkspaceApprovalQueue(workspaceSession.activeWorkspace.id), undefined, requestId);
+    return jsonWithRequestId(
+      await listWorkspaceApprovalQueue(workspaceSession.activeWorkspace.id, pagination),
+      undefined,
+      requestId,
+    );
   } catch {
     return jsonWithRequestId({ message: "Could not load approvals. Retry." }, { status: 500 }, requestId);
   }

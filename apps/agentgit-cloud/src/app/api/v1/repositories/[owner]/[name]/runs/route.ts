@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireApiSession } from "@/lib/auth/api-session";
 import { listRepositoryRuns } from "@/lib/backend/workspace/repository-detail";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
+import { isPaginationQueryError, parseCursorPaginationQuery } from "@/lib/pagination/cursor";
 import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
@@ -33,7 +34,19 @@ export async function GET(
   }
 
   const { owner, name } = await context.params;
-  const runs = await listRepositoryRuns(owner, name, workspaceSession.activeWorkspace.id);
+  let pagination;
+
+  try {
+    pagination = parseCursorPaginationQuery(request);
+  } catch (error) {
+    if (isPaginationQueryError(error)) {
+      return jsonWithRequestId({ message: "Pagination parameters are invalid." }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  const runs = await listRepositoryRuns(owner, name, workspaceSession.activeWorkspace.id, pagination);
 
   if (!runs) {
     return jsonWithRequestId({ message: "Repository not found in the active workspace." }, { status: 404 }, requestId);

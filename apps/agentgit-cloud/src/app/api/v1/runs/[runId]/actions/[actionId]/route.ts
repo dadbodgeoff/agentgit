@@ -2,10 +2,7 @@ import { requireApiSession } from "@/lib/auth/api-session";
 import { getActionDetail } from "@/lib/backend/workspace/action-detail";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ runId: string; actionId: string }> },
-) {
+export async function GET(request: Request, context: { params: Promise<{ runId: string; actionId: string }> }) {
   const requestId = createRequestId(request);
   const { unauthorized, workspaceSession } = await requireApiSession(request);
 

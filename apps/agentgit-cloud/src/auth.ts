@@ -1,4 +1,4 @@
-import NextAuth, { type NextAuthResult } from "next-auth";
+import NextAuth, { type NextAuthConfig, type NextAuthResult } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
 import { z } from "zod";
@@ -11,6 +11,11 @@ import {
   isProductionAuth,
 } from "@/lib/auth/provider-config";
 import { upsertCloudUser } from "@/lib/backend/workspace/cloud-state";
+import {
+  getEnterpriseSsoProviderFromRequest,
+  parseEnterpriseProviderId,
+  resolveEnterpriseWorkspaceAccessForIdentity,
+} from "@/lib/auth/enterprise-sso";
 import { resolveWorkspaceAccessForIdentity } from "@/lib/auth/workspace-access";
 import { publicRoutes } from "@/lib/navigation/routes";
 import { WorkspaceRoleSchema } from "@/schemas/cloud";
@@ -42,9 +47,11 @@ async function fetchGitHubPrimaryEmail(accessToken?: string): Promise<string | n
     return null;
   }
 
-  const payload = (await response.json().catch(() => null)) as
-    | Array<{ email?: string; primary?: boolean; verified?: boolean }>
-    | null;
+  const payload = (await response.json().catch(() => null)) as Array<{
+    email?: string;
+    primary?: boolean;
+    verified?: boolean;
+  }> | null;
 
   if (!Array.isArray(payload)) {
     return null;
@@ -67,60 +74,72 @@ function getGitHubLogin(profile: unknown): string | null {
   return typeof profile.login === "string" && profile.login.trim().length > 0 ? profile.login : null;
 }
 
-const providers = [];
+async function buildProviders(request?: Request) {
+  const providers: NonNullable<NextAuthConfig["providers"]> = [];
 
-if (authFeatureFlags.hasGitHubProvider) {
-  providers.push(
-    GitHub({
-      authorization: {
-        params: {
-          scope: "read:user user:email",
+  if (authFeatureFlags.hasGitHubProvider) {
+    providers.push(
+      GitHub({
+        authorization: {
+          params: {
+            scope: "read:user user:email",
+          },
         },
-      },
-      profile(profile) {
-        const login = typeof profile.login === "string" ? profile.login : undefined;
+        profile(profile) {
+          const login = typeof profile.login === "string" ? profile.login : undefined;
 
-        return {
-          email: typeof profile.email === "string" ? profile.email : null,
-          id: String(profile.id),
-          image: typeof profile.avatar_url === "string" ? profile.avatar_url : null,
-          login,
-          name: typeof profile.name === "string" && profile.name.trim().length > 0 ? profile.name : login ?? "GitHub user",
-        };
-      },
-    }),
-  );
-}
+          return {
+            email: typeof profile.email === "string" ? profile.email : null,
+            id: String(profile.id),
+            image: typeof profile.avatar_url === "string" ? profile.avatar_url : null,
+            login,
+            name:
+              typeof profile.name === "string" && profile.name.trim().length > 0
+                ? profile.name
+                : (login ?? "GitHub user"),
+          };
+        },
+      }),
+    );
+  }
 
-if (authFeatureFlags.enableDevelopmentCredentials) {
-  providers.push(
-    Credentials({
-      credentials: {
-        email: { label: "Email", type: "email" },
-        name: { label: "Name", type: "text" },
-        role: { label: "Role", type: "text" },
-      },
-      id: DEVELOPMENT_PROVIDER_ID,
-      name: "Development access",
-      async authorize(rawCredentials) {
-        const parsed = developmentCredentialsSchema.safeParse(rawCredentials);
+  if (authFeatureFlags.enableDevelopmentCredentials) {
+    providers.push(
+      Credentials({
+        credentials: {
+          email: { label: "Email", type: "email" },
+          name: { label: "Name", type: "text" },
+          role: { label: "Role", type: "text" },
+        },
+        id: DEVELOPMENT_PROVIDER_ID,
+        name: "Development access",
+        async authorize(rawCredentials) {
+          const parsed = developmentCredentialsSchema.safeParse(rawCredentials);
 
-        if (!parsed.success) {
-          return null;
-        }
+          if (!parsed.success) {
+            return null;
+          }
 
-        const activeWorkspace = buildActiveWorkspace(parsed.data.role);
+          const activeWorkspace = buildActiveWorkspace(parsed.data.role);
 
-        return {
-          activeWorkspace,
-          email: parsed.data.email ?? "developer@agentgit.dev",
-          id: parsed.data.email ?? parsed.data.name.toLowerCase().replace(/\s+/g, "-"),
-          name: parsed.data.name,
-          role: parsed.data.role,
-        };
-      },
-    }),
-  );
+          return {
+            activeWorkspace,
+            email: parsed.data.email ?? "developer@agentgit.dev",
+            id: parsed.data.email ?? parsed.data.name.toLowerCase().replace(/\s+/g, "-"),
+            name: parsed.data.name,
+            role: parsed.data.role,
+          };
+        },
+      }),
+    );
+  }
+
+  const enterpriseProvider = await getEnterpriseSsoProviderFromRequest(request);
+  if (enterpriseProvider) {
+    providers.push(enterpriseProvider.provider);
+  }
+
+  return providers;
 }
 
 const authSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
@@ -130,76 +149,106 @@ if (isProductionAuth && !authSecret && !isNextProductionBuild) {
   throw new Error("AUTH_SECRET or NEXTAUTH_SECRET must be set in production.");
 }
 
-if (isProductionAuth && providers.length === 0 && !isNextProductionBuild) {
-  throw new Error("At least one production authentication provider must be configured.");
-}
+const nextAuthResult: NextAuthResult = NextAuth(async (request) => {
+  const providers = await buildProviders(request);
 
-const nextAuthResult: NextAuthResult = NextAuth({
-  callbacks: {
-    async signIn({ user, account, profile }) {
-      if (account?.provider !== "github") {
-        return true;
-      }
+  if (isProductionAuth && providers.length === 0 && !isNextProductionBuild) {
+    throw new Error("At least one production authentication provider must be configured.");
+  }
 
-      const email = user.email ?? (await fetchGitHubPrimaryEmail(typeof account.access_token === "string" ? account.access_token : undefined));
-      const login = getGitHubLogin(profile);
-
-      if (!email) {
-        return false;
-      }
-
-      const workspaceAccess = await resolveWorkspaceAccessForIdentity({ email, login });
-      if (!workspaceAccess) {
-        return false;
-      }
-
-      await upsertCloudUser({
-        email,
-        githubLogin: login,
-        imageUrl: user.image ?? null,
-        lastSignedInAt: new Date().toISOString(),
-        name: user.name ?? login ?? email.split("@")[0] ?? "GitHub user",
-      });
-
-      user.email = email;
-      user.role = workspaceAccess.role;
-      user.activeWorkspace = workspaceAccess.activeWorkspace;
-      return true;
-    },
-    jwt({ token, user }) {
-      if (user) {
-        if (user.role && user.activeWorkspace) {
-          token.role = user.role;
-          token.activeWorkspace = user.activeWorkspace;
-        } else {
-          delete token.role;
-          delete token.activeWorkspace;
+  return {
+    callbacks: {
+      async signIn({ user, account, profile }) {
+        if (!account?.provider || account.provider === DEVELOPMENT_PROVIDER_ID) {
+          return true;
         }
-      }
 
-      return token;
-    },
-    session({ session, token }) {
-      session.user.id = token.sub ?? session.user.email ?? "user_unknown";
-      if (token.role) {
-        session.user.role = token.role;
-      }
-      if (token.activeWorkspace) {
-        session.activeWorkspace = token.activeWorkspace;
-      }
+        if (account.provider === "github") {
+          const email =
+            user.email ??
+            (await fetchGitHubPrimaryEmail(
+              typeof account.access_token === "string" ? account.access_token : undefined,
+            ));
+          const login = getGitHubLogin(profile);
 
-      return session;
+          if (!email) {
+            return false;
+          }
+
+          const workspaceAccess = await resolveWorkspaceAccessForIdentity({ email, login });
+          if (!workspaceAccess) {
+            return false;
+          }
+
+          await upsertCloudUser({
+            email,
+            githubLogin: login,
+            imageUrl: user.image ?? null,
+            lastSignedInAt: new Date().toISOString(),
+            name: user.name ?? login ?? email.split("@")[0] ?? "GitHub user",
+          });
+
+          user.email = email;
+          user.role = workspaceAccess.role;
+          user.activeWorkspace = workspaceAccess.activeWorkspace;
+          return true;
+        }
+
+        const workspaceSlug = parseEnterpriseProviderId(account.provider);
+        if (!workspaceSlug) {
+          return false;
+        }
+
+        const workspaceAccess = await resolveEnterpriseWorkspaceAccessForIdentity({
+          workspaceSlug,
+          email: user.email,
+          name: user.name ?? user.email ?? "Enterprise user",
+          imageUrl: user.image ?? null,
+        });
+
+        if (!workspaceAccess || !user.email) {
+          return false;
+        }
+
+        user.role = workspaceAccess.role;
+        user.activeWorkspace = workspaceAccess.activeWorkspace;
+        return true;
+      },
+      jwt({ token, user }) {
+        if (user) {
+          if (user.role && user.activeWorkspace) {
+            token.role = user.role;
+            token.activeWorkspace = user.activeWorkspace;
+          } else {
+            delete token.role;
+            delete token.activeWorkspace;
+          }
+        }
+
+        return token;
+      },
+      session({ session, token }) {
+        session.user.id = token.sub ?? session.user.email ?? "user_unknown";
+        if (token.role) {
+          session.user.role = token.role;
+        }
+        if (token.activeWorkspace) {
+          session.activeWorkspace = token.activeWorkspace;
+        }
+
+        return session;
+      },
     },
-  },
-  pages: {
-    signIn: publicRoutes.signIn,
-  },
-  providers,
-  secret: authSecret ?? (isNextProductionBuild ? "agentgit-cloud-build-secret" : "agentgit-cloud-dev-secret"),
-  session: {
-    strategy: "jwt",
-  },
-  trustHost: true,
+    pages: {
+      signIn: publicRoutes.signIn,
+    },
+    providers,
+    secret: authSecret ?? (isNextProductionBuild ? "agentgit-cloud-build-secret" : "agentgit-cloud-dev-secret"),
+    session: {
+      strategy: "jwt",
+    },
+    trustHost: true,
+  };
 });
 
 export const handlers: NextAuthResult["handlers"] = nextAuthResult.handlers;

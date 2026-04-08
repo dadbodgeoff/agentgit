@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { MetricCard, PageHeader } from "@/components/composites";
 import { PageStatePanel } from "@/components/feedback";
-import { Badge, Card, Input, TabList, TabTrigger } from "@/components/primitives";
+import { Badge, Button, Card, Input, TabList, TabTrigger } from "@/components/primitives";
 import { useActivityQuery } from "@/lib/query/hooks";
 import { getApiErrorMessage } from "@/lib/api/client";
 import { authenticatedRoutes, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
@@ -72,7 +72,7 @@ export function ActivityPage() {
     );
   }
 
-  if (activityQuery.isError) {
+  if (activityQuery.isError || !activityQuery.data) {
     return (
       <>
         <PageHeader
@@ -87,23 +87,29 @@ export function ActivityPage() {
           description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
           title="Activity"
         />
-        <PageStatePanel errorMessage={getApiErrorMessage(activityQuery.error, "Could not load activity. Retry.")} state="error" />
+        <PageStatePanel
+          errorMessage={getApiErrorMessage(activityQuery.error, "Could not load activity. Retry.")}
+          state="error"
+        />
       </>
     );
   }
 
   const activity = activityQuery.data;
   const normalizedSearch = search.trim().toLowerCase();
-  const filteredItems =
-    (selectedGroup === "all" ? activity.items : activity.items.filter((item) => activityGroupForKind(item.kind) === selectedGroup)).filter(
-      (item) =>
-        normalizedSearch.length === 0 ||
-        item.message.toLowerCase().includes(normalizedSearch) ||
-        item.repo.toLowerCase().includes(normalizedSearch) ||
-        (item.title?.toLowerCase().includes(normalizedSearch) ?? false) ||
-        (item.actorLabel?.toLowerCase().includes(normalizedSearch) ?? false) ||
-        (item.runId?.toLowerCase().includes(normalizedSearch) ?? false),
-    );
+  const filteredItems = (
+    selectedGroup === "all"
+      ? activity.items
+      : activity.items.filter((item) => activityGroupForKind(item.kind) === selectedGroup)
+  ).filter(
+    (item) =>
+      normalizedSearch.length === 0 ||
+      item.message.toLowerCase().includes(normalizedSearch) ||
+      item.repo.toLowerCase().includes(normalizedSearch) ||
+      (item.title?.toLowerCase().includes(normalizedSearch) ?? false) ||
+      (item.actorLabel?.toLowerCase().includes(normalizedSearch) ?? false) ||
+      (item.runId?.toLowerCase().includes(normalizedSearch) ?? false),
+  );
 
   const counts = activity.items.reduce(
     (acc, item) => {
@@ -147,19 +153,19 @@ export function ActivityPage() {
   }
 
   return (
-      <>
-        <PageHeader
-          actions={
-            <Link
-              className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
-              href={authenticatedRoutes.audit}
-            >
-              Open audit log
-            </Link>
-          }
-          description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
-          title="Activity"
-        />
+    <>
+      <PageHeader
+        actions={
+          <Link
+            className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+            href={authenticatedRoutes.audit}
+          >
+            Open audit log
+          </Link>
+        }
+        description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
+        title="Activity"
+      />
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <MetricCard label="Approvals" value={String(counts.approvals)} trend="review gates and resolutions" />
@@ -216,33 +222,56 @@ export function ActivityPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div className="space-y-2">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge tone={item.tone === "error" ? "error" : item.tone === "warning" ? "warning" : item.tone === "accent" ? "accent" : "neutral"}>
+                        <Badge
+                          tone={
+                            item.tone === "error"
+                              ? "error"
+                              : item.tone === "warning"
+                                ? "warning"
+                                : item.tone === "accent"
+                                  ? "accent"
+                                  : "neutral"
+                          }
+                        >
                           {activityToneLabel(item.tone)}
                         </Badge>
                         <Badge tone="neutral">{activityGroupForKind(item.kind ?? undefined)}</Badge>
                         {item.kind ? <Badge tone="neutral">{item.kind.replace(/_/g, " ")}</Badge> : null}
                       </div>
-                      <div className="text-sm font-semibold text-[var(--ag-text-primary)]">{item.title ?? item.message}</div>
+                      <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
+                        {item.title ?? item.message}
+                      </div>
                       <div className="text-sm text-[var(--ag-text-secondary)]">{item.message}</div>
                     </div>
-                    <div className="text-xs text-[var(--ag-text-tertiary)]">{formatRelativeTimestamp(item.createdAt)}</div>
+                    <div className="text-xs text-[var(--ag-text-tertiary)]">
+                      {formatRelativeTimestamp(item.createdAt)}
+                    </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--ag-text-secondary)]">
                     <span>{item.repo}</span>
                     {item.actorLabel ? <span>{item.actorLabel}</span> : null}
                     {item.runId ? <span className="font-mono">{item.runId}</span> : null}
                     {repoParts ? (
-                      <Link className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline" href={repositoryRoute(repoParts.owner, repoParts.name)}>
+                      <Link
+                        className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                        href={repositoryRoute(repoParts.owner, repoParts.name)}
+                      >
                         Open repo
                       </Link>
                     ) : null}
                     {item.runId && repoParts ? (
-                      <Link className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline" href={runDetailRoute(repoParts.owner, repoParts.name, item.runId)}>
+                      <Link
+                        className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                        href={runDetailRoute(repoParts.owner, repoParts.name, item.runId)}
+                      >
                         Open run
                       </Link>
                     ) : null}
                     {item.detailPath ? (
-                      <Link className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline" href={item.detailPath}>
+                      <Link
+                        className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                        href={item.detailPath}
+                      >
                         Open detail
                       </Link>
                     ) : null}
@@ -260,6 +289,23 @@ export function ActivityPage() {
                 </Card>
               );
             })}
+            {activityQuery.hasNextPage ? (
+              <Card className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">More activity available</h2>
+                  <p className="text-sm text-[var(--ag-text-secondary)]">
+                    Showing {activity.items.length} of {activity.total} events loaded into the feed.
+                  </p>
+                </div>
+                <Button
+                  disabled={activityQuery.isFetchingNextPage}
+                  onClick={() => void activityQuery.fetchNextPage()}
+                  variant="secondary"
+                >
+                  {activityQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+                </Button>
+              </Card>
+            ) : null}
           </div>
         )}
       </div>

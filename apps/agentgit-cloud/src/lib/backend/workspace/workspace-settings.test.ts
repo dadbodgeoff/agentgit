@@ -66,6 +66,10 @@ describe("workspace settings backend", () => {
       defaultNotificationChannel: "email",
       approvalTtlMinutes: 30,
       requireRejectComment: true,
+      enterpriseSso: expect.objectContaining({
+        enabled: false,
+        clientSecretConfigured: false,
+      }),
     });
   });
 
@@ -92,6 +96,17 @@ describe("workspace settings backend", () => {
       approvalTtlMinutes: 45,
       requireRejectComment: false,
       freezeDeploysOutsideBusinessHours: true,
+      enterpriseSso: {
+        enabled: true,
+        providerType: "oidc",
+        providerLabel: "Acme Okta",
+        issuerUrl: "https://acme.okta.com/oauth2/default",
+        clientId: "agentgit-cloud",
+        clientSecret: "super-secret",
+        emailDomains: ["acme.dev"],
+        autoProvisionMembers: true,
+        defaultRole: "member",
+      },
     });
 
     const updatedWorkspace = await getWorkspaceConnectionState("ws_acme_01");
@@ -108,6 +123,11 @@ describe("workspace settings backend", () => {
       workspaceSlug: "platform-control",
       approvalTtlMinutes: 45,
       freezeDeploysOutsideBusinessHours: true,
+      enterpriseSso: expect.objectContaining({
+        enabled: true,
+        providerLabel: "Acme Okta",
+        clientSecretConfigured: true,
+      }),
     });
   });
 });

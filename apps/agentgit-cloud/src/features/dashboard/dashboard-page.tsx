@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { Card, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow, TabList, TabTrigger } from "@/components/primitives";
+import {
+  Card,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRoot,
+  TableRow,
+  TabList,
+  TabTrigger,
+} from "@/components/primitives";
 import { PageStatePanel, StaleIndicator } from "@/components/feedback";
 import { RepositoryConnectionDialog } from "@/features/repos/repository-connection-dialog";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
@@ -268,9 +278,21 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
       metrics={dashboard.metrics.map((metric) => ({ label: metric.label, trend: metric.trend, value: metric.value }))}
       sections={[
         { title: "Metric cards", description: "KPI row for repositories, approvals, failures, and deploy posture." },
-        { title: "Recent runs", description: "Table scaffold for repo, branch, status, duration, and timestamp.", kind: "table" },
-        { title: "Attention queue", description: "Operator checklist for approvals, failures, recoveries, and fleet health.", kind: "status" },
-        { title: "Agent activity", description: "Timeline rail for live agent actions and escalation events.", kind: "status" },
+        {
+          title: "Recent runs",
+          description: "Table scaffold for repo, branch, status, duration, and timestamp.",
+          kind: "table",
+        },
+        {
+          title: "Attention queue",
+          description: "Operator checklist for approvals, failures, recoveries, and fleet health.",
+          kind: "status",
+        },
+        {
+          title: "Agent activity",
+          description: "Timeline rail for live agent actions and escalation events.",
+          kind: "status",
+        },
       ]}
       sidePanel={
         <div className="space-y-6">
@@ -279,7 +301,9 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
           <Card className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">Control-plane posture</h2>
-              <StaleIndicator label={dashboard.lastUpdatedAt ? formatRelativeTimestamp(dashboard.lastUpdatedAt) : "just now"} />
+              <StaleIndicator
+                label={dashboard.lastUpdatedAt ? formatRelativeTimestamp(dashboard.lastUpdatedAt) : "just now"}
+              />
             </div>
             <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">
               <div className="flex items-center justify-between gap-3">
@@ -460,7 +484,9 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
                             )}
                           </div>
                           <div className="text-sm text-[var(--ag-text-secondary)]">
-                            {repo.failedRuns > 0 ? `${repo.failedRuns} failed run${repo.failedRuns === 1 ? "" : "s"}` : "No recent failed runs"}
+                            {repo.failedRuns > 0
+                              ? `${repo.failedRuns} failed run${repo.failedRuns === 1 ? "" : "s"}`
+                              : "No recent failed runs"}
                             {" · "}
                             {repo.pendingSignals} governance signal{repo.pendingSignals === 1 ? "" : "s"}
                           </div>
@@ -487,75 +513,75 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
           </Card>
 
           <Card className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">Governed activity</h2>
-            <Link
-              className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-              href={authenticatedRoutes.activity}
-            >
-              Open full feed
-            </Link>
-          </div>
-          <TabList>
-            {(["all", "approvals", "failures", "recovery", "fleet"] as DashboardFocus[]).map((entry) => (
-              <TabTrigger active={focus === entry} key={entry} onClick={() => setFocus(entry)}>
-                {entry}
-              </TabTrigger>
-            ))}
-          </TabList>
-          <div className="space-y-3">
-            {focusedActivity.length > 0 ? (
-              focusedActivity.slice(0, 6).map((activity) => (
-                <div
-                  className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3"
-                  key={activity.id}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="text-sm font-medium text-[var(--ag-text-primary)]">
-                        {activity.title ?? activity.message}
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold">Governed activity</h2>
+              <Link
+                className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                href={authenticatedRoutes.activity}
+              >
+                Open full feed
+              </Link>
+            </div>
+            <TabList>
+              {(["all", "approvals", "failures", "recovery", "fleet"] as DashboardFocus[]).map((entry) => (
+                <TabTrigger active={focus === entry} key={entry} onClick={() => setFocus(entry)}>
+                  {entry}
+                </TabTrigger>
+              ))}
+            </TabList>
+            <div className="space-y-3">
+              {focusedActivity.length > 0 ? (
+                focusedActivity.slice(0, 6).map((activity) => (
+                  <div
+                    className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3"
+                    key={activity.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="text-sm font-medium text-[var(--ag-text-primary)]">
+                          {activity.title ?? activity.message}
+                        </div>
+                        <div className="text-sm text-[var(--ag-text-secondary)]">{activity.message}</div>
                       </div>
-                      <div className="text-sm text-[var(--ag-text-secondary)]">{activity.message}</div>
+                      <StaleIndicator
+                        label={activity.tone}
+                        tone={activity.tone === "warning" || activity.tone === "error" ? "warning" : "success"}
+                      />
                     </div>
-                    <StaleIndicator
-                      label={activity.tone}
-                      tone={activity.tone === "warning" || activity.tone === "error" ? "warning" : "success"}
-                    />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--ag-text-secondary)]">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span>{activity.repo}</span>
-                      {activity.detailPath ? (
-                        <Link
-                          className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                          href={activity.detailPath}
-                        >
-                          Open detail
-                        </Link>
-                      ) : null}
-                      {activity.externalUrl ? (
-                        <a
-                          className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                          href={activity.externalUrl}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          Open provider
-                        </a>
-                      ) : null}
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--ag-text-secondary)]">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span>{activity.repo}</span>
+                        {activity.detailPath ? (
+                          <Link
+                            className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                            href={activity.detailPath}
+                          >
+                            Open detail
+                          </Link>
+                        ) : null}
+                        {activity.externalUrl ? (
+                          <a
+                            className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                            href={activity.externalUrl}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            Open provider
+                          </a>
+                        ) : null}
+                      </div>
+                      <span>{formatRelativeTimestamp(activity.createdAt)}</span>
                     </div>
-                    <span>{formatRelativeTimestamp(activity.createdAt)}</span>
                   </div>
-                </div>
-              ))
-            ) : (
-              <PageStatePanel
-                emptyDescription={`No ${focus === "all" ? "governed" : focus} events are currently visible.`}
-                emptyTitle="No governed activity yet"
-                state="empty"
-              />
-            )}
-          </div>
+                ))
+              ) : (
+                <PageStatePanel
+                  emptyDescription={`No ${focus === "all" ? "governed" : focus} events are currently visible.`}
+                  emptyTitle="No governed activity yet"
+                  state="empty"
+                />
+              )}
+            </div>
           </Card>
         </div>
       </div>

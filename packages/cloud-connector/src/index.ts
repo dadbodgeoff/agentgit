@@ -7,12 +7,16 @@ import path from "node:path";
 import { AuthorityClient } from "@agentgit/authority-sdk";
 import { IntegrationState } from "@agentgit/integration-state";
 import { RunJournal } from "@agentgit/run-journal";
-import { ApprovalInboxItemSchema } from "@agentgit/schemas";
+import {
+  ActionRecordSchema,
+  ApprovalInboxItemSchema,
+  RawActionAttemptSchema,
+  RegisterRunRequestPayloadSchema,
+} from "@agentgit/schemas";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import {
   ConnectorCommandAckRequestSchema,
   ConnectorCommandAckResponseSchema,
-  ConnectorCommandEnvelopeSchema,
   ConnectorCommandPullRequestSchema,
   ConnectorCommandPullResponseSchema,
   ConnectorEventBatchRequestSchema,
@@ -25,6 +29,7 @@ import {
   ConnectorRegistrationResponseSchema,
   CreateCommitCommandPayloadSchema,
   OpenPullRequestCommandPayloadSchema,
+  ReplayRunCommandPayloadSchema,
   ResolveApprovalCommandPayloadSchema,
   RestoreCommandPayloadSchema,
   PushBranchCommandPayloadSchema,
@@ -60,6 +65,12 @@ export const CloudConnectorMetadataSchema = z
   .strict();
 export type CloudConnectorMetadata = z.infer<typeof CloudConnectorMetadataSchema>;
 
+export type CloudConnectorSyncCycleResult = {
+  heartbeat: z.infer<typeof ConnectorHeartbeatResponseSchema> | null;
+  published: Awaited<ReturnType<CloudConnectorRuntime["publishLocalState"]>>;
+  commands: Awaited<ReturnType<CloudConnectorRuntime["processCommands"]>>;
+};
+
 type CloudConnectorCollections = {
   registration: CloudConnectorRegistrationState;
   outbox: CloudConnectorOutboxItem;
@@ -93,7 +104,10 @@ function isSameOrNestedPath(candidate: string, base: string): boolean {
   return normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(`${normalizedBase}${path.sep}`);
 }
 
-function parseGitRemote(remoteUrl: string | null, repoRoot: string): {
+function parseGitRemote(
+  remoteUrl: string | null,
+  repoRoot: string,
+): {
   owner: string;
   name: string;
   provider: RepositoryStateSnapshot["provider"];
@@ -374,7 +388,10 @@ export class CloudSyncClient {
     return parser.parse(json);
   }
 
-  async registerConnector(input: z.infer<typeof ConnectorRegistrationRequestSchema>, options: RegisterConnectorOptions = {}) {
+  async registerConnector(
+    input: z.infer<typeof ConnectorRegistrationRequestSchema>,
+    options: RegisterConnectorOptions = {},
+  ) {
     const headers: Record<string, string> = {};
     if (options.sessionCookie) {
       headers.cookie = options.sessionCookie;
@@ -524,7 +541,12 @@ export class CloudConnectorService {
     );
   }
 
-  async acknowledgeCommand(commandId: string, status: "acked" | "completed" | "failed", acknowledgedAt: string, message?: string) {
+  async acknowledgeCommand(
+    commandId: string,
+    status: "acked" | "completed" | "failed",
+    acknowledgedAt: string,
+    message?: string,
+  ) {
     return this.acknowledgeCommandWithResult(commandId, status, acknowledgedAt, message);
   }
 
@@ -574,7 +596,13 @@ export class CloudConnectorRuntime {
     return this.options.workspaceRoot;
   }
 
-  private buildEvent(repository: RepositoryStateSnapshot, type: ConnectorEventEnvelope["type"], eventId: string, occurredAt: string, payload: Record<string, unknown>) {
+  private buildEvent(
+    repository: RepositoryStateSnapshot,
+    type: ConnectorEventEnvelope["type"],
+    eventId: string,
+    occurredAt: string,
+    payload: Record<string, unknown>,
+  ) {
     const registration = this.options.service.getRegistration();
     if (!registration) {
       throw new Error("Cloud connector is not registered.");
@@ -593,7 +621,13 @@ export class CloudConnectorRuntime {
     });
   }
 
-  private emitEvent(repository: RepositoryStateSnapshot, type: ConnectorEventEnvelope["type"], identity: string, occurredAt: string, payload: Record<string, unknown>) {
+  private emitEvent(
+    repository: RepositoryStateSnapshot,
+    type: ConnectorEventEnvelope["type"],
+    identity: string,
+    occurredAt: string,
+    payload: Record<string, unknown>,
+  ) {
     const eventId = createEventId(type, identity);
     if (this.options.stateStore.hasEvent(eventId)) {
       return false;
@@ -645,7 +679,8 @@ export class CloudConnectorRuntime {
       const manifestPath = path.join(manifestRoot, fileName);
       const raw = fs.readFileSync(manifestPath, "utf8");
       const manifest = JSON.parse(raw) as Record<string, unknown>;
-      const snapshotId = typeof manifest.snapshot_id === "string" ? manifest.snapshot_id : fileName.replace(/\.json$/, "");
+      const snapshotId =
+        typeof manifest.snapshot_id === "string" ? manifest.snapshot_id : fileName.replace(/\.json$/, "");
       const createdAt =
         typeof manifest.created_at === "string" ? manifest.created_at : fs.statSync(manifestPath).mtime.toISOString();
       this.emitEvent(repository, "snapshot.manifest", `snapshot:${snapshotId}`, createdAt, manifest);
@@ -663,7 +698,9 @@ export class CloudConnectorRuntime {
     try {
       const runs = journal
         .listAllRuns()
-        .filter((run) => run.workspace_roots.some((workspaceRoot) => isSameOrNestedPath(workspaceRoot, repository.workspaceRoot)));
+        .filter((run) =>
+          run.workspace_roots.some((workspaceRoot) => isSameOrNestedPath(workspaceRoot, repository.workspaceRoot)),
+        );
 
       for (const run of runs) {
         const latestMarker = run.latest_event?.occurred_at ?? run.started_at;
@@ -813,14 +850,12 @@ export class CloudConnectorRuntime {
     }
 
     const repository = detectRepositoryState(this.workspaceRoot);
-    return this.options.service.sendHeartbeat(
-      {
-        connectorId: registration.response.connector.id,
-        sentAt: this.now(),
-        repository,
-        localDaemon: detectLocalDaemonStatus(this.workspaceRoot),
-      },
-    );
+    return this.options.service.sendHeartbeat({
+      connectorId: registration.response.connector.id,
+      sentAt: this.now(),
+      repository,
+      localDaemon: detectLocalDaemonStatus(this.workspaceRoot),
+    });
   }
 
   async publishLocalState(options: { includeSnapshots?: boolean } = {}) {
@@ -888,7 +923,7 @@ export class CloudConnectorRuntime {
   } {
     const payload = PushBranchCommandPayloadSchema.parse(command.payload);
     const repoRoot = detectRepositoryRoot(this.workspaceRoot);
-    const branch = payload.branch ?? (tryExecGit(["branch", "--show-current"], repoRoot) ?? null);
+    const branch = payload.branch ?? tryExecGit(["branch", "--show-current"], repoRoot) ?? null;
     if (!branch) {
       return {
         status: "failed",
@@ -919,9 +954,7 @@ export class CloudConnectorRuntime {
     };
   }
 
-  private async executeOpenPullRequest(
-    command: ConnectorCommandEnvelope,
-  ): Promise<{
+  private async executeOpenPullRequest(command: ConnectorCommandEnvelope): Promise<{
     status: "completed" | "failed";
     message: string;
     result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
@@ -946,7 +979,8 @@ export class CloudConnectorRuntime {
     if (!token) {
       return {
         status: "failed",
-        message: "GitHub pull request creation requires AGENTGIT_GITHUB_TOKEN or GITHUB_TOKEN in the connector environment.",
+        message:
+          "GitHub pull request creation requires AGENTGIT_GITHUB_TOKEN or GITHUB_TOKEN in the connector environment.",
         result: {
           type: "open_pull_request",
           provider: "github",
@@ -1128,44 +1162,164 @@ export class CloudConnectorRuntime {
     };
   }
 
+  private async executeReplayRun(command: ConnectorCommandEnvelope): Promise<{
+    status: "completed" | "failed";
+    message: string;
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+  }> {
+    const payload = ReplayRunCommandPayloadSchema.parse(command.payload);
+    const repoRoot = detectRepositoryRoot(this.workspaceRoot);
+    const journalPath = getAuthorityPaths(repoRoot).journalPath;
+    if (!fs.existsSync(journalPath)) {
+      return {
+        status: "failed",
+        message: "Local run journal is unavailable, so the connector cannot replay this run.",
+      };
+    }
+
+    const journal = new RunJournal({ dbPath: journalPath });
+    try {
+      const sourceRun = journal.getRunSummary(payload.sourceRunId);
+      if (!sourceRun) {
+        return {
+          status: "failed",
+          message: `Run ${payload.sourceRunId} was not found in the local journal.`,
+          result: {
+            type: "replay_run",
+            sourceRunId: payload.sourceRunId,
+            submittedActionCount: 0,
+            skippedActionCount: 0,
+            pendingApprovalCount: 0,
+            replayedAt: this.now(),
+          },
+        };
+      }
+
+      const sourceActions = journal
+        .listRunEvents(payload.sourceRunId)
+        .filter((event) => event.event_type === "action.normalized")
+        .map((event) => ActionRecordSchema.safeParse(event.payload?.action))
+        .map((parsed) => (parsed.success ? parsed.data : null));
+
+      const replayWorkflowName = payload.replayWorkflowName?.trim() || `${sourceRun.workflow_name} replay`;
+      const client = new AuthorityClient({
+        clientType: "sdk_ts",
+        clientVersion: this.options.connectorVersion,
+        defaultWorkspaceRoots: sourceRun.workspace_roots,
+        socketPath: process.env.AGENTGIT_AUTHORITY_SOCKET_PATH ?? path.join(repoRoot, ".agentgit", "authority.sock"),
+      });
+
+      await client.hello(sourceRun.workspace_roots);
+      const replayRun = await client.registerRun(
+        RegisterRunRequestPayloadSchema.parse({
+          workflow_name: replayWorkflowName,
+          agent_framework: sourceRun.agent_framework,
+          agent_name: sourceRun.agent_name,
+          workspace_roots: sourceRun.workspace_roots,
+          budget_config: sourceRun.budget_config,
+          client_metadata: {
+            replay_source_run_id: payload.sourceRunId,
+            replay_via_connector_command_id: command.commandId,
+          },
+        }),
+        {
+          idempotencyKey: `${command.commandId}:register_run`,
+        },
+      );
+
+      let submittedActionCount = 0;
+      let skippedActionCount = 0;
+      let pendingApprovalCount = 0;
+
+      for (const sourceAction of sourceActions) {
+        if (!sourceAction || sourceAction.provenance.mode !== "governed") {
+          skippedActionCount += 1;
+          continue;
+        }
+
+        const replayAttempt = RawActionAttemptSchema.parse({
+          run_id: replayRun.run_id,
+          tool_registration: {
+            tool_name: sourceAction.actor.tool_name,
+            tool_kind: sourceAction.actor.tool_kind,
+          },
+          raw_call: sourceAction.input.raw,
+          environment_context: {
+            workspace_roots: sourceRun.workspace_roots,
+            credential_mode: sourceAction.execution_path.credential_mode,
+          },
+          framework_context: {
+            agent_name: sourceRun.agent_name,
+            agent_framework: sourceRun.agent_framework,
+          },
+          received_at: sourceAction.timestamps.requested_at,
+        });
+
+        const replayed = await client.submitActionAttempt(replayAttempt, {
+          idempotencyKey: `${command.commandId}:${sourceAction.action_id}`,
+        });
+        submittedActionCount += 1;
+        if (replayed.approval_request?.status === "pending") {
+          pendingApprovalCount += 1;
+        }
+      }
+
+      return {
+        status: "completed",
+        message: `Replayed ${submittedActionCount} governed action${submittedActionCount === 1 ? "" : "s"} from ${payload.sourceRunId}.`,
+        result: {
+          type: "replay_run",
+          sourceRunId: payload.sourceRunId,
+          replayRunId: replayRun.run_id,
+          submittedActionCount,
+          skippedActionCount,
+          pendingApprovalCount,
+          replayedAt: this.now(),
+        },
+      };
+    } finally {
+      journal.close();
+    }
+  }
+
   private async executeCommand(command: ConnectorCommandEnvelope): Promise<{
     status: "completed" | "failed";
     message: string;
     result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
   }> {
     switch (command.type) {
-      case "refresh_repo_state":
-        {
-          const published = await this.publishLocalState({ includeSnapshots: true });
-          return {
-            status: "completed",
-            message: "Repository state refreshed and published.",
-            result: {
-              type: "refresh_repo_state",
-              publishedEventCount: published.published?.acceptedCount ?? 0,
-              includesSnapshots: true,
-              syncedAt: this.now(),
-            },
-          };
-        }
-      case "sync_run_history":
-        {
-          const includeSnapshots =
-            typeof command.payload.includeSnapshots === "boolean" ? command.payload.includeSnapshots : true;
-          const published = await this.publishLocalState({
-            includeSnapshots,
-          });
-          return {
-            status: "completed",
-            message: "Run history synchronized.",
-            result: {
-              type: "sync_run_history",
-              publishedEventCount: published.published?.acceptedCount ?? 0,
-              includesSnapshots: includeSnapshots,
-              syncedAt: this.now(),
-            },
-          };
-        }
+      case "refresh_repo_state": {
+        const published = await this.publishLocalState({ includeSnapshots: true });
+        return {
+          status: "completed",
+          message: "Repository state refreshed and published.",
+          result: {
+            type: "refresh_repo_state",
+            publishedEventCount: published.published?.acceptedCount ?? 0,
+            includesSnapshots: true,
+            syncedAt: this.now(),
+          },
+        };
+      }
+      case "sync_run_history": {
+        const includeSnapshots =
+          typeof command.payload.includeSnapshots === "boolean" ? command.payload.includeSnapshots : true;
+        const published = await this.publishLocalState({
+          includeSnapshots,
+        });
+        return {
+          status: "completed",
+          message: "Run history synchronized.",
+          result: {
+            type: "sync_run_history",
+            publishedEventCount: published.published?.acceptedCount ?? 0,
+            includesSnapshots: includeSnapshots,
+            syncedAt: this.now(),
+          },
+        };
+      }
+      case "replay_run":
+        return this.executeReplayRun(command);
       case "resolve_approval":
         return this.executeResolveApproval(command);
       case "create_commit":
@@ -1194,7 +1348,12 @@ export class CloudConnectorRuntime {
     }> = [];
 
     for (const command of commands.commands) {
-      await this.options.service.acknowledgeCommand(command.commandId, "acked", this.now(), "Connector received command.");
+      await this.options.service.acknowledgeCommand(
+        command.commandId,
+        "acked",
+        this.now(),
+        "Connector received command.",
+      );
       let result: {
         status: "completed" | "failed";
         message: string;
@@ -1228,9 +1387,15 @@ export class CloudConnectorRuntime {
     return processed;
   }
 
-  async syncOnce() {
-    const heartbeat = await this.sendHeartbeat();
-    const published = await this.publishLocalState({ includeSnapshots: true });
+  async syncCycle(
+    options: {
+      sendHeartbeat?: boolean;
+      includeSnapshots?: boolean;
+    } = {},
+  ): Promise<CloudConnectorSyncCycleResult> {
+    const sendHeartbeat = options.sendHeartbeat ?? true;
+    const heartbeat = sendHeartbeat ? await this.sendHeartbeat() : null;
+    const published = await this.publishLocalState({ includeSnapshots: options.includeSnapshots ?? true });
     const commands = await this.processCommands();
 
     return {
@@ -1238,5 +1403,184 @@ export class CloudConnectorRuntime {
       published,
       commands,
     };
+  }
+
+  async syncOnce() {
+    return this.syncCycle({
+      sendHeartbeat: true,
+      includeSnapshots: true,
+    });
+  }
+}
+
+function createAbortError() {
+  const error = new Error("Cloud connector daemon run loop aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function sleepWithAbort(ms: number, signal?: AbortSignal) {
+  if (ms <= 0) {
+    if (signal?.aborted) {
+      return Promise.reject(createAbortError());
+    }
+
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    function onAbort() {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      reject(createAbortError());
+    }
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export type CloudConnectorDaemonEvent =
+  | {
+      type: "started";
+      pollIntervalMs: number;
+      heartbeatIntervalMs: number;
+      initialBackoffMs: number;
+      maxBackoffMs: number;
+      occurredAt: string;
+    }
+  | {
+      type: "iteration_succeeded";
+      occurredAt: string;
+      heartbeatSent: boolean;
+      nextDelayMs: number;
+    }
+  | {
+      type: "iteration_failed";
+      occurredAt: string;
+      heartbeatAttempted: boolean;
+      consecutiveFailures: number;
+      retryInMs: number;
+      error: string;
+    }
+  | {
+      type: "stopped";
+      occurredAt: string;
+    };
+
+export type CloudConnectorDaemonOptions = {
+  runtime: Pick<CloudConnectorRuntime, "syncCycle">;
+  pollIntervalMs?: number;
+  heartbeatIntervalMs?: number;
+  initialBackoffMs?: number;
+  maxBackoffMs?: number;
+  now?: () => string;
+  nowMs?: () => number;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  onEvent?: (event: CloudConnectorDaemonEvent) => void;
+};
+
+export class CloudConnectorDaemon {
+  private readonly pollIntervalMs: number;
+  private readonly heartbeatIntervalMs: number;
+  private readonly initialBackoffMs: number;
+  private readonly maxBackoffMs: number;
+  private readonly now: () => string;
+  private readonly nowMs: () => number;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+
+  constructor(private readonly options: CloudConnectorDaemonOptions) {
+    this.pollIntervalMs = options.pollIntervalMs ?? 5_000;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 30_000;
+    this.initialBackoffMs = options.initialBackoffMs ?? 2_000;
+    this.maxBackoffMs = options.maxBackoffMs ?? 60_000;
+    this.now = options.now ?? (() => new Date().toISOString());
+    this.nowMs = options.nowMs ?? Date.now;
+    this.sleep = options.sleep ?? sleepWithAbort;
+  }
+
+  private emit(event: CloudConnectorDaemonEvent) {
+    this.options.onEvent?.(event);
+  }
+
+  async run(signal?: AbortSignal) {
+    this.emit({
+      type: "started",
+      pollIntervalMs: this.pollIntervalMs,
+      heartbeatIntervalMs: this.heartbeatIntervalMs,
+      initialBackoffMs: this.initialBackoffMs,
+      maxBackoffMs: this.maxBackoffMs,
+      occurredAt: this.now(),
+    });
+
+    let consecutiveFailures = 0;
+    let lastSuccessfulHeartbeatAtMs: number | null = null;
+
+    while (!signal?.aborted) {
+      const heartbeatDue =
+        lastSuccessfulHeartbeatAtMs === null || this.nowMs() - lastSuccessfulHeartbeatAtMs >= this.heartbeatIntervalMs;
+
+      try {
+        await this.options.runtime.syncCycle({
+          sendHeartbeat: heartbeatDue,
+          includeSnapshots: true,
+        });
+        consecutiveFailures = 0;
+        if (heartbeatDue) {
+          lastSuccessfulHeartbeatAtMs = this.nowMs();
+        }
+
+        this.emit({
+          type: "iteration_succeeded",
+          occurredAt: this.now(),
+          heartbeatSent: heartbeatDue,
+          nextDelayMs: this.pollIntervalMs,
+        });
+        await this.sleep(this.pollIntervalMs, signal);
+      } catch (error) {
+        if (signal?.aborted || isAbortError(error)) {
+          break;
+        }
+
+        consecutiveFailures += 1;
+        const retryInMs = Math.min(this.initialBackoffMs * 2 ** (consecutiveFailures - 1), this.maxBackoffMs);
+        this.emit({
+          type: "iteration_failed",
+          occurredAt: this.now(),
+          heartbeatAttempted: heartbeatDue,
+          consecutiveFailures,
+          retryInMs,
+          error: error instanceof Error ? error.message : "Connector daemon sync failed unexpectedly.",
+        });
+
+        try {
+          await this.sleep(retryInMs, signal);
+        } catch (sleepError) {
+          if (signal?.aborted || isAbortError(sleepError)) {
+            break;
+          }
+
+          throw sleepError;
+        }
+      }
+    }
+
+    this.emit({
+      type: "stopped",
+      occurredAt: this.now(),
+    });
   }
 }

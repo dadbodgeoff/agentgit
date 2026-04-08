@@ -1,0 +1,22 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#060B10" />
+  <rect x="40" y="40" width="1120" height="550" rx="32" fill="#0C141C" stroke="#1D313C" />
+  <rect x="76" y="84" width="1048" height="462" rx="24" fill="url(#panel)" stroke="#14303A" />
+  <rect x="96" y="108" width="220" height="36" rx="18" fill="#0ACDCF" fill-opacity="0.12" stroke="#0ACDCF" stroke-opacity="0.3" />
+  <text x="206" y="132" fill="#0ACDCF" font-family="'IBM Plex Mono', monospace" font-size="16" letter-spacing="3.2" text-anchor="middle">HOSTED CONTROL PLANE</text>
+  <text x="96" y="252" fill="#F6FBFF" font-family="'IBM Plex Sans', sans-serif" font-size="78" font-weight="600">AgentGit</text>
+  <text x="96" y="322" fill="#B5C3CB" font-family="'IBM Plex Sans', sans-serif" font-size="32" font-weight="400">
+    Govern every agent action before it turns into repo history.
+  </text>
+  <text x="96" y="394" fill="#80919B" font-family="'IBM Plex Sans', sans-serif" font-size="24" font-weight="400">
+    Hosted approvals, audit trails, connector health, and recovery context for local-first agent workflows.
+  </text>
+  <rect x="96" y="448" width="308" height="54" rx="27" fill="#E8FF59" fill-opacity="0.08" stroke="#E8FF59" stroke-opacity="0.24" />
+  <text x="250" y="482" fill="#E8FF59" font-family="'IBM Plex Mono', monospace" font-size="18" letter-spacing="1.8" text-anchor="middle">LOCAL EXECUTION. CLOUD OVERSIGHT.</text>
+  <defs>
+    <linearGradient id="panel" x1="120" y1="96" x2="1050" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A141B" />
+      <stop offset="1" stop-color="#091018" />
+    </linearGradient>
+  </defs>
+</svg>

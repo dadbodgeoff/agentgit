@@ -1,4 +1,5 @@
 import { fetchJson } from "@/lib/api/client";
+import { appendCursorPagination, type CursorPaginationRequest } from "@/lib/api/endpoints/pagination";
 import {
   ApprovalDecisionResponseSchema,
   ApprovalListResponseSchema,
@@ -7,11 +8,10 @@ import {
   type PreviewState,
 } from "@/schemas/cloud";
 
-export async function getApprovalQueue(previewState: PreviewState = "ready"): Promise<ApprovalListResponse> {
-  const url = new URL("/api/v1/approvals", "http://localhost");
-  if (previewState !== "ready") {
-    url.searchParams.set("state", previewState);
-  }
+export async function getApprovalQueue(
+  params: CursorPaginationRequest & { previewState?: PreviewState } = {},
+): Promise<ApprovalListResponse> {
+  const url = appendCursorPagination(new URL("/api/v1/approvals", "http://localhost"), params);
 
   const response = await fetchJson<unknown>(url.pathname + url.search);
   return ApprovalListResponseSchema.parse(response);

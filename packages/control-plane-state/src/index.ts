@@ -321,11 +321,7 @@ export class ControlPlaneStateStore {
     });
   }
 
-  claimDispatchableCommands(params: {
-    connectorId: string;
-    claimedAt: string;
-    leaseExpiresAt: string;
-  }) {
+  claimDispatchableCommands(params: { connectorId: string; claimedAt: string; leaseExpiresAt: string }) {
     const now = Date.now();
     const dispatchable: ConnectorCommandRecord[] = [];
     const rows = this.listCommands(params.connectorId).sort(
@@ -376,7 +372,7 @@ export class ControlPlaneStateStore {
           ? "Connector lease expired after acknowledgement; command returned to pending."
           : row.status === "failed" || row.status === "expired"
             ? "Automatic retry window reached; command returned to pending."
-          : row.lastMessage;
+            : row.lastMessage;
       const claimed = this.updateCommandStatus({
         commandId: row.command.commandId,
         status: "pending",

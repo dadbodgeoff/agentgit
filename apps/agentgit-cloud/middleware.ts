@@ -16,7 +16,10 @@ export default auth((request) => {
   }
 
   const signInUrl = new URL(publicRoutes.signIn, authenticatedRequest.nextUrl.origin);
-  signInUrl.searchParams.set("callbackUrl", `${authenticatedRequest.nextUrl.pathname}${authenticatedRequest.nextUrl.search}`);
+  signInUrl.searchParams.set(
+    "callbackUrl",
+    `${authenticatedRequest.nextUrl.pathname}${authenticatedRequest.nextUrl.search}`,
+  );
 
   return NextResponse.redirect(signInUrl);
 });

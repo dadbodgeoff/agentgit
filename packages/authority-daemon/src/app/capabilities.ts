@@ -1,10 +1,6 @@
 import type { CachedCapabilityState } from "@agentgit/recovery-engine";
 import type { RunJournal } from "@agentgit/run-journal";
-import {
-  type GetCapabilitiesResponsePayload,
-  InternalError,
-  type ReasonDetail,
-} from "@agentgit/schemas";
+import { type GetCapabilitiesResponsePayload, InternalError, type ReasonDetail } from "@agentgit/schemas";
 
 const CAPABILITY_REFRESH_STALE_MS = 5 * 60 * 1_000;
 

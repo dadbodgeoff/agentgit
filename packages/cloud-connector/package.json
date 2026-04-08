@@ -23,7 +23,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "test": "vitest run --dir src",
-    "prepack": "pnpm run build"
+    "prepack": "pnpm run build",
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "@agentgit/authority-sdk": "workspace:*",

@@ -4,10 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { RunJournal } from "@agentgit/run-journal";
-import type {
-  GetPolicyCalibrationReportResponsePayload,
-  PolicyThresholdRecommendation,
-} from "@agentgit/schemas";
+import type { GetPolicyCalibrationReportResponsePayload, PolicyThresholdRecommendation } from "@agentgit/schemas";
 
 import { withScopedAuthorityClient } from "@/lib/backend/authority/client";
 import { findRepositoryRuntimeRecordById } from "@/lib/backend/workspace/repository-inventory";
@@ -65,7 +62,9 @@ function mapCalibrationReport(params: {
 
   return CalibrationReportSchema.parse({
     repoId: params.repoId,
-    period: params.calibrationReport.filters.run_id ? `Run ${params.calibrationReport.filters.run_id}` : "workspace history",
+    period: params.calibrationReport.filters.run_id
+      ? `Run ${params.calibrationReport.filters.run_id}`
+      : "workspace history",
     totalActions: totals.sample_count,
     brierScore: clampMetric(quality.brier_score),
     ece: clampMetric(quality.expected_calibration_error),

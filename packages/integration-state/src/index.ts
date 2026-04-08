@@ -11,6 +11,32 @@ const Database = require("better-sqlite3") as BetterSqlite3Constructor;
 type BetterSqliteDatabase = InstanceType<BetterSqlite3Constructor>;
 type SqliteJournalMode = "WAL" | "DELETE";
 
+function isSqliteBusyError(error: unknown): boolean {
+  const code = storageErrorCode(error);
+  if (code === "SQLITE_BUSY" || code === "SQLITE_LOCKED") {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes("database is locked") || message.includes("database table is locked");
+}
+
+function resolveSqliteBusyTimeoutMs(): number {
+  const configured = process.env.AGENTGIT_SQLITE_BUSY_TIMEOUT_MS?.trim();
+  if (!configured) {
+    return 5_000;
+  }
+
+  const parsed = Number.parseInt(configured, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new InternalError("Unsupported SQLite busy timeout.", {
+      configured_timeout_ms: configured,
+    });
+  }
+
+  return parsed;
+}
+
 function storageErrorCode(error: unknown): string | null {
   if (!error || typeof error !== "object") {
     return null;
@@ -32,6 +58,7 @@ function isLowDiskPressureError(error: unknown): boolean {
 
 function storageUnavailableError(message: string, error: unknown, details?: Record<string, unknown>): AgentGitError {
   const lowDiskPressure = isLowDiskPressureError(error);
+  const busy = isSqliteBusyError(error);
   return new AgentGitError(
     message,
     "STORAGE_UNAVAILABLE",
@@ -39,10 +66,15 @@ function storageUnavailableError(message: string, error: unknown, details?: Reco
       ...details,
       cause: error instanceof Error ? error.message : String(error),
       storage_error_code: storageErrorCode(error),
+      sqlite_busy: busy,
       low_disk_pressure: lowDiskPressure,
-      retry_hint: lowDiskPressure ? "Free disk space, then retry." : undefined,
+      retry_hint: lowDiskPressure
+        ? "Free disk space, then retry."
+        : busy
+          ? "The SQLite database is busy. Retry once the concurrent writer finishes."
+          : undefined,
     },
-    lowDiskPressure,
+    lowDiskPressure || busy,
   );
 }
 
@@ -94,6 +126,7 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
       fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
       this.db = new Database(options.dbPath);
       this.db.pragma(`journal_mode = ${resolveSqliteJournalMode()}`);
+      this.db.pragma(`busy_timeout = ${resolveSqliteBusyTimeoutMs()}`);
       this.db.pragma("foreign_keys = ON");
       this.migrate();
     } catch (error) {

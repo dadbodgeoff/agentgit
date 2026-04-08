@@ -234,4 +234,65 @@ describe("IntegrationState", () => {
     rawDb.close();
     state.close();
   });
+
+  it("configures WAL, foreign keys, busy timeout, and checkpoints cleanly", () => {
+    tempDir = makeTempDir();
+    const state = createDraftState(path.join(tempDir, "state.db"));
+    const db = state as unknown as {
+      db: {
+        pragma(statement: string, options?: { simple: boolean }): unknown;
+      };
+    };
+
+    expect(db.db.pragma("journal_mode", { simple: true })).toBe("wal");
+    expect(db.db.pragma("foreign_keys", { simple: true })).toBe(1);
+    expect(db.db.pragma("busy_timeout", { simple: true })).toBe(5000);
+    expect(state.checkpointWal()).toMatchObject({
+      journal_mode: "WAL",
+      checkpointed: true,
+    });
+
+    state.close();
+  });
+
+  it("marks SQLITE_BUSY failures as retryable storage errors", () => {
+    tempDir = makeTempDir();
+    const state = createDraftState(path.join(tempDir, "state.db"));
+    const db = state as unknown as {
+      db: {
+        prepare(sql: string): { run(...args: unknown[]): unknown };
+      };
+    };
+    const prepareSpy = vi.spyOn(db.db, "prepare").mockImplementation((_sql: string) => {
+      const statement = {
+        run() {
+          const error = new Error("database is locked") as Error & { code: string };
+          error.code = "SQLITE_BUSY";
+          throw error;
+        },
+      };
+      return statement;
+    });
+
+    try {
+      state.put("drafts", "draft_busy", {
+        draft_id: "draft_busy",
+        status: "active",
+        action_id: "act_busy",
+      });
+      throw new Error("expected SQLITE_BUSY state write to throw");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "STORAGE_UNAVAILABLE",
+        retryable: true,
+        details: {
+          sqlite_busy: true,
+          storage_error_code: "SQLITE_BUSY",
+        },
+      });
+    } finally {
+      prepareSpy.mockRestore();
+      state.close();
+    }
+  });
 });

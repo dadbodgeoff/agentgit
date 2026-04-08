@@ -5,8 +5,12 @@ import type { ApprovalInboxItem } from "@agentgit/schemas";
 import type {
   IntegrationTestChannel,
   IntegrationTestResponse,
+  NotificationBusinessDay,
+  NotificationEvent,
+  NotificationRule,
   WorkspaceIntegrationSaveResponse,
   WorkspaceIntegrationSnapshot,
+  WorkspaceNotificationBusinessHours,
   WorkspaceIntegrationUpdate,
   WorkspaceSession,
 } from "@/schemas/cloud";
@@ -18,6 +22,14 @@ import {
   saveStoredWorkspaceIntegrations,
   saveWorkspaceIntegrationSecrets,
 } from "@/lib/backend/workspace/cloud-state";
+
+const NOTIFICATION_EVENTS: NotificationEvent[] = [
+  "approval_requested",
+  "run_failed",
+  "policy_changed",
+  "snapshot_restored",
+];
+const DEFAULT_NOTIFICATION_BUSINESS_DAYS: NotificationBusinessDay[] = ["mon", "tue", "wed", "thu", "fri"];
 
 type NotificationDeliveryResult = {
   deliveredAt: string | null;
@@ -40,6 +52,48 @@ function getResendApiKey(): string | null {
 
 function getEmailFromAddress(): string | null {
   return normalizeWebhookUrl(process.env.AGENTGIT_EMAIL_FROM ?? process.env.RESEND_FROM_EMAIL ?? null);
+}
+
+function getDefaultNotificationTimeZone() {
+  return process.env.AGENTGIT_NOTIFICATION_TIME_ZONE ?? "America/New_York";
+}
+
+function buildDefaultNotificationBusinessHours(): WorkspaceNotificationBusinessHours {
+  return {
+    timeZone: getDefaultNotificationTimeZone(),
+    startTime: "09:00",
+    endTime: "17:00",
+    weekdays: DEFAULT_NOTIFICATION_BUSINESS_DAYS,
+  };
+}
+
+function buildDefaultNotificationRule(event: NotificationEvent): NotificationRule {
+  return {
+    event,
+    repositoryScope: "all",
+    repositoryTargets: [],
+    deliveryWindow: "anytime",
+    minimumRiskLevel: "read_only",
+  };
+}
+
+function normalizeNotificationRules(rules?: NotificationRule[] | null): NotificationRule[] {
+  const byEvent = new Map<NotificationEvent, NotificationRule>();
+  for (const rule of rules ?? []) {
+    if (!byEvent.has(rule.event)) {
+      byEvent.set(rule.event, rule);
+    }
+  }
+
+  return NOTIFICATION_EVENTS.map((event) => byEvent.get(event) ?? buildDefaultNotificationRule(event));
+}
+
+function normalizeWorkspaceIntegrationsSnapshot(snapshot: WorkspaceIntegrationSnapshot): WorkspaceIntegrationSnapshot {
+  return {
+    ...snapshot,
+    notificationBusinessHours: snapshot.notificationBusinessHours ?? buildDefaultNotificationBusinessHours(),
+    notificationRules: normalizeNotificationRules(snapshot.notificationRules),
+  };
 }
 
 async function deriveGitHubOrgName(workspaceId: string, workspaceSlug: string): Promise<string> {
@@ -76,6 +130,8 @@ function buildDefaultIntegrations(params: {
     emailNotificationsEnabled: Boolean(getResendApiKey() && getEmailFromAddress()),
     digestCadence: "daily",
     notificationEvents: ["approval_requested", "run_failed", "policy_changed"],
+    notificationBusinessHours: buildDefaultNotificationBusinessHours(),
+    notificationRules: normalizeNotificationRules(),
   };
 }
 
@@ -93,14 +149,14 @@ async function resolveWorkspaceIntegrationsByWorkspace(params: {
   const githubOrgName = await deriveGitHubOrgName(params.workspaceId, params.workspaceSlug);
 
   if (stored) {
-    return {
+    return normalizeWorkspaceIntegrationsSnapshot({
       ...stored,
       githubOrgName,
       githubAppInstalled: repositoryCount > 0 || stored.githubAppInstalled,
       githubAppStatus: repositoryCount > 0 ? "healthy" : stored.githubAppStatus,
       webhookStatus: resolveWebhookStatus(repositoryCount),
       slackWebhookConfigured,
-    };
+    });
   }
 
   return buildDefaultIntegrations({
@@ -124,9 +180,7 @@ async function resolveWorkspaceMemberEmails(workspaceId: string): Promise<string
 
   return Array.from(
     new Set(
-      workspaceState.members
-        .map((member) => member.email.trim().toLowerCase())
-        .filter((email) => email.length > 0),
+      workspaceState.members.map((member) => member.email.trim().toLowerCase()).filter((email) => email.length > 0),
     ),
   );
 }
@@ -231,7 +285,7 @@ function buildApprovalRequestedHtml(params: {
 }) {
   const reason = params.approval.reason_summary ?? "Policy review required.";
   return [
-    "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#111827\">",
+    '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">',
     `<h2 style="margin-bottom:12px">Approval requested for ${params.repositoryOwner}/${params.repositoryName}</h2>`,
     `<p><strong>Workflow:</strong> ${params.approval.workflow_name}</p>`,
     `<p><strong>Action:</strong> ${params.approval.action_summary}</p>`,
@@ -240,6 +294,162 @@ function buildApprovalRequestedHtml(params: {
     `<p><strong>Approval ID:</strong> ${params.approval.approval_id}</p>`,
     "</div>",
   ].join("");
+}
+
+function buildGenericNotificationHtml(params: { heading: string; lines: Array<[label: string, value: string]> }) {
+  return [
+    '<div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">',
+    `<h2 style="margin-bottom:12px">${params.heading}</h2>`,
+    ...params.lines.map(([label, value]) => `<p><strong>${label}:</strong> ${value}</p>`),
+    "</div>",
+  ].join("");
+}
+
+function notificationRiskRank(level: ApprovalInboxItem["side_effect_level"]) {
+  switch (level) {
+    case "read_only":
+      return 0;
+    case "mutating":
+      return 1;
+    case "destructive":
+      return 2;
+    default:
+      return 2;
+  }
+}
+
+function parseTimeToMinutes(value: string) {
+  const [hours, minutes] = value.split(":").map((part) => Number.parseInt(part, 10));
+  return hours * 60 + minutes;
+}
+
+function resolveBusinessHoursParts(businessHours: WorkspaceNotificationBusinessHours, now: Date) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: businessHours.timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const weekday = parts
+    .find((part) => part.type === "weekday")
+    ?.value.toLowerCase()
+    .slice(0, 3) as NotificationBusinessDay | undefined;
+  const hour = Number.parseInt(parts.find((part) => part.type === "hour")?.value ?? "0", 10);
+  const minute = Number.parseInt(parts.find((part) => part.type === "minute")?.value ?? "0", 10);
+
+  return {
+    weekday: weekday ?? "mon",
+    minuteOfDay: hour * 60 + minute,
+  };
+}
+
+function isWithinBusinessHours(businessHours: WorkspaceNotificationBusinessHours, now = new Date()) {
+  const current = resolveBusinessHoursParts(businessHours, now);
+  if (!businessHours.weekdays.includes(current.weekday)) {
+    return false;
+  }
+
+  const start = parseTimeToMinutes(businessHours.startTime);
+  const end = parseTimeToMinutes(businessHours.endTime);
+  if (start <= end) {
+    return current.minuteOfDay >= start && current.minuteOfDay <= end;
+  }
+
+  return current.minuteOfDay >= start || current.minuteOfDay <= end;
+}
+
+function findNotificationRule(integrations: WorkspaceIntegrationSnapshot, event: NotificationEvent) {
+  return integrations.notificationRules.find((rule) => rule.event === event) ?? buildDefaultNotificationRule(event);
+}
+
+function shouldDeliverNotificationEvent(params: {
+  event: NotificationEvent;
+  repositoryOwner: string;
+  repositoryName: string;
+  integrations: WorkspaceIntegrationSnapshot;
+  approval?: ApprovalInboxItem;
+  now?: Date;
+}) {
+  if (!params.integrations.notificationEvents.includes(params.event)) {
+    return false;
+  }
+
+  const rule = findNotificationRule(params.integrations, params.event);
+  const repositoryLabel = `${params.repositoryOwner}/${params.repositoryName}`;
+  if (rule.repositoryScope === "selected" && !rule.repositoryTargets.includes(repositoryLabel)) {
+    return false;
+  }
+
+  if (
+    params.event === "approval_requested" &&
+    params.approval &&
+    notificationRiskRank(params.approval.side_effect_level) < notificationRiskRank(rule.minimumRiskLevel)
+  ) {
+    return false;
+  }
+
+  if (
+    rule.deliveryWindow === "business_hours" &&
+    !isWithinBusinessHours(params.integrations.notificationBusinessHours, params.now)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+async function deliverWorkspaceEventNotification(params: {
+  workspaceId: string;
+  event: NotificationEvent;
+  repositoryOwner: string;
+  repositoryName: string;
+  integrations: WorkspaceIntegrationSnapshot;
+  subject: string;
+  text: string;
+  html: string;
+}): Promise<NotificationDeliveryResult> {
+  const result: NotificationDeliveryResult = {
+    deliveredAt: null,
+    failures: [],
+    sent: [],
+  };
+
+  if (params.integrations.emailNotificationsEnabled) {
+    try {
+      const recipients = await resolveWorkspaceMemberEmails(params.workspaceId);
+      if (recipients.length === 0) {
+        throw new Error("Workspace has no active member emails for notification delivery.");
+      }
+
+      result.deliveredAt = await sendEmailMessage({
+        to: recipients,
+        subject: params.subject,
+        text: params.text,
+        html: params.html,
+      });
+      result.sent.push("email");
+    } catch (error) {
+      result.failures.push(error instanceof Error ? error.message : "Email delivery failed.");
+    }
+  }
+
+  const shouldSendSlack =
+    params.integrations.slackConnected &&
+    params.integrations.slackDeliveryMode !== "disabled" &&
+    (params.event === "approval_requested" || params.integrations.slackDeliveryMode === "all");
+
+  if (shouldSendSlack) {
+    try {
+      result.deliveredAt = await sendSlackWebhookMessage(params.workspaceId, params.text);
+      result.sent.push("slack");
+    } catch (error) {
+      result.failures.push(error instanceof Error ? error.message : "Slack delivery failed.");
+    }
+  }
+
+  return result;
 }
 
 async function deliverApprovalRequestedNotification(params: {
@@ -255,7 +465,15 @@ async function deliverApprovalRequestedNotification(params: {
     sent: [],
   };
 
-  if (!params.integrations.notificationEvents.includes("approval_requested")) {
+  if (
+    !shouldDeliverNotificationEvent({
+      event: "approval_requested",
+      repositoryOwner: params.repositoryOwner,
+      repositoryName: params.repositoryName,
+      approval: params.approval,
+      integrations: params.integrations,
+    })
+  ) {
     return result;
   }
 
@@ -264,43 +482,25 @@ async function deliverApprovalRequestedNotification(params: {
     repositoryName: params.repositoryName,
     approval: params.approval,
   });
-
-  if (params.integrations.emailNotificationsEnabled) {
-    try {
-      const recipients = await resolveWorkspaceMemberEmails(params.workspaceId);
-      if (recipients.length === 0) {
-        throw new Error("Workspace has no active member emails for notification delivery.");
-      }
-
-      result.deliveredAt = await sendEmailMessage({
-        to: recipients,
-        subject: `[AgentGit] Approval required for ${params.repositoryOwner}/${params.repositoryName}`,
-        text: messageText,
-        html: buildApprovalRequestedHtml({
-          repositoryOwner: params.repositoryOwner,
-          repositoryName: params.repositoryName,
-          approval: params.approval,
-        }),
-      });
-      result.sent.push("email");
-    } catch (error) {
-      result.failures.push(error instanceof Error ? error.message : "Email delivery failed.");
-    }
-  }
-
-  if (params.integrations.slackConnected && params.integrations.slackDeliveryMode !== "disabled") {
-    try {
-      result.deliveredAt = await sendSlackWebhookMessage(params.workspaceId, messageText);
-      result.sent.push("slack");
-    } catch (error) {
-      result.failures.push(error instanceof Error ? error.message : "Slack delivery failed.");
-    }
-  }
-
-  return result;
+  return deliverWorkspaceEventNotification({
+    workspaceId: params.workspaceId,
+    event: "approval_requested",
+    repositoryOwner: params.repositoryOwner,
+    repositoryName: params.repositoryName,
+    integrations: params.integrations,
+    subject: `[AgentGit] Approval required for ${params.repositoryOwner}/${params.repositoryName}`,
+    text: messageText,
+    html: buildApprovalRequestedHtml({
+      repositoryOwner: params.repositoryOwner,
+      repositoryName: params.repositoryName,
+      approval: params.approval,
+    }),
+  });
 }
 
-export async function resolveWorkspaceIntegrations(workspaceSession: WorkspaceSession): Promise<WorkspaceIntegrationSnapshot> {
+export async function resolveWorkspaceIntegrations(
+  workspaceSession: WorkspaceSession,
+): Promise<WorkspaceIntegrationSnapshot> {
   return resolveWorkspaceIntegrationsByWorkspace({
     workspaceId: workspaceSession.activeWorkspace.id,
     workspaceSlug: workspaceSession.activeWorkspace.slug,
@@ -314,9 +514,14 @@ export async function saveWorkspaceIntegrations(
   const current = await resolveWorkspaceIntegrations(workspaceSession);
   const existingSecrets = await getWorkspaceIntegrationSecrets(workspaceSession.activeWorkspace.id);
   const { slackWebhookUrl: _slackWebhookUrl, ...publicUpdate } = update;
+  const normalizedUpdate = {
+    ...publicUpdate,
+    notificationBusinessHours: publicUpdate.notificationBusinessHours ?? current.notificationBusinessHours,
+    notificationRules: normalizeNotificationRules(publicUpdate.notificationRules),
+  };
   const nextSlackWebhookUrl = !update.slackConnected
     ? null
-    : normalizeWebhookUrl(update.slackWebhookUrl) ?? existingSecrets?.slackWebhookUrl ?? null;
+    : (normalizeWebhookUrl(update.slackWebhookUrl) ?? existingSecrets?.slackWebhookUrl ?? null);
 
   await saveWorkspaceIntegrationSecrets(workspaceSession.activeWorkspace.id, {
     slackWebhookUrl: nextSlackWebhookUrl,
@@ -324,7 +529,7 @@ export async function saveWorkspaceIntegrations(
 
   await saveStoredWorkspaceIntegrations(workspaceSession.activeWorkspace.id, {
     ...current,
-    ...publicUpdate,
+    ...normalizedUpdate,
     slackWebhookConfigured: Boolean(nextSlackWebhookUrl ?? getSlackWebhookUrlFromEnvironment()),
     slackWorkspaceName: update.slackConnected ? update.slackWorkspaceName || current.slackWorkspaceName : undefined,
     slackChannelName: update.slackConnected ? update.slackChannelName || current.slackChannelName : undefined,
@@ -425,5 +630,151 @@ export async function notifyWorkspaceApprovalRequested(params: {
   await persistDeliveryStatus(params.workspaceId, integrations, {
     deliveredAt: delivery.deliveredAt,
     success: delivery.failures.length === 0,
+  });
+}
+
+async function notifyWorkspaceGenericEvent(params: {
+  workspaceId: string;
+  workspaceSlug: string;
+  event: NotificationEvent;
+  repositoryOwner: string;
+  repositoryName: string;
+  subject: string;
+  text: string;
+  html: string;
+}) {
+  const integrations = await resolveWorkspaceIntegrationsByWorkspace({
+    workspaceId: params.workspaceId,
+    workspaceSlug: params.workspaceSlug,
+  });
+
+  if (
+    !shouldDeliverNotificationEvent({
+      event: params.event,
+      repositoryOwner: params.repositoryOwner,
+      repositoryName: params.repositoryName,
+      integrations,
+    })
+  ) {
+    return;
+  }
+
+  const delivery = await deliverWorkspaceEventNotification({
+    workspaceId: params.workspaceId,
+    event: params.event,
+    repositoryOwner: params.repositoryOwner,
+    repositoryName: params.repositoryName,
+    integrations,
+    subject: params.subject,
+    text: params.text,
+    html: params.html,
+  });
+
+  if (delivery.sent.length === 0 && delivery.failures.length === 0) {
+    return;
+  }
+
+  await persistDeliveryStatus(params.workspaceId, integrations, {
+    deliveredAt: delivery.deliveredAt,
+    success: delivery.failures.length === 0,
+  });
+}
+
+export async function notifyWorkspaceRunFailed(params: {
+  workspaceId: string;
+  workspaceSlug: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  runId: string;
+  actionId?: string | null;
+}) {
+  const heading = `Run failed for ${params.repositoryOwner}/${params.repositoryName}`;
+  await notifyWorkspaceGenericEvent({
+    workspaceId: params.workspaceId,
+    workspaceSlug: params.workspaceSlug,
+    event: "run_failed",
+    repositoryOwner: params.repositoryOwner,
+    repositoryName: params.repositoryName,
+    subject: `[AgentGit] Run failed for ${params.repositoryOwner}/${params.repositoryName}`,
+    text: [
+      `AgentGit detected a governed run failure for ${params.repositoryOwner}/${params.repositoryName}.`,
+      `Run ID: ${params.runId}`,
+      params.actionId ? `Action ID: ${params.actionId}` : null,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n"),
+    html: buildGenericNotificationHtml({
+      heading,
+      lines: [
+        ["Run ID", params.runId],
+        ...(params.actionId ? ([["Action ID", params.actionId]] as Array<[string, string]>) : []),
+      ],
+    }),
+  });
+}
+
+export async function notifyWorkspacePolicyChanged(params: {
+  workspaceId: string;
+  workspaceSlug: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  kind: string;
+  digest?: string | null;
+}) {
+  const heading = `Policy changed for ${params.repositoryOwner}/${params.repositoryName}`;
+  await notifyWorkspaceGenericEvent({
+    workspaceId: params.workspaceId,
+    workspaceSlug: params.workspaceSlug,
+    event: "policy_changed",
+    repositoryOwner: params.repositoryOwner,
+    repositoryName: params.repositoryName,
+    subject: `[AgentGit] Policy changed for ${params.repositoryOwner}/${params.repositoryName}`,
+    text: [
+      `AgentGit synchronized updated policy state for ${params.repositoryOwner}/${params.repositoryName}.`,
+      `Policy kind: ${params.kind}`,
+      params.digest ? `Digest: ${params.digest}` : null,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n"),
+    html: buildGenericNotificationHtml({
+      heading,
+      lines: [
+        ["Policy kind", params.kind],
+        ...(params.digest ? ([["Digest", params.digest]] as Array<[string, string]>) : []),
+      ],
+    }),
+  });
+}
+
+export async function notifyWorkspaceSnapshotRestored(params: {
+  workspaceId: string;
+  workspaceSlug: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  runId: string;
+  snapshotId?: string | null;
+}) {
+  const heading = `Snapshot restored for ${params.repositoryOwner}/${params.repositoryName}`;
+  await notifyWorkspaceGenericEvent({
+    workspaceId: params.workspaceId,
+    workspaceSlug: params.workspaceSlug,
+    event: "snapshot_restored",
+    repositoryOwner: params.repositoryOwner,
+    repositoryName: params.repositoryName,
+    subject: `[AgentGit] Snapshot restored for ${params.repositoryOwner}/${params.repositoryName}`,
+    text: [
+      `AgentGit restored a snapshot for ${params.repositoryOwner}/${params.repositoryName}.`,
+      `Run ID: ${params.runId}`,
+      params.snapshotId ? `Snapshot ID: ${params.snapshotId}` : null,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n"),
+    html: buildGenericNotificationHtml({
+      heading,
+      lines: [
+        ["Run ID", params.runId],
+        ...(params.snapshotId ? ([["Snapshot ID", params.snapshotId]] as Array<[string, string]>) : []),
+      ],
+    }),
   });
 }

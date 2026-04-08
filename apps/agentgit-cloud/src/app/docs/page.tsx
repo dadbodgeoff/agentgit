@@ -1,8 +1,17 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { Badge } from "@/components/primitives";
 import { MarketingSection, MarketingShell, marketingLinkClasses } from "@/features/marketing/marketing-shell";
+import { buildPageMetadata } from "@/lib/metadata/site";
 import { publicRoutes } from "@/lib/navigation/routes";
+
+export const metadata: Metadata = buildPageMetadata({
+  title: "Docs",
+  description:
+    "Read the AgentGit Cloud quickstart for onboarding a workspace, bootstrapping a connector, and proving the approval round trip end to end.",
+  path: publicRoutes.docs,
+});
 
 export default function DocsPage() {
   return (
@@ -17,7 +26,8 @@ export default function DocsPage() {
               Bring the connector online, prove the approval round trip, then scale.
             </h1>
             <p className="max-w-3xl text-lg leading-8 text-[var(--ag-text-secondary)]">
-              These docs are intentionally short. The fastest hosted rollout is one workspace, one connector, one governed action, and one operator decision path.
+              These docs are intentionally short. The fastest hosted rollout is one workspace, one connector, one
+              governed action, and one operator decision path.
             </p>
           </div>
         </div>
@@ -68,11 +78,13 @@ export default function DocsPage() {
             Local shell
           </div>
           <pre className="overflow-x-auto px-5 py-5 font-mono text-sm leading-7 text-[var(--ag-text-primary)]">
-{`agentgit-cloud-connector bootstrap \\
+            {`agentgit-cloud-connector bootstrap \\
   --cloud-url https://cloud.example.com \\
   --workspace-id ws_acme_01 \\
   --workspace-root /Users/me/code/platform-ui \\
-  --bootstrap-token agcbt_...`}
+  --bootstrap-token agcbt_... && \\
+agentgit-cloud-connector run \\
+  --workspace-root /Users/me/code/platform-ui`}
           </pre>
         </div>
       </MarketingSection>
@@ -91,7 +103,10 @@ export default function DocsPage() {
             "Activity and audit surfaces show the decision trail without manual reloads.",
             "Billing and plan limits reflect the expected seat and repository envelope.",
           ].map((item) => (
-            <div className="border-t border-[var(--ag-border-subtle)] pt-4 text-base leading-7 text-[var(--ag-text-secondary)]" key={item}>
+            <div
+              className="border-t border-[var(--ag-border-subtle)] pt-4 text-base leading-7 text-[var(--ag-text-secondary)]"
+              key={item}
+            >
               {item}
             </div>
           ))}
@@ -107,13 +122,21 @@ export default function DocsPage() {
           <div className="rounded-[28px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-6">
             <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">Live now</div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
-              <p>Durable workspaces, membership-backed auth, connector sync, approval round trips, hosted notifications, rate limiting, and beta-gated billing enforcement.</p>
+              <p>
+                Durable workspaces, membership-backed auth, connector sync, approval round trips, hosted notifications,
+                rate limiting, and beta-gated billing enforcement.
+              </p>
             </div>
           </div>
           <div className="rounded-[28px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-6">
-            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-warning)]">Still deferred</div>
+            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-warning)]">
+              Still deferred
+            </div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
-              <p>Live Stripe checkout, customer billing portal, and a broader self-serve workspace invitation funnel beyond the hosted beta operator path.</p>
+              <p>
+                Live Stripe checkout, customer billing portal, and a broader self-serve workspace invitation funnel
+                beyond the hosted beta operator path.
+              </p>
             </div>
           </div>
         </div>
@@ -122,7 +145,9 @@ export default function DocsPage() {
       <section className="border-t border-[var(--ag-border-subtle)] bg-[color:rgb(7_11_16_/_0.94)]">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-16 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
           <div className="space-y-4">
-            <div className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-color-brand)]">Need the plan envelope too?</div>
+            <div className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-color-brand)]">
+              Need the plan envelope too?
+            </div>
             <h2 className="max-w-3xl text-3xl font-semibold tracking-[-0.03em] text-[var(--ag-text-primary)] sm:text-4xl">
               Compare hosted plan limits before you bring more repos or seats online.
             </h2>

@@ -1,11 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-
 import { getWorkspaceAuditLog } from "@/lib/api/endpoints/audit";
+import { useCursorPaginatedQuery } from "@/lib/query/hooks/use-cursor-paginated-query";
 import { queryKeys } from "@/lib/query/keys";
 
 export function useAuditQuery() {
-  return useQuery({
+  return useCursorPaginatedQuery({
     queryKey: queryKeys.audit,
-    queryFn: () => getWorkspaceAuditLog(),
+    queryFn: ({ cursor }) => getWorkspaceAuditLog({ cursor }),
   });
 }

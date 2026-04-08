@@ -1,6 +1,12 @@
 import { http, HttpResponse } from "msw";
 
-import { getApprovalsFixture, getCalibrationFixture, getDashboardFixture, getRepositoriesFixture, getRunFixture } from "@/mocks/fixtures";
+import {
+  getApprovalsFixture,
+  getCalibrationFixture,
+  getDashboardFixture,
+  getRepositoriesFixture,
+  getRunFixture,
+} from "@/mocks/fixtures";
 import { PreviewStateSchema } from "@/schemas/cloud";
 
 function resolvePreviewState(request: Request) {

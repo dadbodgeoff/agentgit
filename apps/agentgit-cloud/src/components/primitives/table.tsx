@@ -26,10 +26,7 @@ export function TableCell({ className, ...props }: HTMLAttributes<HTMLTableCellE
   return <td className={cn("px-4 py-3 text-[13px] text-[var(--ag-text-primary)]", className)} {...props} />;
 }
 
-export function TableHeaderCell({
-  className,
-  ...props
-}: HTMLAttributes<HTMLTableCellElement>) {
+export function TableHeaderCell({ className, ...props }: HTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
       className={cn("px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-[0.06em]", className)}

@@ -38,7 +38,7 @@ import { formatAbsoluteDate, formatConfidence, formatNumber, formatRelativeTimes
 
 type SnapshotToast = {
   message: string;
-  tone: "success" | "warning";
+  tone: "success" | "warning" | "error";
 };
 
 function SnapshotPageSkeleton() {
@@ -115,9 +115,9 @@ export function RepositorySnapshotsPage({
           : "connecting live updates";
   const snapshots = snapshotsQuery.data;
   const items = snapshots?.items ?? [];
-  const selectedSnapshot =
-    items.find((snapshot) => snapshot.snapshotId === selectedSnapshotId) ?? items[0] ?? null;
-  const activePreview = selectedSnapshot && restorePreview?.snapshotId === selectedSnapshot.snapshotId ? restorePreview : null;
+  const selectedSnapshot = items.find((snapshot) => snapshot.snapshotId === selectedSnapshotId) ?? items[0] ?? null;
+  const activePreview =
+    selectedSnapshot && restorePreview?.snapshotId === selectedSnapshot.snapshotId ? restorePreview : null;
 
   useEffect(() => {
     if (!selectedSnapshotId && items[0]) {
@@ -154,7 +154,12 @@ export function RepositorySnapshotsPage({
       setRestorePreview(result);
     },
     onError: (error) => {
-      setPanelError(getApiErrorMessage(error, "Could not plan snapshot recovery. Try again."));
+      const message = getApiErrorMessage(error, "Could not plan snapshot recovery. Try again.");
+      setPanelError(message);
+      setToast({
+        tone: "error",
+        message,
+      });
     },
   });
 
@@ -182,7 +187,12 @@ export function RepositorySnapshotsPage({
       void queryClient.invalidateQueries({ queryKey: queryKeys.runs(owner, name) });
     },
     onError: (error) => {
-      setPanelError(getApiErrorMessage(error, "Could not restore snapshot. Try again."));
+      const message = getApiErrorMessage(error, "Could not restore snapshot. Try again.");
+      setPanelError(message);
+      setToast({
+        tone: "error",
+        message,
+      });
     },
   });
 
@@ -202,7 +212,9 @@ export function RepositorySnapshotsPage({
     return (
       <>
         <PageHeader
-          actions={<StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />}
+          actions={
+            <StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />
+          }
           description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
           title="Snapshots"
         />
@@ -220,7 +232,9 @@ export function RepositorySnapshotsPage({
     return (
       <>
         <PageHeader
-          actions={<StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />}
+          actions={
+            <StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />
+          }
           description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
           title="Snapshots"
         />
@@ -239,7 +253,9 @@ export function RepositorySnapshotsPage({
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />
-              <Badge tone={snapshots?.authorityReachable ? "accent" : "warning"}>{snapshots?.authorityReachable ? "Authority reachable" : "Authority offline"}</Badge>
+              <Badge tone={snapshots?.authorityReachable ? "accent" : "warning"}>
+                {snapshots?.authorityReachable ? "Authority reachable" : "Authority offline"}
+              </Badge>
             </div>
           }
           description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
@@ -265,7 +281,9 @@ export function RepositorySnapshotsPage({
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />
-            <Badge tone={snapshots.authorityReachable ? "accent" : "warning"}>{snapshots.authorityReachable ? "Authority reachable" : "Authority offline"}</Badge>
+            <Badge tone={snapshots.authorityReachable ? "accent" : "warning"}>
+              {snapshots.authorityReachable ? "Authority reachable" : "Authority offline"}
+            </Badge>
           </div>
         }
         description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
@@ -292,6 +310,9 @@ export function RepositorySnapshotsPage({
             >
               Repository detail
             </Link>
+          </div>
+          <div className="text-sm text-[var(--ag-text-secondary)]">
+            Showing {items.length} of {snapshots.total} snapshots loaded for recovery review.
           </div>
 
           <TableRoot>
@@ -321,7 +342,9 @@ export function RepositorySnapshotsPage({
                           {snapshot.snapshotClass} / {snapshot.fidelity}
                         </div>
                         {selected ? (
-                          <div className="mt-2 text-xs uppercase tracking-[0.12em] text-[var(--ag-color-brand)]">Selected</div>
+                          <div className="mt-2 text-xs uppercase tracking-[0.12em] text-[var(--ag-color-brand)]">
+                            Selected
+                          </div>
                         ) : null}
                       </button>
                     </TableCell>
@@ -334,14 +357,20 @@ export function RepositorySnapshotsPage({
                     <TableCell>
                       <Badge tone={integrityTone(snapshot.integrityStatus)}>{snapshot.integrityStatus}</Badge>
                     </TableCell>
-                    <TableCell className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(snapshot.createdAt)}</TableCell>
+                    <TableCell className="text-[var(--ag-text-secondary)]">
+                      {formatRelativeTimestamp(snapshot.createdAt)}
+                    </TableCell>
                     <TableCell>
                       <div className="space-y-1">
                         <Badge tone={restoreTone(snapshot)}>
-                          {snapshot.latestRecovery ? `${snapshot.latestRecovery.outcome} ${formatRelativeTimestamp(snapshot.latestRecovery.executedAt)}` : "Not restored"}
+                          {snapshot.latestRecovery
+                            ? `${snapshot.latestRecovery.outcome} ${formatRelativeTimestamp(snapshot.latestRecovery.executedAt)}`
+                            : "Not restored"}
                         </Badge>
                         {restoreCommandDisplayState(snapshot) ? (
-                          <div className="text-xs text-[var(--ag-text-secondary)]">{restoreCommandDisplayState(snapshot)}</div>
+                          <div className="text-xs text-[var(--ag-text-secondary)]">
+                            {restoreCommandDisplayState(snapshot)}
+                          </div>
                         ) : null}
                       </div>
                     </TableCell>
@@ -350,12 +379,28 @@ export function RepositorySnapshotsPage({
               })}
             </TableBody>
           </TableRoot>
+          {snapshotsQuery.hasNextPage ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ag-border-subtle)] pt-4">
+              <p className="text-sm text-[var(--ag-text-secondary)]">
+                Load older snapshot boundaries and restore history.
+              </p>
+              <Button
+                disabled={snapshotsQuery.isFetchingNextPage}
+                onClick={() => void snapshotsQuery.fetchNextPage()}
+                variant="secondary"
+              >
+                {snapshotsQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+              </Button>
+            </div>
+          ) : null}
         </Card>
 
         <Card className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">Restore detail</h2>
-            {selectedSnapshot ? <Badge tone={integrityTone(selectedSnapshot.integrityStatus)}>{selectedSnapshot.integrityStatus}</Badge> : null}
+            {selectedSnapshot ? (
+              <Badge tone={integrityTone(selectedSnapshot.integrityStatus)}>{selectedSnapshot.integrityStatus}</Badge>
+            ) : null}
           </div>
 
           {selectedSnapshot ? (
@@ -371,12 +416,15 @@ export function RepositorySnapshotsPage({
                 </div>
                 <div>
                   <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Target</div>
-                  <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">{selectedSnapshot.targetLocator}</div>
+                  <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">
+                    {selectedSnapshot.targetLocator}
+                  </div>
                 </div>
                 <div>
                   <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Captured</div>
                   <div className="mt-1 font-medium">
-                    {formatAbsoluteDate(selectedSnapshot.createdAt)} · {formatRelativeTimestamp(selectedSnapshot.createdAt)}
+                    {formatAbsoluteDate(selectedSnapshot.createdAt)} ·{" "}
+                    {formatRelativeTimestamp(selectedSnapshot.createdAt)}
                   </div>
                 </div>
                 <div>
@@ -407,7 +455,8 @@ export function RepositorySnapshotsPage({
                     {selectedSnapshot.latestRecovery.outcome} via {selectedSnapshot.latestRecovery.strategy}
                   </div>
                   <div className="mt-1 text-xs text-[var(--ag-text-tertiary)]">
-                    {formatAbsoluteDate(selectedSnapshot.latestRecovery.executedAt)} · {selectedSnapshot.latestRecovery.recoveryClass}
+                    {formatAbsoluteDate(selectedSnapshot.latestRecovery.executedAt)} ·{" "}
+                    {selectedSnapshot.latestRecovery.recoveryClass}
                   </div>
                 </div>
               ) : null}
@@ -416,14 +465,26 @@ export function RepositorySnapshotsPage({
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
                   <div className="text-sm font-medium text-[var(--ag-text-primary)]">Latest restore command</div>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <Badge tone={selectedSnapshot.latestRestoreCommandStatus === "completed" ? "success" : selectedSnapshot.latestRestoreCommandStatus === "failed" || selectedSnapshot.latestRestoreCommandStatus === "expired" ? "warning" : "accent"}>
+                    <Badge
+                      tone={
+                        selectedSnapshot.latestRestoreCommandStatus === "completed"
+                          ? "success"
+                          : selectedSnapshot.latestRestoreCommandStatus === "failed" ||
+                              selectedSnapshot.latestRestoreCommandStatus === "expired"
+                            ? "warning"
+                            : "accent"
+                      }
+                    >
                       {restoreCommandDisplayState(selectedSnapshot) ?? "unknown"}
                     </Badge>
-                    <span className="font-mono text-xs text-[var(--ag-text-secondary)]">{selectedSnapshot.latestRestoreCommandId}</span>
+                    <span className="font-mono text-xs text-[var(--ag-text-secondary)]">
+                      {selectedSnapshot.latestRestoreCommandId}
+                    </span>
                   </div>
                   {selectedSnapshot.latestRestoreCommandUpdatedAt ? (
                     <div className="mt-1 text-xs text-[var(--ag-text-tertiary)]">
-                      {formatAbsoluteDate(selectedSnapshot.latestRestoreCommandUpdatedAt)} · {formatRelativeTimestamp(selectedSnapshot.latestRestoreCommandUpdatedAt)}
+                      {formatAbsoluteDate(selectedSnapshot.latestRestoreCommandUpdatedAt)} ·{" "}
+                      {formatRelativeTimestamp(selectedSnapshot.latestRestoreCommandUpdatedAt)}
                     </div>
                   ) : null}
                   {selectedSnapshot.latestRestoreCommandMessage ? (
@@ -443,7 +504,12 @@ export function RepositorySnapshotsPage({
                     {selectedSnapshot.latestRestoreRunId && selectedSnapshot.latestRestoreActionId ? (
                       <Link
                         className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
-                        href={actionDetailRoute(owner, name, selectedSnapshot.latestRestoreRunId, selectedSnapshot.latestRestoreActionId)}
+                        href={actionDetailRoute(
+                          owner,
+                          name,
+                          selectedSnapshot.latestRestoreRunId,
+                          selectedSnapshot.latestRestoreActionId,
+                        )}
                       >
                         Open restored action
                       </Link>
@@ -494,7 +560,8 @@ export function RepositorySnapshotsPage({
                   </div>
                   {!snapshots.authorityReachable ? (
                     <div className="text-sm text-[var(--ag-status-warning)]">
-                      The authority daemon is offline, so restore planning and connector execution are temporarily unavailable.
+                      The authority daemon is offline, so restore planning and connector execution are temporarily
+                      unavailable.
                     </div>
                   ) : null}
                   {selectedSnapshot.integrityStatus !== "verified" ? (
@@ -519,27 +586,44 @@ export function RepositorySnapshotsPage({
                   <div className="text-sm text-[var(--ag-text-secondary)]">{activePreview.plan.strategy}</div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Confidence</div>
+                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                        Confidence
+                      </div>
                       <div className="mt-1 font-medium">{formatConfidence(activePreview.plan.confidence)}</div>
                     </div>
                     <div>
-                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Paths to change</div>
-                      <div className="mt-1 font-medium">{formatNumber(activePreview.plan.impact_preview.paths_to_change ?? 0)}</div>
+                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                        Paths to change
+                      </div>
+                      <div className="mt-1 font-medium">
+                        {formatNumber(activePreview.plan.impact_preview.paths_to_change ?? 0)}
+                      </div>
                     </div>
                     <div>
-                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Later actions affected</div>
-                      <div className="mt-1 font-medium">{formatNumber(activePreview.plan.impact_preview.later_actions_affected)}</div>
+                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                        Later actions affected
+                      </div>
+                      <div className="mt-1 font-medium">
+                        {formatNumber(activePreview.plan.impact_preview.later_actions_affected)}
+                      </div>
                     </div>
                     <div>
-                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Data loss risk</div>
-                      <div className="mt-1 font-medium capitalize">{activePreview.plan.impact_preview.data_loss_risk}</div>
+                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                        Data loss risk
+                      </div>
+                      <div className="mt-1 font-medium capitalize">
+                        {activePreview.plan.impact_preview.data_loss_risk}
+                      </div>
                     </div>
                   </div>
                   {activePreview.plan.warnings.length > 0 ? (
                     <div className="space-y-2">
                       <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Warnings</div>
                       {activePreview.plan.warnings.map((warning) => (
-                        <div className="text-sm text-[var(--ag-status-warning)]" key={`${warning.code}:${warning.message}`}>
+                        <div
+                          className="text-sm text-[var(--ag-status-warning)]"
+                          key={`${warning.code}:${warning.message}`}
+                        >
                           {warning.code}: {warning.message}
                         </div>
                       ))}
@@ -560,7 +644,13 @@ export function RepositorySnapshotsPage({
 
       {toast ? (
         <ToastViewport>
-          <ToastCard className={toast.tone === "warning" ? "border-[color:rgb(245_158_11_/_0.28)]" : "border-[color:rgb(34_197_94_/_0.28)]"}>
+          <ToastCard
+            className={
+              toast.tone === "warning"
+                ? "border-[color:rgb(245_158_11_/_0.28)]"
+                : "border-[color:rgb(34_197_94_/_0.28)]"
+            }
+          >
             {toast.message}
           </ToastCard>
         </ToastViewport>

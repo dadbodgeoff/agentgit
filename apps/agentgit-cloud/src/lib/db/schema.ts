@@ -1,17 +1,9 @@
 import { relations, sql } from "drizzle-orm";
-import {
-  boolean,
-  index,
-  integer,
-  jsonb,
-  pgTable,
-  primaryKey,
-  text,
-  timestamp,
-  uniqueIndex,
-} from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import type {
+  RepositoryPolicyChangeSource,
+  StoredRepositoryPolicyVersion,
   WorkspaceBilling,
   WorkspaceIntegrationSnapshot,
   WorkspaceRole,
@@ -139,6 +131,46 @@ export const cloudWorkspaceIntegrationSecrets = pgTable("cloud_workspace_integra
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const cloudWorkspaceSsoSecrets = pgTable("cloud_workspace_sso_secrets", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+  clientSecret: text("client_secret"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const cloudRepositoryPolicyVersions = pgTable(
+  "cloud_repository_policy_versions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => cloudWorkspaces.id, { onDelete: "cascade" }),
+    repositoryId: text("repository_id").notNull(),
+    repositoryOwner: text("repository_owner").notNull(),
+    repositoryName: text("repository_name").notNull(),
+    policyPath: text("policy_path").notNull(),
+    document: jsonb("document").$type<StoredRepositoryPolicyVersion["document"]>().notNull(),
+    documentHash: text("document_hash").notNull(),
+    profileName: text("profile_name").notNull(),
+    policyVersion: text("policy_version").notNull(),
+    ruleCount: integer("rule_count").notNull(),
+    thresholdCount: integer("threshold_count").notNull(),
+    changeSource: text("change_source").$type<RepositoryPolicyChangeSource>().notNull(),
+    actorUserId: text("actor_user_id").references(() => cloudUsers.id, { onDelete: "set null" }),
+    actorName: text("actor_name").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    workspaceRepoCreatedIdx: index("cloud_repository_policy_versions_workspace_repo_created_idx").on(
+      table.workspaceId,
+      table.repositoryId,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const cloudRateLimitBuckets = pgTable(
   "cloud_rate_limit_buckets",
   {
@@ -158,6 +190,7 @@ export const cloudWorkspaceRelations = relations(cloudWorkspaces, ({ many, one }
   memberships: many(cloudWorkspaceMemberships),
   invites: many(cloudWorkspaceInvites),
   repositories: many(cloudWorkspaceRepositories),
+  repositoryPolicyVersions: many(cloudRepositoryPolicyVersions),
   settings: one(cloudWorkspaceSettings, {
     fields: [cloudWorkspaces.id],
     references: [cloudWorkspaceSettings.workspaceId],
@@ -173,6 +206,10 @@ export const cloudWorkspaceRelations = relations(cloudWorkspaces, ({ many, one }
   integrationSecrets: one(cloudWorkspaceIntegrationSecrets, {
     fields: [cloudWorkspaces.id],
     references: [cloudWorkspaceIntegrationSecrets.workspaceId],
+  }),
+  ssoSecrets: one(cloudWorkspaceSsoSecrets, {
+    fields: [cloudWorkspaces.id],
+    references: [cloudWorkspaceSsoSecrets.workspaceId],
   }),
 }));
 
@@ -214,6 +251,17 @@ export const cloudWorkspaceSettingsRelations = relations(cloudWorkspaceSettings,
   workspace: one(cloudWorkspaces, {
     fields: [cloudWorkspaceSettings.workspaceId],
     references: [cloudWorkspaces.id],
+  }),
+}));
+
+export const cloudRepositoryPolicyVersionRelations = relations(cloudRepositoryPolicyVersions, ({ one }) => ({
+  workspace: one(cloudWorkspaces, {
+    fields: [cloudRepositoryPolicyVersions.workspaceId],
+    references: [cloudWorkspaces.id],
+  }),
+  actor: one(cloudUsers, {
+    fields: [cloudRepositoryPolicyVersions.actorUserId],
+    references: [cloudUsers.id],
   }),
 }));
 

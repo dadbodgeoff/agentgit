@@ -4,8 +4,8 @@ function main() {
   const summary = getCloudRuntimeSummary();
   const hasFailures = summary.checks.some((check) => check.level === "fail");
 
-  console.log(
-    JSON.stringify(
+  process.stdout.write(
+    `${JSON.stringify(
       {
         mode: summary.mode,
         status: summary.status,
@@ -16,7 +16,7 @@ function main() {
       },
       null,
       2,
-    ),
+    )}\n`,
   );
 
   if (hasFailures) {

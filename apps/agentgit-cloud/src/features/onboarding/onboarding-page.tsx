@@ -17,11 +17,7 @@ import { authenticatedRoutes } from "@/lib/navigation/routes";
 import { useOnboardingBootstrapQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
 import type { PreviewState } from "@/schemas/cloud";
-import {
-  OnboardingFormValuesSchema,
-  type OnboardingFormValues,
-  type PolicyPack,
-} from "@/schemas/cloud";
+import { OnboardingFormValuesSchema, type OnboardingFormValues, type PolicyPack } from "@/schemas/cloud";
 
 const onboardingSteps = [
   { id: "workspace", title: "Workspace", description: "Create the workspace name and slug." },
@@ -53,11 +49,7 @@ function checkboxClassName() {
   return "h-4 w-4 rounded border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] text-[var(--ag-color-brand)]";
 }
 
-function Stepper({
-  activeStep,
-}: {
-  activeStep: number;
-}) {
+function Stepper({ activeStep }: { activeStep: number }) {
   return (
     <div className="grid gap-3 md:grid-cols-5">
       {onboardingSteps.map((step, index) => {
@@ -78,7 +70,13 @@ function Stepper({
                 {status === "complete" ? "✓" : index + 1}
               </div>
               {index < onboardingSteps.length - 1 ? (
-                <div className={status === "complete" ? "h-px flex-1 bg-[var(--ag-color-brand)]" : "h-px flex-1 bg-[var(--ag-border-default)]"} />
+                <div
+                  className={
+                    status === "complete"
+                      ? "h-px flex-1 bg-[var(--ag-color-brand)]"
+                      : "h-px flex-1 bg-[var(--ag-border-default)]"
+                  }
+                />
               ) : null}
             </div>
             <div className="space-y-1">
@@ -116,6 +114,7 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
   const bootstrapQuery = useOnboardingBootstrapQuery(previewState);
   const [activeStep, setActiveStep] = useState(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
 
   const form = useForm<OnboardingFormValues>({
     resolver: zodResolver(OnboardingFormValuesSchema),
@@ -175,11 +174,25 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
     return () => window.clearTimeout(timeout);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (!errorToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setErrorToast(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [errorToast]);
+
   const watchedValues = watch();
   const selectedRepositoryIds = watchedValues.repositoryIds;
   const selectedRepositories = useMemo(
     () =>
-      bootstrapQuery.data?.availableRepositories.filter((repository) => selectedRepositoryIds.includes(repository.id)) ?? [],
+      bootstrapQuery.data?.availableRepositories.filter((repository) =>
+        selectedRepositoryIds.includes(repository.id),
+      ) ?? [],
     [bootstrapQuery.data?.availableRepositories, selectedRepositoryIds],
   );
 
@@ -198,6 +211,21 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
           router.push(authenticatedRoutes.dashboard);
         });
       }, 900);
+    },
+    onError: (error) => {
+      if (error instanceof ApiClientError) {
+        const message =
+          typeof error.details === "object" &&
+          error.details !== null &&
+          "message" in error.details &&
+          typeof error.details.message === "string"
+            ? error.details.message
+            : "Could not launch the workspace. Try again.";
+        setErrorToast(message);
+        return;
+      }
+
+      setErrorToast("Could not launch the workspace. Try again.");
     },
   });
 
@@ -273,17 +301,29 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
   return (
     <>
       <PageHeader
-        actions={<Badge tone={isDirty ? "warning" : "success"}>{isDirty ? "Draft in progress" : "Ready to launch"}</Badge>}
+        actions={
+          <Badge tone={isDirty ? "warning" : "success"}>{isDirty ? "Draft in progress" : "Ready to launch"}</Badge>
+        }
         description="Owner-only setup wizard for workspace creation, repository connection, invitations, policy defaults, and launch."
         title="Onboarding"
       />
 
       <div className="grid gap-6 md:grid-cols-3">
         <MetricCard label="Owner access" trend={activeWorkspace.role} value={user.name} />
-        <MetricCard label="Repositories selected" trend={`${bootstrap.availableRepositories.length} available`} value={String(selectedRepositoryIds.length)} />
+        <MetricCard
+          label="Repositories selected"
+          trend={`${bootstrap.availableRepositories.length} available`}
+          value={String(selectedRepositoryIds.length)}
+        />
         <MetricCard
           label="Launch state"
-          trend={isRedirecting ? "redirecting" : bootstrap.launchedAt ? "existing workspace state loaded" : "step validation enabled"}
+          trend={
+            isRedirecting
+              ? "redirecting"
+              : bootstrap.launchedAt
+                ? "existing workspace state loaded"
+                : "step validation enabled"
+          }
           value={launchMutation.isSuccess || bootstrap.launchedAt ? "Launched" : `${activeStep + 1}/5`}
         />
       </div>
@@ -355,7 +395,9 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                       >
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-1">
-                            <div className="text-base font-semibold">{repository.owner}/{repository.name}</div>
+                            <div className="text-base font-semibold">
+                              {repository.owner}/{repository.name}
+                            </div>
                             <div className="text-sm text-[var(--ag-text-secondary)]">{repository.description}</div>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -451,12 +493,15 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
               <div className="space-y-2">
                 <h2 className="text-lg font-semibold">Configure the default policy pack</h2>
                 <p className="text-sm text-[var(--ag-text-secondary)]">
-                  Step 4 validates policy and notification defaults before any repository starts running governed actions.
+                  Step 4 validates policy and notification defaults before any repository starts running governed
+                  actions.
                 </p>
               </div>
 
               <label className="flex w-full flex-col gap-1">
-                <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Default notification channel</span>
+                <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">
+                  Default notification channel
+                </span>
                 <select className={selectClassName()} {...register("defaultNotificationChannel")}>
                   <option value="slack">Slack</option>
                   <option value="email">Email</option>
@@ -481,7 +526,12 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                       >
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-base font-semibold capitalize">{policyPack}</span>
-                          <input className={checkboxClassName()} type="radio" value={policyPack} {...register("policyPack")} />
+                          <input
+                            className={checkboxClassName()}
+                            type="radio"
+                            value={policyPack}
+                            {...register("policyPack")}
+                          />
                         </div>
                         <p className="text-sm text-[var(--ag-text-secondary)]">{policyPackDescriptions[policyPack]}</p>
                       </label>
@@ -510,7 +560,8 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                 <Card className="space-y-3 bg-[var(--ag-bg-elevated)]">
                   <h3 className="text-base font-semibold">Team and policy</h3>
                   <div className="text-sm text-[var(--ag-text-secondary)]">
-                    {watchedValues.invites.length} invite{watchedValues.invites.length === 1 ? "" : "s"} · {watchedValues.defaultNotificationChannel.replace("_", " ")} · {watchedValues.policyPack}
+                    {watchedValues.invites.length} invite{watchedValues.invites.length === 1 ? "" : "s"} ·{" "}
+                    {watchedValues.defaultNotificationChannel.replace("_", " ")} · {watchedValues.policyPack}
                   </div>
                 </Card>
               </div>
@@ -524,7 +575,9 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                         className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-sm"
                         key={repository.id}
                       >
-                        <div className="font-medium">{repository.owner}/{repository.name}</div>
+                        <div className="font-medium">
+                          {repository.owner}/{repository.name}
+                        </div>
                         <div className="text-[var(--ag-text-secondary)]">{repository.description}</div>
                       </div>
                     ))}
@@ -544,7 +597,8 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                     I reviewed the workspace, repositories, team access, and default policy pack.
                   </span>
                   <span className="block text-sm text-[var(--ag-text-secondary)]">
-                    Launching sends the workspace into the main dashboard experience with the selected repositories connected.
+                    Launching sends the workspace into the main dashboard experience with the selected repositories
+                    connected.
                   </span>
                 </span>
               </label>
@@ -571,11 +625,17 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
               <div>
                 <h2 className="text-base font-semibold">Step controls</h2>
                 <p className="text-sm text-[var(--ag-text-secondary)]">
-                  Each step validates before progression, and launch uses the same auth-protected API rail as the rest of the app.
+                  Each step validates before progression, and launch uses the same auth-protected API rail as the rest
+                  of the app.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button disabled={activeStep === 0 || isSubmitting} onClick={handlePreviousStep} type="button" variant="secondary">
+                <Button
+                  disabled={activeStep === 0 || isSubmitting}
+                  onClick={handlePreviousStep}
+                  type="button"
+                  variant="secondary"
+                >
                   Back
                 </Button>
                 {activeStep < onboardingSteps.length - 1 ? (
@@ -597,12 +657,19 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
 
           <Card className="space-y-4">
             <h2 className="text-lg font-semibold">Stepper proof points</h2>
-              <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">
-                <p>This route validates owner-only access, authenticated bootstrap/loading states, and multi-step RHF progression.</p>
-                <p>Repository selection, invite field arrays, and policy defaults all feed the same typed launch payload.</p>
-                <p>The final launch mutation persists workspace connection state and redirects into the dashboard flow.</p>
-              </div>
-            </Card>
+            <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">
+              <p>
+                This route validates owner-only access, authenticated bootstrap/loading states, and multi-step RHF
+                progression.
+              </p>
+              <p>
+                Repository selection, invite field arrays, and policy defaults all feed the same typed launch payload.
+              </p>
+              <p>
+                The final launch mutation persists workspace connection state and redirects into the dashboard flow.
+              </p>
+            </div>
+          </Card>
 
           <Card className="space-y-4">
             <h2 className="text-lg font-semibold">Current draft</h2>
@@ -639,6 +706,16 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
             <div className="space-y-1">
               <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Workspace launched</div>
               <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
+      ) : null}
+      {errorToast ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Launch failed</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{errorToast}</p>
             </div>
           </ToastCard>
         </ToastViewport>

@@ -62,7 +62,8 @@ async function resolveGitHubIdentity(input: RepositoryIdentityInput): Promise<Pr
   const token = getGitHubAccessToken();
   if (!token) {
     return buildLocalProviderRepositoryIdentity(input, {
-      statusReason: "Provider verification is unavailable because no GitHub API token is configured in the cloud environment.",
+      statusReason:
+        "Provider verification is unavailable because no GitHub API token is configured in the cloud environment.",
     });
   }
 
@@ -113,7 +114,9 @@ async function resolveGitHubIdentity(input: RepositoryIdentityInput): Promise<Pr
     driftReasons.push(`Provider canonical name is ${providerOwner}/${providerName}.`);
   }
   if (providerDefaultBranch !== input.defaultBranch) {
-    driftReasons.push(`Provider default branch is ${providerDefaultBranch}, local metadata reported ${input.defaultBranch}.`);
+    driftReasons.push(
+      `Provider default branch is ${providerDefaultBranch}, local metadata reported ${input.defaultBranch}.`,
+    );
   }
 
   return ProviderRepositoryIdentitySchema.parse({

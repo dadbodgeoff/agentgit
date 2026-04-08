@@ -10,6 +10,14 @@ function getControlPlaneStateDbPath(): string {
   return path.join(root, ".agentgit", "state", "cloud", "control-plane.db");
 }
 
+export function ensureLocalControlPlaneStateInitialized(): void {
+  const dbPath = getControlPlaneStateDbPath();
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+
+  const store = new ControlPlaneStateStore(dbPath);
+  store.close();
+}
+
 export function withControlPlaneState<T>(run: (store: ControlPlaneStateStore) => T): T {
   const dbPath = getControlPlaneStateDbPath();
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });

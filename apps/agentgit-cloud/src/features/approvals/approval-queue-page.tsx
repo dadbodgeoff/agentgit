@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 
 import { ApprovalCard } from "@/components/composites";
 import { EmptyState, LoadingSkeleton, PageStatePanel, StaleIndicator } from "@/components/feedback";
@@ -17,11 +17,7 @@ import { actionDetailRoute, repositoryRoute, repositorySnapshotsRoute, runDetail
 import { useApprovalsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
 import type { PreviewState } from "@/schemas/cloud";
-import {
-  ApprovalDecisionResponseSchema,
-  type ApprovalListItem,
-  type ApprovalListResponse,
-} from "@/schemas/cloud";
+import { ApprovalDecisionResponseSchema, type ApprovalListItem, type ApprovalListResponse } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 
 type DecisionIntent = "approve" | "reject";
@@ -159,7 +155,7 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
       ? `live ${formatRelativeTimestamp(liveUpdateStatus.lastInvalidatedAt)}`
       : liveUpdateStatus.state === "connected"
         ? "live updates active"
-      : liveUpdateStatus.state === "degraded"
+        : liveUpdateStatus.state === "degraded"
           ? "updates delayed"
           : "connecting live updates";
 
@@ -192,15 +188,36 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
   }, [toast]);
 
   function removeApprovalFromCache(approvalId: string) {
-    queryClient.setQueryData<ApprovalListResponse>([...queryKeys.approvals, previewState], (current) => {
+    queryClient.setQueryData<InfiniteData<ApprovalListResponse>>([...queryKeys.approvals, previewState], (current) => {
       if (!current) {
         return current;
       }
 
+      let removed = false;
+      const nextPages = current.pages.map((page) => {
+        const nextItems = page.items.filter((item) => item.id !== approvalId);
+        if (nextItems.length !== page.items.length) {
+          removed = true;
+        }
+
+        return {
+          ...page,
+          items: nextItems,
+        };
+      });
+
+      if (!removed) {
+        return current;
+      }
+
+      const nextTotal = Math.max((current.pages[current.pages.length - 1]?.total ?? 0) - 1, 0);
+
       return {
         ...current,
-        items: current.items.filter((item) => item.id !== approvalId),
-        total: Math.max(current.total - 1, 0),
+        pages: nextPages.map((page) => ({
+          ...page,
+          total: nextTotal,
+        })),
       };
     });
 
@@ -264,6 +281,10 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
           ...current,
           [variables.approvalId]: fallbackMessage,
         }));
+        setToast({
+          tone: "error",
+          message: fallbackMessage,
+        });
         return;
       }
 
@@ -271,6 +292,10 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
         ...current,
         [variables.approvalId]: "Could not submit the decision. Try again.",
       }));
+      setToast({
+        tone: "error",
+        message: "Could not submit the decision. Try again.",
+      });
     },
   });
 
@@ -341,7 +366,11 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
         <MetricCard label="Expiring soon" trend="within approval TTL" value={String(expiringSoonCount)} />
         <MetricCard
           label="Oldest request"
-          trend={oldestPendingApproval ? `oldest ${formatRelativeTimestamp(oldestPendingApproval.requestedAt)}` : "no active requests"}
+          trend={
+            oldestPendingApproval
+              ? `oldest ${formatRelativeTimestamp(oldestPendingApproval.requestedAt)}`
+              : "no active requests"
+          }
           value={oldestPendingApproval ? oldestPendingApproval.workflowName : "clear"}
         />
       </div>
@@ -394,7 +423,8 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
             >
               {resolvedApprovals.length > 0 ? (
                 <p className="text-xs text-[var(--ag-text-secondary)]">
-                  {resolvedApprovals.length} resolved request{resolvedApprovals.length === 1 ? "" : "s"} remain in the audit rail below.
+                  {resolvedApprovals.length} resolved request{resolvedApprovals.length === 1 ? "" : "s"} remain in the
+                  audit rail below.
                 </p>
               ) : null}
             </EmptyState>
@@ -428,6 +458,25 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
               ) : null}
             </Card>
           ) : null}
+
+          {approvalsQuery.hasNextPage ? (
+            <Card className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">More approvals available</h2>
+                <p className="text-sm text-[var(--ag-text-secondary)]">
+                  Showing {approvalItems.length} of {approvals.total} approval records across pending and resolved
+                  history.
+                </p>
+              </div>
+              <Button
+                disabled={approvalsQuery.isFetchingNextPage}
+                onClick={() => void approvalsQuery.fetchNextPage()}
+                variant="secondary"
+              >
+                {approvalsQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+              </Button>
+            </Card>
+          ) : null}
         </div>
 
         <div className="space-y-6">
@@ -456,13 +505,18 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                     </div>
                     <h2 className="text-xl font-semibold">{selectedApproval.actionSummary}</h2>
                     <p className="text-sm text-[var(--ag-text-secondary)]">
-                      {selectedApproval.reasonSummary ?? "No additional policy rationale was attached to this approval."}
+                      {selectedApproval.reasonSummary ??
+                        "No additional policy rationale was attached to this approval."}
                     </p>
                   </div>
                   <div className="space-y-1 text-right text-xs text-[var(--ag-text-secondary)]">
                     <div>Requested {formatRelativeTimestamp(selectedApproval.requestedAt)}</div>
-                    {selectedApproval.expiresAt ? <div>Expires {formatRelativeTimestamp(selectedApproval.expiresAt)}</div> : null}
-                    {selectedApproval.resolvedAt ? <div>Resolved {formatRelativeTimestamp(selectedApproval.resolvedAt)}</div> : null}
+                    {selectedApproval.expiresAt ? (
+                      <div>Expires {formatRelativeTimestamp(selectedApproval.expiresAt)}</div>
+                    ) : null}
+                    {selectedApproval.resolvedAt ? (
+                      <div>Resolved {formatRelativeTimestamp(selectedApproval.resolvedAt)}</div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -481,15 +535,23 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                   </div>
                   <div>
                     <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Target</div>
-                    <div className="mt-1 font-medium">{selectedApproval.targetLabel ?? selectedApproval.targetLocator}</div>
+                    <div className="mt-1 font-medium">
+                      {selectedApproval.targetLabel ?? selectedApproval.targetLocator}
+                    </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Snapshot gate</div>
-                    <div className="mt-1 font-medium">{selectedApproval.snapshotRequired ? "Required before execution" : "Not required"}</div>
+                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                      Snapshot gate
+                    </div>
+                    <div className="mt-1 font-medium">
+                      {selectedApproval.snapshotRequired ? "Required before execution" : "Not required"}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Run</div>
-                    <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">{selectedApproval.runId}</div>
+                    <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">
+                      {selectedApproval.runId}
+                    </div>
                   </div>
                 </div>
 
@@ -544,13 +606,17 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                 </div>
 
                 <div className="space-y-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Authority target locator</h3>
+                  <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                    Authority target locator
+                  </h3>
                   <CodeBlock>{selectedApproval.targetLocator}</CodeBlock>
                 </div>
 
                 {selectedApproval.resolutionNote ? (
                   <div className="space-y-3">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Resolution note</h3>
+                    <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                      Resolution note
+                    </h3>
                     <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
                       {selectedApproval.resolutionNote}
                     </div>
@@ -577,15 +643,17 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                     {confirmRejectId === selectedApproval.id ? (
                       <div className="rounded-[var(--ag-radius-md)] border border-[color:rgb(239_68_68_/_0.25)] bg-[color:rgb(239_68_68_/_0.06)] p-4">
                         <p className="text-sm text-[var(--ag-text-primary)]">
-                          Rejecting will pause the agent session and keep the run blocked until a new action is submitted.
+                          Rejecting will pause the agent session and keep the run blocked until a new action is
+                          submitted.
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
-                        <Button
-                          disabled={decisionMutation.isPending || selectedApproval.connectorStatus !== "active"}
-                          onClick={() => submitDecision(selectedApproval.id, "reject")}
-                          variant="destructive"
-                        >
-                            {decisionMutation.isPending && decisionMutation.variables?.approvalId === selectedApproval.id
+                          <Button
+                            disabled={decisionMutation.isPending || selectedApproval.connectorStatus !== "active"}
+                            onClick={() => submitDecision(selectedApproval.id, "reject")}
+                            variant="destructive"
+                          >
+                            {decisionMutation.isPending &&
+                            decisionMutation.variables?.approvalId === selectedApproval.id
                               ? "Rejecting..."
                               : "Confirm reject"}
                           </Button>
@@ -641,8 +709,8 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
               <Badge>{user.name}</Badge>
             </div>
             <p className="text-sm text-[var(--ag-text-secondary)]">
-              Foundation follow-ups are captured alongside the approval loop so implementation work and cleanup work stay
-              in the same operating rhythm.
+              Foundation follow-ups are captured alongside the approval loop so implementation work and cleanup work
+              stay in the same operating rhythm.
             </p>
             <CodeBlock>
               {`Backlog file:

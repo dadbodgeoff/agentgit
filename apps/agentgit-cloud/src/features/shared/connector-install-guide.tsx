@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
-import { Badge, Button, Card } from "@/components/primitives";
+import { Badge, Button, Card, ToastCard, ToastViewport } from "@/components/primitives";
 import { getApiErrorMessage } from "@/lib/api/client";
 import { issueConnectorBootstrapToken } from "@/lib/api/endpoints/connectors";
 import { authenticatedRoutes } from "@/lib/navigation/routes";
@@ -39,10 +39,14 @@ export function ConnectorInstallGuide({
 }: ConnectorInstallGuideProps) {
   const readinessQuery = useRepositoryConnectionBootstrapQuery(true);
   const [bootstrapDetails, setBootstrapDetails] = useState<ConnectorBootstrapResponse | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const bootstrapMutation = useMutation({
     mutationFn: () => issueConnectorBootstrapToken(),
     onSuccess: (result) => {
       setBootstrapDetails(result);
+    },
+    onError: (error) => {
+      setToastMessage(getApiErrorMessage(error, "Could not issue a connector bootstrap token."));
     },
   });
 
@@ -78,6 +82,18 @@ export function ConnectorInstallGuide({
     return () => window.clearInterval(interval);
   }, [bootstrapDetails, readinessQuery, summary]);
 
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [toastMessage]);
+
   if (readinessQuery.isPending) {
     return (
       <Card className="space-y-4">
@@ -108,8 +124,7 @@ export function ConnectorInstallGuide({
     );
   }
 
-  const stepOneStatus: StepStatus =
-    summary.connectedRepositories.length > 0 ? "complete" : "active";
+  const stepOneStatus: StepStatus = summary.connectedRepositories.length > 0 ? "complete" : "active";
   const stepTwoStatus: StepStatus =
     summary.connectedRepositories.length === 0
       ? "pending"
@@ -146,9 +161,12 @@ export function ConnectorInstallGuide({
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
-              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">2. Bootstrap the connector on the right machine</div>
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
+                2. Bootstrap the connector on the right machine
+              </div>
               <div className="text-sm text-[var(--ag-text-secondary)]">
-                Generate a workspace-scoped bootstrap token, then run the local connector on the machine that holds the selected repos.
+                Generate a workspace-scoped bootstrap token, then start the local connector on the machine that holds
+                the selected repos so it stays connected after bootstrap.
               </div>
             </div>
             <Badge tone={stepTone(stepTwoStatus)}>{stepTwoStatus}</Badge>
@@ -158,9 +176,12 @@ export function ConnectorInstallGuide({
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
-              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">3. Verify first governed run readiness</div>
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
+                3. Verify first governed run readiness
+              </div>
               <div className="text-sm text-[var(--ag-text-secondary)]">
-                Once the connector is active, the workspace is ready to sync repo state, approvals, snapshots, and writeback commands.
+                Once the connector is active, the workspace is ready to sync repo state, approvals, snapshots, and
+                writeback commands.
               </div>
             </div>
             <Badge tone={stepTone(stepThreeStatus)}>{stepThreeStatus}</Badge>
@@ -172,7 +193,8 @@ export function ConnectorInstallGuide({
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-page)] px-4 py-3">
           <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Install target</div>
           <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
-            Run the bootstrap command on the exact machine that has the repository checkout and local AgentGit daemon state for:
+            Run the bootstrap command on the exact machine that has the repository checkout and local AgentGit daemon
+            state for:
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {summary.uncoveredRepositories.map((repository) => (
@@ -186,7 +208,9 @@ export function ConnectorInstallGuide({
 
       {summary.connectedRepositories.length > 0 ? (
         <div className="space-y-2">
-          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Selected repositories</div>
+          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+            Selected repositories
+          </div>
           <div className="flex flex-wrap gap-2">
             {summary.connectedRepositories.map((repository) => (
               <Badge
@@ -235,6 +259,16 @@ export function ConnectorInstallGuide({
           connected={summary.uncoveredRepositories.length === 0 && summary.connectedRepositories.length > 0}
           waitingForConnection={summary.uncoveredRepositories.length > 0}
         />
+      ) : null}
+      {toastMessage ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Bootstrap failed</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
       ) : null}
     </Card>
   );

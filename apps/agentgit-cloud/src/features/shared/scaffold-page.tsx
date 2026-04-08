@@ -2,7 +2,20 @@ import type { ReactNode } from "react";
 
 import { EmptyState, ErrorState, StaleIndicator } from "@/components/feedback";
 import { MetricCard, PageHeader } from "@/components/composites";
-import { Badge, Button, Card, CodeBlock, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow, TabList, TabTrigger } from "@/components/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  CodeBlock,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRoot,
+  TableRow,
+  TabList,
+  TabTrigger,
+} from "@/components/primitives";
 
 export interface ScaffoldSection {
   title: string;

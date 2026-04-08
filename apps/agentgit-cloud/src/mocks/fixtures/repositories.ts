@@ -36,16 +36,16 @@ const repositoriesReadyFixture = RepositoryListResponseSchema.parse({
     },
   ],
   total: 2,
-  page: 1,
-  per_page: 25,
+  page_size: 25,
+  next_cursor: null,
   has_more: false,
 });
 
 const repositoriesEmptyFixture = RepositoryListResponseSchema.parse({
   items: [],
   total: 0,
-  page: 1,
-  per_page: 25,
+  page_size: 25,
+  next_cursor: null,
   has_more: false,
 });
 

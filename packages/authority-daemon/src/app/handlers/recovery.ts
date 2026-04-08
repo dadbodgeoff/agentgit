@@ -1,7 +1,6 @@
 import type { RequestContext } from "@agentgit/core-ports";
 import type { StaticCompensationRegistry } from "@agentgit/recovery-engine";
 import {
-  createActionBoundaryReviewPlan,
   executePathSubsetRecovery,
   executeSnapshotRecovery,
   loadRecoverySnapshotManifest,
@@ -17,7 +16,6 @@ import {
   type PlanRecoveryResponsePayload,
   PreconditionError,
   type RecoveryPlan,
-  type RecoveryTarget,
   type RequestEnvelope,
   type ResponseEnvelope,
   validate,

@@ -24,7 +24,11 @@ import {
   TableRow,
 } from "@/components/primitives";
 import { getApiErrorMessage, ApiClientError } from "@/lib/api/client";
-import { updateRepositoryPolicy, validateRepositoryPolicy } from "@/lib/api/endpoints/repositories";
+import {
+  rollbackRepositoryPolicyVersion,
+  updateRepositoryPolicy,
+  validateRepositoryPolicy,
+} from "@/lib/api/endpoints/repositories";
 import { queryKeys } from "@/lib/query/keys";
 import { useRepositoryPolicyQuery } from "@/lib/query/hooks";
 import { formatConfidence } from "@/lib/utils/format";
@@ -34,6 +38,7 @@ import {
   type RepositoryPolicyDocumentInput,
   type RepositoryPolicySnapshot,
   type RepositoryPolicyValidation,
+  type RepositoryPolicyVersionSummary,
 } from "@/schemas/cloud";
 
 function documentClassName() {
@@ -48,6 +53,35 @@ function formatSourceScope(scope: string): string {
   return scope.replaceAll("_", " ");
 }
 
+function formatChangeSource(source: RepositoryPolicyVersionSummary["changeSource"]): string {
+  switch (source) {
+    case "rollback":
+      return "Rollback";
+    case "seed":
+      return "Seed";
+    default:
+      return "Save";
+  }
+}
+
+function formatPolicyVersionTimestamp(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function diffTone(change: "added" | "removed" | "changed"): "accent" | "warning" | "neutral" {
+  switch (change) {
+    case "added":
+      return "accent";
+    case "removed":
+      return "warning";
+    default:
+      return "neutral";
+  }
+}
+
 function recommendationTone(recommendation: PolicyThresholdRecommendation): "accent" | "warning" | "neutral" {
   switch (recommendation.direction) {
     case "tighten":
@@ -59,10 +93,7 @@ function recommendationTone(recommendation: PolicyThresholdRecommendation): "acc
   }
 }
 
-function applyRecommendationToDocument(
-  document: string,
-  recommendation: PolicyThresholdRecommendation,
-): string {
+function applyRecommendationToDocument(document: string, recommendation: PolicyThresholdRecommendation): string {
   const parsed = JSON.parse(document) as RepositoryPolicySnapshot["workspaceConfig"];
   const thresholds = [...(parsed.thresholds?.low_confidence ?? [])];
   const nextValue = recommendation.recommended_ask_below;
@@ -106,8 +137,10 @@ export function RepositoryPolicyPage({
   const queryClient = useQueryClient();
   const policyQuery = useRepositoryPolicyQuery(owner, name, previewState);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<RepositoryPolicyValidation | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
   const form = useForm<RepositoryPolicyDocumentInput>({
     resolver: zodResolver(RepositoryPolicyDocumentInputSchema),
@@ -136,6 +169,7 @@ export function RepositoryPolicyPage({
       document: serializePolicyDocument(policyQuery.data.workspaceConfig),
     });
     setValidationResult(policyQuery.data.validation);
+    setSelectedVersionId(policyQuery.data.currentVersionId ?? policyQuery.data.history[0]?.id ?? null);
   }, [policyQuery.data, reset]);
 
   useEffect(() => {
@@ -150,6 +184,18 @@ export function RepositoryPolicyPage({
     return () => window.clearTimeout(timeout);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (!errorToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setErrorToast(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [errorToast]);
+
   const validateMutation = useMutation({
     mutationFn: (document: string) => validateRepositoryPolicy(owner, name, document),
     onSuccess: (result) => {
@@ -158,7 +204,9 @@ export function RepositoryPolicyPage({
       setToastMessage(result.valid ? "Draft validated." : "Draft has validation issues.");
     },
     onError: (error) => {
-      setSubmitError(getApiErrorMessage(error, "Could not validate policy draft. Try again."));
+      const message = getApiErrorMessage(error, "Could not validate policy draft. Try again.");
+      setSubmitError(message);
+      setErrorToast(message);
     },
   });
 
@@ -169,6 +217,7 @@ export function RepositoryPolicyPage({
       queryClient.setQueryData([...queryKeys.repositoryPolicy(owner, name), previewState], result.policy);
       reset({ document: nextDocument });
       setValidationResult(result.policy.validation);
+      setSelectedVersionId(result.policy.currentVersionId ?? result.policy.history[0]?.id ?? null);
       setSubmitError(null);
       setToastMessage(result.message);
     },
@@ -180,17 +229,40 @@ export function RepositoryPolicyPage({
           "issues" in error.details &&
           Array.isArray(error.details.issues)
         ) {
-          setSubmitError((error.details.issues as string[]).join(" "));
+          const message = (error.details.issues as string[]).join(" ");
+          setSubmitError(message);
+          setErrorToast(message);
           return;
         }
       }
 
-      setSubmitError(getApiErrorMessage(error, "Could not save repository policy. Try again."));
+      const message = getApiErrorMessage(error, "Could not save repository policy. Try again.");
+      setSubmitError(message);
+      setErrorToast(message);
+    },
+  });
+
+  const rollbackMutation = useMutation({
+    mutationFn: (versionId: string) => rollbackRepositoryPolicyVersion(owner, name, versionId),
+    onSuccess: (result) => {
+      const nextDocument = serializePolicyDocument(result.policy.workspaceConfig);
+      queryClient.setQueryData([...queryKeys.repositoryPolicy(owner, name), previewState], result.policy);
+      reset({ document: nextDocument });
+      setValidationResult(result.policy.validation);
+      setSelectedVersionId(result.policy.currentVersionId ?? result.policy.history[0]?.id ?? null);
+      setSubmitError(null);
+      setToastMessage(result.message);
+    },
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Could not roll back repository policy. Try again.");
+      setSubmitError(message);
+      setErrorToast(message);
     },
   });
 
   const documentValue = watch("document");
-  const recommendationCount = policyQuery.data?.recommendations.filter((entry) => entry.requires_policy_update).length ?? 0;
+  const recommendationCount =
+    policyQuery.data?.recommendations.filter((entry) => entry.requires_policy_update).length ?? 0;
   const thresholdCount = policyQuery.data?.workspaceConfig.thresholds?.low_confidence.length ?? 0;
   const appliedThresholdCount = useMemo(() => {
     if (!validationResult?.valid) {
@@ -229,7 +301,9 @@ export function RepositoryPolicyPage({
       });
       setSubmitError(null);
     } catch {
-      setSubmitError("The current draft is not valid JSON yet, so a recommendation could not be applied automatically.");
+      setSubmitError(
+        "The current draft is not valid JSON yet, so a recommendation could not be applied automatically.",
+      );
     }
   }
 
@@ -260,7 +334,10 @@ export function RepositoryPolicyPage({
           description={`Repository governance for ${owner}/${name}, including policy sources, threshold tuning, and admin save controls.`}
           title="Policy"
         />
-        <PageStatePanel errorMessage={getApiErrorMessage(policyQuery.error, "Could not load repository policy. Retry.")} state="error" />
+        <PageStatePanel
+          errorMessage={getApiErrorMessage(policyQuery.error, "Could not load repository policy. Retry.")}
+          state="error"
+        />
       </>
     );
   }
@@ -272,12 +349,20 @@ export function RepositoryPolicyPage({
           description={`Repository governance for ${owner}/${name}, including policy sources, threshold tuning, and admin save controls.`}
           title="Policy"
         />
-        <EmptyState description="No policy state could be resolved for this repository yet." title="No policy available" />
+        <EmptyState
+          description="No policy state could be resolved for this repository yet."
+          title="No policy available"
+        />
       </>
     );
   }
 
   const policy = policyQuery.data;
+  const selectedVersion = policy.history.find((entry) => entry.id === selectedVersionId) ?? policy.history[0] ?? null;
+  const selectedVersionIndex = selectedVersion
+    ? policy.history.findIndex((entry) => entry.id === selectedVersion.id)
+    : -1;
+  const previousVersion = selectedVersionIndex >= 0 ? (policy.history[selectedVersionIndex + 1] ?? null) : null;
 
   return (
     <>
@@ -301,7 +386,11 @@ export function RepositoryPolicyPage({
           value={policy.authorityReachable ? "Live" : "Offline"}
         />
         <MetricCard label="Threshold entries" trend={`${thresholdCount} saved`} value={String(appliedThresholdCount)} />
-        <MetricCard label="Recommendations" trend={`${policy.loadedSources.length} loaded sources`} value={String(recommendationCount)} />
+        <MetricCard
+          label="Recommendations"
+          trend={`${policy.loadedSources.length} loaded sources`}
+          value={String(recommendationCount)}
+        />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,1fr)]">
@@ -386,10 +475,154 @@ export function RepositoryPolicyPage({
 
         <div className="space-y-6">
           <Card className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Version history</h2>
+                <p className="text-sm text-[var(--ag-text-secondary)]">
+                  Every saved or rolled back workspace override is retained with actor attribution and a diff from the
+                  prior version.
+                </p>
+              </div>
+              <Badge tone={policy.history.length > 0 ? "accent" : "neutral"}>{policy.history.length} versions</Badge>
+            </div>
+
+            {policy.history.length === 0 ? (
+              <EmptyState
+                description="History begins with the first saved workspace override for this repository."
+                title="No saved policy versions yet"
+              />
+            ) : (
+              <div className="space-y-3">
+                {policy.history.map((version) => {
+                  const isSelected = version.id === selectedVersion?.id;
+                  return (
+                    <button
+                      className={`w-full rounded-[var(--ag-radius-md)] border px-4 py-3 text-left transition ${
+                        isSelected
+                          ? "border-[var(--ag-color-brand)] bg-[var(--ag-bg-elevated)]"
+                          : "border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] hover:border-[var(--ag-border-strong)]"
+                      }`}
+                      key={version.id}
+                      onClick={() => setSelectedVersionId(version.id)}
+                      type="button"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
+                            {version.profileName}
+                          </div>
+                          <div className="text-xs text-[var(--ag-text-secondary)]">
+                            {formatPolicyVersionTimestamp(version.createdAt)} by {version.actorName}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {version.isCurrent ? <Badge tone="success">Current</Badge> : null}
+                          <Badge tone="neutral">{formatChangeSource(version.changeSource)}</Badge>
+                          <Badge>{version.policyVersion}</Badge>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-sm text-[var(--ag-text-secondary)]">{version.summary}</p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Badge tone="accent">{version.ruleCount} rules</Badge>
+                        <Badge tone="neutral">{version.thresholdCount} thresholds</Badge>
+                        <Badge tone="neutral">{version.diffFromPrevious.length} diff entries</Badge>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedVersion ? (
+              <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold">Selected diff</h3>
+                    <p className="text-sm text-[var(--ag-text-secondary)]">
+                      {previousVersion
+                        ? "Comparing this saved version against the version immediately before it."
+                        : "This is the oldest retained version, so there is no prior saved version to compare against."}
+                    </p>
+                  </div>
+                  {!selectedVersion.isCurrent ? (
+                    <Button
+                      disabled={rollbackMutation.isPending}
+                      onClick={() => rollbackMutation.mutate(selectedVersion.id)}
+                      size="sm"
+                      type="button"
+                      variant="secondary"
+                    >
+                      {rollbackMutation.isPending ? "Rolling back..." : "Roll back to this version"}
+                    </Button>
+                  ) : (
+                    <Badge tone="success">Active version</Badge>
+                  )}
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {selectedVersion.diffFromPrevious.length === 0 ? (
+                    <EmptyState
+                      description={
+                        previousVersion
+                          ? "This saved version has no effective diff from the prior one."
+                          : "This version is the baseline for future policy changes."
+                      }
+                      title={previousVersion ? "No effective diff" : "Baseline version"}
+                    />
+                  ) : (
+                    selectedVersion.diffFromPrevious.map((entry) => (
+                      <div
+                        className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] p-4"
+                        key={entry.id}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone={diffTone(entry.change)}>{entry.change}</Badge>
+                          <Badge tone="neutral">{entry.section}</Badge>
+                          <div className="text-sm font-semibold text-[var(--ag-text-primary)]">{entry.label}</div>
+                        </div>
+                        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+                              Before
+                            </div>
+                            <CodeBlock className="min-h-0">{entry.before ?? "Not set"}</CodeBlock>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+                              After
+                            </div>
+                            <CodeBlock className="min-h-0">{entry.after ?? "Removed"}</CodeBlock>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <div>
+                    <div className="mb-2 text-sm font-semibold text-[var(--ag-text-primary)]">Selected document</div>
+                    <CodeBlock>{selectedVersion.document}</CodeBlock>
+                  </div>
+                  {previousVersion ? (
+                    <div>
+                      <div className="mb-2 text-sm font-semibold text-[var(--ag-text-primary)]">Previous version</div>
+                      <CodeBlock>{previousVersion.document}</CodeBlock>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </Card>
+
+          <Card className="space-y-4">
             <h2 className="text-lg font-semibold">Loaded sources</h2>
             <div className="space-y-3">
               {policy.loadedSources.map((source) => (
-                <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] p-4" key={`${source.scope}:${source.path ?? "builtin"}`}>
+                <div
+                  className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] p-4"
+                  key={`${source.scope}:${source.path ?? "builtin"}`}
+                >
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge>{formatSourceScope(source.scope)}</Badge>
                     <Badge tone="neutral">{source.policy_version}</Badge>
@@ -426,9 +659,15 @@ export function RepositoryPolicyPage({
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="space-y-1">
-                        <div className="text-sm font-semibold text-[var(--ag-text-primary)]">{recommendation.action_family}</div>
+                        <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
+                          {recommendation.action_family}
+                        </div>
                         <div className="text-xs text-[var(--ag-text-secondary)]">
-                          Current {recommendation.current_ask_below === null ? "none" : formatConfidence(recommendation.current_ask_below)} · Recommended{" "}
+                          Current{" "}
+                          {recommendation.current_ask_below === null
+                            ? "none"
+                            : formatConfidence(recommendation.current_ask_below)}{" "}
+                          · Recommended{" "}
                           {recommendation.recommended_ask_below === null
                             ? "none"
                             : formatConfidence(recommendation.recommended_ask_below)}
@@ -475,7 +714,11 @@ export function RepositoryPolicyPage({
 
             <div className="space-y-2">
               <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Compiled rule coverage</div>
-              <CodeBlock>{policy.effectivePolicy.policy.rules.map((rule) => `${rule.rule_id} (${rule.enforcement_mode})`).join("\n")}</CodeBlock>
+              <CodeBlock>
+                {policy.effectivePolicy.policy.rules
+                  .map((rule) => `${rule.rule_id} (${rule.enforcement_mode})`)
+                  .join("\n")}
+              </CodeBlock>
             </div>
           </Card>
         </div>
@@ -483,7 +726,22 @@ export function RepositoryPolicyPage({
 
       {toastMessage ? (
         <ToastViewport>
-          <ToastCard>{toastMessage}</ToastCard>
+          <ToastCard className="border-[color:rgb(34_197_94_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Policy saved</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
+      ) : null}
+      {errorToast ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Policy action failed</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{errorToast}</p>
+            </div>
+          </ToastCard>
         </ToastViewport>
       ) : null}
     </>

@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { SessionCredentialBroker } from "@agentgit/credential-broker";
 import {
   AdapterRegistry,
   FilesystemExecutionAdapter,

@@ -13,11 +13,7 @@ import { ApiClientError } from "@/lib/api/client";
 import { updateWorkspaceTeam } from "@/lib/api/endpoints/team";
 import { queryKeys } from "@/lib/query/keys";
 import { useWorkspaceTeamQuery } from "@/lib/query/hooks";
-import {
-  WorkspaceTeamUpdateSchema,
-  type WorkspaceTeamSnapshot,
-  type WorkspaceTeamUpdate,
-} from "@/schemas/cloud";
+import { WorkspaceTeamUpdateSchema, type WorkspaceTeamSnapshot, type WorkspaceTeamUpdate } from "@/schemas/cloud";
 
 function selectClassName() {
   return "ag-focus-ring h-9 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] px-3 text-[14px] text-[var(--ag-text-primary)] hover:border-[var(--ag-border-strong)] focus:border-[var(--ag-color-brand)]";
@@ -37,6 +33,7 @@ export function TeamSettingsPage() {
   const queryClient = useQueryClient();
   const teamQuery = useWorkspaceTeamQuery();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const form = useForm<WorkspaceTeamUpdate>({
@@ -83,6 +80,18 @@ export function TeamSettingsPage() {
     return () => window.clearTimeout(timeout);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (!errorToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setErrorToast(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [errorToast]);
+
   const activeMembers = useMemo(
     () => teamQuery.data?.members.filter((member) => member.status === "active") ?? [],
     [teamQuery.data],
@@ -108,10 +117,12 @@ export function TeamSettingsPage() {
             : "Could not save team settings. Try again.";
 
         setSubmitError(message);
+        setErrorToast(message);
         return;
       }
 
       setSubmitError("Could not save team settings. Try again.");
+      setErrorToast("Could not save team settings. Try again.");
     },
   });
 
@@ -165,8 +176,15 @@ export function TeamSettingsPage() {
 
       <div className="grid gap-6 md:grid-cols-3">
         <MetricCard label="Active members" value={String(activeMembers.length)} />
-        <MetricCard label="Pending invites" trend={`${teamQuery.data.inviteLimit} seat limit`} value={String(invites.length)} />
-        <MetricCard label="Invite capacity" value={`${Math.max(teamQuery.data.inviteLimit - invites.length, 0)} left`} />
+        <MetricCard
+          label="Pending invites"
+          trend={`${teamQuery.data.inviteLimit} seat limit`}
+          value={String(invites.length)}
+        />
+        <MetricCard
+          label="Invite capacity"
+          value={`${Math.max(teamQuery.data.inviteLimit - invites.length, 0)} left`}
+        />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
@@ -280,7 +298,12 @@ export function TeamSettingsPage() {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button disabled={!isDirty || isSubmitting} onClick={() => reset({ invites: extractInvites(teamQuery.data) })} type="button" variant="secondary">
+                <Button
+                  disabled={!isDirty || isSubmitting}
+                  onClick={() => reset({ invites: extractInvites(teamQuery.data) })}
+                  type="button"
+                  variant="secondary"
+                >
                   Reset changes
                 </Button>
                 <Button disabled={!isDirty || isSubmitting} type="submit">
@@ -296,8 +319,14 @@ export function TeamSettingsPage() {
             <h2 className="text-lg font-semibold">What this proves</h2>
             <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">
               <p>Admin-only settings now cover another real mutation surface instead of a scaffold.</p>
-              <p>Invite editing reuses the onboarding invite schema so team management cannot drift from launch-time rules.</p>
-              <p>The roster view separates active session-derived access from pending invites staged in durable workspace state.</p>
+              <p>
+                Invite editing reuses the onboarding invite schema so team management cannot drift from launch-time
+                rules.
+              </p>
+              <p>
+                The roster view separates active session-derived access from pending invites staged in durable workspace
+                state.
+              </p>
             </div>
           </Card>
         </div>
@@ -309,6 +338,16 @@ export function TeamSettingsPage() {
             <div className="space-y-1">
               <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Team saved</div>
               <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
+      ) : null}
+      {errorToast ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Save failed</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{errorToast}</p>
             </div>
           </ToastCard>
         </ToastViewport>

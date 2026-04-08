@@ -11,6 +11,7 @@ vi.mock("server-only", () => ({}));
 import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { listDiscoveredRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
 import {
+  rollbackRepositoryPolicyVersion,
   resolveRepositoryPolicy,
   saveRepositoryPolicy,
   validateRepositoryPolicyDocument,
@@ -45,7 +46,13 @@ describe("repository policy backend adapter", () => {
   const originalWorkspacePolicyPath = process.env.AGENTGIT_POLICY_WORKSPACE_CONFIG_PATH;
   const originalGeneratedPolicyPath = process.env.AGENTGIT_POLICY_CALIBRATION_CONFIG_PATH;
   const originalGlobalPolicyPath = process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH;
+  const originalDatabaseUrl = process.env.DATABASE_URL;
   const tempDirs: string[] = [];
+  const actor = {
+    userId: "usr_jordan",
+    name: "Jordan Smith",
+    email: "jordan@acme.dev",
+  };
 
   afterEach(() => {
     if (originalWorkspaceRoots === undefined) {
@@ -84,6 +91,12 @@ describe("repository policy backend adapter", () => {
       process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = originalGlobalPolicyPath;
     }
 
+    if (originalDatabaseUrl === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = originalDatabaseUrl;
+    }
+
     for (const tempDir of tempDirs.splice(0, tempDirs.length)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -96,6 +109,7 @@ describe("repository policy backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
     process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = path.join(repoRoot, ".missing-global.toml");
+    delete process.env.DATABASE_URL;
 
     const inventory = await listDiscoveredRepositoryInventory();
     await saveWorkspaceConnectionState({
@@ -116,6 +130,8 @@ describe("repository policy backend adapter", () => {
     expect(policy?.hasWorkspaceOverride).toBe(false);
     expect(policy?.workspaceConfig.profile_name).toBe("coding-agent-v1");
     expect(policy?.loadedSources.at(-1)?.scope).toBe("builtin_default");
+    expect(policy?.currentVersionId).toBeNull();
+    expect(policy?.history).toEqual([]);
   });
 
   it("persists a workspace policy override and returns the updated snapshot", async () => {
@@ -125,6 +141,7 @@ describe("repository policy backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
     process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = path.join(repoRoot, ".missing-global.toml");
+    delete process.env.DATABASE_URL;
 
     const inventory = await listDiscoveredRepositoryInventory();
     await saveWorkspaceConnectionState({
@@ -155,13 +172,104 @@ describe("repository policy backend adapter", () => {
         2,
       ),
       "ws_acme_01",
+      actor,
     );
 
     expect(result).not.toBeNull();
     expect(result?.policy.hasWorkspaceOverride).toBe(true);
     expect(result?.policy.workspaceConfig.profile_name).toBe("workspace-override");
     expect(result?.policy.workspaceConfig.thresholds?.low_confidence[0]?.ask_below).toBe(0.42);
+    expect(result?.policy.currentVersionId).toMatch(/^polver_/);
+    expect(result?.policy.history).toHaveLength(1);
+    expect(result?.policy.history[0]?.changeSource).toBe("save");
+    expect(result?.policy.history[0]?.actorEmail).toBe(actor.email);
     expect(fs.existsSync(path.join(repoRoot, ".agentgit", "policy.toml"))).toBe(true);
+  });
+
+  it("records version history, diffs, and rollback state", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+    process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = path.join(repoRoot, ".missing-global.toml");
+    delete process.env.DATABASE_URL;
+
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const first = await saveRepositoryPolicy(
+      "acme",
+      "platform-ui",
+      JSON.stringify(
+        {
+          profile_name: "workspace-override",
+          policy_version: "2026-04-07",
+          thresholds: {
+            low_confidence: [{ action_family: "shell/*", ask_below: 0.42 }],
+          },
+          rules: [],
+        },
+        null,
+        2,
+      ),
+      "ws_acme_01",
+      actor,
+    );
+    const firstVersionId = first?.policy.currentVersionId;
+
+    const second = await saveRepositoryPolicy(
+      "acme",
+      "platform-ui",
+      JSON.stringify(
+        {
+          profile_name: "workspace-override",
+          policy_version: "2026-04-08",
+          thresholds: {
+            low_confidence: [
+              { action_family: "git/*", ask_below: 0.33 },
+              { action_family: "shell/*", ask_below: 0.55 },
+            ],
+          },
+          rules: [],
+        },
+        null,
+        2,
+      ),
+      "ws_acme_01",
+      actor,
+    );
+
+    expect(second?.policy.history).toHaveLength(2);
+    expect(second?.policy.history[0]?.diffFromPrevious.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining(["metadata:policy_version", "threshold:git/*", "threshold:shell/*"]),
+    );
+
+    const rolledBack = await rollbackRepositoryPolicyVersion(
+      "acme",
+      "platform-ui",
+      firstVersionId!,
+      "ws_acme_01",
+      actor,
+    );
+
+    expect(rolledBack?.policy.workspaceConfig.policy_version).toBe("2026-04-07");
+    expect(rolledBack?.policy.workspaceConfig.thresholds?.low_confidence).toEqual([
+      { action_family: "shell/*", ask_below: 0.42 },
+    ]);
+    expect(rolledBack?.policy.history).toHaveLength(3);
+    expect(rolledBack?.policy.history[0]?.changeSource).toBe("rollback");
+    expect(rolledBack?.policy.history[0]?.document).toContain('"policy_version": "2026-04-07"');
   });
 
   it("returns validation issues for malformed policy documents", () => {
@@ -178,6 +286,7 @@ describe("repository policy backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
     process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = path.join(repoRoot, ".missing-global.toml");
+    delete process.env.DATABASE_URL;
 
     fs.mkdirSync(path.join(repoRoot, ".agentgit", "state"), { recursive: true });
     const journal = new RunJournal({
@@ -185,11 +294,9 @@ describe("repository policy backend adapter", () => {
     });
     journal.close();
 
-    const calibrationSpy = vi
-      .spyOn(RunJournal.prototype, "getPolicyCalibrationReport")
-      .mockImplementation(() => {
-        throw new Error("calibration unavailable");
-      });
+    const calibrationSpy = vi.spyOn(RunJournal.prototype, "getPolicyCalibrationReport").mockImplementation(() => {
+      throw new Error("calibration unavailable");
+    });
 
     try {
       const inventory = await listDiscoveredRepositoryInventory();

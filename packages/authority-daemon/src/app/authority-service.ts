@@ -1,17 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { RequestContext } from "@agentgit/core-ports";
 import { LocalEncryptedSecretStore, SessionCredentialBroker } from "@agentgit/credential-broker";
 import {
   AdapterRegistry,
-  FilesystemExecutionAdapter,
-  FunctionExecutionAdapter,
-  McpExecutionAdapter,
   OwnedDraftStore,
   OwnedNoteStore,
   OwnedTicketIntegration,
@@ -22,129 +18,31 @@ import {
   parseTicketAssigneeLocator,
   parseTicketLabelLocator,
   parseTicketLocator,
-  ShellExecutionAdapter,
 } from "@agentgit/execution-adapters";
-import {
-  classifyMcpNetworkScope,
-  extractContainerRegistryHost,
-  isContainerRegistryAllowed,
-  isDigestPinnedContainerImage,
-  McpPublicHostPolicyRegistry,
-  McpServerRegistry,
-  validateMcpServerDefinitions,
-} from "@agentgit/mcp-registry";
-import {
-  replayPolicyThresholds,
-  recommendPolicyThresholds,
-  validatePolicyConfigDocument,
-} from "@agentgit/policy-engine";
+import { McpPublicHostPolicyRegistry, McpServerRegistry, validateMcpServerDefinitions } from "@agentgit/mcp-registry";
+import { recommendPolicyThresholds, validatePolicyConfigDocument } from "@agentgit/policy-engine";
 import {
   type CachedCapabilityState,
   StaticCompensationRegistry,
   createActionBoundaryReviewPlan,
-  executePathSubsetRecovery,
-  executeSnapshotRecovery,
-  loadRecoverySnapshotManifest,
-  planPathSubsetRecovery,
-  planSnapshotRecovery,
 } from "@agentgit/recovery-engine";
-import { createRunJournal, type RunJournal, type RunJournalEventRecord } from "@agentgit/run-journal";
+import type { RunJournal, RunJournalEventRecord } from "@agentgit/run-journal";
 import { answerHelperQuery, projectTimelineView } from "@agentgit/timeline-helper";
 import {
-  API_VERSION,
   type ActionRecord,
   ActionRecordSchema,
   AgentGitError,
-  type ApprovalInboxItem,
   type DaemonMethod,
-  ActivateMcpServerProfileRequestPayloadSchema,
-  type ActivateMcpServerProfileResponsePayload,
-  ApproveMcpServerProfileRequestPayloadSchema,
-  type ApproveMcpServerProfileResponsePayload,
-  BindMcpServerCredentialsRequestPayloadSchema,
-  type BindMcpServerCredentialsResponsePayload,
-  DiagnosticsRequestPayloadSchema,
-  type DiagnosticsResponsePayload,
-  ExplainPolicyActionRequestPayloadSchema,
-  type ExplainPolicyActionResponsePayload,
-  CreateRunCheckpointRequestPayloadSchema,
-  type CreateRunCheckpointResponsePayload,
-  type ErrorEnvelope,
-  ExecuteRecoveryRequestPayloadSchema,
-  type ExecuteRecoveryResponsePayload,
-  type ExecutionResult,
-  GetEffectivePolicyRequestPayloadSchema,
-  type GetEffectivePolicyResponsePayload,
-  GetPolicyCalibrationReportRequestPayloadSchema,
-  type GetPolicyCalibrationReportResponsePayload,
-  GetPolicyThresholdReplayRequestPayloadSchema,
-  type GetPolicyThresholdReplayResponsePayload,
-  GetPolicyThresholdRecommendationsRequestPayloadSchema,
-  type GetPolicyThresholdRecommendationsResponsePayload,
-  GetCapabilitiesRequestPayloadSchema,
   type GetCapabilitiesResponsePayload,
-  ListMcpServerTrustDecisionsRequestPayloadSchema,
-  type ListMcpServerTrustDecisionsResponsePayload,
-  ListMcpServerCredentialBindingsRequestPayloadSchema,
-  type ListMcpServerCredentialBindingsResponsePayload,
-  ListMcpServerCandidatesRequestPayloadSchema,
-  type ListMcpServerCandidatesResponsePayload,
-  ListMcpServerProfilesRequestPayloadSchema,
-  type ListMcpServerProfilesResponsePayload,
-  ListHostedMcpJobsRequestPayloadSchema,
-  type ListHostedMcpJobsResponsePayload,
-  ListMcpHostPoliciesRequestPayloadSchema,
-  type ListMcpHostPoliciesResponsePayload,
-  ListMcpSecretsRequestPayloadSchema,
-  type ListMcpSecretsResponsePayload,
-  ListMcpServersRequestPayloadSchema,
-  type ListMcpServersResponsePayload,
-  type HostedMcpExecutionAttestationRecord,
-  type HostedMcpExecutionJobRecord,
-  type HostedMcpExecutionLeaseRecord,
-  type ImportedMcpToolRecord,
-  type McpCredentialBindingRecord,
-  type McpServerCandidateRecord,
-  type McpServerRegistrationRecord,
-  type McpServerProfileRecord,
-  type McpServerTrustDecisionRecord,
   type HelperQuestionType,
-  GetRunSummaryRequestPayloadSchema,
-  type GetRunSummaryResponsePayload,
-  GetMcpServerReviewRequestPayloadSchema,
-  type GetMcpServerReviewResponsePayload,
-  GetHostedMcpJobRequestPayloadSchema,
-  type GetHostedMcpJobResponsePayload,
-  HelloRequestPayloadSchema,
-  type HelloResponsePayload,
   InternalError,
-  ListApprovalsRequestPayloadSchema,
-  type ListApprovalsResponsePayload,
+  type QueryHelperResponsePayload,
   RunMaintenanceRequestPayloadSchema,
   type RunMaintenanceResponsePayload,
-  QueryApprovalInboxRequestPayloadSchema,
-  type QueryApprovalInboxResponsePayload,
-  QuarantineMcpServerProfileRequestPayloadSchema,
-  type QuarantineMcpServerProfileResponsePayload,
-  CancelHostedMcpJobRequestPayloadSchema,
-  type CancelHostedMcpJobResponsePayload,
-  RequeueHostedMcpJobRequestPayloadSchema,
-  type RequeueHostedMcpJobResponsePayload,
-  ResolveMcpServerCandidateRequestPayloadSchema,
-  type ResolveMcpServerCandidateResponsePayload,
   RevokeMcpServerProfileRequestPayloadSchema,
   type RevokeMcpServerProfileResponsePayload,
   NotFoundError,
-  QueryHelperRequestPayloadSchema,
-  type QueryHelperResponsePayload,
-  QueryArtifactRequestPayloadSchema,
-  type QueryArtifactResponsePayload,
-  QueryTimelineRequestPayloadSchema,
-  type QueryTimelineResponsePayload,
-  PlanRecoveryRequestPayloadSchema,
-  type PlanRecoveryResponsePayload,
   McpServerDefinitionSchema,
-  type McpPublicHostPolicy,
   type McpServerDefinition,
   RevokeMcpServerCredentialsRequestPayloadSchema,
   type RevokeMcpServerCredentialsResponsePayload,
@@ -154,58 +52,25 @@ import {
   type RemoveMcpSecretResponsePayload,
   RemoveMcpServerRequestPayloadSchema,
   type RemoveMcpServerResponsePayload,
-  type PolicyOutcomeRecord,
   PreconditionError,
   type ReasonDetail,
   type RecoveryPlan,
   type RecoveryTarget,
   type RunCheckpointKind,
-  RegisterRunRequestPayloadSchema,
-  type RegisterRunResponsePayload,
-  ResolveApprovalRequestPayloadSchema,
-  type ResolveApprovalResponsePayload,
   type RequestEnvelope,
   RequestEnvelopeSchema,
   type ResponseEnvelope,
-  SCHEMA_PACK_VERSION,
-  SubmitMcpServerCandidateRequestPayloadSchema,
   type TimelineStep,
-  type SubmitMcpServerCandidateResponsePayload,
-  type SubmitActionAttemptResponsePayload,
-  UpsertMcpHostPolicyRequestPayloadSchema,
-  type UpsertMcpHostPolicyResponsePayload,
-  UpsertMcpSecretRequestPayloadSchema,
-  type UpsertMcpSecretResponsePayload,
-  UpsertMcpServerRequestPayloadSchema,
-  type UpsertMcpServerResponsePayload,
-  ValidatePolicyConfigRequestPayloadSchema,
-  type ValidatePolicyConfigResponsePayload,
   ValidationError,
   validate,
   type VisibilityScope,
 } from "@agentgit/schemas";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
-import { selectSnapshotClass } from "@agentgit/snapshot-engine";
-
-import { createPrefixedId } from "../ids.js";
-import {
-  handleSubmitActionAttempt as handleSubmitActionAttemptFlow,
-  prepareActionAttemptEvaluation,
-} from "../handlers/submit-action.js";
+import { handleSubmitActionAttempt as handleSubmitActionAttemptFlow } from "../handlers/submit-action.js";
 import { HostedExecutionQueue } from "../hosted-execution-queue.js";
 import { HostedMcpWorkerClient } from "../hosted-worker-client.js";
-import {
-  loadPolicyRuntime,
-  reloadPolicyRuntime,
-  type LoadPolicyRuntimeOptions,
-  type PolicyRuntimeState,
-} from "../policy-runtime.js";
-import {
-  makeErrorResponse,
-  makeSuccessResponse,
-  replayStoredSuccessResponse,
-  toErrorEnvelope,
-} from "./response-helpers.js";
+import { reloadPolicyRuntime, type LoadPolicyRuntimeOptions, type PolicyRuntimeState } from "../policy-runtime.js";
+import { makeErrorResponse, makeSuccessResponse, replayStoredSuccessResponse } from "./response-helpers.js";
 import { getRequestContext as getRequestContextFromHelpers } from "./request-helpers.js";
 import type { ServiceDependencies, ServiceOptions } from "./types.js";
 import { canUseIdempotency as canUseIdempotencyHelper } from "./idempotency.js";
@@ -271,11 +136,6 @@ import {
   handleUpsertMcpSecret,
   handleUpsertMcpServer,
 } from "./handlers/mcp.js";
-import { executeGovernedAction as executeGovernedActionFlow } from "../services/action-execution.js";
-import {
-  deriveSnapshotCapabilityState as deriveSnapshotCapabilityStateService,
-  deriveSnapshotRunRiskContext as deriveSnapshotRunRiskContextService,
-} from "../services/snapshot-risk.js";
 import { AuthorityState } from "../state.js";
 
 const METHODS: DaemonMethod[] = [
@@ -3015,12 +2875,12 @@ export async function handleRequest(
 export function rehydrateState(state: AuthorityState, journal: RunJournal): void {
   const result = reconcilePersistedRuns(state, journal);
 
-  console.log(
-    JSON.stringify({
+  process.stdout.write(
+    `${JSON.stringify({
       status: "rehydrated",
       sessions: result.total_sessions,
       runs: result.total_runs,
-    }),
+    })}\n`,
   );
 }
 

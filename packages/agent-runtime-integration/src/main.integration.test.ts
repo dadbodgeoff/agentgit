@@ -156,6 +156,194 @@ process.exit(1);
   return scriptPath;
 }
 
+function writeFakeDocker(root: string): string {
+  const binDir = path.join(root, "docker-bin");
+  const scriptPath = path.join(binDir, "docker");
+  const wgetPath = path.join(binDir, "wget");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+
+const args = process.argv.slice(2);
+function mountMap(value) {
+  return Object.fromEntries(
+    String(value)
+      .split(",")
+      .map((entry) => entry.split("=", 2))
+      .filter(([key, val]) => key && val),
+  );
+}
+
+if (args[0] === "version") {
+  process.stdout.write(
+    JSON.stringify({
+      Server: {
+        Platform: { Name: "Docker Desktop 4.99.0 (test shim)" },
+        Os: "linux",
+        Arch: "aarch64",
+      },
+    }),
+  );
+  process.exit(0);
+}
+
+if (args[0] === "info") {
+  process.stdout.write(
+    JSON.stringify({
+      OperatingSystem: "Docker Desktop",
+      Rootless: false,
+      SecurityOptions: [],
+    }),
+  );
+  process.exit(0);
+}
+
+if (args[0] !== "run") {
+  process.stderr.write("fake docker only supports version, info, and run\\n");
+  process.exit(1);
+}
+
+const env = {};
+for (const key of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM"]) {
+  if (typeof process.env[key] === "string") {
+    env[key] = process.env[key];
+  }
+}
+let workspaceRoot = process.cwd();
+let secretMountRoot = null;
+let imageIndex = -1;
+for (let index = 1; index < args.length; index += 1) {
+  const value = args[index];
+  if (value === "--mount") {
+    const options = mountMap(args[++index] ?? "");
+    if (options.target === "/workspace" && options.src) {
+      workspaceRoot = options.src;
+    }
+    if (options.target === "/run/agentgit-secrets" && options.src) {
+      secretMountRoot = options.src;
+    }
+    continue;
+  }
+  if (value === "--env-file") {
+    const envFilePath = args[++index];
+    if (envFilePath && fs.existsSync(envFilePath)) {
+      for (const line of fs.readFileSync(envFilePath, "utf8").split(/\\r?\\n/)) {
+        if (!line || line.startsWith("#")) continue;
+        const separator = line.indexOf("=");
+        if (separator <= 0) continue;
+        env[line.slice(0, separator)] = line.slice(separator + 1);
+      }
+    }
+    continue;
+  }
+  if (value === "-e") {
+    const envSpec = args[++index] ?? "";
+    const separator = envSpec.indexOf("=");
+    if (separator >= 0) {
+      env[envSpec.slice(0, separator)] = envSpec.slice(separator + 1).replaceAll("host.docker.internal", "127.0.0.1");
+    } else if (envSpec in process.env && typeof process.env[envSpec] === "string") {
+      env[envSpec] = process.env[envSpec];
+    }
+    continue;
+  }
+  if (
+    value === "--security-opt" ||
+    value === "--pids-limit" ||
+    value === "--workdir" ||
+    value === "--user" ||
+    value === "--network" ||
+    value === "--add-host" ||
+    value === "--tmpfs" ||
+    value === "--cap-drop"
+  ) {
+    index += 1;
+    continue;
+  }
+  if (
+    value.startsWith("--security-opt=") ||
+    value.startsWith("--pids-limit=") ||
+    value.startsWith("--workdir=") ||
+    value.startsWith("--user=") ||
+    value.startsWith("--network=") ||
+    value.startsWith("--add-host=") ||
+    value.startsWith("--tmpfs=") ||
+    value.startsWith("--cap-drop=")
+  ) {
+    continue;
+  }
+  if (value === "--rm" || value === "--init" || value === "--read-only") {
+    continue;
+  }
+  imageIndex = index;
+  break;
+}
+
+if (imageIndex === -1) {
+  process.stderr.write("fake docker did not receive an image to run\\n");
+  process.exit(1);
+}
+
+const command = args.slice(imageIndex + 1);
+if (command.length === 0) {
+  process.exit(0);
+}
+
+if (command[0] === "sh" && command[1] === "-lc") {
+  let script = command[2] ?? "";
+  if (secretMountRoot) {
+    script = script.replaceAll("/run/agentgit-secrets", secretMountRoot);
+  }
+  script = script.replaceAll("host.docker.internal", "127.0.0.1");
+  const result = spawnSync("sh", ["-lc", script], {
+    cwd: workspaceRoot,
+    env,
+    stdio: "inherit",
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  process.exit(result.status ?? 0);
+}
+
+const result = spawnSync(command[0], command.slice(1), {
+  cwd: workspaceRoot,
+  env,
+  stdio: "inherit",
+});
+if (result.error) {
+  throw result.error;
+}
+process.exit(result.status ?? 0);
+`,
+    "utf8",
+  );
+  fs.chmodSync(scriptPath, 0o755);
+  fs.writeFileSync(
+    wgetPath,
+    `#!/usr/bin/env node
+const target = process.argv.at(-1);
+if (!target) {
+  process.stderr.write("fake wget requires a URL\\n");
+  process.exit(1);
+}
+const rewritten = String(target).replaceAll("host.docker.internal", "127.0.0.1");
+const response = await fetch(rewritten);
+if (!response.ok) {
+  process.stderr.write(\`fake wget received \${response.status}\\n\`);
+  process.exit(1);
+}
+process.stdout.write(await response.text());
+`,
+    "utf8",
+  );
+  fs.chmodSync(wgetPath, 0o755);
+  return scriptPath;
+}
+
 function setupWorkspace(): {
   root: string;
   workspaceRoot: string;
@@ -169,8 +357,9 @@ function setupWorkspace(): {
   fs.mkdirSync(workspaceRoot, { recursive: true });
   fs.copyFileSync(new URL("./test-fixtures/openclaw/default-config.json", import.meta.url), openclawConfigPath);
   writeFakeOpenClaw(root);
+  writeFakeDocker(root);
   process.chdir(workspaceRoot);
-  process.env.PATH = `${path.join(root, "bin")}${path.delimiter}${originalEnv.PATH ?? ""}`;
+  process.env.PATH = `${path.join(root, "docker-bin")}${path.delimiter}${path.join(root, "bin")}${path.delimiter}${originalEnv.PATH ?? ""}`;
   process.env.OPENCLAW_CONFIG_PATH = openclawConfigPath;
   process.env.AGENTGIT_CLI_CONFIG_ROOT = configRoot;
   process.env.AGENTGIT_MCP_SECRET_STORE_PATH = "";

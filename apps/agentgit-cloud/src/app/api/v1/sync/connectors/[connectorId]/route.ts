@@ -2,10 +2,7 @@ import { requireApiRole } from "@/lib/auth/api-session";
 import { ConnectorAccessError, revokeWorkspaceConnector } from "@/lib/backend/control-plane/connectors";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
-export async function DELETE(
-  request: Request,
-  context: { params: Promise<{ connectorId: string }> },
-) {
+export async function DELETE(request: Request, context: { params: Promise<{ connectorId: string }> }) {
   const requestId = createRequestId(request);
   const access = await requireApiRole("admin", request);
 

@@ -72,6 +72,26 @@ const statements = [
     slack_webhook_url text,
     updated_at timestamptz not null default now()
   )`,
+  `create table if not exists cloud_repository_policy_versions (
+    id text primary key,
+    workspace_id text not null references cloud_workspaces(id) on delete cascade,
+    repository_id text not null,
+    repository_owner text not null,
+    repository_name text not null,
+    policy_path text not null,
+    document jsonb not null,
+    document_hash text not null,
+    profile_name text not null,
+    policy_version text not null,
+    rule_count integer not null,
+    threshold_count integer not null,
+    change_source text not null,
+    actor_user_id text references cloud_users(id) on delete set null,
+    actor_name text not null,
+    actor_email text not null,
+    created_at timestamptz not null default now()
+  )`,
+  `create index if not exists cloud_repository_policy_versions_workspace_repo_created_idx on cloud_repository_policy_versions (workspace_id, repository_id, created_at)`,
   `create table if not exists cloud_rate_limit_buckets (
     bucket_key text primary key,
     scope text not null,

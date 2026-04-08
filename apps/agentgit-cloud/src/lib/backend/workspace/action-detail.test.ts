@@ -425,9 +425,11 @@ describe("action detail backend adapter", () => {
 
       const authorityClient = {
         queryTimeline: vi.fn().mockResolvedValue(timelineResponse),
-        queryHelper: vi.fn().mockImplementation(async (_runId: string, questionType: string) =>
-          questionType === "step_details" ? helperResponse : policyResponse,
-        ),
+        queryHelper: vi
+          .fn()
+          .mockImplementation(async (_runId: string, questionType: string) =>
+            questionType === "step_details" ? helperResponse : policyResponse,
+          ),
       };
 
       withWorkspaceAuthorityClient.mockImplementation(async (_workspaceId, run) => run(authorityClient as never));

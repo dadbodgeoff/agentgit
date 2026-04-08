@@ -14,13 +14,7 @@ const LiveUpdateStatusContext = createContext<LiveUpdateStatus>({
   invalidationCount: 0,
 });
 
-export function LiveUpdateStatusProvider({
-  children,
-  value,
-}: {
-  children: React.ReactNode;
-  value: LiveUpdateStatus;
-}) {
+export function LiveUpdateStatusProvider({ children, value }: { children: React.ReactNode; value: LiveUpdateStatus }) {
   return <LiveUpdateStatusContext.Provider value={value}>{children}</LiveUpdateStatusContext.Provider>;
 }
 

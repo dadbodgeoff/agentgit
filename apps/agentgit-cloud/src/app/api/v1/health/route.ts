@@ -1,9 +1,12 @@
 import { requireApiRole } from "@/lib/auth/api-session";
 import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
-import { pingCloudDatabase } from "@/lib/db/client";
+import { ensureLocalControlPlaneStateInitialized } from "@/lib/backend/control-plane/state";
+import { ensureLocalCloudStateInitialized } from "@/lib/backend/workspace/cloud-state.local";
+import { hasDatabaseUrl, pingCloudDatabase } from "@/lib/db/client";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
-import { getCloudReadinessChecks, summarizeReadiness } from "@/lib/release/readiness";
+import { getCloudReadinessChecks, summarizeOperationalHealth } from "@/lib/release/readiness";
 import { getCloudRuntimeSummary } from "@/lib/release/runtime-config";
+import { ensureLocalRateLimitStoreInitialized } from "@/lib/security/rate-limit";
 
 export async function GET(request: Request): Promise<Response> {
   const requestId = createRequestId(request);
@@ -11,6 +14,12 @@ export async function GET(request: Request): Promise<Response> {
 
   if (access.denied) {
     return access.denied;
+  }
+
+  if (!hasDatabaseUrl()) {
+    ensureLocalCloudStateInitialized();
+    ensureLocalControlPlaneStateInitialized();
+    ensureLocalRateLimitStoreInitialized();
   }
 
   const runtime = getCloudRuntimeSummary();
@@ -51,7 +60,7 @@ export async function GET(request: Request): Promise<Response> {
 
   return jsonWithRequestId(
     {
-      status: summarizeReadiness(allChecks),
+      status: summarizeOperationalHealth(allChecks),
       checkedAt: new Date().toISOString(),
       workspaceId: access.workspaceSession.activeWorkspace.id,
       runtime: {

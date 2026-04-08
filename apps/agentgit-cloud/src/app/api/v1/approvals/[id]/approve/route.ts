@@ -11,10 +11,7 @@ import { getWorkspaceApprovalProjection } from "@/lib/backend/workspace/workspac
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { ApprovalDecisionRequestSchema } from "@/schemas/cloud";
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ id: string }> },
-): Promise<NextResponse> {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<NextResponse> {
   const requestId = createRequestId(request);
   const { session, unauthorized, workspaceSession } = await requireApiSession(request);
 

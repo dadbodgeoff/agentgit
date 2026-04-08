@@ -4,10 +4,7 @@ import { requireConnectorSession } from "@/lib/auth/connector-session";
 import { ConnectorAccessError, acknowledgeConnectorCommand } from "@/lib/backend/control-plane/connectors";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ commandId: string }> },
-) {
+export async function POST(request: Request, context: { params: Promise<{ commandId: string }> }) {
   const requestId = createRequestId(request);
   const connectorSession = await requireConnectorSession(request);
 
@@ -50,6 +47,10 @@ export async function POST(
       connectorId: connectorSession.access.connector.id,
       commandId,
     });
-    return jsonWithRequestId({ message: "Could not acknowledge connector command. Retry." }, { status: 500 }, requestId);
+    return jsonWithRequestId(
+      { message: "Could not acknowledge connector command. Retry." },
+      { status: 500 },
+      requestId,
+    );
   }
 }

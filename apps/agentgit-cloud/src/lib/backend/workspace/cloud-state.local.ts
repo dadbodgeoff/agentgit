@@ -6,10 +6,12 @@ import path from "node:path";
 import { IntegrationState } from "@agentgit/integration-state";
 
 import {
+  StoredRepositoryPolicyVersionSchema,
   WorkspaceConnectionStateSchema,
   WorkspaceBillingSchema,
   WorkspaceIntegrationSnapshotSchema,
   WorkspaceSettingsSchema,
+  type StoredRepositoryPolicyVersion,
   type WorkspaceConnectionState,
   type WorkspaceBilling,
   type WorkspaceIntegrationSnapshot,
@@ -20,11 +22,17 @@ export type WorkspaceIntegrationSecrets = {
   slackWebhookUrl: string | null;
 };
 
+export type WorkspaceSsoSecrets = {
+  clientSecret: string | null;
+};
+
 type CloudStateCollections = {
   workspaces: WorkspaceConnectionState;
+  repositoryPolicyVersions: StoredRepositoryPolicyVersion;
   workspaceBilling: WorkspaceBilling;
   workspaceIntegrations: WorkspaceIntegrationSnapshot;
   workspaceIntegrationSecrets: WorkspaceIntegrationSecrets;
+  workspaceSsoSecrets: WorkspaceSsoSecrets;
   workspaceSettings: WorkspaceSettings;
 };
 
@@ -42,6 +50,11 @@ function createCloudStateStore() {
       workspaces: {
         parse(_key: string, value: unknown) {
           return WorkspaceConnectionStateSchema.parse(value);
+        },
+      },
+      repositoryPolicyVersions: {
+        parse(_key: string, value: unknown) {
+          return StoredRepositoryPolicyVersionSchema.parse(value);
         },
       },
       workspaceSettings: {
@@ -70,8 +83,24 @@ function createCloudStateStore() {
           };
         },
       },
+      workspaceSsoSecrets: {
+        parse(_key: string, value: unknown) {
+          const candidate = value as WorkspaceSsoSecrets | null;
+          return {
+            clientSecret:
+              typeof candidate?.clientSecret === "string" && candidate.clientSecret.length > 0
+                ? candidate.clientSecret
+                : null,
+          };
+        },
+      },
     },
   });
+}
+
+export function ensureLocalCloudStateInitialized(): void {
+  const store = createCloudStateStore();
+  store.close();
 }
 
 export function getWorkspaceConnectionStateLocal(workspaceId: string): WorkspaceConnectionState | null {
@@ -110,6 +139,50 @@ export function saveWorkspaceConnectionStateLocal(state: WorkspaceConnectionStat
   }
 }
 
+export function listRepositoryPolicyVersionsLocal(
+  workspaceId: string,
+  repositoryId: string,
+): StoredRepositoryPolicyVersion[] {
+  const store = createCloudStateStore();
+  try {
+    return store
+      .list("repositoryPolicyVersions")
+      .filter((entry) => entry.workspaceId === workspaceId && entry.repositoryId === repositoryId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  } finally {
+    store.close();
+  }
+}
+
+export function findRepositoryPolicyVersionLocal(
+  workspaceId: string,
+  repositoryId: string,
+  versionId: string,
+): StoredRepositoryPolicyVersion | null {
+  const store = createCloudStateStore();
+  try {
+    const row = store.get("repositoryPolicyVersions", versionId);
+    if (!row || row.workspaceId !== workspaceId || row.repositoryId !== repositoryId) {
+      return null;
+    }
+
+    return row;
+  } finally {
+    store.close();
+  }
+}
+
+export function saveRepositoryPolicyVersionLocal(
+  version: StoredRepositoryPolicyVersion,
+): StoredRepositoryPolicyVersion {
+  const store = createCloudStateStore();
+  try {
+    return store.put("repositoryPolicyVersions", version.id, version);
+  } finally {
+    store.close();
+  }
+}
+
 export function getStoredWorkspaceSettingsLocal(workspaceId: string): WorkspaceSettings | null {
   const store = createCloudStateStore();
   try {
@@ -140,7 +213,9 @@ export function findStoredWorkspaceSettingsBySlugLocal(workspaceSlug: string): {
       return null;
     }
 
-    const workspaceId = store.list("workspaces").find((workspace) => workspace.workspaceSlug === workspaceSlug)?.workspaceId;
+    const workspaceId = store
+      .list("workspaces")
+      .find((workspace) => workspace.workspaceSlug === workspaceSlug)?.workspaceId;
     return {
       workspaceId: workspaceId ?? workspaceSlug,
       settings: matched,
@@ -205,6 +280,24 @@ export function saveWorkspaceIntegrationSecretsLocal(
   const store = createCloudStateStore();
   try {
     return store.put("workspaceIntegrationSecrets", workspaceId, secrets);
+  } finally {
+    store.close();
+  }
+}
+
+export function getWorkspaceSsoSecretsLocal(workspaceId: string): WorkspaceSsoSecrets | null {
+  const store = createCloudStateStore();
+  try {
+    return store.get("workspaceSsoSecrets", workspaceId);
+  } finally {
+    store.close();
+  }
+}
+
+export function saveWorkspaceSsoSecretsLocal(workspaceId: string, secrets: WorkspaceSsoSecrets): WorkspaceSsoSecrets {
+  const store = createCloudStateStore();
+  try {
+    return store.put("workspaceSsoSecrets", workspaceId, secrets);
   } finally {
     store.close();
   }

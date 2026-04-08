@@ -1,4 +1,8 @@
-import type { QueryApprovalInboxResponsePayload, QueryTimelineResponsePayload, ResolveApprovalResponsePayload } from "@agentgit/schemas";
+import type {
+  QueryApprovalInboxResponsePayload,
+  QueryTimelineResponsePayload,
+  ResolveApprovalResponsePayload,
+} from "@agentgit/schemas";
 
 import {
   ApprovalDecisionResponseSchema,
@@ -49,7 +53,11 @@ function deriveRunStatus(payload: QueryTimelineResponsePayload): RunStatus {
     return "canceled";
   }
 
-  if (payload.steps.some((step) => step.status === "blocked" || step.status === "awaiting_approval" || step.status === "partial")) {
+  if (
+    payload.steps.some(
+      (step) => step.status === "blocked" || step.status === "awaiting_approval" || step.status === "partial",
+    )
+  ) {
     return "running";
   }
 
@@ -96,8 +104,8 @@ export function mapApprovalInboxToCloud(
       snapshotRequired: item.snapshot_required,
     })),
     total: payload.items.length,
-    page: 1,
-    per_page: payload.items.length === 0 ? 25 : payload.items.length,
+    page_size: payload.items.length === 0 ? 25 : payload.items.length,
+    next_cursor: null,
     has_more: false,
   });
 }

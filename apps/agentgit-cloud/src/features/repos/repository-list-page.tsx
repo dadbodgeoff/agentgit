@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 
-import { Card, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow } from "@/components/primitives";
+import {
+  Button,
+  Card,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRoot,
+  TableRow,
+} from "@/components/primitives";
 import { PageStatePanel } from "@/components/feedback";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 import { RepositoryConnectionDialog } from "@/features/repos/repository-connection-dialog";
@@ -17,17 +26,27 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
 
   if (repositoriesQuery.isPending) {
     return (
-      <ScaffoldPage actions={<RepositoryConnectionDialog />} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
+      <ScaffoldPage
+        actions={<RepositoryConnectionDialog />}
+        description="Searchable repository inventory with status, last run, and agent posture."
+        sections={[]}
+        title="Repositories"
+      >
         <PageStatePanel state="loading" />
       </ScaffoldPage>
     );
   }
 
-  if (repositoriesQuery.isError) {
+  if (repositoriesQuery.isError || !repositoriesQuery.data) {
     const errorMessage = getApiErrorMessage(repositoriesQuery.error, "Could not load repositories. Retry.");
 
     return (
-      <ScaffoldPage actions={<RepositoryConnectionDialog />} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
+      <ScaffoldPage
+        actions={<RepositoryConnectionDialog />}
+        description="Searchable repository inventory with status, last run, and agent posture."
+        sections={[]}
+        title="Repositories"
+      >
         <PageStatePanel errorMessage={errorMessage} state="error" />
       </ScaffoldPage>
     );
@@ -37,7 +56,12 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
 
   if (repositories.items.length === 0) {
     return (
-      <ScaffoldPage actions={<RepositoryConnectionDialog />} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
+      <ScaffoldPage
+        actions={<RepositoryConnectionDialog />}
+        description="Searchable repository inventory with status, last run, and agent posture."
+        sections={[]}
+        title="Repositories"
+      >
         <PageStatePanel
           emptyActionLabel="Connect repository"
           emptyDescription="Connect a GitHub, GitLab, or Bitbucket repository."
@@ -67,13 +91,22 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
       ]}
       sections={[
         { title: "Filter bar", description: "Search, status, and sort controls live here." },
-        { title: "Repository table", description: "Inventory for connected repositories and their latest state.", kind: "table" },
+        {
+          title: "Repository table",
+          description: "Inventory for connected repositories and their latest state.",
+          kind: "table",
+        },
         { title: "Empty state", description: "Illustrated empty state with connect CTA.", kind: "empty" },
       ]}
       title="Repositories"
     >
       <Card className="space-y-4">
-        <h2 className="text-lg font-semibold">Connected repositories</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Connected repositories</h2>
+          <div className="text-sm text-[var(--ag-text-secondary)]">
+            Showing {repositories.items.length} of {repositories.total}
+          </div>
+        </div>
         <TableRoot>
           <TableHead>
             <TableRow>
@@ -102,11 +135,27 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
                 </TableCell>
                 <TableCell className="capitalize">{repo.lastRunStatus}</TableCell>
                 <TableCell className="capitalize">{repo.agentStatus}</TableCell>
-                <TableCell className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(repo.lastUpdatedAt)}</TableCell>
+                <TableCell className="text-[var(--ag-text-secondary)]">
+                  {formatRelativeTimestamp(repo.lastUpdatedAt)}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </TableRoot>
+        {repositoriesQuery.hasNextPage ? (
+          <div className="flex items-center justify-between gap-3 border-t border-[var(--ag-border-subtle)] pt-4">
+            <p className="text-sm text-[var(--ag-text-secondary)]">
+              Load the next repository page from the workspace inventory.
+            </p>
+            <Button
+              disabled={repositoriesQuery.isFetchingNextPage}
+              onClick={() => void repositoriesQuery.fetchNextPage()}
+              variant="secondary"
+            >
+              {repositoriesQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+            </Button>
+          </div>
+        ) : null}
       </Card>
     </ScaffoldPage>
   );

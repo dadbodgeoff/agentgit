@@ -53,13 +53,19 @@ export function ConnectorBootstrapPanel({
   }
 
   const statusTone = connected ? "success" : waitingForConnection ? "warning" : "accent";
-  const statusLabel = connected ? "Connector active" : waitingForConnection ? "Waiting for heartbeat" : "Bootstrap ready";
+  const statusLabel = connected
+    ? "Connector active"
+    : waitingForConnection
+      ? "Waiting for heartbeat"
+      : "Bootstrap ready";
 
   return (
     <div className="space-y-3 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-page)] px-4 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Connector bootstrap command</div>
+          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+            Connector bootstrap command
+          </div>
           <div className="text-sm text-[var(--ag-text-secondary)]">
             Run this on the machine that hosts the selected repository checkout.
           </div>
@@ -82,11 +88,15 @@ export function ConnectorBootstrapPanel({
 
       <div className="grid gap-3 text-sm text-[var(--ag-text-secondary)] sm:grid-cols-2">
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-3">
-          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">Workspace</div>
+          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+            Workspace
+          </div>
           <div className="mt-1 text-[var(--ag-text-primary)]">{bootstrapDetails.workspaceSlug}</div>
         </div>
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-3">
-          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">Expires</div>
+          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+            Expires
+          </div>
           <div className="mt-1 text-[var(--ag-text-primary)]">
             {formatAbsoluteDate(bootstrapDetails.expiresAt)} ({formatRelativeTimestamp(bootstrapDetails.expiresAt)})
           </div>
@@ -97,8 +107,8 @@ export function ConnectorBootstrapPanel({
         {connected
           ? "A connector is now active for the selected repository scope."
           : waitingForConnection
-            ? "The cloud UI is polling for the first connector heartbeat. Leave this page open while the bootstrap command runs."
-            : "Generate a token only when you are at the terminal that will run the connector."}
+            ? "The cloud UI is polling for the first connector heartbeat. Leave this page open while the bootstrap command starts and hands off to the long-lived connector run loop."
+            : "Generate a token only when you are at the terminal that will bootstrap and keep the connector running."}
       </div>
 
       {copyError ? (

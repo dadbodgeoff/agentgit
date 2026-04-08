@@ -4,7 +4,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { RequestContext } from "@agentgit/core-ports";
 import type { SessionCredentialBroker } from "@agentgit/credential-broker";
-import { classifyMcpNetworkScope, type McpPublicHostPolicyRegistry, type McpServerRegistry } from "@agentgit/mcp-registry";
+import {
+  classifyMcpNetworkScope,
+  type McpPublicHostPolicyRegistry,
+  type McpServerRegistry,
+} from "@agentgit/mcp-registry";
 import type { RunJournal } from "@agentgit/run-journal";
 import {
   ActivateMcpServerProfileRequestPayloadSchema,
@@ -46,7 +50,6 @@ import {
   type McpServerTrustDecisionRecord,
   NotFoundError,
   PreconditionError,
-  type QueryArtifactResponsePayload,
   QuarantineMcpServerProfileRequestPayloadSchema,
   type QuarantineMcpServerProfileResponsePayload,
   type RequeueHostedMcpJobResponsePayload,

@@ -90,7 +90,9 @@ export function RepositoryDetailPage({
       : null,
     repository.failedRuns24h > 0
       ? {
-          href: repository.latestRunId ? runDetailRoute(owner, name, repository.latestRunId) : repositoryRunsRoute(owner, name),
+          href: repository.latestRunId
+            ? runDetailRoute(owner, name, repository.latestRunId)
+            : repositoryRunsRoute(owner, name),
           label: "Failed run follow-up",
           detail: `${repository.failedRuns24h} failed run${repository.failedRuns24h === 1 ? "" : "s"} recorded in the last 24 hours.`,
           tone: "warning" as const,
@@ -139,13 +141,29 @@ export function RepositoryDetailPage({
       metrics={[
         { label: "Agent posture", value: repository.agentStatus, trend: repository.lastRunStatus },
         { label: "Pending approvals", value: String(repository.pendingApprovalCount), trend: "active review load" },
-        { label: "Runs tracked", value: String(repository.totalRuns), trend: `${repository.failedRuns24h} failed in 24h` },
+        {
+          label: "Runs tracked",
+          value: String(repository.totalRuns),
+          trend: `${repository.failedRuns24h} failed in 24h`,
+        },
       ]}
       sections={[
         { title: "Repository posture", description: "Live repository metadata and current governed status." },
-        { title: "Attention queue", description: "Fast-path operator actions for approvals, failures, and policy review.", kind: "status" },
-        { title: "Recent activity", description: "Latest authority events associated with the repository.", kind: "status" },
-        { title: "Runtime context", description: "Repository root and latest workflow pointers for debugging.", kind: "code" },
+        {
+          title: "Attention queue",
+          description: "Fast-path operator actions for approvals, failures, and policy review.",
+          kind: "status",
+        },
+        {
+          title: "Recent activity",
+          description: "Latest authority events associated with the repository.",
+          kind: "status",
+        },
+        {
+          title: "Runtime context",
+          description: "Repository root and latest workflow pointers for debugging.",
+          kind: "code",
+        },
       ]}
       title={`${owner}/${name}`}
     >
@@ -168,13 +186,18 @@ export function RepositoryDetailPage({
                 </div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Provider identity</div>
+                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                  Provider identity
+                </div>
                 <div className="mt-2 flex items-center gap-2">
                   <Badge tone="neutral">{repository.providerIdentity.provider}</Badge>
-                  <Badge tone={statusTone(repository.providerIdentity.status)}>{repository.providerIdentity.status}</Badge>
+                  <Badge tone={statusTone(repository.providerIdentity.status)}>
+                    {repository.providerIdentity.status}
+                  </Badge>
                 </div>
                 <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
-                  {repository.providerIdentity.statusReason ?? "Repository provider identity matches the local workspace."}
+                  {repository.providerIdentity.statusReason ??
+                    "Repository provider identity matches the local workspace."}
                 </div>
               </div>
             </div>
@@ -230,7 +253,9 @@ export function RepositoryDetailPage({
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-1">
-                        <div className="text-sm font-medium text-[var(--ag-text-primary)]">{activity.title ?? activity.message}</div>
+                        <div className="text-sm font-medium text-[var(--ag-text-primary)]">
+                          {activity.title ?? activity.message}
+                        </div>
                         <div className="text-sm text-[var(--ag-text-secondary)]">{activity.message}</div>
                       </div>
                       <Badge tone={statusTone(activity.tone)}>{activity.tone}</Badge>
@@ -238,7 +263,10 @@ export function RepositoryDetailPage({
                     <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--ag-text-secondary)]">
                       <span>{formatRelativeTimestamp(activity.createdAt)}</span>
                       {activity.detailPath ? (
-                        <Link className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline" href={activity.detailPath}>
+                        <Link
+                          className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                          href={activity.detailPath}
+                        >
                           Open detail
                         </Link>
                       ) : null}
@@ -264,13 +292,19 @@ export function RepositoryDetailPage({
               <div className="mt-1 font-medium">{repository.defaultBranch}</div>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Provider identity</div>
+              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                Provider identity
+              </div>
               <div className="mt-1 flex items-center gap-2">
                 <Badge tone="neutral">{repository.providerIdentity.provider}</Badge>
-                <Badge tone={statusTone(repository.providerIdentity.status)}>{repository.providerIdentity.status}</Badge>
+                <Badge tone={statusTone(repository.providerIdentity.status)}>
+                  {repository.providerIdentity.status}
+                </Badge>
               </div>
               {repository.providerIdentity.statusReason ? (
-                <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">{repository.providerIdentity.statusReason}</div>
+                <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
+                  {repository.providerIdentity.statusReason}
+                </div>
               ) : null}
             </div>
             <div>

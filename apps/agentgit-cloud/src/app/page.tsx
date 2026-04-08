@@ -1,8 +1,17 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { Badge } from "@/components/primitives";
 import { MarketingSection, MarketingShell, marketingLinkClasses } from "@/features/marketing/marketing-shell";
+import { buildPageMetadata } from "@/lib/metadata/site";
 import { publicRoutes } from "@/lib/navigation/routes";
+
+export const metadata: Metadata = buildPageMetadata({
+  title: "AgentGit Cloud",
+  description:
+    "AgentGit Cloud is the hosted control plane for governed agent approvals, connector fleet visibility, audit trails, and recovery context.",
+  path: publicRoutes.landing,
+});
 
 export default function LandingPage() {
   return (
@@ -22,7 +31,8 @@ export default function LandingPage() {
                   Govern every agent action before it turns into repo history.
                 </h1>
                 <p className="max-w-2xl text-lg leading-8 text-[var(--ag-text-secondary)]">
-                  AgentGit Cloud gives operators a live approval rail, durable audit, fleet status, and recovery context while the actual work still runs inside the local daemon next to the code.
+                  AgentGit Cloud gives operators a live approval rail, durable audit, fleet status, and recovery context
+                  while the actual work still runs inside the local daemon next to the code.
                 </p>
               </div>
 
@@ -37,16 +47,28 @@ export default function LandingPage() {
 
               <div className="grid gap-4 border-t border-[var(--ag-border-subtle)] pt-6 text-sm text-[var(--ag-text-secondary)] sm:grid-cols-3">
                 <div>
-                  <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">Approvals</div>
-                  <div className="mt-2 text-[var(--ag-text-primary)]">Cloud inbox mirrors the local daemon in seconds.</div>
+                  <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">
+                    Approvals
+                  </div>
+                  <div className="mt-2 text-[var(--ag-text-primary)]">
+                    Cloud inbox mirrors the local daemon in seconds.
+                  </div>
                 </div>
                 <div>
-                  <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">Recovery</div>
-                  <div className="mt-2 text-[var(--ag-text-primary)]">Snapshots, audit, and replay stay visible per repo.</div>
+                  <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">
+                    Recovery
+                  </div>
+                  <div className="mt-2 text-[var(--ag-text-primary)]">
+                    Snapshots, audit, and replay stay visible per repo.
+                  </div>
                 </div>
                 <div>
-                  <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">Fleet</div>
-                  <div className="mt-2 text-[var(--ag-text-primary)]">Track connectors, drift, and stale machines from one surface.</div>
+                  <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">
+                    Fleet
+                  </div>
+                  <div className="mt-2 text-[var(--ag-text-primary)]">
+                    Track connectors, drift, and stale machines from one surface.
+                  </div>
                 </div>
               </div>
             </div>
@@ -55,8 +77,12 @@ export default function LandingPage() {
               <div className="relative w-full overflow-hidden rounded-[32px] border border-[color:rgb(255_255_255_/_0.08)] bg-[color:rgb(13_18_24_/_0.9)] p-5 shadow-[0_30px_120px_rgb(0_0_0_/_0.35)]">
                 <div className="grid gap-4 border-b border-[var(--ag-border-subtle)] pb-4 sm:grid-cols-[0.88fr_1.12fr]">
                   <div className="space-y-3 rounded-[24px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-4">
-                    <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">Local daemon</div>
-                    <div className="text-xl font-semibold text-[var(--ag-text-primary)]">`deploy production release`</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">
+                      Local daemon
+                    </div>
+                    <div className="text-xl font-semibold text-[var(--ag-text-primary)]">
+                      `deploy production release`
+                    </div>
                     <div className="space-y-2 text-sm text-[var(--ag-text-secondary)]">
                       <div className="flex items-center justify-between">
                         <span>risk profile</span>
@@ -75,7 +101,9 @@ export default function LandingPage() {
 
                   <div className="space-y-3 rounded-[24px] border border-[color:rgb(10_205_207_/_0.16)] bg-[color:rgb(10_205_207_/_0.05)] p-4">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">Cloud control plane</div>
+                      <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">
+                        Cloud control plane
+                      </div>
                       <Badge tone="warning">Approval pending</Badge>
                     </div>
                     <div className="space-y-4">
@@ -84,12 +112,20 @@ export default function LandingPage() {
                       </div>
                       <div className="grid gap-3 text-sm sm:grid-cols-2">
                         <div className="rounded-[18px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-3">
-                          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">Operator choice</div>
-                          <div className="mt-2 text-[var(--ag-text-primary)]">Approve, deny, or replay after review.</div>
+                          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
+                            Operator choice
+                          </div>
+                          <div className="mt-2 text-[var(--ag-text-primary)]">
+                            Approve, deny, or replay after review.
+                          </div>
                         </div>
                         <div className="rounded-[18px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-3">
-                          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">Round trip</div>
-                          <div className="mt-2 text-[var(--ag-text-primary)]">Resolution is sent back over the connector command queue.</div>
+                          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
+                            Round trip
+                          </div>
+                          <div className="mt-2 text-[var(--ag-text-primary)]">
+                            Resolution is sent back over the connector command queue.
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -98,16 +134,26 @@ export default function LandingPage() {
 
                 <div className="grid gap-3 pt-4 text-sm text-[var(--ag-text-secondary)] sm:grid-cols-3">
                   <div className="rounded-[18px] border border-[var(--ag-border-subtle)] p-3">
-                    <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">Fleet health</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
+                      Fleet health
+                    </div>
                     <div className="mt-2 text-[var(--ag-text-primary)]">6 active connectors, 0 stale, 0 revoked</div>
                   </div>
                   <div className="rounded-[18px] border border-[var(--ag-border-subtle)] p-3">
-                    <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">Audit coverage</div>
-                    <div className="mt-2 text-[var(--ag-text-primary)]">Every action, approval, snapshot, and retry is queryable.</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
+                      Audit coverage
+                    </div>
+                    <div className="mt-2 text-[var(--ag-text-primary)]">
+                      Every action, approval, snapshot, and retry is queryable.
+                    </div>
                   </div>
                   <div className="rounded-[18px] border border-[var(--ag-border-subtle)] p-3">
-                    <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">Recovery posture</div>
-                    <div className="mt-2 text-[var(--ag-text-primary)]">Snapshots stay attached to the repo where risk happened.</div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
+                      Recovery posture
+                    </div>
+                    <div className="mt-2 text-[var(--ag-text-primary)]">
+                      Snapshots stay attached to the repo where risk happened.
+                    </div>
                   </div>
                 </div>
               </div>
@@ -137,7 +183,9 @@ export default function LandingPage() {
             },
           ].map((item) => (
             <div className="border-t border-[var(--ag-border-subtle)] pt-5" key={item.title}>
-              <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">{item.title}</div>
+              <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">
+                {item.title}
+              </div>
               <p className="mt-3 text-base leading-7 text-[var(--ag-text-secondary)]">{item.body}</p>
             </div>
           ))}
@@ -167,12 +215,15 @@ export default function LandingPage() {
       <section className="border-t border-[var(--ag-border-subtle)] bg-[color:rgb(7_11_16_/_0.94)]">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-16 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
           <div className="space-y-4">
-            <div className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-color-brand)]">Launch with control</div>
+            <div className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-color-brand)]">
+              Launch with control
+            </div>
             <h2 className="max-w-3xl text-3xl font-semibold tracking-[-0.03em] text-[var(--ag-text-primary)] sm:text-4xl">
               Bring one repo, one connector, and one approval path online first. Then widen the blast radius.
             </h2>
             <p className="max-w-2xl text-base leading-7 text-[var(--ag-text-secondary)]">
-              The fastest way to adopt AgentGit Cloud is to connect a real workspace, prove the approval loop, and then let operators see what the daemon is already doing.
+              The fastest way to adopt AgentGit Cloud is to connect a real workspace, prove the approval loop, and then
+              let operators see what the daemon is already doing.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

@@ -205,6 +205,7 @@ export type ConnectorEventBatchResponse = z.infer<typeof ConnectorEventBatchResp
 export const ConnectorCommandTypeSchema = z.enum([
   "refresh_repo_state",
   "sync_run_history",
+  "replay_run",
   "resolve_approval",
   "plan_restore",
   "execute_restore",
@@ -230,6 +231,14 @@ export const SyncRunHistoryCommandPayloadSchema = z
   })
   .strict();
 export type SyncRunHistoryCommandPayload = z.infer<typeof SyncRunHistoryCommandPayloadSchema>;
+
+export const ReplayRunCommandPayloadSchema = z
+  .object({
+    sourceRunId: z.string().min(1),
+    replayWorkflowName: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+export type ReplayRunCommandPayload = z.infer<typeof ReplayRunCommandPayloadSchema>;
 
 export const ResolveApprovalCommandPayloadSchema = z
   .object({
@@ -290,6 +299,17 @@ export const ConnectorCommandExecutionResultSchema = z.discriminatedUnion("type"
       publishedEventCount: z.number().int().nonnegative().optional(),
       includesSnapshots: z.boolean().optional(),
       syncedAt: TimestampStringSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("replay_run"),
+      sourceRunId: z.string().min(1),
+      replayRunId: z.string().min(1).optional(),
+      submittedActionCount: z.number().int().nonnegative(),
+      skippedActionCount: z.number().int().nonnegative(),
+      pendingApprovalCount: z.number().int().nonnegative(),
+      replayedAt: TimestampStringSchema.optional(),
     })
     .strict(),
   z

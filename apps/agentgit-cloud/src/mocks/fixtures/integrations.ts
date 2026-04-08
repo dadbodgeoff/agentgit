@@ -23,6 +23,42 @@ const integrationsFixture = WorkspaceIntegrationSnapshotSchema.parse({
   emailNotificationsEnabled: true,
   digestCadence: "daily",
   notificationEvents: ["approval_requested", "run_failed", "policy_changed"],
+  notificationBusinessHours: {
+    timeZone: "America/New_York",
+    startTime: "09:00",
+    endTime: "17:00",
+    weekdays: ["mon", "tue", "wed", "thu", "fri"],
+  },
+  notificationRules: [
+    {
+      event: "approval_requested",
+      repositoryScope: "all",
+      repositoryTargets: [],
+      deliveryWindow: "anytime",
+      minimumRiskLevel: "read_only",
+    },
+    {
+      event: "run_failed",
+      repositoryScope: "all",
+      repositoryTargets: [],
+      deliveryWindow: "business_hours",
+      minimumRiskLevel: "read_only",
+    },
+    {
+      event: "policy_changed",
+      repositoryScope: "all",
+      repositoryTargets: [],
+      deliveryWindow: "business_hours",
+      minimumRiskLevel: "read_only",
+    },
+    {
+      event: "snapshot_restored",
+      repositoryScope: "all",
+      repositoryTargets: [],
+      deliveryWindow: "anytime",
+      minimumRiskLevel: "read_only",
+    },
+  ],
 });
 
 export function getWorkspaceIntegrationsFixture(): WorkspaceIntegrationSnapshot {
@@ -33,8 +69,12 @@ export function saveWorkspaceIntegrationsFixture(update: WorkspaceIntegrationUpd
   const integrations = WorkspaceIntegrationSnapshotSchema.parse({
     ...integrationsFixture,
     ...update,
-    slackWorkspaceName: update.slackConnected ? update.slackWorkspaceName || integrationsFixture.slackWorkspaceName : undefined,
-    slackChannelName: update.slackConnected ? update.slackChannelName || integrationsFixture.slackChannelName : undefined,
+    slackWorkspaceName: update.slackConnected
+      ? update.slackWorkspaceName || integrationsFixture.slackWorkspaceName
+      : undefined,
+    slackChannelName: update.slackConnected
+      ? update.slackChannelName || integrationsFixture.slackChannelName
+      : undefined,
   });
 
   return WorkspaceIntegrationSaveResponseSchema.parse({

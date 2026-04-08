@@ -8,15 +8,9 @@ const repositoryRecords: Array<{
   latestRun: { run_id: string; latest_event: { occurred_at: string } } | null;
 }> = [];
 
-const commands = [
-  { updatedAt: "2026-04-07T18:01:00Z" },
-  { updatedAt: "2026-04-07T18:05:00Z" },
-];
+const commands = [{ updatedAt: "2026-04-07T18:01:00Z" }, { updatedAt: "2026-04-07T18:05:00Z" }];
 
-const events = [
-  { ingestedAt: "2026-04-07T18:02:00Z" },
-  { ingestedAt: "2026-04-07T18:06:00Z" },
-];
+const events = [{ ingestedAt: "2026-04-07T18:02:00Z" }, { ingestedAt: "2026-04-07T18:06:00Z" }];
 
 vi.mock("@/lib/backend/workspace/repository-inventory", () => ({
   collectWorkspaceRepositoryRuntimeRecords: vi.fn(() => repositoryRecords),

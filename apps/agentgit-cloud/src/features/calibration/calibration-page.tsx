@@ -36,7 +36,7 @@ export function CalibrationPage({
 
     return repositories.some((repository) => repository.id === initialRepoId)
       ? initialRepoId!
-      : repositories[0]?.id ?? null;
+      : (repositories[0]?.id ?? null);
   }, [initialRepoId, repositories]);
   const calibrationQuery = useCalibrationQuery(
     selectedRepoId,
@@ -58,7 +58,12 @@ export function CalibrationPage({
 
   if (repositoriesQuery.isPending) {
     return (
-      <ScaffoldPage actions={actionButton} description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations." sections={[]} title="Calibration">
+      <ScaffoldPage
+        actions={actionButton}
+        description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations."
+        sections={[]}
+        title="Calibration"
+      >
         <PageStatePanel state="loading" />
       </ScaffoldPage>
     );
@@ -66,15 +71,28 @@ export function CalibrationPage({
 
   if (repositoriesQuery.isError) {
     return (
-      <ScaffoldPage actions={actionButton} description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations." sections={[]} title="Calibration">
-        <PageStatePanel errorMessage={getApiErrorMessage(repositoriesQuery.error, "Could not load repositories. Retry.")} state="error" />
+      <ScaffoldPage
+        actions={actionButton}
+        description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations."
+        sections={[]}
+        title="Calibration"
+      >
+        <PageStatePanel
+          errorMessage={getApiErrorMessage(repositoriesQuery.error, "Could not load repositories. Retry.")}
+          state="error"
+        />
       </ScaffoldPage>
     );
   }
 
   if (repositories.length === 0 || !selectedRepoId) {
     return (
-      <ScaffoldPage actions={actionButton} description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations." sections={[]} title="Calibration">
+      <ScaffoldPage
+        actions={actionButton}
+        description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations."
+        sections={[]}
+        title="Calibration"
+      >
         <PageStatePanel
           emptyDescription="Connect at least one governed repository before reviewing calibration quality."
           emptyTitle="No repositories available"
@@ -86,7 +104,12 @@ export function CalibrationPage({
 
   if (calibrationQuery.isPending) {
     return (
-      <ScaffoldPage actions={actionButton} description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations." sections={[]} title="Calibration">
+      <ScaffoldPage
+        actions={actionButton}
+        description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations."
+        sections={[]}
+        title="Calibration"
+      >
         <PageStatePanel state="loading" />
       </ScaffoldPage>
     );
@@ -94,8 +117,16 @@ export function CalibrationPage({
 
   if (calibrationQuery.isError) {
     return (
-      <ScaffoldPage actions={actionButton} description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations." sections={[]} title="Calibration">
-        <PageStatePanel errorMessage={getApiErrorMessage(calibrationQuery.error, "Could not load calibration data. Retry.")} state="error" />
+      <ScaffoldPage
+        actions={actionButton}
+        description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations."
+        sections={[]}
+        title="Calibration"
+      >
+        <PageStatePanel
+          errorMessage={getApiErrorMessage(calibrationQuery.error, "Could not load calibration data. Retry.")}
+          state="error"
+        />
       </ScaffoldPage>
     );
   }
@@ -105,12 +136,21 @@ export function CalibrationPage({
 
   if (calibration.recommendations.length === 0 && calibration.totalActions < 50) {
     return (
-      <ScaffoldPage actions={actionButton} description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations." sections={[]} title="Calibration">
+      <ScaffoldPage
+        actions={actionButton}
+        description="Policy calibration dashboard with confidence quality, replay previews, and threshold recommendations."
+        sections={[]}
+        title="Calibration"
+      >
         <div className="space-y-4">
           <Card className="space-y-2">
             <label className="flex flex-col gap-1">
               <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Repository</span>
-              <select className={selectClassName()} onChange={(event) => handleRepositoryChange(event.target.value)} value={selectedRepoId}>
+              <select
+                className={selectClassName()}
+                onChange={(event) => handleRepositoryChange(event.target.value)}
+                value={selectedRepoId}
+              >
                 {repositories.map((repository) => (
                   <option key={repository.id} value={repository.id}>
                     {repository.owner}/{repository.name}
@@ -146,7 +186,11 @@ export function CalibrationPage({
       sections={[
         { title: "Calibration metrics", description: "Brier score, ECE, and confidence bands." },
         { title: "Recommendations", description: "Per-domain threshold cards with impact preview.", kind: "cards" },
-        { title: "Insufficient data handling", description: "Progress rail and messaging for the 50-action minimum.", kind: "status" },
+        {
+          title: "Insufficient data handling",
+          description: "Progress rail and messaging for the 50-action minimum.",
+          kind: "status",
+        },
       ]}
       title="Calibration"
     >
@@ -154,7 +198,11 @@ export function CalibrationPage({
         <Card className="space-y-2">
           <label className="flex flex-col gap-1">
             <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Repository</span>
-            <select className={selectClassName()} onChange={(event) => handleRepositoryChange(event.target.value)} value={selectedRepoId}>
+            <select
+              className={selectClassName()}
+              onChange={(event) => handleRepositoryChange(event.target.value)}
+              value={selectedRepoId}
+            >
               {repositories.map((repository) => (
                 <option key={repository.id} value={repository.id}>
                   {repository.owner}/{repository.name}

@@ -48,7 +48,5 @@ export async function getWorkspaceLiveSignature(workspaceId: string): Promise<st
       .sort((left, right) => left.id.localeCompare(right.id)),
   );
 
-  return createHash("sha256")
-    .update(JSON.stringify({ repositorySignature, connectorSignature }), "utf8")
-    .digest("hex");
+  return createHash("sha256").update(JSON.stringify({ repositorySignature, connectorSignature }), "utf8").digest("hex");
 }

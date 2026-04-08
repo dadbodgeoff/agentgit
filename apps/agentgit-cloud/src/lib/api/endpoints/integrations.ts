@@ -28,9 +28,7 @@ export async function updateWorkspaceIntegrations(
   return WorkspaceIntegrationSaveResponseSchema.parse(response);
 }
 
-export async function sendIntegrationTest(
-  channel: IntegrationTestChannel,
-): Promise<IntegrationTestResponse> {
+export async function sendIntegrationTest(channel: IntegrationTestChannel): Promise<IntegrationTestResponse> {
   const response = await fetchJson<unknown>("/api/v1/settings/integrations/test-notification", {
     method: "POST",
     body: JSON.stringify(IntegrationTestRequestSchema.parse({ channel })),

@@ -28,8 +28,8 @@ describe("approvals route", () => {
     listWorkspaceApprovalQueue.mockReturnValue({
       items: [],
       total: 0,
-      page: 1,
-      per_page: 25,
+      page_size: 25,
+      next_cursor: null,
       has_more: false,
     });
 
@@ -38,7 +38,10 @@ describe("approvals route", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(listWorkspaceApprovalQueue).toHaveBeenCalledWith("ws_acme_01");
+    expect(listWorkspaceApprovalQueue).toHaveBeenCalledWith("ws_acme_01", {
+      cursor: undefined,
+      limit: 25,
+    });
     expect(body.items).toEqual([]);
   });
 });

@@ -9,7 +9,11 @@ import type {
 } from "@/schemas/cloud";
 
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
-import { getStoredWorkspaceBilling, getWorkspaceConnectionState, saveStoredWorkspaceBilling } from "@/lib/backend/workspace/cloud-state";
+import {
+  getStoredWorkspaceBilling,
+  getWorkspaceConnectionState,
+  saveStoredWorkspaceBilling,
+} from "@/lib/backend/workspace/cloud-state";
 
 const DEFAULT_PAYMENT_METHOD_LABEL = "Beta access granted";
 const DEFAULT_PAYMENT_METHOD_STATUS = "active" as const;
@@ -22,10 +26,7 @@ type WorkspaceUsageSnapshot = {
   approvalsUsed: number;
 };
 
-type BillingLimitSnapshot = Pick<
-  WorkspaceBilling,
-  "seatsIncluded" | "repositoriesIncluded" | "approvalsIncluded"
->;
+type BillingLimitSnapshot = Pick<WorkspaceBilling, "seatsIncluded" | "repositoriesIncluded" | "approvalsIncluded">;
 
 export class WorkspaceBillingLimitError extends Error {
   constructor(
@@ -70,15 +71,16 @@ function getNextInvoiceDate(): string {
 
 function deriveApprovalsUsed(workspaceId: string): number {
   const windowStartMs = Date.now() - APPROVAL_USAGE_WINDOW_MS;
-  return withControlPlaneState((store) =>
-    store
-      .listEvents()
-      .filter(
-        (record) =>
-          record.event.workspaceId === workspaceId &&
-          record.event.type === "approval.requested" &&
-          new Date(record.event.occurredAt).getTime() >= windowStartMs,
-      ).length,
+  return withControlPlaneState(
+    (store) =>
+      store
+        .listEvents()
+        .filter(
+          (record) =>
+            record.event.workspaceId === workspaceId &&
+            record.event.type === "approval.requested" &&
+            new Date(record.event.occurredAt).getTime() >= windowStartMs,
+        ).length,
   );
 }
 
@@ -104,10 +106,7 @@ async function deriveUsageSnapshot(workspaceId: string) {
   };
 }
 
-function getBillingLimitBreaches(
-  limits: BillingLimitSnapshot,
-  usage: WorkspaceUsageSnapshot,
-): BillingLimitBreach[] {
+function getBillingLimitBreaches(limits: BillingLimitSnapshot, usage: WorkspaceUsageSnapshot): BillingLimitBreach[] {
   const breaches: BillingLimitBreach[] = [];
 
   if (usage.seatsUsed > limits.seatsIncluded) {
@@ -165,9 +164,7 @@ async function mergeDerivedUsage(
     seatsUsed: usage.seatsUsed,
     approvalsUsed: usage.approvalsUsed,
     paymentMethodLabel:
-      billing.billingProvider === "stripe"
-        ? billing.paymentMethodLabel
-        : DEFAULT_PAYMENT_METHOD_LABEL,
+      billing.billingProvider === "stripe" ? billing.paymentMethodLabel : DEFAULT_PAYMENT_METHOD_LABEL,
     paymentMethodStatus:
       billing.billingProvider === "stripe"
         ? billing.paymentMethodStatus
@@ -232,13 +229,9 @@ export async function resolveWorkspaceBilling(workspaceSession: WorkspaceSession
       limitBreaches: storedBilling.limitBreaches ?? [],
       nextInvoiceDate: storedBilling.nextInvoiceDate || getNextInvoiceDate(),
       paymentMethodLabel:
-        storedBilling.billingProvider === "stripe"
-          ? storedBilling.paymentMethodLabel
-          : DEFAULT_PAYMENT_METHOD_LABEL,
+        storedBilling.billingProvider === "stripe" ? storedBilling.paymentMethodLabel : DEFAULT_PAYMENT_METHOD_LABEL,
       paymentMethodStatus:
-        storedBilling.billingProvider === "stripe"
-          ? storedBilling.paymentMethodStatus
-          : DEFAULT_PAYMENT_METHOD_STATUS,
+        storedBilling.billingProvider === "stripe" ? storedBilling.paymentMethodStatus : DEFAULT_PAYMENT_METHOD_STATUS,
       invoices: storedBilling.billingProvider === "stripe" ? storedBilling.invoices : DEFAULT_INVOICES,
     });
   }

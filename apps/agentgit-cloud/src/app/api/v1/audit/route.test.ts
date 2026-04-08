@@ -28,6 +28,9 @@ describe("audit route", () => {
     listWorkspaceAuditLog.mockReturnValue({
       items: [],
       total: 0,
+      page_size: 25,
+      next_cursor: null,
+      has_more: false,
       generatedAt: "2026-04-07T19:00:00Z",
     });
 
@@ -36,7 +39,10 @@ describe("audit route", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(listWorkspaceAuditLog).toHaveBeenCalledWith("ws_acme_01");
+    expect(listWorkspaceAuditLog).toHaveBeenCalledWith("ws_acme_01", {
+      cursor: undefined,
+      limit: 25,
+    });
     expect(body.total).toBe(0);
   });
 });

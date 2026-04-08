@@ -12,7 +12,8 @@
     "test:smoke": "sh -c \"pkill -f 'next start --hostname localhost --port 3112' >/dev/null 2>&1 || true; pkill -f '@agentgit/authority-daemon start' >/dev/null 2>&1 || true; pnpm build && playwright test --config=playwright.config.ts\"",
     "typecheck": "next typegen && tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf .next coverage tsconfig.tsbuildinfo",
-    "db:migrate": "tsx src/lib/db/migrate.ts"
+    "db:migrate": "tsx src/lib/db/migrate.ts",
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "@agentgit/authority-sdk": "workspace:*",

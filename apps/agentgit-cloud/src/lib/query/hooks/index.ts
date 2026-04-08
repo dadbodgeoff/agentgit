@@ -3,6 +3,7 @@ export * from "@/lib/query/hooks/use-activity-query";
 export * from "@/lib/query/hooks/use-approvals-query";
 export * from "@/lib/query/hooks/use-audit-query";
 export * from "@/lib/query/hooks/use-calibration-query";
+export * from "@/lib/query/hooks/use-cursor-paginated-query";
 export * from "@/lib/query/hooks/use-workspace-connectors-query";
 export * from "@/lib/query/hooks/use-dashboard-query";
 export * from "@/lib/query/hooks/use-onboarding-bootstrap-query";

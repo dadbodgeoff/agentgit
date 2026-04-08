@@ -19,9 +19,7 @@ export function Input({ className, errorText, helpText, label, ...props }: Input
         aria-invalid={errorText ? true : undefined}
         className={cn(
           "ag-focus-ring h-9 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] px-3 text-[14px] text-[var(--ag-text-primary)] placeholder:text-[var(--ag-text-tertiary)] hover:border-[var(--ag-border-strong)]",
-          errorText
-            ? "border-[var(--ag-color-error)] bg-[var(--ag-bg-error)]"
-            : "focus:border-[var(--ag-color-brand)]",
+          errorText ? "border-[var(--ag-color-error)] bg-[var(--ag-bg-error)]" : "focus:border-[var(--ag-color-brand)]",
           className,
         )}
         {...props}

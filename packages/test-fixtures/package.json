@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "test": "vitest run --passWithNoTests --dir src"
+    "test": "vitest run --passWithNoTests --dir src",
+    "lint": "eslint . --max-warnings=0"
   }
 }

@@ -209,7 +209,7 @@ export async function runCli(argv: string[] = process.argv.slice(2), providedCli
   const { jsonOutput, command, rest } = flags;
 
   if (!command || command === "help" || command === "--help" || command === "-h") {
-    console.log(USAGE);
+    process.stdout.write(`${USAGE}\n`);
     return;
   }
 

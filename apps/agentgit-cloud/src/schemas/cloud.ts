@@ -87,8 +87,8 @@ export const PaginatedEnvelopeSchema = <T extends z.ZodTypeAny>(itemSchema: T) =
     .object({
       items: z.array(itemSchema),
       total: z.number().int().nonnegative(),
-      page: z.number().int().positive(),
-      per_page: z.number().int().positive(),
+      page_size: z.number().int().positive(),
+      next_cursor: z.string().min(1).nullable(),
       has_more: z.boolean(),
     })
     .strict();
@@ -96,10 +96,18 @@ export const PaginatedEnvelopeSchema = <T extends z.ZodTypeAny>(itemSchema: T) =
 export type PaginatedEnvelope<T> = {
   items: T[];
   total: number;
-  page: number;
-  per_page: number;
+  page_size: number;
+  next_cursor: string | null;
   has_more: boolean;
 };
+
+export const CursorPaginationQuerySchema = z
+  .object({
+    cursor: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+  })
+  .strict();
+export type CursorPaginationQuery = z.infer<typeof CursorPaginationQuerySchema>;
 
 export const PreviewStateSchema = z.enum(["ready", "loading", "empty", "error"]);
 export type PreviewState = z.infer<typeof PreviewStateSchema>;
@@ -137,22 +145,134 @@ export const WorkspaceSessionSchema = z
   .strict();
 export type WorkspaceSession = z.infer<typeof WorkspaceSessionSchema>;
 
+export const WorkspaceEnterpriseSsoSettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    providerType: z.literal("oidc").default("oidc"),
+    providerLabel: z
+      .string()
+      .trim()
+      .min(2, "Enter a provider label with at least 2 characters.")
+      .max(64, "Keep the provider label under 64 characters."),
+    issuerUrl: z.string().trim().url("Enter a valid issuer URL."),
+    clientId: z
+      .string()
+      .trim()
+      .min(1, "Enter the OIDC client ID.")
+      .max(256, "Keep the client ID under 256 characters."),
+    emailDomains: z
+      .array(
+        z
+          .string()
+          .trim()
+          .toLowerCase()
+          .regex(/^[a-z0-9.-]+\.[a-z]{2,}$/, "Enter a valid email domain like example.com."),
+      )
+      .max(20, "Limit SSO email domains to 20 entries."),
+    autoProvisionMembers: z.boolean(),
+    defaultRole: WorkspaceRoleSchema,
+    clientSecretConfigured: z.boolean(),
+  })
+  .strict();
+export type WorkspaceEnterpriseSsoSettings = z.infer<typeof WorkspaceEnterpriseSsoSettingsSchema>;
+
+export const WorkspaceEnterpriseSsoUpdateSchema = z
+  .object({
+    enabled: z.boolean(),
+    providerType: z.literal("oidc"),
+    providerLabel: z
+      .string()
+      .trim()
+      .min(2, "Enter a provider label with at least 2 characters.")
+      .max(64, "Keep the provider label under 64 characters."),
+    issuerUrl: z.string().trim().url("Enter a valid issuer URL."),
+    clientId: z
+      .string()
+      .trim()
+      .min(1, "Enter the OIDC client ID.")
+      .max(256, "Keep the client ID under 256 characters."),
+    clientSecret: z
+      .string()
+      .trim()
+      .max(512, "Keep the client secret under 512 characters.")
+      .optional()
+      .or(z.literal("")),
+    emailDomains: z
+      .array(
+        z
+          .string()
+          .trim()
+          .toLowerCase()
+          .regex(/^[a-z0-9.-]+\.[a-z]{2,}$/, "Enter a valid email domain like example.com."),
+      )
+      .max(20, "Limit SSO email domains to 20 entries."),
+    autoProvisionMembers: z.boolean(),
+    defaultRole: WorkspaceRoleSchema,
+  })
+  .strict();
+export type WorkspaceEnterpriseSsoUpdate = z.infer<typeof WorkspaceEnterpriseSsoUpdateSchema>;
+
 export const WorkspaceSettingsSchema = z
   .object({
-    workspaceName: z.string().trim().min(3).max(48),
+    workspaceName: z
+      .string()
+      .trim()
+      .min(3, "Workspace name must be at least 3 characters.")
+      .max(48, "Workspace name must be 48 characters or fewer."),
     workspaceSlug: z
       .string()
       .trim()
-      .min(3)
-      .max(48)
-      .regex(/^[a-z0-9-]+$/),
+      .min(3, "Workspace slug must be at least 3 characters.")
+      .max(48, "Workspace slug must be 48 characters or fewer.")
+      .regex(/^[a-z0-9-]+$/, "Use lowercase letters, numbers, and hyphens only."),
     defaultNotificationChannel: NotificationChannelSchema,
-    approvalTtlMinutes: z.number().int().min(15).max(120),
+    approvalTtlMinutes: z
+      .number()
+      .int("Enter the approval timeout in whole minutes.")
+      .min(15, "Approval timeout must be at least 15 minutes.")
+      .max(120, "Approval timeout must be 120 minutes or less."),
     requireRejectComment: z.boolean(),
     freezeDeploysOutsideBusinessHours: z.boolean(),
+    enterpriseSso: WorkspaceEnterpriseSsoSettingsSchema.default({
+      enabled: false,
+      providerType: "oidc",
+      providerLabel: "Enterprise SSO",
+      issuerUrl: "https://idp.example.com/realms/agentgit",
+      clientId: "agentgit-cloud",
+      emailDomains: [],
+      autoProvisionMembers: true,
+      defaultRole: "member",
+      clientSecretConfigured: false,
+    }),
   })
   .strict();
 export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
+
+export const WorkspaceSettingsUpdateSchema = z
+  .object({
+    workspaceName: z
+      .string()
+      .trim()
+      .min(3, "Workspace name must be at least 3 characters.")
+      .max(48, "Workspace name must be 48 characters or fewer."),
+    workspaceSlug: z
+      .string()
+      .trim()
+      .min(3, "Workspace slug must be at least 3 characters.")
+      .max(48, "Workspace slug must be 48 characters or fewer.")
+      .regex(/^[a-z0-9-]+$/, "Use lowercase letters, numbers, and hyphens only."),
+    defaultNotificationChannel: NotificationChannelSchema,
+    approvalTtlMinutes: z
+      .number()
+      .int("Enter the approval timeout in whole minutes.")
+      .min(15, "Approval timeout must be at least 15 minutes.")
+      .max(120, "Approval timeout must be 120 minutes or less."),
+    requireRejectComment: z.boolean(),
+    freezeDeploysOutsideBusinessHours: z.boolean(),
+    enterpriseSso: WorkspaceEnterpriseSsoUpdateSchema,
+  })
+  .strict();
+export type WorkspaceSettingsUpdate = z.infer<typeof WorkspaceSettingsUpdateSchema>;
 
 export const WorkspaceSettingsSaveResponseSchema = z
   .object({
@@ -229,7 +349,7 @@ export const BillingUpdateSchema = z
     billingCycle: BillingCycleSchema,
     billingEmail: z.string().email("Enter a valid billing email."),
     invoiceEmail: z.string().email("Enter a valid invoice email."),
-    taxId: z.string().trim().max(32).optional().or(z.literal("")),
+    taxId: z.string().trim().max(32, "Keep the tax ID under 32 characters.").optional().or(z.literal("")),
   })
   .strict();
 export type BillingUpdate = z.infer<typeof BillingUpdateSchema>;
@@ -249,8 +369,55 @@ export type IntegrationHealthStatus = z.infer<typeof IntegrationHealthStatusSche
 export const SlackDeliveryModeSchema = z.enum(["all", "approvals_only", "disabled"]);
 export type SlackDeliveryMode = z.infer<typeof SlackDeliveryModeSchema>;
 
-export const NotificationEventSchema = z.enum(["approval_requested", "run_failed", "policy_changed", "snapshot_restored"]);
+export const NotificationEventSchema = z.enum([
+  "approval_requested",
+  "run_failed",
+  "policy_changed",
+  "snapshot_restored",
+]);
 export type NotificationEvent = z.infer<typeof NotificationEventSchema>;
+
+export const NotificationRepositoryScopeSchema = z.enum(["all", "selected"]);
+export type NotificationRepositoryScope = z.infer<typeof NotificationRepositoryScopeSchema>;
+
+export const NotificationDeliveryWindowSchema = z.enum(["anytime", "business_hours"]);
+export type NotificationDeliveryWindow = z.infer<typeof NotificationDeliveryWindowSchema>;
+
+export const NotificationRiskThresholdSchema = z.enum(["read_only", "mutating", "destructive"]);
+export type NotificationRiskThreshold = z.infer<typeof NotificationRiskThresholdSchema>;
+
+export const NotificationBusinessDaySchema = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+export type NotificationBusinessDay = z.infer<typeof NotificationBusinessDaySchema>;
+
+export const WorkspaceNotificationBusinessHoursSchema = z
+  .object({
+    timeZone: z.string().min(1),
+    startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM in 24-hour time."),
+    endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM in 24-hour time."),
+    weekdays: z.array(NotificationBusinessDaySchema).min(1, "Select at least one business day."),
+  })
+  .strict();
+export type WorkspaceNotificationBusinessHours = z.infer<typeof WorkspaceNotificationBusinessHoursSchema>;
+
+export const NotificationRuleSchema = z
+  .object({
+    event: NotificationEventSchema,
+    repositoryScope: NotificationRepositoryScopeSchema,
+    repositoryTargets: z.array(z.string().min(1)),
+    deliveryWindow: NotificationDeliveryWindowSchema,
+    minimumRiskLevel: NotificationRiskThresholdSchema,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.repositoryScope === "selected" && value.repositoryTargets.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select at least one repository when a rule is limited to selected repos.",
+        path: ["repositoryTargets"],
+      });
+    }
+  });
+export type NotificationRule = z.infer<typeof NotificationRuleSchema>;
 
 export const WorkspaceIntegrationSnapshotSchema = z
   .object({
@@ -268,20 +435,52 @@ export const WorkspaceIntegrationSnapshotSchema = z
     emailNotificationsEnabled: z.boolean(),
     digestCadence: z.enum(["realtime", "daily", "weekly"]),
     notificationEvents: z.array(NotificationEventSchema),
+    notificationBusinessHours: WorkspaceNotificationBusinessHoursSchema.default({
+      timeZone: "America/New_York",
+      startTime: "09:00",
+      endTime: "17:00",
+      weekdays: ["mon", "tue", "wed", "thu", "fri"],
+    }),
+    notificationRules: z.array(NotificationRuleSchema).default([]),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const events = new Set<NotificationEvent>();
+    for (const [index, rule] of value.notificationRules.entries()) {
+      if (events.has(rule.event)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Only one notification rule may be stored for each event.",
+          path: ["notificationRules", index, "event"],
+        });
+      }
+      events.add(rule.event);
+    }
+  });
 export type WorkspaceIntegrationSnapshot = z.infer<typeof WorkspaceIntegrationSnapshotSchema>;
 
 export const WorkspaceIntegrationUpdateSchema = z
   .object({
     slackConnected: z.boolean(),
     slackWebhookUrl: z.string().trim().url("Enter a valid Slack webhook URL.").optional().or(z.literal("")),
-    slackWorkspaceName: z.string().trim().max(48).optional().or(z.literal("")),
-    slackChannelName: z.string().trim().max(48).optional().or(z.literal("")),
+    slackWorkspaceName: z
+      .string()
+      .trim()
+      .max(48, "Keep the Slack workspace name under 48 characters.")
+      .optional()
+      .or(z.literal("")),
+    slackChannelName: z
+      .string()
+      .trim()
+      .max(48, "Keep the Slack channel name under 48 characters.")
+      .optional()
+      .or(z.literal("")),
     slackDeliveryMode: SlackDeliveryModeSchema,
     emailNotificationsEnabled: z.boolean(),
     digestCadence: z.enum(["realtime", "daily", "weekly"]),
     notificationEvents: z.array(NotificationEventSchema).min(1, "Select at least one notification event."),
+    notificationBusinessHours: WorkspaceNotificationBusinessHoursSchema,
+    notificationRules: z.array(NotificationRuleSchema),
   })
   .strict()
   .superRefine((values, context) => {
@@ -291,6 +490,18 @@ export const WorkspaceIntegrationUpdateSchema = z
         message: "Enter a Slack channel when Slack delivery is enabled.",
         path: ["slackChannelName"],
       });
+    }
+
+    const events = new Set<NotificationEvent>();
+    for (const [index, rule] of values.notificationRules.entries()) {
+      if (events.has(rule.event)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Only one notification rule may be configured for each event.",
+          path: ["notificationRules", index, "event"],
+        });
+      }
+      events.add(rule.event);
     }
   });
 export type WorkspaceIntegrationUpdate = z.infer<typeof WorkspaceIntegrationUpdateSchema>;
@@ -600,8 +811,8 @@ export const RepositorySnapshotsResponseSchema = z
   .object({
     items: z.array(RepositorySnapshotListItemSchema),
     total: z.number().int().nonnegative(),
-    page: z.number().int().positive(),
-    per_page: z.number().int().positive(),
+    page_size: z.number().int().positive(),
+    next_cursor: z.string().min(1).nullable(),
     has_more: z.boolean(),
     authorityReachable: z.boolean(),
     restorableCount: z.number().int().nonnegative(),
@@ -656,6 +867,9 @@ export const ActivityFeedResponseSchema = z
   .object({
     items: z.array(ActivityEventSchema),
     total: z.number().int().nonnegative(),
+    page_size: z.number().int().positive(),
+    next_cursor: z.string().min(1).nullable(),
+    has_more: z.boolean(),
     generatedAt: TimestampStringSchema,
   })
   .strict();
@@ -694,10 +908,34 @@ export const AuditLogResponseSchema = z
   .object({
     items: z.array(AuditEntrySchema),
     total: z.number().int().nonnegative(),
+    page_size: z.number().int().positive(),
+    next_cursor: z.string().min(1).nullable(),
+    has_more: z.boolean(),
     generatedAt: TimestampStringSchema,
   })
   .strict();
 export type AuditLogResponse = z.infer<typeof AuditLogResponseSchema>;
+
+export const AuditExportFormatSchema = z.enum(["csv", "json"]);
+export type AuditExportFormat = z.infer<typeof AuditExportFormatSchema>;
+
+export const AuditExportQuerySchema = z
+  .object({
+    format: AuditExportFormatSchema.default("csv"),
+    from: TimestampStringSchema.optional(),
+    to: TimestampStringSchema.optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.from && value.to && new Date(value.from).getTime() > new Date(value.to).getTime()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "`from` must be earlier than or equal to `to`.",
+        path: ["from"],
+      });
+    }
+  });
+export type AuditExportQuery = z.infer<typeof AuditExportQuerySchema>;
 
 export const DashboardSummarySchema = z
   .object({
@@ -731,10 +969,23 @@ export const ApprovalDecisionResponseSchema = z
   .strict();
 export type ApprovalDecisionResponse = z.infer<typeof ApprovalDecisionResponseSchema>;
 
-export const RunStepTypeSchema = z.enum(["action_step", "approval_step", "recovery_step", "analysis_step", "system_step"]);
+export const RunStepTypeSchema = z.enum([
+  "action_step",
+  "approval_step",
+  "recovery_step",
+  "analysis_step",
+  "system_step",
+]);
 export type RunStepType = z.infer<typeof RunStepTypeSchema>;
 
-export const RunStepStatusSchema = z.enum(["completed", "failed", "partial", "blocked", "awaiting_approval", "cancelled"]);
+export const RunStepStatusSchema = z.enum([
+  "completed",
+  "failed",
+  "partial",
+  "blocked",
+  "awaiting_approval",
+  "cancelled",
+]);
 export type RunStepStatus = z.infer<typeof RunStepStatusSchema>;
 
 export const RunStepSchema = z
@@ -775,6 +1026,57 @@ export const RunDetailSchema = z
   })
   .strict();
 export type RunDetail = z.infer<typeof RunDetailSchema>;
+
+export const RunReplayModeSchema = z.enum(["exact", "partial", "preview_only"]);
+export type RunReplayMode = z.infer<typeof RunReplayModeSchema>;
+
+export const RunReplayActionSchema = z
+  .object({
+    sourceActionId: z.string().min(1),
+    title: z.string().min(1),
+    actionFamily: z.string().min(1),
+    toolName: z.string().min(1),
+    provenance: z.enum(["governed", "observed", "imported", "unknown"]),
+    sideEffectLevel: SideEffectLevelSchema,
+    decision: PolicyDecisionSchema.nullable(),
+    confidenceScore: z.number().min(0).max(1),
+    replayable: z.boolean(),
+    replayReason: z.string().min(1).nullable(),
+  })
+  .strict();
+export type RunReplayAction = z.infer<typeof RunReplayActionSchema>;
+
+export const RunReplayPreviewSchema = z
+  .object({
+    sourceRunId: z.string().min(1),
+    workflowName: z.string().min(1),
+    connectorStatus: ApprovalConnectorStatusSchema,
+    connectorStatusReason: z.string().min(1).nullable(),
+    connectorId: z.string().min(1).nullable(),
+    connectorMachineName: z.string().min(1).nullable(),
+    replayMode: RunReplayModeSchema,
+    sourceActionCount: z.number().int().nonnegative(),
+    replayableActionCount: z.number().int().nonnegative(),
+    skippedActionCount: z.number().int().nonnegative(),
+    pendingApprovalCount: z.number().int().nonnegative(),
+    summary: z.string().min(1),
+    helperSummary: z.string().min(1).nullable(),
+    replayReason: z.string().min(1).nullable(),
+    actions: z.array(RunReplayActionSchema),
+  })
+  .strict();
+export type RunReplayPreview = z.infer<typeof RunReplayPreviewSchema>;
+
+export const RunReplayQueuedResponseSchema = z
+  .object({
+    sourceRunId: z.string().min(1),
+    connectorId: z.string().min(1),
+    commandId: z.string().min(1),
+    queuedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type RunReplayQueuedResponse = z.infer<typeof RunReplayQueuedResponseSchema>;
 
 export const ActionDetailSchema = z
   .object({
@@ -918,6 +1220,70 @@ export const RepositoryPolicyValidationSchema = z
   .strict();
 export type RepositoryPolicyValidation = z.infer<typeof RepositoryPolicyValidationSchema>;
 
+export const RepositoryPolicyChangeSourceSchema = z.enum(["save", "rollback", "seed"]);
+export type RepositoryPolicyChangeSource = z.infer<typeof RepositoryPolicyChangeSourceSchema>;
+
+export const RepositoryPolicyVersionDiffSectionSchema = z.enum(["metadata", "threshold", "rule"]);
+export type RepositoryPolicyVersionDiffSection = z.infer<typeof RepositoryPolicyVersionDiffSectionSchema>;
+
+export const RepositoryPolicyVersionDiffChangeSchema = z.enum(["added", "removed", "changed"]);
+export type RepositoryPolicyVersionDiffChange = z.infer<typeof RepositoryPolicyVersionDiffChangeSchema>;
+
+export const RepositoryPolicyVersionDiffEntrySchema = z
+  .object({
+    id: z.string().min(1),
+    section: RepositoryPolicyVersionDiffSectionSchema,
+    change: RepositoryPolicyVersionDiffChangeSchema,
+    label: z.string().min(1),
+    before: z.string().min(1).nullable(),
+    after: z.string().min(1).nullable(),
+  })
+  .strict();
+export type RepositoryPolicyVersionDiffEntry = z.infer<typeof RepositoryPolicyVersionDiffEntrySchema>;
+
+export const RepositoryPolicyVersionSummarySchema = z
+  .object({
+    id: z.string().min(1),
+    createdAt: TimestampStringSchema,
+    changeSource: RepositoryPolicyChangeSourceSchema,
+    actorUserId: z.string().min(1).nullable().default(null),
+    actorName: z.string().min(1),
+    actorEmail: z.string().email(),
+    profileName: z.string().min(1),
+    policyVersion: z.string().min(1),
+    ruleCount: z.number().int().nonnegative(),
+    thresholdCount: z.number().int().nonnegative(),
+    document: z.string().min(1),
+    isCurrent: z.boolean().default(false),
+    summary: z.string().min(1),
+    diffFromPrevious: z.array(RepositoryPolicyVersionDiffEntrySchema).default([]),
+  })
+  .strict();
+export type RepositoryPolicyVersionSummary = z.infer<typeof RepositoryPolicyVersionSummarySchema>;
+
+export const StoredRepositoryPolicyVersionSchema = z
+  .object({
+    id: z.string().min(1),
+    workspaceId: z.string().min(1),
+    repositoryId: z.string().min(1),
+    repositoryOwner: z.string().min(1),
+    repositoryName: z.string().min(1),
+    policyPath: z.string().min(1),
+    document: z.string().min(1),
+    documentHash: z.string().min(1),
+    profileName: z.string().min(1),
+    policyVersion: z.string().min(1),
+    ruleCount: z.number().int().nonnegative(),
+    thresholdCount: z.number().int().nonnegative(),
+    changeSource: RepositoryPolicyChangeSourceSchema,
+    actorUserId: z.string().min(1).nullable().default(null),
+    actorName: z.string().min(1),
+    actorEmail: z.string().email(),
+    createdAt: TimestampStringSchema,
+  })
+  .strict();
+export type StoredRepositoryPolicyVersion = z.infer<typeof StoredRepositoryPolicyVersionSchema>;
+
 export const RepositoryPolicySnapshotSchema = z
   .object({
     repoId: z.string().min(1),
@@ -936,6 +1302,8 @@ export const RepositoryPolicySnapshotSchema = z
     validation: RepositoryPolicyValidationSchema,
     recommendations: z.array(PolicyThresholdRecommendationSchema),
     loadedSources: z.array(PolicyLoadedSourceSchema),
+    currentVersionId: z.string().min(1).nullable(),
+    history: z.array(RepositoryPolicyVersionSummarySchema),
   })
   .strict();
 export type RepositoryPolicySnapshot = z.infer<typeof RepositoryPolicySnapshotSchema>;
@@ -1074,6 +1442,9 @@ export const WorkspaceConnectorInventorySchema = z
   .object({
     items: z.array(WorkspaceConnectorSummarySchema),
     total: z.number().int().nonnegative(),
+    page_size: z.number().int().positive(),
+    next_cursor: z.string().min(1).nullable(),
+    has_more: z.boolean(),
     generatedAt: TimestampStringSchema,
   })
   .strict();
@@ -1101,6 +1472,13 @@ export const ConnectorCommandDispatchRequestSchema = z.discriminatedUnion("type"
     .object({
       type: z.literal("sync_run_history"),
       includeSnapshots: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("replay_run"),
+      sourceRunId: z.string().min(1),
+      replayWorkflowName: z.string().trim().min(1).max(200).optional(),
     })
     .strict(),
   z

@@ -90,7 +90,8 @@ function toWorkspaceTeamSnapshot(
 
 export async function resolveWorkspaceTeam(workspaceSession: WorkspaceSession): Promise<WorkspaceTeamSnapshot> {
   const workspaceState =
-    (await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id)) ?? (await buildFallbackWorkspaceState(workspaceSession));
+    (await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id)) ??
+    (await buildFallbackWorkspaceState(workspaceSession));
 
   return toWorkspaceTeamSnapshot(
     ensureWorkspaceMember(workspaceState.members, workspaceSession),
@@ -104,7 +105,8 @@ export async function saveWorkspaceTeam(
   update: WorkspaceTeamUpdate,
 ): Promise<WorkspaceTeamSaveResponse> {
   const currentState =
-    (await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id)) ?? (await buildFallbackWorkspaceState(workspaceSession));
+    (await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id)) ??
+    (await buildFallbackWorkspaceState(workspaceSession));
 
   const persistedState: WorkspaceConnectionState = {
     ...currentState,

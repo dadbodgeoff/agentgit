@@ -1,9 +1,6 @@
 import { requireApiRole } from "@/lib/auth/api-session";
 import { listWorkspaceConnectors } from "@/lib/backend/control-plane/connectors";
-import {
-  getWorkspaceConnectionState,
-  saveWorkspaceConnectionState,
-} from "@/lib/backend/workspace/cloud-state";
+import { getWorkspaceConnectionState, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { listWorkspaceRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
 import {
   assertWorkspaceUsageWithinBillingLimits,
@@ -20,7 +17,10 @@ import {
 async function buildRepositoryBootstrap(access: { workspaceSession: WorkspaceSession }) {
   const availableRepositories = await listWorkspaceRepositoryOptions(access.workspaceSession.activeWorkspace.id);
   const persistedState = await getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
-  const connectors = await listWorkspaceConnectors(access.workspaceSession.activeWorkspace.id, new Date().toISOString());
+  const connectors = await listWorkspaceConnectors(
+    access.workspaceSession.activeWorkspace.id,
+    new Date().toISOString(),
+  );
   const repositoryIdByKey = new Map(
     availableRepositories.map((repository) => [`${repository.owner}/${repository.name}`, repository.id] as const),
   );
@@ -55,7 +55,11 @@ export async function GET(request: Request) {
     logRouteError("repository_connect_bootstrap_get", requestId, error, {
       workspaceId: access.workspaceSession.activeWorkspace.id,
     });
-    return jsonWithRequestId({ message: "Could not load repository connection setup. Retry." }, { status: 500 }, requestId);
+    return jsonWithRequestId(
+      { message: "Could not load repository connection setup. Retry." },
+      { status: 500 },
+      requestId,
+    );
   }
 }
 
@@ -105,14 +109,13 @@ export async function POST(request: Request) {
       workspaceName: previousState?.workspaceName ?? access.workspaceSession.activeWorkspace.name,
       workspaceSlug: previousState?.workspaceSlug ?? access.workspaceSession.activeWorkspace.slug,
       repositoryIds: requestedRepositoryIds,
-      members:
-        previousState?.members ?? [
-          {
-            name: access.workspaceSession.user.name,
-            email: access.workspaceSession.user.email,
-            role: access.workspaceSession.activeWorkspace.role,
-          },
-        ],
+      members: previousState?.members ?? [
+        {
+          name: access.workspaceSession.user.name,
+          email: access.workspaceSession.user.email,
+          role: access.workspaceSession.activeWorkspace.role,
+        },
+      ],
       invites: previousState?.invites ?? [],
       defaultNotificationChannel: previousState?.defaultNotificationChannel ?? "slack",
       policyPack: previousState?.policyPack ?? "guarded",
@@ -142,16 +145,16 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (error instanceof WorkspaceBillingLimitError) {
-      return jsonWithRequestId(
-        { message: error.message, breaches: error.breaches },
-        { status: 409 },
-        requestId,
-      );
+      return jsonWithRequestId({ message: error.message, breaches: error.breaches }, { status: 409 }, requestId);
     }
 
     logRouteError("repository_connect_bootstrap_post", requestId, error, {
       workspaceId: access.workspaceSession.activeWorkspace.id,
     });
-    return jsonWithRequestId({ message: "Could not update repository connections. Retry." }, { status: 500 }, requestId);
+    return jsonWithRequestId(
+      { message: "Could not update repository connections. Retry." },
+      { status: 500 },
+      requestId,
+    );
   }
 }

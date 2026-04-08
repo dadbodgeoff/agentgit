@@ -8,7 +8,20 @@ import { useForm } from "react-hook-form";
 
 import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
 import { MetricCard, PageHeader } from "@/components/composites";
-import { Badge, Button, Card, Input, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow, ToastCard, ToastViewport } from "@/components/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  Input,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRoot,
+  TableRow,
+  ToastCard,
+  ToastViewport,
+} from "@/components/primitives";
 import { ApiClientError } from "@/lib/api/client";
 import { updateWorkspaceBilling } from "@/lib/api/endpoints/billing";
 import { useWorkspaceBillingQuery } from "@/lib/query/hooks";
@@ -54,6 +67,7 @@ export function BillingSettingsPage() {
   const queryClient = useQueryClient();
   const billingQuery = useWorkspaceBillingQuery();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const form = useForm<BillingUpdate>({
@@ -102,6 +116,18 @@ export function BillingSettingsPage() {
     return () => window.clearTimeout(timeout);
   }, [toastMessage]);
 
+  useEffect(() => {
+    if (!errorToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setErrorToast(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [errorToast]);
+
   const saveMutation = useMutation({
     mutationFn: (values: BillingUpdate) => updateWorkspaceBilling(values),
     onSuccess: (result) => {
@@ -127,10 +153,12 @@ export function BillingSettingsPage() {
             : "Could not save billing settings. Retry.";
 
         setSubmitError(message);
+        setErrorToast(message);
         return;
       }
 
       setSubmitError("Could not save billing settings. Retry.");
+      setErrorToast("Could not save billing settings. Retry.");
     },
   });
 
@@ -180,10 +208,7 @@ export function BillingSettingsPage() {
           description="Owner-only billing controls for plan selection, invoice routing, and usage review."
           title="Billing"
         />
-        <EmptyState
-          description="Billing has not been initialized for this workspace yet."
-          title="No billing data"
-        />
+        <EmptyState description="Billing has not been initialized for this workspace yet." title="No billing data" />
       </>
     );
   }
@@ -193,13 +218,19 @@ export function BillingSettingsPage() {
   return (
     <>
       <PageHeader
-        actions={<Badge tone={isDirty ? "warning" : "success"}>{isDirty ? "Unsaved billing changes" : "Billing synced"}</Badge>}
+        actions={
+          <Badge tone={isDirty ? "warning" : "success"}>{isDirty ? "Unsaved billing changes" : "Billing synced"}</Badge>
+        }
         description="Owner-only billing controls for plan selection, invoice routing, and usage review."
         title="Billing"
       />
 
       <div className="grid gap-6 md:grid-cols-3">
-        <MetricCard label="Monthly estimate" trend={`${billing.planTier} plan`} value={formatCurrencyUsd(billing.monthlyEstimateUsd)} />
+        <MetricCard
+          label="Monthly estimate"
+          trend={`${billing.planTier} plan`}
+          value={formatCurrencyUsd(billing.monthlyEstimateUsd)}
+        />
         <MetricCard
           label="Seats used"
           trend={`${formatNumber(billing.seatsIncluded)} included`}
@@ -217,7 +248,8 @@ export function BillingSettingsPage() {
           <div>
             <h2 className="text-lg font-semibold">Hosted beta billing mode</h2>
             <p className="text-sm text-[var(--ag-text-secondary)]">
-              Stripe is intentionally not live yet. This workspace runs on a hosted beta gate that enforces plan limits without charging a card.
+              Stripe is intentionally not live yet. This workspace runs on a hosted beta gate that enforces plan limits
+              without charging a card.
             </p>
           </div>
           <Badge tone={billing.billingAccessStatus === "active" ? "success" : "warning"}>
@@ -245,7 +277,8 @@ export function BillingSettingsPage() {
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Plan and billing cycle</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Billing settings now persist durably in the cloud app, and the selected plan is enforced as the hosted beta entitlement envelope.
+                Billing settings now persist durably in the cloud app, and the selected plan is enforced as the hosted
+                beta entitlement envelope.
               </p>
             </div>
 
@@ -279,7 +312,8 @@ export function BillingSettingsPage() {
                 <option value="yearly">Yearly</option>
               </select>
               <span className="text-[12px] text-[var(--ag-text-secondary)]">
-                Yearly mode reflects a discounted effective monthly estimate for procurement planning, even before Stripe is enabled.
+                Yearly mode reflects a discounted effective monthly estimate for procurement planning, even before
+                Stripe is enabled.
               </span>
             </label>
           </Card>
@@ -322,7 +356,8 @@ export function BillingSettingsPage() {
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Invoice history</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Invoice history will populate after Stripe lands. During hosted beta, plan enforcement works without generating invoices.
+                Invoice history will populate after Stripe lands. During hosted beta, plan enforcement works without
+                generating invoices.
               </p>
             </div>
             {billing.invoices.length === 0 ? (
@@ -408,7 +443,8 @@ export function BillingSettingsPage() {
                 </Badge>
               </div>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Card collection is disabled during hosted beta. Plan enforcement happens through the selected tier and access review instead.
+                Card collection is disabled during hosted beta. Plan enforcement happens through the selected tier and
+                access review instead.
               </p>
               <Button disabled size="sm" variant="secondary">
                 Stripe coming later
@@ -463,6 +499,16 @@ export function BillingSettingsPage() {
             <div className="space-y-1">
               <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Billing saved</div>
               <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
+      ) : null}
+      {errorToast ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Save failed</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{errorToast}</p>
             </div>
           </ToastCard>
         </ToastViewport>

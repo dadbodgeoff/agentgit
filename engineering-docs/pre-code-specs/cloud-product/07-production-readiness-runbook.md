@@ -15,7 +15,10 @@ The cloud app expects four things before it should be considered production-read
 - workspace roots the control plane is allowed to inspect
 - a reachable authority daemon for the active workspace
 
+Enterprise SSO is optional at the platform level and is configured per workspace from the hosted settings UI. The current enterprise path is workspace-scoped OIDC for providers such as Okta or Microsoft Entra ID, with client secrets stored server-side in cloud persistence rather than in global environment variables.
+
 The app is built from a Next.js production build and then started with `next start` or the equivalent hosting platform runtime.
+The repository also ships a supported Docker image build at `apps/agentgit-cloud/Dockerfile` for containerized deployment dry-runs and single-service hosting targets.
 
 ## Required Environment
 
@@ -35,6 +38,25 @@ The app is built from a Next.js production build and then started with `next sta
 | `AUTH_WORKSPACE_ID` | Recommended for first launch | Bootstrap workspace id | Used only to seed the first persisted workspace when auth bootstrap is needed |
 | `AUTH_WORKSPACE_NAME` | Recommended for first launch | Bootstrap workspace display name | Used only during initial bootstrap |
 | `AUTH_WORKSPACE_SLUG` | Recommended for first launch | Bootstrap workspace slug | Used only during initial bootstrap |
+
+### Enterprise SSO Configuration
+
+Enterprise SSO does not require global environment variables. Instead, an owner configures it per workspace in the hosted product by supplying:
+
+- provider label
+- issuer URL
+- client id
+- client secret
+- allowed email domains for auto-provision
+- whether new members may be auto-provisioned
+- the default role for auto-provisioned users
+
+Production expectations:
+
+- enterprise SSO should remain disabled until the workspace owner has validated the issuer metadata, callback behavior, and domain allowlist
+- the client secret must be write-only in the UI and must never be returned by the workspace settings API
+- auto-provision should be enabled only when the email-domain allowlist is explicit and correct for the customer tenant
+- invited users and existing members should still be able to complete SSO sign-in even when broad auto-provision is disabled
 
 ### Cloud Database
 
@@ -104,6 +126,16 @@ pnpm --filter @agentgit/cloud-ui build
 pnpm --filter @agentgit/cloud-ui start
 ```
 
+For a containerized production-like start:
+
+```bash
+docker build -f apps/agentgit-cloud/Dockerfile -t agentgit-cloud .
+docker run --rm -p 3000:3000 \
+  --env-file /absolute/path/to/real-production.env \
+  -v /absolute/path/to/workspace:/workspace \
+  agentgit-cloud
+```
+
 ## Health And Readiness
 
 The production readiness check lives at `GET /api/v1/health` and requires an admin session.
@@ -152,6 +184,15 @@ Before launch, also validate abuse controls directly against production or a pro
 - pending approvals should expose their TTL-derived expiry and connector availability so operators can see whether the next action is review, reconnect, or retry
 - stale or missing connectors should prevent approval submission in the UI and should return a specific recovery reason from the decision routes
 - failed or expired approval-delivery commands should reappear in the queue with retry context instead of disappearing as if the local daemon had already accepted the decision
+- repository policy history should show the current version, prior versions, actor attribution, and a usable rollback path before launch; a bad policy edit must be reversible from the product without shell access
+- repositories with an existing workspace override should seed a baseline policy-history entry the first time the hosted page loads after versioning ships, so history is never blank while an override is active
+- run detail should expose a replay preview with replayable/skipped action counts and connector readiness before the replay button is ever enabled
+- replaying a run should queue a real connector command, produce a new run id locally, and sync that new run back into the hosted UI; imported or observed steps may be skipped, but the product must say so explicitly
+- audit export should return CSV or JSON for a requested date range and must match the same workspace-scoped entries shown in the hosted audit table instead of a separate compliance-only pipeline
+- high-volume list routes such as repositories, approvals, runs, snapshots, activity, audit, and connector fleet should return bounded cursor pages in production; the hosted UI must be able to keep loading older pages without full-page reloads or all-results fetches
+- enterprise SSO sign-in should succeed for an invited or existing member of the target workspace and should fail closed for identities outside the workspace membership rules
+- enterprise SSO workspace settings should never echo the configured client secret back to the browser, even after a successful save
+- if enterprise auto-provision is enabled, only identities from the configured allowlist should be admitted automatically, and the created membership should receive the configured default role
 
 ## Connector Bootstrap
 
@@ -173,7 +214,9 @@ agentgit-cloud-connector bootstrap \
   --cloud-url https://cloud.example.com \
   --workspace-id ws_acme_01 \
   --workspace-root /Users/me/code/agentgit \
-  --bootstrap-token agcbt_...
+  --bootstrap-token agcbt_... && \
+agentgit-cloud-connector run \
+  --workspace-root /Users/me/code/agentgit
 ```
 
 The connector stores its state database by default at:
@@ -189,6 +232,8 @@ After bootstrap, the connector should be able to:
 - publish event batches
 - pull queued commands
 - acknowledge command execution
+- stay connected in a long-lived loop with exponential backoff and resume normal sync cadence after recovery
+- drain durable pending events after a restart instead of requiring operators to re-bootstrap or re-run missed syncs manually
 
 ## First Production Run
 
@@ -208,7 +253,13 @@ Use this checklist for the first real workspace:
 12. Confirm live updates refresh the relevant view without a manual reload.
 13. Confirm approval or sync-heavy workflows still complete inside the expected latency budget after rate limiting is enabled.
 14. Confirm seat and repository growth paths return clear `409` responses when the selected hosted beta plan would be exceeded.
-15. Confirm the external uptime monitor succeeds against `/api/v1/healthz` and that Sentry alert rules and request-metrics dashboards are live.
+15. If enterprise SSO will be enabled for the first customer, configure one workspace-scoped OIDC provider, confirm the `enterprise-<workspace-slug>` sign-in path succeeds for an allowed user, and confirm a disallowed-domain user is rejected cleanly.
+16. Confirm large list surfaces can page beyond the first result set, both by direct API calls with `cursor` and by the hosted "Load more" controls.
+17. Confirm the external uptime monitor succeeds against `/api/v1/healthz` and that Sentry alert rules and request-metrics dashboards are live.
+18. Open one repository policy page, save a small change, confirm a new history entry appears with a diff, then roll back and confirm the previous document is restored as a new rollback entry.
+19. Open one run detail page, review the replay preview, queue a replay, confirm the connector acknowledges a `replay_run` command, and verify a new replay run appears in run history for the same repository.
+20. Leave the connector running, force one transient cloud sync failure, confirm the connector backs off and recovers automatically, then verify queued events still flush after the connection returns.
+21. Export audit history as both CSV and JSON for a bounded date range, confirm the file downloads include the expected workspace events, and verify no out-of-range records leak into the export.
 
 ## Do Not Ship If
 
@@ -222,6 +273,7 @@ Use this checklist for the first real workspace:
 - API and connector abuse controls are disabled or unverified
 - billing still shows fake processor state instead of an explicit Stripe integration or hosted beta gate
 - uptime monitoring, request metrics, or Sentry alerting are unconfigured
+- the connector can only `sync-once` and has no verified long-lived recovery path for transient network failures
 - the first connector cannot bootstrap and heartbeats do not appear in the fleet view
 
 ## Operator Notes

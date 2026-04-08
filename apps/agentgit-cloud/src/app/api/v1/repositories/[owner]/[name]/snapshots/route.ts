@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireApiSession } from "@/lib/auth/api-session";
 import { listRepositorySnapshots } from "@/lib/backend/workspace/repository-snapshots";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
+import { isPaginationQueryError, parseCursorPaginationQuery } from "@/lib/pagination/cursor";
 import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
@@ -35,13 +36,22 @@ export async function GET(
   const { owner, name } = await context.params;
 
   try {
-    const snapshots = await listRepositorySnapshots(owner, name, workspaceSession.activeWorkspace.id);
+    const pagination = parseCursorPaginationQuery(request);
+    const snapshots = await listRepositorySnapshots(owner, name, workspaceSession.activeWorkspace.id, pagination);
     if (!snapshots) {
-      return jsonWithRequestId({ message: "Repository not found in the active workspace." }, { status: 404 }, requestId);
+      return jsonWithRequestId(
+        { message: "Repository not found in the active workspace." },
+        { status: 404 },
+        requestId,
+      );
     }
 
     return jsonWithRequestId(snapshots, undefined, requestId);
   } catch (error) {
+    if (isPaginationQueryError(error)) {
+      return jsonWithRequestId({ message: "Pagination parameters are invalid." }, { status: 400 }, requestId);
+    }
+
     logRouteError("repository_snapshots_get", requestId, error, { owner, name });
     return jsonWithRequestId({ message: "Could not load repository snapshots. Retry." }, { status: 500 }, requestId);
   }

@@ -2,6 +2,10 @@ import path from "node:path";
 
 export const releaseNpmPackages = [
   {
+    name: "@agentgit/core-ports",
+    relativeDir: path.join("packages", "core-ports"),
+  },
+  {
     name: "@agentgit/integration-state",
     relativeDir: path.join("packages", "integration-state"),
   },

@@ -87,7 +87,9 @@ async function provisionBootstrapWorkspaceAccess(identity: WorkspaceIdentity): P
   };
 }
 
-export async function resolveWorkspaceAccessForIdentity(identity: WorkspaceIdentity): Promise<ResolvedWorkspaceAccess | null> {
+export async function resolveWorkspaceAccessForIdentity(
+  identity: WorkspaceIdentity,
+): Promise<ResolvedWorkspaceAccess | null> {
   const email = normalizeEmail(identity.email);
   const matches: ResolvedWorkspaceAccess[] = [];
 

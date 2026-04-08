@@ -40,9 +40,12 @@ describe("sync connector revoke route", () => {
     });
 
     const { DELETE } = await import("./route");
-    const response = await DELETE(new Request("http://localhost/api/v1/sync/connectors/conn_01", { method: "DELETE" }), {
-      params: Promise.resolve({ connectorId: "conn_01" }),
-    });
+    const response = await DELETE(
+      new Request("http://localhost/api/v1/sync/connectors/conn_01", { method: "DELETE" }),
+      {
+        params: Promise.resolve({ connectorId: "conn_01" }),
+      },
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);

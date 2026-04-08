@@ -8,10 +8,16 @@ import path from "node:path";
 import { RunJournal } from "@agentgit/run-journal";
 import type { RunSummary } from "@agentgit/schemas";
 
-import { RepositoryListResponseSchema, type AgentStatus, type RepositoryListItem, type RunStatus } from "@/schemas/cloud";
+import {
+  RepositoryListResponseSchema,
+  type AgentStatus,
+  type RepositoryListItem,
+  type RunStatus,
+} from "@/schemas/cloud";
 import { buildLocalProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
 import { getWorkspaceConnectionState, listWorkspaceConnectionStates } from "@/lib/backend/workspace/cloud-state";
 import { resolveWorkspaceRoots } from "@/lib/backend/workspace/roots";
+import { paginateItems, type CursorPage } from "@/lib/pagination/cursor";
 
 type GitRepositoryMetadata = {
   root: string;
@@ -69,7 +75,10 @@ function isSameOrNestedPath(candidate: string, base: string): boolean {
   return normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(`${normalizedBase}${path.sep}`);
 }
 
-function parseGitRemote(remoteUrl: string | null, repoRoot: string): {
+function parseGitRemote(
+  remoteUrl: string | null,
+  repoRoot: string,
+): {
   owner: string;
   name: string;
   provider: GitRepositoryMetadata["provider"];
@@ -308,28 +317,36 @@ export async function collectDiscoveredRepositoryRuntimeRecords(): Promise<Works
     );
 }
 
-export async function collectWorkspaceRepositoryRuntimeRecords(workspaceId: string): Promise<WorkspaceRepositoryRuntimeRecord[]> {
+export async function collectWorkspaceRepositoryRuntimeRecords(
+  workspaceId: string,
+): Promise<WorkspaceRepositoryRuntimeRecord[]> {
   return filterRecordsForWorkspace(await collectDiscoveredRepositoryRuntimeRecords(), workspaceId);
 }
 
-function buildRepositoryListResponse(repositories: RepositoryListItem[]) {
+function buildRepositoryListResponse(page: CursorPage<RepositoryListItem>) {
   return RepositoryListResponseSchema.parse({
-    items: repositories,
-    total: repositories.length,
-    page: 1,
-    per_page: repositories.length === 0 ? 25 : repositories.length,
-    has_more: false,
+    ...page,
   });
 }
 
-export async function listDiscoveredRepositoryInventory() {
-  return buildRepositoryListResponse((await collectDiscoveredRepositoryRuntimeRecords()).map((record) => record.inventory));
+export async function listDiscoveredRepositoryInventory(
+  params: { cursor?: string | null; limit: number } = { limit: 25 },
+) {
+  return buildRepositoryListResponse(
+    paginateItems(
+      (await collectDiscoveredRepositoryRuntimeRecords()).map((record) => record.inventory),
+      params,
+    ),
+  );
 }
 
-export async function listRepositoryInventory(workspaceId: string) {
+export async function listRepositoryInventory(
+  workspaceId: string,
+  params: { cursor?: string | null; limit: number } = { limit: 25 },
+) {
   const repositories = (await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).map((record) => record.inventory);
 
-  return buildRepositoryListResponse(repositories);
+  return buildRepositoryListResponse(paginateItems(repositories, params));
 }
 
 function buildRepositoryClaims(workspaceStates: Awaited<ReturnType<typeof listWorkspaceConnectionStates>>) {
@@ -352,10 +369,9 @@ function mapRepositoryOption(record: WorkspaceRepositoryRuntimeRecord) {
     owner: record.inventory.owner,
     name: record.inventory.name,
     defaultBranch: record.inventory.defaultBranch,
-    description:
-      record.latestRun?.workflow_name
-        ? `Latest workflow: ${record.latestRun.workflow_name}.`
-        : `Governed repository rooted at ${record.metadata.root}.`,
+    description: record.latestRun?.workflow_name
+      ? `Latest workflow: ${record.latestRun.workflow_name}.`
+      : `Governed repository rooted at ${record.metadata.root}.`,
     requiresOrgApproval: false,
   };
 }
@@ -391,5 +407,8 @@ export async function findRepositoryRuntimeRecordById(
   repoId: string,
   workspaceId: string,
 ): Promise<WorkspaceRepositoryRuntimeRecord | null> {
-  return (await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).find((record) => record.inventory.id === repoId) ?? null;
+  return (
+    (await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).find((record) => record.inventory.id === repoId) ??
+    null
+  );
 }

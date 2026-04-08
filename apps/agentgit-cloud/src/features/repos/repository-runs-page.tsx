@@ -17,12 +17,19 @@ import {
   TableRow,
 } from "@/components/primitives";
 import { getApiErrorMessage } from "@/lib/api/client";
-import { repositoryPolicyRoute, repositoryRoute, repositorySnapshotsRoute, runDetailRoute } from "@/lib/navigation/routes";
+import {
+  repositoryPolicyRoute,
+  repositoryRoute,
+  repositorySnapshotsRoute,
+  runDetailRoute,
+} from "@/lib/navigation/routes";
 import { useRepositoryRunsQuery } from "@/lib/query/hooks";
 import type { PreviewState } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 
-function badgeToneForStatus(status: "queued" | "running" | "completed" | "failed" | "canceled"): "neutral" | "warning" | "success" | "error" {
+function badgeToneForStatus(
+  status: "queued" | "running" | "completed" | "failed" | "canceled",
+): "neutral" | "warning" | "success" | "error" {
   switch (status) {
     case "running":
       return "warning";
@@ -84,7 +91,7 @@ export function RepositoryRunsPage({
     );
   }
 
-  if (runsQuery.isError) {
+  if (runsQuery.isError || !runsQuery.data) {
     const errorMessage = getApiErrorMessage(runsQuery.error, "Could not load repository runs. Retry.");
 
     return (
@@ -143,12 +150,16 @@ export function RepositoryRunsPage({
             <div>
               <h2 className="text-lg font-semibold">Run history</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Follow governed runs from repository context into run and action detail without losing the operator trail.
+                Follow governed runs from repository context into run and action detail without losing the operator
+                trail.
               </p>
             </div>
             <Badge tone={attentionCount > 0 ? "warning" : "success"}>
               {attentionCount > 0 ? `${attentionCount} need attention` : "Healthy backlog"}
             </Badge>
+          </div>
+          <div className="text-sm text-[var(--ag-text-secondary)]">
+            Showing {runs.items.length} of {runs.total} runs loaded for this repository.
           </div>
 
           {runs.items.length === 0 ? (
@@ -182,7 +193,9 @@ export function RepositoryRunsPage({
                         <div className="text-xs text-[var(--ag-text-secondary)]">{run.summary}</div>
                         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ag-text-tertiary)]">
                           <span className="font-mono">{run.id}</span>
-                          <span>{run.eventCount} event{run.eventCount === 1 ? "" : "s"}</span>
+                          <span>
+                            {run.eventCount} event{run.eventCount === 1 ? "" : "s"}
+                          </span>
                         </div>
                       </div>
                     </TableCell>
@@ -190,13 +203,31 @@ export function RepositoryRunsPage({
                       <Badge tone={badgeToneForStatus(run.status)}>{run.status}</Badge>
                     </TableCell>
                     <TableCell>{run.agentName}</TableCell>
-                    <TableCell className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(run.startedAt)}</TableCell>
-                    <TableCell className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(run.updatedAt)}</TableCell>
+                    <TableCell className="text-[var(--ag-text-secondary)]">
+                      {formatRelativeTimestamp(run.startedAt)}
+                    </TableCell>
+                    <TableCell className="text-[var(--ag-text-secondary)]">
+                      {formatRelativeTimestamp(run.updatedAt)}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </TableRoot>
           )}
+          {runsQuery.hasNextPage ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ag-border-subtle)] pt-4">
+              <p className="text-sm text-[var(--ag-text-secondary)]">
+                Load older governed runs from the repository journal.
+              </p>
+              <Button
+                disabled={runsQuery.isFetchingNextPage}
+                onClick={() => void runsQuery.fetchNextPage()}
+                variant="secondary"
+              >
+                {runsQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+              </Button>
+            </div>
+          ) : null}
         </Card>
 
         <div className="space-y-6">

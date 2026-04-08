@@ -180,10 +180,7 @@ function commandHistoryMatchesFilter(command: WorkspaceConnectorCommandSummary, 
 
 function fallbackConnectorSummary(message: string) {
   return (
-    <EmptyState
-      description={message}
-      title="No connectors registered yet"
-    >
+    <EmptyState description={message} title="No connectors registered yet">
       <Link
         className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] px-4 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
         href={authenticatedRoutes.integrations}
@@ -348,7 +345,7 @@ export function ConnectorsFleetPage() {
     );
   }
 
-  if (connectorsQuery.isError) {
+  if (connectorsQuery.isError || !connectorsQuery.data) {
     return (
       <>
         <PageHeader
@@ -384,8 +381,7 @@ export function ConnectorsFleetPage() {
       connector.workspaceRoot.toLowerCase().includes(normalizedSearch)
     );
   });
-  const selectedConnector =
-    items.find((connector) => connector.id === selectedConnectorId) ?? items[0] ?? null;
+  const selectedConnector = items.find((connector) => connector.id === selectedConnectorId) ?? items[0] ?? null;
   const selectedConnectorCommands = selectedConnector?.recentCommands ?? [];
   const filteredCommands = selectedConnectorCommands.filter((command) =>
     commandHistoryMatchesFilter(command, commandHistoryFilter),
@@ -395,21 +391,17 @@ export function ConnectorsFleetPage() {
     total: inventory.total,
     active: items.filter((connector) => connector.status === "active").length,
     unhealthy: items.filter((connector) => connector.status !== "active").length,
-    retryable: items.reduce(
-      (total, connector) => total + connector.retryableCommandCount,
-      0,
-    ),
-    autoRetries: items.reduce(
-      (total, connector) => total + connector.automaticRetryCount,
-      0,
-    ),
+    retryable: items.reduce((total, connector) => total + connector.retryableCommandCount, 0),
+    autoRetries: items.reduce((total, connector) => total + connector.automaticRetryCount, 0),
   };
   const selectedReplayableCount = selectedConnectorCommands.filter((command) => command.replayable).length;
   const selectedActiveCommandCount = selectedConnectorCommands.filter(
     (command) => command.status === "pending" || command.status === "acked",
   ).length;
   const selectedSettledCount = selectedConnectorCommands.filter((command) => command.status === "completed").length;
-  const selectedScheduledRetryCount = selectedConnectorCommands.filter((command) => command.nextAttemptAt !== null).length;
+  const selectedScheduledRetryCount = selectedConnectorCommands.filter(
+    (command) => command.nextAttemptAt !== null,
+  ).length;
   const selectedTimeline = !selectedConnector
     ? []
     : [
@@ -419,7 +411,8 @@ export function ConnectorsFleetPage() {
           kind: "command" as const,
           label: `${command.type} / ${commandDisplayState(command)}`,
           detail: commandSummary(command) ?? command.message ?? "No command details recorded.",
-          href: command.detailPath ?? repositoryRoute(selectedConnector.repositoryOwner, selectedConnector.repositoryName),
+          href:
+            command.detailPath ?? repositoryRoute(selectedConnector.repositoryOwner, selectedConnector.repositoryName),
           externalUrl: command.externalUrl ?? null,
         })),
         ...selectedConnector.recentEvents.map((event) => ({
@@ -458,7 +451,9 @@ export function ConnectorsFleetPage() {
           <MetricCard label="Provider verified" value="0" trend="verification appears here" />
         </div>
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.9fr)]">
-          {fallbackConnectorSummary("No local connectors have registered for this workspace yet. Generate a bootstrap token or launch the local connector to start observing fleet health.")}
+          {fallbackConnectorSummary(
+            "No local connectors have registered for this workspace yet. Generate a bootstrap token or launch the local connector to start observing fleet health.",
+          )}
           <ConnectorInstallGuide />
         </div>
       </>
@@ -493,8 +488,16 @@ export function ConnectorsFleetPage() {
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard label="Connected connectors" value={String(summary.total)} trend="registered connectors" />
         <MetricCard label="Active" value={String(summary.active)} trend={`${summary.unhealthy} need attention`} />
-        <MetricCard label="Retryable commands" value={String(summary.retryable)} trend={`${summary.autoRetries} scheduled retries`} />
-        <MetricCard label="Provider verified" value={String(items.filter((connector) => connector.providerIdentity.status === "verified").length)} trend="identity drift surfaced" />
+        <MetricCard
+          label="Retryable commands"
+          value={String(summary.retryable)}
+          trend={`${summary.autoRetries} scheduled retries`}
+        />
+        <MetricCard
+          label="Provider verified"
+          value={String(items.filter((connector) => connector.providerIdentity.status === "verified").length)}
+          trend="identity drift surfaced"
+        />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.95fr)]">
@@ -509,6 +512,9 @@ export function ConnectorsFleetPage() {
             <Badge tone={summary.unhealthy === 0 ? "success" : "warning"}>
               {summary.unhealthy === 0 ? "All healthy" : `${summary.unhealthy} need review`}
             </Badge>
+          </div>
+          <div className="text-sm text-[var(--ag-text-secondary)]">
+            Showing {inventory.items.length} of {inventory.total} registered connectors.
           </div>
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
             <Input
@@ -598,6 +604,20 @@ export function ConnectorsFleetPage() {
               })}
             </TableBody>
           </TableRoot>
+          {connectorsQuery.hasNextPage ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ag-border-subtle)] pt-4">
+              <p className="text-sm text-[var(--ag-text-secondary)]">
+                Load the next connector page to inspect more fleet machines and histories.
+              </p>
+              <Button
+                disabled={connectorsQuery.isFetchingNextPage}
+                onClick={() => void connectorsQuery.fetchNextPage()}
+                variant="secondary"
+              >
+                {connectorsQuery.isFetchingNextPage ? "Loading..." : "Load more"}
+              </Button>
+            </div>
+          ) : null}
         </Card>
 
         {selectedConnector ? (
@@ -634,7 +654,9 @@ export function ConnectorsFleetPage() {
                   </Link>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-2 text-sm">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Workspace root</div>
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                    Workspace root
+                  </div>
                   <div className="mt-1 break-all font-mono text-xs text-[var(--ag-text-secondary)]">
                     {selectedConnector.workspaceRoot}
                   </div>
@@ -660,7 +682,9 @@ export function ConnectorsFleetPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Provider state</div>
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                    Provider state
+                  </div>
                   <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
                     {selectedConnector.providerIdentity.statusReason ?? "Verified from the local connector state."}
                   </div>
@@ -669,7 +693,9 @@ export function ConnectorsFleetPage() {
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Default branch</div>
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                    Default branch
+                  </div>
                   <div className="mt-1 font-medium">{selectedConnector.providerIdentity.defaultBranch}</div>
                 </div>
                 <div>
@@ -752,7 +778,9 @@ export function ConnectorsFleetPage() {
                 <Button
                   disabled={
                     retryMutation.isPending ||
-                    !selectedConnectorCommands.some((command) => command.status === "failed" || command.status === "expired")
+                    !selectedConnectorCommands.some(
+                      (command) => command.status === "failed" || command.status === "expired",
+                    )
                   }
                   onClick={() => {
                     const retryable = selectedConnectorCommands.find(
@@ -781,10 +809,14 @@ export function ConnectorsFleetPage() {
             <Card className="space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">Operational timeline</h2>
-                <Badge tone={selectedTimeline.length > 0 ? "accent" : "neutral"}>{formatNumber(selectedTimeline.length)}</Badge>
+                <Badge tone={selectedTimeline.length > 0 ? "accent" : "neutral"}>
+                  {formatNumber(selectedTimeline.length)}
+                </Badge>
               </div>
               {selectedTimeline.length === 0 ? (
-                <div className="text-sm text-[var(--ag-text-secondary)]">No command or event timeline is available yet.</div>
+                <div className="text-sm text-[var(--ag-text-secondary)]">
+                  No command or event timeline is available yet.
+                </div>
               ) : (
                 <div className="space-y-3">
                   {selectedTimeline.map((entry) => (
@@ -801,7 +833,10 @@ export function ConnectorsFleetPage() {
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--ag-text-secondary)]">
                         <span>{formatRelativeTimestamp(entry.timestamp)}</span>
-                        <Link className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline" href={entry.href}>
+                        <Link
+                          className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                          href={entry.href}
+                        >
                           Open context
                         </Link>
                         {entry.externalUrl ? (
@@ -864,7 +899,9 @@ export function ConnectorsFleetPage() {
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedSettledCount)}</div>
                   </div>
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Scheduled retry</div>
+                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                      Scheduled retry
+                    </div>
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedScheduledRetryCount)}</div>
                   </div>
                 </div>
@@ -884,10 +921,16 @@ export function ConnectorsFleetPage() {
                     >
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <Badge tone={commandTone(command.status)}>{command.type}</Badge>
-                            <Badge tone={commandReplayTone(command)}>{command.replayable ? "replayable" : command.replayStatus ?? commandDisplayState(command)}</Badge>
-                            <span className="text-sm text-[var(--ag-text-secondary)]">{commandDisplayState(command)}</span>
+                            <Badge tone={commandReplayTone(command)}>
+                              {command.replayable
+                                ? "replayable"
+                                : (command.replayStatus ?? commandDisplayState(command))}
+                            </Badge>
+                            <span className="text-sm text-[var(--ag-text-secondary)]">
+                              {commandDisplayState(command)}
+                            </span>
                           </div>
                           <div className="text-sm text-[var(--ag-text-secondary)]">
                             {commandSummary(command) ?? command.message ?? "No command summary available."}
@@ -933,12 +976,21 @@ export function ConnectorsFleetPage() {
                       <div className="mt-3 grid gap-2 text-xs text-[var(--ag-text-tertiary)] sm:grid-cols-2 xl:grid-cols-4">
                         <span>{command.commandId}</span>
                         <span>attempt {formatNumber(command.attemptCount)}</span>
-                        <span>{command.nextAttemptAt ? `retry at ${formatAbsoluteDate(command.nextAttemptAt)}` : "no scheduled retry"}</span>
-                        <span>{command.leaseExpiresAt ? `lease expires ${formatAbsoluteDate(command.leaseExpiresAt)}` : "no active lease"}</span>
+                        <span>
+                          {command.nextAttemptAt
+                            ? `retry at ${formatAbsoluteDate(command.nextAttemptAt)}`
+                            : "no scheduled retry"}
+                        </span>
+                        <span>
+                          {command.leaseExpiresAt
+                            ? `lease expires ${formatAbsoluteDate(command.leaseExpiresAt)}`
+                            : "no active lease"}
+                        </span>
                       </div>
                       {command.result ? (
                         <div className="mt-3 rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2 text-sm text-[var(--ag-text-secondary)]">
-                          {commandSummary({ ...command, message: command.message }) ?? "Result recorded for this command."}
+                          {commandSummary({ ...command, message: command.message }) ??
+                            "Result recorded for this command."}
                         </div>
                       ) : null}
                     </div>
@@ -955,7 +1007,9 @@ export function ConnectorsFleetPage() {
                 </Badge>
               </div>
               {selectedConnector.recentEvents.length === 0 ? (
-                <div className="text-sm text-[var(--ag-text-secondary)]">No connector events have been synchronized yet.</div>
+                <div className="text-sm text-[var(--ag-text-secondary)]">
+                  No connector events have been synchronized yet.
+                </div>
               ) : (
                 <div className="space-y-2">
                   {selectedConnector.recentEvents.map((event) => (
@@ -967,7 +1021,9 @@ export function ConnectorsFleetPage() {
                         <div className="text-sm font-medium">{event.type}</div>
                         <div className="text-xs text-[var(--ag-text-secondary)]">{event.eventId}</div>
                       </div>
-                      <div className="text-xs text-[var(--ag-text-tertiary)]">{formatRelativeTimestamp(event.occurredAt)}</div>
+                      <div className="text-xs text-[var(--ag-text-tertiary)]">
+                        {formatRelativeTimestamp(event.occurredAt)}
+                      </div>
                     </div>
                   ))}
                 </div>

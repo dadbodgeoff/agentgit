@@ -42,11 +42,7 @@ export function ShellHeader() {
               Settings
             </Link>
           ) : null}
-          <Button
-            onClick={() => void signOut({ redirectTo: publicRoutes.signIn })}
-            size="sm"
-            variant="ghost"
-          >
+          <Button onClick={() => void signOut({ redirectTo: publicRoutes.signIn })} size="sm" variant="ghost">
             Sign out
           </Button>
         </div>

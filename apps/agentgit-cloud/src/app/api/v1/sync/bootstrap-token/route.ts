@@ -18,6 +18,10 @@ export async function POST(request: Request) {
     logRouteError("sync_bootstrap_token_post", requestId, error, {
       workspaceId: access.workspaceSession.activeWorkspace.id,
     });
-    return jsonWithRequestId({ message: "Could not issue connector bootstrap token. Retry." }, { status: 500 }, requestId);
+    return jsonWithRequestId(
+      { message: "Could not issue connector bootstrap token. Retry." },
+      { status: 500 },
+      requestId,
+    );
   }
 }

@@ -12,10 +12,7 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ runId: string }> },
-): Promise<NextResponse> {
+export async function GET(request: Request, context: { params: Promise<{ runId: string }> }): Promise<NextResponse> {
   const requestId = createRequestId(request);
   const { unauthorized, workspaceSession } = await requireApiSession(request);
 

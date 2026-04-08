@@ -13,7 +13,8 @@
     "start": "node dist/server.js",
     "test": "vitest run --dir src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf dist tsconfig.tsbuildinfo"
+    "clean": "rm -rf dist tsconfig.tsbuildinfo",
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "@agentgit/authority-sdk": "workspace:*"

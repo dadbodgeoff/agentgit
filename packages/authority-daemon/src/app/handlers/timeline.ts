@@ -2,7 +2,6 @@ import type { RequestContext } from "@agentgit/core-ports";
 import type { RunJournal } from "@agentgit/run-journal";
 import { answerHelperQuery, projectTimelineView } from "@agentgit/timeline-helper";
 import {
-  type ApprovalInboxItem,
   type HelperQuestionType,
   NotFoundError,
   QueryArtifactRequestPayloadSchema,
@@ -18,7 +17,7 @@ import {
   validate,
 } from "@agentgit/schemas";
 
-import { requireAuthorizedRunSummary, requireValidSession, sessionCanAccessRun } from "../authorization.js";
+import { requireAuthorizedRunSummary, requireValidSession } from "../authorization.js";
 import { makeSuccessResponse } from "../response-helpers.js";
 import type { AuthorityState } from "../../state.js";
 

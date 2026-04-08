@@ -6,7 +6,7 @@ import Link from "next/link";
 import { signIn } from "next-auth/react";
 
 import { Button, Card, Input } from "@/components/primitives";
-import { DEVELOPMENT_PROVIDER_ID } from "@/lib/auth/provider-config";
+import { buildEnterpriseProviderId, DEVELOPMENT_PROVIDER_ID } from "@/lib/auth/provider-config";
 import { publicRoutes } from "@/lib/navigation/routes";
 import { cn } from "@/lib/utils/cn";
 
@@ -28,6 +28,7 @@ export function SignInCard({
   const [name, setName] = useState("Jordan Smith");
   const [email, setEmail] = useState("jordan@acme.dev");
   const [role, setRole] = useState("admin");
+  const [workspaceSlug, setWorkspaceSlug] = useState("acme-platform");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const resolvedErrorMessage = useMemo(() => {
@@ -40,7 +41,7 @@ export function SignInCard({
     }
 
     if (errorMessage === "AccessDenied") {
-      return "Access was denied because this GitHub account is not mapped to a workspace, or the workspace selection is ambiguous.";
+      return "Access was denied because this identity is not mapped to the requested workspace, or the workspace selection is ambiguous.";
     }
 
     return errorMessage;
@@ -70,6 +71,15 @@ export function SignInCard({
     }
   }
 
+  async function handleEnterpriseSignIn() {
+    setIsSubmitting(true);
+    try {
+      await signIn(buildEnterpriseProviderId(workspaceSlug), { callbackUrl, redirectTo: callbackUrl });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   return (
     <Card className="w-full max-w-md space-y-6">
       <div className="space-y-2">
@@ -92,9 +102,36 @@ export function SignInCard({
         </Button>
       ) : (
         <div className="rounded-[var(--ag-radius-md)] border border-dashed border-[var(--ag-border-default)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
-          GitHub OAuth is not configured yet. Add `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, and `AUTH_SECRET` to enable it.
+          GitHub OAuth is not configured yet. Add `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, and `AUTH_SECRET` to enable
+          it.
         </div>
       )}
+
+      <div className="space-y-4 rounded-[var(--ag-radius-lg)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold">Workspace SSO</h2>
+          <p className="text-sm text-[var(--ag-text-secondary)]">
+            Use your workspace slug to sign in through an enterprise OIDC provider such as Okta or Azure AD after an
+            admin configures it.
+          </p>
+        </div>
+
+        <Input
+          helpText="This maps to the workspace-owned enterprise provider id."
+          label="Workspace slug"
+          onChange={(event) => setWorkspaceSlug(event.target.value)}
+          value={workspaceSlug}
+        />
+
+        <Button
+          className="w-full"
+          disabled={isSubmitting || workspaceSlug.trim().length < 3}
+          onClick={() => void handleEnterpriseSignIn()}
+          variant="secondary"
+        >
+          Continue with workspace SSO
+        </Button>
+      </div>
 
       {enableDevelopmentCredentials ? (
         <div className="space-y-4 rounded-[var(--ag-radius-lg)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
@@ -106,16 +143,8 @@ export function SignInCard({
           </div>
 
           <div className="space-y-3">
-            <Input
-              label="Display name"
-              onChange={(event) => setName(event.target.value)}
-              value={name}
-            />
-            <Input
-              label="Email"
-              onChange={(event) => setEmail(event.target.value)}
-              value={email}
-            />
+            <Input label="Display name" onChange={(event) => setName(event.target.value)} value={name} />
+            <Input label="Email" onChange={(event) => setEmail(event.target.value)} value={email} />
             <label className="flex w-full flex-col gap-1">
               <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Workspace role</span>
               <select className={selectClassName()} onChange={(event) => setRole(event.target.value)} value={role}>
@@ -126,7 +155,12 @@ export function SignInCard({
             </label>
           </div>
 
-          <Button className="w-full" disabled={isSubmitting} onClick={() => void handleDevelopmentSignIn()} variant="secondary">
+          <Button
+            className="w-full"
+            disabled={isSubmitting}
+            onClick={() => void handleDevelopmentSignIn()}
+            variant="secondary"
+          >
             Continue with development access
           </Button>
         </div>
@@ -139,7 +173,11 @@ export function SignInCard({
         </Link>
         .
       </p>
-      <div className={cn("rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] px-3 py-2 text-xs text-[var(--ag-text-secondary)]")}>
+      <div
+        className={cn(
+          "rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] px-3 py-2 text-xs text-[var(--ag-text-secondary)]",
+        )}
+      >
         Redirect after sign-in: <span className="font-mono">{callbackUrl}</span>
       </div>
     </Card>

@@ -19,11 +19,7 @@ export function getBearerToken(request: Request): string | null {
 
 export async function requireConnectorSession(
   request: Request,
-):
-  Promise<
-    | { access: ConnectorAccessContext; denied: null }
-    | { access: null; denied: NextResponse }
-  > {
+): Promise<{ access: ConnectorAccessContext; denied: null } | { access: null; denied: NextResponse }> {
   const token = getBearerToken(request);
   if (!token) {
     return {

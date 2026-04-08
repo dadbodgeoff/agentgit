@@ -78,7 +78,9 @@ export function ApprovalCard({
   const repositoryHref =
     item.repositoryOwner && item.repositoryName ? repositoryRoute(item.repositoryOwner, item.repositoryName) : null;
   const runHref =
-    item.repositoryOwner && item.repositoryName ? runDetailRoute(item.repositoryOwner, item.repositoryName, item.runId) : null;
+    item.repositoryOwner && item.repositoryName
+      ? runDetailRoute(item.repositoryOwner, item.repositoryName, item.runId)
+      : null;
   const actionHref =
     item.repositoryOwner && item.repositoryName
       ? actionDetailRoute(item.repositoryOwner, item.repositoryName, item.runId, item.actionId)
@@ -98,7 +100,9 @@ export function ApprovalCard({
         isSelected
           ? "border-[var(--ag-color-brand)] bg-[var(--ag-bg-elevated)] shadow-[var(--ag-shadow-md)]"
           : "border-[var(--ag-border-subtle)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-elevated)]",
-        item.status === "pending" ? "border-l-2 border-l-[var(--ag-color-accent)]" : "border-l-2 border-l-[var(--ag-border-default)]",
+        item.status === "pending"
+          ? "border-l-2 border-l-[var(--ag-color-accent)]"
+          : "border-l-2 border-l-[var(--ag-border-default)]",
       )}
       onClick={onSelect}
       onKeyDown={handleKeyDown}
@@ -143,7 +147,9 @@ export function ApprovalCard({
         {item.decisionCommandMessage ? (
           <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-hover)] px-3 py-2 text-sm text-[var(--ag-text-secondary)]">
             {item.decisionCommandMessage}
-            {item.decisionCommandNextAttemptAt ? ` Retry ${formatRelativeTimestamp(item.decisionCommandNextAttemptAt)}.` : ""}
+            {item.decisionCommandNextAttemptAt
+              ? ` Retry ${formatRelativeTimestamp(item.decisionCommandNextAttemptAt)}.`
+              : ""}
           </div>
         ) : null}
         <div className="flex flex-wrap items-center gap-2">

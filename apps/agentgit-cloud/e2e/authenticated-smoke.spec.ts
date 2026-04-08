@@ -1,16 +1,31 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import type { ActionRecord } from "@agentgit/schemas";
 import { RunJournal } from "@agentgit/run-journal";
 
 async function waitForOkResponse(page: Page, pathFragment: string) {
-  await page.waitForResponse(
-    (response) => response.url().includes(pathFragment) && response.ok(),
-    { timeout: 45_000 },
-  );
+  await page.waitForResponse((response) => response.url().includes(pathFragment) && response.ok(), { timeout: 45_000 });
+}
+
+async function loadMoreUntilVisible(page: Page, locator: Locator, maxPages = 6) {
+  for (let attempt = 0; attempt < maxPages; attempt += 1) {
+    if (await locator.count()) {
+      await expect(locator.first()).toBeVisible({ timeout: 20_000 });
+      return;
+    }
+
+    const loadMoreButton = page.getByRole("button", { name: "Load more" });
+    if (!(await loadMoreButton.count())) {
+      break;
+    }
+
+    await loadMoreButton.first().click();
+  }
+
+  await expect(locator.first()).toBeVisible({ timeout: 20_000 });
 }
 
 async function signInAs(
@@ -454,9 +469,13 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
   await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
   await expect(page.getByRole("heading", { name: "Snapshots" })).toBeVisible();
-  await expect(page.getByText(snapshotSeed.snapshotId)).toBeVisible({ timeout: 20_000 });
+  await loadMoreUntilVisible(page, page.getByText(snapshotSeed.snapshotId));
   await expect(page.locator("main")).toContainText("Update README.md", { timeout: 20_000 });
-  const verifiedSnapshotButton = page.getByRole("row", { name: /verified.*Not restored/ }).first().getByRole("button").first();
+  const verifiedSnapshotButton = page
+    .getByRole("row", { name: /verified.*Not restored/ })
+    .first()
+    .getByRole("button")
+    .first();
   const verifiedSnapshotText = (await verifiedSnapshotButton.innerText()).trim();
   const verifiedSnapshotId = verifiedSnapshotText.split("\n")[0]?.trim();
   expect(verifiedSnapshotId).toBeTruthy();
@@ -489,7 +508,10 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await page.goto("/app/settings/connectors");
   await expect(page.getByRole("heading", { name: "Connector fleet" })).toBeVisible();
   await expect(page.locator("main")).toContainText("Admin smoke connector", { timeout: 20_000 });
-  await page.getByRole("button", { name: /Admin smoke connector.*Selected/ }).first().click();
+  await page
+    .getByRole("button", { name: /Admin smoke connector.*Selected/ })
+    .first()
+    .click();
   await expect(page.locator("main")).toContainText("create_commit", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("push_branch", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("open_pull_request", { timeout: 20_000 });
@@ -511,12 +533,12 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   expect(healthPayload.checks?.some((check) => check.id === "auth_secret" && check.level === "ok")).toBe(true);
   expect(healthPayload.checks?.some((check) => check.id === "auth_base_url" && check.level === "ok")).toBe(true);
   expect(healthPayload.checks?.some((check) => check.id === "github_provider" && check.level === "ok")).toBe(true);
-  expect(
-    healthPayload.checks?.some((check) => check.id === "workspace_roots_configured" && check.level === "ok"),
-  ).toBe(true);
-  expect(
-    healthPayload.checks?.some((check) => check.id === "workspace_roots_available" && check.level === "ok"),
-  ).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "workspace_roots_configured" && check.level === "ok")).toBe(
+    true,
+  );
+  expect(healthPayload.checks?.some((check) => check.id === "workspace_roots_available" && check.level === "ok")).toBe(
+    true,
+  );
   expect(healthPayload.checks?.some((check) => check.id === "sentry_dsn" && check.level === "ok")).toBe(true);
   expect(healthPayload.checks?.some((check) => check.id === "sentry_source_maps" && check.level === "ok")).toBe(true);
   expect(healthPayload.checks?.some((check) => check.id === "vercel_analytics" && check.level === "ok")).toBe(true);
@@ -542,10 +564,7 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await expect(page.getByRole("heading", { name: "Policy" })).toBeVisible();
   const policyDocument = page.getByLabel("Policy document");
   const currentDocument = await policyDocument.inputValue();
-  const nextDocument = currentDocument.replace(
-    /"policy_version":\s*"([^"]+)"/,
-    '"policy_version": "2026-04-07-smoke"',
-  );
+  const nextDocument = currentDocument.replace(/"policy_version":\s*"([^"]+)"/, '"policy_version": "2026-04-07-smoke"');
   await policyDocument.fill(nextDocument);
   await page.getByRole("button", { name: "Save policy" }).click();
   await expect(page.getByText("Policy saved.")).toBeVisible({ timeout: 20_000 });

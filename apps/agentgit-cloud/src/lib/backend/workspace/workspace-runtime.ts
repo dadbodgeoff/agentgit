@@ -49,7 +49,9 @@ export async function listWorkspaceRunContexts(workspaceId: string): Promise<Wor
     try {
       const runs = journal
         .listAllRuns()
-        .filter((run) => run.workspace_roots.some((workspaceRoot) => isSameOrNestedPath(workspaceRoot, repository.metadata.root)))
+        .filter((run) =>
+          run.workspace_roots.some((workspaceRoot) => isSameOrNestedPath(workspaceRoot, repository.metadata.root)),
+        )
         .sort((left, right) => {
           const leftTimestamp = left.latest_event?.occurred_at ?? left.started_at;
           const rightTimestamp = right.latest_event?.occurred_at ?? right.started_at;
@@ -75,10 +77,12 @@ export async function listWorkspaceRunContexts(workspaceId: string): Promise<Wor
   });
 }
 
-export async function listWorkspaceApprovals(workspaceId: string): Promise<Array<{
-  repository: WorkspaceRepositoryRuntimeRecord;
-  approval: ApprovalRequest;
-}>> {
+export async function listWorkspaceApprovals(workspaceId: string): Promise<
+  Array<{
+    repository: WorkspaceRepositoryRuntimeRecord;
+    approval: ApprovalRequest;
+  }>
+> {
   const approvals: Array<{
     repository: WorkspaceRepositoryRuntimeRecord;
     approval: ApprovalRequest;

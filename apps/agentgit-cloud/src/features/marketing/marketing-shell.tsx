@@ -12,13 +12,7 @@ export const marketingLinkClasses = {
     "ag-focus-ring inline-flex min-h-11 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-5 text-[14px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]",
 } as const;
 
-export function MarketingShell({
-  children,
-  currentPath,
-}: {
-  children: ReactNode;
-  currentPath: string;
-}) {
+export function MarketingShell({ children, currentPath }: { children: ReactNode; currentPath: string }) {
   return (
     <main className="ag-page-shell min-h-screen overflow-hidden">
       <a className="ag-skip-link" href="#marketing-main">
@@ -35,24 +29,39 @@ export function MarketingShell({
               <div className="text-sm font-semibold tracking-[0.18em] text-[var(--ag-text-primary)] uppercase">
                 AgentGit Cloud
               </div>
-              <div className="text-xs text-[var(--ag-text-secondary)]">
-                Governed shipping for autonomous teams
-              </div>
+              <div className="text-xs text-[var(--ag-text-secondary)]">Governed shipping for autonomous teams</div>
             </div>
           </Link>
 
           <nav className="hidden items-center gap-6 text-sm text-[var(--ag-text-secondary)] md:flex">
-            <Link className={currentPath === publicRoutes.pricing ? "text-[var(--ag-text-primary)]" : "hover:text-[var(--ag-text-primary)]"} href={publicRoutes.pricing}>
+            <Link
+              className={
+                currentPath === publicRoutes.pricing
+                  ? "text-[var(--ag-text-primary)]"
+                  : "hover:text-[var(--ag-text-primary)]"
+              }
+              href={publicRoutes.pricing}
+            >
               Pricing
             </Link>
-            <Link className={currentPath === publicRoutes.docs ? "text-[var(--ag-text-primary)]" : "hover:text-[var(--ag-text-primary)]"} href={publicRoutes.docs}>
+            <Link
+              className={
+                currentPath === publicRoutes.docs
+                  ? "text-[var(--ag-text-primary)]"
+                  : "hover:text-[var(--ag-text-primary)]"
+              }
+              href={publicRoutes.docs}
+            >
               Docs
             </Link>
             <Badge tone="accent">Hosted beta</Badge>
           </nav>
 
           <div className="flex items-center gap-3">
-            <Link className="hidden text-sm text-[var(--ag-text-secondary)] transition-colors hover:text-[var(--ag-text-primary)] sm:inline-flex" href={publicRoutes.docs}>
+            <Link
+              className="hidden text-sm text-[var(--ag-text-secondary)] transition-colors hover:text-[var(--ag-text-primary)] sm:inline-flex"
+              href={publicRoutes.docs}
+            >
               Quickstart
             </Link>
             <Link className={marketingLinkClasses.primary} href={publicRoutes.signIn}>
@@ -71,7 +80,8 @@ export function MarketingShell({
               The local daemon keeps authority close to the repo. The cloud keeps operators in sync.
             </div>
             <p className="max-w-2xl">
-              AgentGit Cloud adds approvals, audit, calibration, fleet status, and operator visibility without moving execution out of the developer workspace.
+              AgentGit Cloud adds approvals, audit, calibration, fleet status, and operator visibility without moving
+              execution out of the developer workspace.
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">

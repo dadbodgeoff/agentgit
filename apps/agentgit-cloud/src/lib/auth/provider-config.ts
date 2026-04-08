@@ -3,6 +3,7 @@ import { ActiveWorkspaceSchema, type WorkspaceRole } from "@/schemas/cloud";
 import { isWorkspaceRole } from "@/lib/rbac/roles";
 
 export const DEVELOPMENT_PROVIDER_ID = "development";
+export const ENTERPRISE_PROVIDER_PREFIX = "enterprise-";
 export const isProductionAuth = process.env.NODE_ENV === "production";
 
 export const authFeatureFlags = {
@@ -50,4 +51,8 @@ export function isBootstrapIdentityMatch(identity: { email?: string | null; logi
   }
 
   return false;
+}
+
+export function buildEnterpriseProviderId(workspaceSlug: string): string {
+  return `${ENTERPRISE_PROVIDER_PREFIX}${workspaceSlug.trim().toLowerCase()}`;
 }

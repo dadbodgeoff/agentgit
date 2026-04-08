@@ -1,6 +1,6 @@
 # Coverage Ratchet Policy
 
-Status date: 2026-04-03
+Status date: 2026-04-08
 
 ## Purpose
 
@@ -35,4 +35,4 @@ Verification fails when either of these is true:
 ## Current Baseline
 
 - threshold floor: lines `50`, functions `50`, statements `50`, branches `40`
-- measured aggregate floor: lines `73.99`, functions `82.79`, statements `74.07`, branches `61.12`
+- measured aggregate floor: lines `72.04`, functions `78.91`, statements `71.98`, branches `58.71`

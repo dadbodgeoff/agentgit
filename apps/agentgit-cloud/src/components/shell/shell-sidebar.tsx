@@ -34,18 +34,18 @@ export function ShellSidebar() {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
 
           return (
-          <Link
-            className={cn(
-              "ag-focus-ring flex min-h-9 items-center rounded-[var(--ag-radius-md)] border-l-2 px-3 text-sm transition-colors",
-              active
-                ? "border-l-[var(--ag-color-brand)] bg-[var(--ag-bg-hover)] text-[var(--ag-text-primary)]"
-                : "border-l-transparent text-[var(--ag-text-secondary)] hover:bg-[var(--ag-bg-hover)] hover:text-[var(--ag-text-primary)]",
-            )}
-            href={item.href}
-            key={item.href}
-          >
-            {item.label}
-          </Link>
+            <Link
+              className={cn(
+                "ag-focus-ring flex min-h-9 items-center rounded-[var(--ag-radius-md)] border-l-2 px-3 text-sm transition-colors",
+                active
+                  ? "border-l-[var(--ag-color-brand)] bg-[var(--ag-bg-hover)] text-[var(--ag-text-primary)]"
+                  : "border-l-transparent text-[var(--ag-text-secondary)] hover:bg-[var(--ag-bg-hover)] hover:text-[var(--ag-text-primary)]",
+              )}
+              href={item.href}
+              key={item.href}
+            >
+              {item.label}
+            </Link>
           );
         })}
       </nav>

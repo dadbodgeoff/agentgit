@@ -78,6 +78,22 @@ interface McpFacet {
   tool_name?: string;
 }
 
+function resolveSqliteBusyTimeoutMs(): number {
+  const configured = process.env.AGENTGIT_SQLITE_BUSY_TIMEOUT_MS?.trim();
+  if (!configured) {
+    return 5_000;
+  }
+
+  const parsed = Number.parseInt(configured, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new PreconditionError("Unsupported SQLite busy timeout.", {
+      configured_timeout_ms: configured,
+    });
+  }
+
+  return parsed;
+}
+
 interface McpRawInput {
   server_id?: string;
   tool_name?: string;
@@ -276,6 +292,7 @@ class McpConcurrencyLeaseStore {
     this.db = new Database(dbPath);
     this.leaseOwnerId = options.leaseOwnerId ?? `${os.hostname()}:${process.pid}:${randomUUID()}`;
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma(`busy_timeout = ${resolveSqliteBusyTimeoutMs()}`);
     this.db.pragma("foreign_keys = ON");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS mcp_streamable_http_leases (

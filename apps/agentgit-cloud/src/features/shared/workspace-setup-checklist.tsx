@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 
 import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
-import { Badge, Button, Card } from "@/components/primitives";
+import { Badge, Button, Card, ToastCard, ToastViewport } from "@/components/primitives";
 import { getApiErrorMessage } from "@/lib/api/client";
 import { issueConnectorBootstrapToken } from "@/lib/api/endpoints/connectors";
 import { useWorkspace } from "@/lib/auth/workspace-context";
@@ -34,18 +34,19 @@ function itemTone(status: "complete" | "attention" | "pending"): "success" | "wa
   return "neutral";
 }
 
-export function WorkspaceSetupChecklist({
-  title = "Setup readiness",
-  compact = false,
-}: WorkspaceSetupChecklistProps) {
+export function WorkspaceSetupChecklist({ title = "Setup readiness", compact = false }: WorkspaceSetupChecklistProps) {
   const { activeWorkspace } = useWorkspace();
   const isAdmin = activeWorkspace.role === "admin" || activeWorkspace.role === "owner";
   const readinessQuery = useRepositoryConnectionBootstrapQuery(isAdmin);
   const [bootstrapDetails, setBootstrapDetails] = useState<ConnectorBootstrapResponse | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const bootstrapMutation = useMutation({
     mutationFn: () => issueConnectorBootstrapToken(),
     onSuccess: (result) => {
       setBootstrapDetails(result);
+    },
+    onError: (error) => {
+      setToastMessage(getApiErrorMessage(error, "Could not issue a connector bootstrap token."));
     },
   });
 
@@ -81,6 +82,18 @@ export function WorkspaceSetupChecklist({
 
     return () => window.clearInterval(interval);
   }, [bootstrapDetails, readinessQuery, setupSummary]);
+
+  useEffect(() => {
+    if (!toastMessage) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [toastMessage]);
 
   if (!isAdmin) {
     return null;
@@ -128,11 +141,7 @@ export function WorkspaceSetupChecklist({
     {
       label: "Connector coverage ready",
       status:
-        setupSummary.connectedCount === 0
-          ? "pending"
-          : setupSummary.uncoveredCount === 0
-            ? "complete"
-            : "attention",
+        setupSummary.connectedCount === 0 ? "pending" : setupSummary.uncoveredCount === 0 ? "complete" : "attention",
       detail:
         setupSummary.connectedCount === 0
           ? "Choose repositories first, then register a local connector for live sync and writeback."
@@ -177,7 +186,9 @@ export function WorkspaceSetupChecklist({
 
       {setupSummary.uncoveredRepositories.length > 0 ? (
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)] px-4 py-3">
-          <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Repositories awaiting connector coverage</div>
+          <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
+            Repositories awaiting connector coverage
+          </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {setupSummary.uncoveredRepositories.map((repository) => (
               <Badge key={repository.id} tone="warning">
@@ -221,6 +232,16 @@ export function WorkspaceSetupChecklist({
       ) : null}
 
       {!compact ? <ConnectorInstallGuide compact /> : null}
+      {toastMessage ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Bootstrap failed</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
+      ) : null}
     </Card>
   );
 }

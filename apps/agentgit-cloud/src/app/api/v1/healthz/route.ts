@@ -1,5 +1,8 @@
-import { pingCloudDatabase } from "@/lib/db/client";
-import { getCloudReadinessChecks, summarizeReadiness } from "@/lib/release/readiness";
+import { ensureLocalControlPlaneStateInitialized } from "@/lib/backend/control-plane/state";
+import { ensureLocalCloudStateInitialized } from "@/lib/backend/workspace/cloud-state.local";
+import { hasDatabaseUrl, pingCloudDatabase } from "@/lib/db/client";
+import { getCloudReadinessChecks, summarizeOperationalHealth } from "@/lib/release/readiness";
+import { ensureLocalRateLimitStoreInitialized } from "@/lib/security/rate-limit";
 
 type PublicHealthCheck = {
   id: string;
@@ -7,6 +10,12 @@ type PublicHealthCheck = {
 };
 
 export async function GET(): Promise<Response> {
+  if (!hasDatabaseUrl()) {
+    ensureLocalCloudStateInitialized();
+    ensureLocalControlPlaneStateInitialized();
+    ensureLocalRateLimitStoreInitialized();
+  }
+
   const checks = getCloudReadinessChecks();
   const database = await pingCloudDatabase()
     .then(
@@ -31,7 +40,7 @@ export async function GET(): Promise<Response> {
     })),
     database,
   ];
-  const status = summarizeReadiness(safeChecks);
+  const status = summarizeOperationalHealth(safeChecks);
 
   return Response.json(
     {

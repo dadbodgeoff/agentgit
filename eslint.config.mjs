@@ -7,7 +7,11 @@ export default [
   {
     ignores: [
       "**/dist/**",
+      "**/.next/**",
       "**/node_modules/**",
+      "**/playwright-report/**",
+      "**/test-results/**",
+      "**/coverage/**",
       ".turbo/**",
       ".release-artifacts/**",
       ".agentgit/**",

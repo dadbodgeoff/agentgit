@@ -1207,18 +1207,18 @@ function parseRunOptions(args: string[]): RunCliOptions {
 
 function printValue(value: unknown, json: boolean, formatter: (result: unknown) => string): void {
   if (json) {
-    console.log(JSON.stringify(value, null, 2));
+    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
     return;
   }
 
-  console.log(formatter(value));
+  process.stdout.write(`${formatter(value)}\n`);
 }
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<ProductRunResult | null> {
   const flags = parseGlobalFlags(argv);
   const [command, ...rest] = flags.rest;
   if (!command || command === "help" || command === "--help" || command === "-h") {
-    console.log(USAGE);
+    process.stdout.write(`${USAGE}\n`);
     return null;
   }
 
@@ -1326,7 +1326,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<Pr
         const options = parseRunOptions(rest);
         const result = await service.run(workspaceRoot, options);
         if (flags.json) {
-          console.log(JSON.stringify(result, null, 2));
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         }
         return result;
       }

@@ -10,6 +10,7 @@ import { ApprovalInboxItemSchema } from "@agentgit/schemas";
 import {
   CreateCommitCommandPayloadSchema,
   OpenPullRequestCommandPayloadSchema,
+  ReplayRunCommandPayloadSchema,
   ResolveApprovalCommandPayloadSchema,
   RestoreCommandPayloadSchema,
   PushBranchCommandPayloadSchema,
@@ -30,21 +31,23 @@ import {
 
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { resolveProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
-import { notifyWorkspaceApprovalRequested } from "@/lib/backend/workspace/workspace-integrations";
 import {
-  actionDetailRoute,
-  repositoryRoute,
-  repositorySnapshotsRoute,
-  runDetailRoute,
-} from "@/lib/navigation/routes";
+  notifyWorkspaceApprovalRequested,
+  notifyWorkspacePolicyChanged,
+  notifyWorkspaceRunFailed,
+  notifyWorkspaceSnapshotRestored,
+} from "@/lib/backend/workspace/workspace-integrations";
+import { actionDetailRoute, repositoryRoute, repositorySnapshotsRoute, runDetailRoute } from "@/lib/navigation/routes";
 import {
   ConnectorBootstrapResponseSchema,
   ConnectorCommandRetryResponseSchema,
   ConnectorRevokeResponseSchema,
   WorkspaceConnectorInventorySchema,
+  type CursorPaginationQuery,
   type ConnectorCommandDispatchRequest,
 } from "@/schemas/cloud";
 import type { WorkspaceSession } from "@/schemas/cloud";
+import { paginateItems } from "@/lib/pagination/cursor";
 
 export class ConnectorAccessError extends Error {
   constructor(
@@ -118,6 +121,11 @@ function normalizeCommandPayload(request: ConnectorCommandDispatchRequest): Reco
       return SyncRunHistoryCommandPayloadSchema.parse({
         includeSnapshots: request.includeSnapshots,
       });
+    case "replay_run":
+      return ReplayRunCommandPayloadSchema.parse({
+        sourceRunId: request.sourceRunId,
+        replayWorkflowName: request.replayWorkflowName,
+      });
     case "resolve_approval":
       return ResolveApprovalCommandPayloadSchema.parse({
         approvalId: request.approvalId,
@@ -175,10 +183,7 @@ function getConnectorStatusDetails(lastSeenAt: string, revoked: boolean, referen
   };
 }
 
-function getLatestConnectorToken(
-  store: ControlPlaneStateStore,
-  connectorId: string,
-) {
+function getLatestConnectorToken(store: ControlPlaneStateStore, connectorId: string) {
   return (
     store
       .listConnectorTokens(connectorId)
@@ -200,11 +205,7 @@ function getLatestTimestamp(values: Array<string | null | undefined>): string | 
   }, null);
 }
 
-function getConnectorDispatchHealth(
-  store: ControlPlaneStateStore,
-  connector: ConnectorRecord,
-  referenceAt: string,
-) {
+function getConnectorDispatchHealth(store: ControlPlaneStateStore, connector: ConnectorRecord, referenceAt: string) {
   const latestToken = getLatestConnectorToken(store, connector.id);
   const statusDetails = getConnectorStatusDetails(
     connector.lastSeenAt,
@@ -222,11 +223,7 @@ function getConnectorDispatchHealth(
   };
 }
 
-function getLatestConnectorActivityAt(
-  store: ControlPlaneStateStore,
-  connectorId: string,
-  fallback: string,
-) {
+function getLatestConnectorActivityAt(store: ControlPlaneStateStore, connectorId: string, fallback: string) {
   const latestCommandAt = getLatestTimestamp(store.listCommands(connectorId).map((command) => command.updatedAt));
   const latestEventAt = getLatestTimestamp(store.listEvents(connectorId).map((event) => event.ingestedAt));
   return getLatestTimestamp([latestCommandAt, latestEventAt, fallback]) ?? fallback;
@@ -247,7 +244,8 @@ function getCommandReplayStatus(command: {
   referenceAt: string;
 }) {
   const leaseExpired =
-    command.leaseExpiresAt !== null && new Date(command.leaseExpiresAt).getTime() <= new Date(command.referenceAt).getTime();
+    command.leaseExpiresAt !== null &&
+    new Date(command.leaseExpiresAt).getTime() <= new Date(command.referenceAt).getTime();
 
   if (command.status === "failed" || command.status === "expired") {
     return {
@@ -363,6 +361,9 @@ export function issueConnectorBootstrapToken(
     `--workspace-id ${workspaceSession.activeWorkspace.id}`,
     `--workspace-root ${JSON.stringify(process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS?.split(",")[0] ?? process.cwd())}`,
     `--bootstrap-token ${bootstrapToken}`,
+    "&&",
+    "agentgit-cloud-connector run",
+    `--workspace-root ${JSON.stringify(process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS?.split(",")[0] ?? process.cwd())}`,
   ].join(" ");
 
   return ConnectorBootstrapResponseSchema.parse({
@@ -548,13 +549,14 @@ export async function ingestConnectorEvents(
     }
   }
 
-  const { response, approvalRequests } = withControlPlaneState((store) => {
+  const { response, approvalRequests, notifications } = withControlPlaneState((store) => {
     const existingEventIds = new Set(store.listEvents(access.connector.id).map((event) => event.event.eventId));
     const approvalRequests: Array<{
       repositoryOwner: string;
       repositoryName: string;
       approval: import("@agentgit/schemas").ApprovalInboxItem;
     }> = [];
+    const notifications: Array<Promise<void>> = [];
 
     for (const event of batch.events) {
       store.appendEvent({
@@ -570,6 +572,65 @@ export async function ingestConnectorEvents(
             repositoryName: event.repository.name,
             approval: parsedApproval.data,
           });
+        }
+      }
+
+      if (!existingEventIds.has(event.eventId) && event.type === "policy.state") {
+        notifications.push(
+          notifyWorkspacePolicyChanged({
+            workspaceId: access.connector.workspaceId,
+            workspaceSlug: access.connector.workspaceSlug,
+            repositoryOwner: event.repository.owner,
+            repositoryName: event.repository.name,
+            kind: typeof event.payload.kind === "string" ? event.payload.kind : "workspace_policy",
+            digest: typeof event.payload.digest === "string" ? event.payload.digest : null,
+          }),
+        );
+      }
+
+      if (!existingEventIds.has(event.eventId) && event.type === "run.event") {
+        const runId = typeof event.payload.runId === "string" ? event.payload.runId : null;
+        const runEvent =
+          typeof event.payload.event === "object" && event.payload.event !== null ? event.payload.event : null;
+        const eventType =
+          typeof (runEvent as { event_type?: unknown } | null)?.event_type === "string"
+            ? (runEvent as { event_type: string }).event_type
+            : null;
+        const eventPayload =
+          typeof (runEvent as { payload?: unknown } | null)?.payload === "object" &&
+          (runEvent as { payload?: unknown }).payload !== null
+            ? (runEvent as { payload: Record<string, unknown> }).payload
+            : null;
+        const actionId = typeof eventPayload?.action_id === "string" ? eventPayload.action_id : null;
+
+        if (eventType === "execution.failed" && runId) {
+          notifications.push(
+            notifyWorkspaceRunFailed({
+              workspaceId: access.connector.workspaceId,
+              workspaceSlug: access.connector.workspaceSlug,
+              repositoryOwner: event.repository.owner,
+              repositoryName: event.repository.name,
+              runId,
+              actionId,
+            }),
+          );
+        }
+
+        if (
+          eventType === "recovery.executed" &&
+          runId &&
+          (eventPayload?.strategy === "restore_snapshot" || eventPayload?.outcome === "restored")
+        ) {
+          notifications.push(
+            notifyWorkspaceSnapshotRestored({
+              workspaceId: access.connector.workspaceId,
+              workspaceSlug: access.connector.workspaceSlug,
+              repositoryOwner: event.repository.owner,
+              repositoryName: event.repository.name,
+              runId,
+              snapshotId: typeof eventPayload?.snapshot_id === "string" ? eventPayload.snapshot_id : null,
+            }),
+          );
         }
       }
     }
@@ -590,11 +651,12 @@ export async function ingestConnectorEvents(
         highestAcceptedSequence,
       }),
       approvalRequests,
+      notifications,
     };
   });
 
-  await Promise.allSettled(
-    approvalRequests.map((request) =>
+  await Promise.allSettled([
+    ...approvalRequests.map((request) =>
       notifyWorkspaceApprovalRequested({
         workspaceId: access.connector.workspaceId,
         workspaceSlug: access.connector.workspaceSlug,
@@ -603,7 +665,8 @@ export async function ingestConnectorEvents(
         approval: request.approval,
       }),
     ),
-  );
+    ...notifications,
+  ]);
 
   return response;
 }
@@ -705,120 +768,123 @@ export function acknowledgeConnectorCommand(
   });
 }
 
-export async function listWorkspaceConnectors(workspaceId: string, generatedAt: string) {
+export async function listWorkspaceConnectors(
+  workspaceId: string,
+  generatedAt: string,
+  params: CursorPaginationQuery = { limit: 25 },
+) {
   const connectorRecords = withControlPlaneState((store) =>
     store.listConnectors(workspaceId).map((connector) => {
-        const token = store.listConnectorTokens(connector.id).sort((left, right) =>
-          new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime(),
-        )[0] ?? null;
-        const heartbeat = store.getHeartbeat(connector.id);
-        const commands = store
-          .listCommands(connector.id)
-          .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-        const events = store
-          .listEvents(connector.id)
-          .sort(
-            (left, right) => new Date(right.event.occurredAt).getTime() - new Date(left.event.occurredAt).getTime(),
-          );
-        const lastCommand = commands[0] ?? null;
-        const lastEvent = events[0] ?? null;
-        const pendingCommandCount = commands.filter(
-          (command) => command.status === "pending" || command.status === "acked",
-        ).length;
-        const leasedCommandCount = commands.filter(
-          (command) =>
-            command.status === "acked" &&
-            command.leaseExpiresAt !== null &&
-            new Date(command.leaseExpiresAt).getTime() > new Date(generatedAt).getTime(),
-        ).length;
-        const retryableCommandCount = commands.filter(
-          (command) => command.status === "failed" || command.status === "expired",
-        ).length;
-        const automaticRetryCount = commands.filter((command) => command.nextAttemptAt !== null).length;
-        const statusDetails = getConnectorStatusDetails(connector.lastSeenAt, Boolean(token?.revokedAt), generatedAt);
+      const token =
+        store
+          .listConnectorTokens(connector.id)
+          .sort((left, right) => new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime())[0] ?? null;
+      const heartbeat = store.getHeartbeat(connector.id);
+      const commands = store
+        .listCommands(connector.id)
+        .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+      const events = store
+        .listEvents(connector.id)
+        .sort((left, right) => new Date(right.event.occurredAt).getTime() - new Date(left.event.occurredAt).getTime());
+      const lastCommand = commands[0] ?? null;
+      const lastEvent = events[0] ?? null;
+      const pendingCommandCount = commands.filter(
+        (command) => command.status === "pending" || command.status === "acked",
+      ).length;
+      const leasedCommandCount = commands.filter(
+        (command) =>
+          command.status === "acked" &&
+          command.leaseExpiresAt !== null &&
+          new Date(command.leaseExpiresAt).getTime() > new Date(generatedAt).getTime(),
+      ).length;
+      const retryableCommandCount = commands.filter(
+        (command) => command.status === "failed" || command.status === "expired",
+      ).length;
+      const automaticRetryCount = commands.filter((command) => command.nextAttemptAt !== null).length;
+      const statusDetails = getConnectorStatusDetails(connector.lastSeenAt, Boolean(token?.revokedAt), generatedAt);
 
-        return {
-          connector,
-          id: connector.id,
-          connectorName: connector.connectorName,
-          machineName: connector.machineName,
-          status: statusDetails.status,
-          connectorVersion: connector.connectorVersion,
-          registeredAt: connector.registeredAt,
-          lastSeenAt: connector.lastSeenAt,
-          workspaceSlug: connector.workspaceSlug,
-          capabilities: connector.capabilities,
-          repositoryOwner: connector.repository.repo.owner,
-          repositoryName: connector.repository.repo.name,
-          currentBranch: connector.repository.currentBranch,
-          headSha: connector.repository.headSha,
-          isDirty: connector.repository.isDirty,
-          aheadBy: connector.repository.aheadBy,
-          behindBy: connector.repository.behindBy,
-          workspaceRoot: connector.repository.workspaceRoot,
-          daemonReachable: heartbeat?.localDaemon.reachable ?? false,
-          pendingCommandCount,
-          leasedCommandCount,
-          retryableCommandCount,
-          automaticRetryCount,
-          eventCount: events.length,
-          lastEvent: lastEvent
-            ? {
-                eventId: lastEvent.event.eventId,
-                type: lastEvent.event.type,
-                occurredAt: lastEvent.event.occurredAt,
-              }
-            : null,
-          statusReason: statusDetails.reason,
-          revokedAt: token?.revokedAt ?? null,
-          lastCommand: lastCommand
-            ? {
-                commandId: lastCommand.command.commandId,
-                type: lastCommand.command.type,
-                status: lastCommand.status,
-                issuedAt: lastCommand.command.issuedAt,
-                updatedAt: lastCommand.updatedAt,
-                acknowledgedAt: lastCommand.acknowledgedAt,
-                leaseExpiresAt: lastCommand.leaseExpiresAt,
-                attemptCount: lastCommand.attemptCount,
-                nextAttemptAt: lastCommand.nextAttemptAt,
-                message: lastCommand.lastMessage,
-                result: lastCommand.result,
-              }
-            : null,
-          recentCommands: commands.slice(0, 8).map((command) => {
-            const replay = getCommandReplayStatus({
-              status: command.status,
-              nextAttemptAt: command.nextAttemptAt,
-              leaseExpiresAt: command.leaseExpiresAt,
-              referenceAt: generatedAt,
-            });
+      return {
+        connector,
+        id: connector.id,
+        connectorName: connector.connectorName,
+        machineName: connector.machineName,
+        status: statusDetails.status,
+        connectorVersion: connector.connectorVersion,
+        registeredAt: connector.registeredAt,
+        lastSeenAt: connector.lastSeenAt,
+        workspaceSlug: connector.workspaceSlug,
+        capabilities: connector.capabilities,
+        repositoryOwner: connector.repository.repo.owner,
+        repositoryName: connector.repository.repo.name,
+        currentBranch: connector.repository.currentBranch,
+        headSha: connector.repository.headSha,
+        isDirty: connector.repository.isDirty,
+        aheadBy: connector.repository.aheadBy,
+        behindBy: connector.repository.behindBy,
+        workspaceRoot: connector.repository.workspaceRoot,
+        daemonReachable: heartbeat?.localDaemon.reachable ?? false,
+        pendingCommandCount,
+        leasedCommandCount,
+        retryableCommandCount,
+        automaticRetryCount,
+        eventCount: events.length,
+        lastEvent: lastEvent
+          ? {
+              eventId: lastEvent.event.eventId,
+              type: lastEvent.event.type,
+              occurredAt: lastEvent.event.occurredAt,
+            }
+          : null,
+        statusReason: statusDetails.reason,
+        revokedAt: token?.revokedAt ?? null,
+        lastCommand: lastCommand
+          ? {
+              commandId: lastCommand.command.commandId,
+              type: lastCommand.command.type,
+              status: lastCommand.status,
+              issuedAt: lastCommand.command.issuedAt,
+              updatedAt: lastCommand.updatedAt,
+              acknowledgedAt: lastCommand.acknowledgedAt,
+              leaseExpiresAt: lastCommand.leaseExpiresAt,
+              attemptCount: lastCommand.attemptCount,
+              nextAttemptAt: lastCommand.nextAttemptAt,
+              message: lastCommand.lastMessage,
+              result: lastCommand.result,
+            }
+          : null,
+        recentCommands: commands.slice(0, 8).map((command) => {
+          const replay = getCommandReplayStatus({
+            status: command.status,
+            nextAttemptAt: command.nextAttemptAt,
+            leaseExpiresAt: command.leaseExpiresAt,
+            referenceAt: generatedAt,
+          });
 
-            return {
-              commandId: command.command.commandId,
-              type: command.command.type,
-              status: command.status,
-              issuedAt: command.command.issuedAt,
-              updatedAt: command.updatedAt,
-              acknowledgedAt: command.acknowledgedAt,
-              leaseExpiresAt: command.leaseExpiresAt,
-              attemptCount: command.attemptCount,
-              nextAttemptAt: command.nextAttemptAt,
-              message: command.lastMessage,
-              result: command.result,
-              detailPath: getCommandDetailPath(command),
-              externalUrl: getCommandExternalUrl(command),
-              replayable: replay.replayable,
-              replayStatus: replay.replayStatus,
-              replayReason: replay.replayReason,
-            };
-          }),
-          recentEvents: events.slice(0, 5).map((event) => ({
-            eventId: event.event.eventId,
-            type: event.event.type,
-            occurredAt: event.event.occurredAt,
-          })),
-        };
+          return {
+            commandId: command.command.commandId,
+            type: command.command.type,
+            status: command.status,
+            issuedAt: command.command.issuedAt,
+            updatedAt: command.updatedAt,
+            acknowledgedAt: command.acknowledgedAt,
+            leaseExpiresAt: command.leaseExpiresAt,
+            attemptCount: command.attemptCount,
+            nextAttemptAt: command.nextAttemptAt,
+            message: command.lastMessage,
+            result: command.result,
+            detailPath: getCommandDetailPath(command),
+            externalUrl: getCommandExternalUrl(command),
+            replayable: replay.replayable,
+            replayStatus: replay.replayStatus,
+            replayReason: replay.replayReason,
+          };
+        }),
+        recentEvents: events.slice(0, 5).map((event) => ({
+          eventId: event.event.eventId,
+          type: event.event.type,
+          occurredAt: event.event.occurredAt,
+        })),
+      };
     }),
   );
 
@@ -834,10 +900,13 @@ export async function listWorkspaceConnectors(workspaceId: string, generatedAt: 
     })),
   );
 
-  const sortedItems = items.sort((left, right) => new Date(right.lastSeenAt).getTime() - new Date(left.lastSeenAt).getTime());
+  const sortedItems = items.sort(
+    (left, right) => new Date(right.lastSeenAt).getTime() - new Date(left.lastSeenAt).getTime(),
+  );
+  const page = paginateItems(sortedItems, params);
+
   return WorkspaceConnectorInventorySchema.parse({
-    items: sortedItems,
-    total: sortedItems.length,
+    ...page,
     generatedAt,
   });
 }
@@ -884,11 +953,12 @@ export function retryConnectorCommand(workspaceId: string, commandId: string, re
       connectorId: retried.command.connectorId,
       status: retried.status,
       queuedAt: retried.updatedAt,
-      message: retried.status === "pending"
-        ? reclaimableLease
-          ? `${retried.command.type} lease expired and the command was reclaimed into the pending queue.`
-          : `${retried.command.type} returned to the pending queue.`
-        : `Command ${retried.command.type} is not retryable from its current state.`,
+      message:
+        retried.status === "pending"
+          ? reclaimableLease
+            ? `${retried.command.type} lease expired and the command was reclaimed into the pending queue.`
+            : `${retried.command.type} returned to the pending queue.`
+          : `Command ${retried.command.type} is not retryable from its current state.`,
     });
   });
 }
@@ -957,9 +1027,7 @@ export function findConnectorForRepository(
     return (
       store
         .listConnectors(workspaceId)
-        .filter(
-          (connector) => connector.repository.repo.owner === owner && connector.repository.repo.name === name,
-        )
+        .filter((connector) => connector.repository.repo.owner === owner && connector.repository.repo.name === name)
         .filter((connector) =>
           workspaceRoot ? sameWorkspaceRoot(connector.repository.workspaceRoot, workspaceRoot) : true,
         )
@@ -970,8 +1038,7 @@ export function findConnectorForRepository(
         }))
         .filter((candidate) => candidate.health.dispatchable)
         .sort((left, right) => {
-          const activityDelta =
-            new Date(right.latestActivityAt).getTime() - new Date(left.latestActivityAt).getTime();
+          const activityDelta = new Date(right.latestActivityAt).getTime() - new Date(left.latestActivityAt).getTime();
           if (activityDelta !== 0) {
             return activityDelta;
           }

@@ -7,7 +7,9 @@ import { hasAtLeastRole } from "@/lib/rbac/roles";
 import { enforceApiRateLimits } from "@/lib/security/rate-limit";
 import type { WorkspaceRole, WorkspaceSession } from "@/schemas/cloud";
 
-export async function requireApiSession(request?: Request): Promise<
+export async function requireApiSession(
+  request?: Request,
+): Promise<
   | { session: Session; workspaceSession: WorkspaceSession; unauthorized: null }
   | { session: null; workspaceSession: null; unauthorized: NextResponse }
 > {
@@ -49,7 +51,10 @@ export async function requireApiSession(request?: Request): Promise<
   };
 }
 
-export async function requireApiRole(requiredRole: WorkspaceRole, request?: Request): Promise<
+export async function requireApiRole(
+  requiredRole: WorkspaceRole,
+  request?: Request,
+): Promise<
   | { session: Session; workspaceSession: WorkspaceSession; denied: null }
   | { session: null; workspaceSession: null; denied: NextResponse }
 > {

@@ -2,12 +2,26 @@ import "server-only";
 
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
-import { AuditLogResponseSchema, type AuditEntry } from "@/schemas/cloud";
+import { AuditLogResponseSchema, type AuditEntry, type AuditExportFormat } from "@/schemas/cloud";
 import { listWorkspaceApprovals, listWorkspaceRunContexts } from "@/lib/backend/workspace/workspace-runtime";
+import { paginateItems } from "@/lib/pagination/cursor";
 
 function repoLabel(owner: string, name: string) {
   return `${owner}/${name}`;
 }
+
+type WorkspaceAuditLogOptions = {
+  from?: string | null;
+  to?: string | null;
+  cursor?: string | null;
+  limit?: number | null;
+};
+
+type WorkspaceAuditExport = {
+  contentType: string;
+  fileName: string;
+  body: string;
+};
 
 function describeConnectorAuditDetails(command: {
   command: { type: string };
@@ -16,7 +30,11 @@ function describeConnectorAuditDetails(command: {
   nextAttemptAt: string | null;
   result?: Record<string, unknown> | null;
 }) {
-  if (command.result && command.command.type === "open_pull_request" && typeof command.result.pullRequestUrl === "string") {
+  if (
+    command.result &&
+    command.command.type === "open_pull_request" &&
+    typeof command.result.pullRequestUrl === "string"
+  ) {
     return `Provider PR opened at ${command.result.pullRequestUrl}.`;
   }
 
@@ -51,13 +69,43 @@ function detailPathForCommand(command: {
   return repositoryRoute(owner, name);
 }
 
-function externalUrlForCommand(command: {
-  result?: Record<string, unknown> | null;
-}) {
+function externalUrlForCommand(command: { result?: Record<string, unknown> | null }) {
   return typeof command.result?.pullRequestUrl === "string" ? command.result.pullRequestUrl : null;
 }
 
-export async function listWorkspaceAuditLog(workspaceId: string) {
+function csvCell(value: string | null | undefined) {
+  const normalized = value ?? "";
+  return `"${normalized.replaceAll('"', '""')}"`;
+}
+
+function formatAuditExportTimestamp(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toISOString().replace(/[:.]/g, "-");
+}
+
+function filterAuditItems(items: AuditEntry[], options: WorkspaceAuditLogOptions) {
+  const fromTime = options.from ? new Date(options.from).getTime() : null;
+  const toTime = options.to ? new Date(options.to).getTime() : null;
+
+  return items.filter((item) => {
+    const occurredAt = new Date(item.occurredAt).getTime();
+    if (fromTime !== null && occurredAt < fromTime) {
+      return false;
+    }
+
+    if (toTime !== null && occurredAt > toTime) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+async function collectWorkspaceAuditItems(workspaceId: string) {
   const items: AuditEntry[] = [];
 
   for (const { repository, approval } of await listWorkspaceApprovals(workspaceId)) {
@@ -69,12 +117,7 @@ export async function listWorkspaceAuditLog(workspaceId: string) {
       category: "approval",
       action: approval.resolved_at ? `approval_${approval.status}` : "approval_requested",
       target: approval.action_summary,
-      outcome:
-        approval.status === "approved"
-          ? "success"
-          : approval.status === "denied"
-            ? "failure"
-            : "info",
+      outcome: approval.status === "approved" ? "success" : approval.status === "denied" ? "failure" : "info",
       repo: repoLabel(repository.inventory.owner, repository.inventory.name),
       runId: approval.run_id,
       actionId: approval.action_id,
@@ -158,10 +201,107 @@ export async function listWorkspaceAuditLog(workspaceId: string) {
     }
   });
 
-  const sorted = items.sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
+  return items.sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
+}
+
+function serializeAuditExport(
+  items: AuditEntry[],
+  workspaceId: string,
+  format: AuditExportFormat,
+  options: WorkspaceAuditLogOptions,
+): WorkspaceAuditExport {
+  const exportedAt = new Date().toISOString();
+  const fileBase = `audit-${workspaceId}-${formatAuditExportTimestamp(exportedAt)}`;
+
+  if (format === "json") {
+    return {
+      contentType: "application/json; charset=utf-8",
+      fileName: `${fileBase}.json`,
+      body: JSON.stringify(
+        {
+          workspaceId,
+          exportedAt,
+          filters: {
+            from: options.from ?? null,
+            to: options.to ?? null,
+          },
+          total: items.length,
+          items,
+        },
+        null,
+        2,
+      ),
+    };
+  }
+
+  const header = [
+    "id",
+    "occurredAt",
+    "actorLabel",
+    "actorType",
+    "category",
+    "action",
+    "target",
+    "outcome",
+    "repo",
+    "runId",
+    "actionId",
+    "detailPath",
+    "externalUrl",
+    "details",
+  ];
+  const lines = items.map((item) =>
+    [
+      item.id,
+      item.occurredAt,
+      item.actorLabel,
+      item.actorType,
+      item.category,
+      item.action,
+      item.target,
+      item.outcome,
+      item.repo,
+      item.runId,
+      item.actionId,
+      item.detailPath ?? null,
+      item.externalUrl ?? null,
+      item.details,
+    ]
+      .map((value) => csvCell(typeof value === "string" ? value : value))
+      .join(","),
+  );
+
+  return {
+    contentType: "text/csv; charset=utf-8",
+    fileName: `${fileBase}.csv`,
+    body: [header.join(","), ...lines].join("\n"),
+  };
+}
+
+export async function listWorkspaceAuditLog(workspaceId: string, options: WorkspaceAuditLogOptions = {}) {
+  const sorted = filterAuditItems(await collectWorkspaceAuditItems(workspaceId), options);
+  const limit = options.limit ?? 100;
+  const page =
+    limit === null
+      ? {
+          items: sorted,
+          total: sorted.length,
+          page_size: sorted.length === 0 ? 25 : sorted.length,
+          next_cursor: null,
+          has_more: false,
+        }
+      : paginateItems(sorted, { cursor: options.cursor ?? null, limit });
   return AuditLogResponseSchema.parse({
-    items: sorted.slice(0, 100),
-    total: sorted.length,
+    ...page,
     generatedAt: new Date().toISOString(),
   });
+}
+
+export async function exportWorkspaceAuditLog(
+  workspaceId: string,
+  format: AuditExportFormat,
+  options: WorkspaceAuditLogOptions = {},
+) {
+  const sorted = filterAuditItems(await collectWorkspaceAuditItems(workspaceId), options);
+  return serializeAuditExport(sorted, workspaceId, format, options);
 }

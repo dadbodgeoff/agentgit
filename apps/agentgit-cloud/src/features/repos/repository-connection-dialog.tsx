@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
-import { Badge, Button, Card } from "@/components/primitives";
+import { Badge, Button, Card, ToastCard, ToastViewport } from "@/components/primitives";
 import { ApiClientError, getApiErrorMessage } from "@/lib/api/client";
 import { issueConnectorBootstrapToken } from "@/lib/api/endpoints/connectors";
 import { updateWorkspaceRepositories } from "@/lib/api/endpoints/repositories";
@@ -23,6 +23,12 @@ type RepositoryConnectionDialogProps = {
   buttonLabel?: string;
 };
 
+type RepositoryConnectionToast = {
+  title: string;
+  message: string;
+  tone: "success" | "warning" | "error";
+};
+
 export function RepositoryConnectionDialog({
   buttonClassName,
   buttonLabel = "Connect repository",
@@ -34,6 +40,7 @@ export function RepositoryConnectionDialog({
   const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [bootstrapDetails, setBootstrapDetails] = useState<ConnectorBootstrapResponse | null>(null);
+  const [toast, setToast] = useState<RepositoryConnectionToast | null>(null);
   const connectionQuery = useRepositoryConnectionBootstrapQuery(isOpen && isAdmin);
 
   useEffect(() => {
@@ -44,10 +51,27 @@ export function RepositoryConnectionDialog({
     setSelectedRepositoryIds(connectionQuery.data.connectedRepositoryIds);
   }, [connectionQuery.data, isOpen]);
 
+  useEffect(() => {
+    if (!toast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setToast(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
   const saveMutation = useMutation({
     mutationFn: (repositoryIds: string[]) => updateWorkspaceRepositories({ repositoryIds }),
     onSuccess: async (result) => {
       setSubmitError(null);
+      setToast({
+        title: "Repository scope saved",
+        message: "Workspace repository visibility was updated.",
+        tone: "success",
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.repositories }),
         queryClient.invalidateQueries({ queryKey: queryKeys.repositoryConnection }),
@@ -61,11 +85,22 @@ export function RepositoryConnectionDialog({
     },
     onError: (error) => {
       if (error instanceof ApiClientError) {
-        setSubmitError(getApiErrorMessage(error, "Could not update repository connections. Retry."));
+        const message = getApiErrorMessage(error, "Could not update repository connections. Retry.");
+        setSubmitError(message);
+        setToast({
+          title: "Save failed",
+          message,
+          tone: "error",
+        });
         return;
       }
 
       setSubmitError("Could not update repository connections. Retry.");
+      setToast({
+        title: "Save failed",
+        message: "Could not update repository connections. Retry.",
+        tone: "error",
+      });
     },
   });
 
@@ -73,9 +108,20 @@ export function RepositoryConnectionDialog({
     mutationFn: () => issueConnectorBootstrapToken(),
     onSuccess: (result) => {
       setBootstrapDetails(result);
+      setToast({
+        title: "Bootstrap token ready",
+        message: "Run the generated command on the machine that hosts the selected repositories.",
+        tone: "success",
+      });
     },
     onError: (error) => {
-      setSubmitError(getApiErrorMessage(error, "Could not issue a connector bootstrap token."));
+      const message = getApiErrorMessage(error, "Could not issue a connector bootstrap token.");
+      setSubmitError(message);
+      setToast({
+        title: "Bootstrap failed",
+        message,
+        tone: "error",
+      });
     },
   });
 
@@ -111,7 +157,8 @@ export function RepositoryConnectionDialog({
               <div className="space-y-2">
                 <h2 className="text-xl font-semibold text-[var(--ag-text-primary)]">Connect repositories</h2>
                 <p className="text-sm text-[var(--ag-text-secondary)]">
-                  Choose which governed repositories should be visible in this workspace and bootstrap a local connector if no active machine covers them yet.
+                  Choose which governed repositories should be visible in this workspace and bootstrap a local connector
+                  if no active machine covers them yet.
                 </p>
               </div>
               <Button onClick={() => setIsOpen(false)} variant="ghost">
@@ -134,7 +181,10 @@ export function RepositoryConnectionDialog({
             ) : connectionQuery.isError ? (
               <div className="mt-6">
                 <PageStatePanel
-                  errorMessage={getApiErrorMessage(connectionQuery.error, "Could not load repository connection setup. Retry.")}
+                  errorMessage={getApiErrorMessage(
+                    connectionQuery.error,
+                    "Could not load repository connection setup. Retry.",
+                  )}
                   state="error"
                 />
               </div>
@@ -146,23 +196,38 @@ export function RepositoryConnectionDialog({
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
                       {connectionQuery.data.availableRepositories.length}
                     </div>
-                    <div className="text-sm text-[var(--ag-text-secondary)]">Repositories discovered from configured workspace roots</div>
+                    <div className="text-sm text-[var(--ag-text-secondary)]">
+                      Repositories discovered from configured workspace roots
+                    </div>
                   </Card>
                   <Card className="space-y-1">
                     <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Connected</div>
-                    <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">{selectedRepositoryIds.length}</div>
-                    <div className="text-sm text-[var(--ag-text-secondary)]">Repositories that will appear in this workspace</div>
-                  </Card>
-                  <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Live coverage</div>
-                    <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">{activeCoverageCount}</div>
-                    <div className="text-sm text-[var(--ag-text-secondary)]">Selected repositories with an active registered connector</div>
-                  </Card>
-                  <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Connector fleet</div>
-                    <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">{connectionQuery.data.totalConnectorCount}</div>
+                    <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
+                      {selectedRepositoryIds.length}
+                    </div>
                     <div className="text-sm text-[var(--ag-text-secondary)]">
-                      {connectionQuery.data.activeConnectorCount} active, {connectionQuery.data.staleConnectorCount} stale, {connectionQuery.data.revokedConnectorCount} revoked
+                      Repositories that will appear in this workspace
+                    </div>
+                  </Card>
+                  <Card className="space-y-1">
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+                      Live coverage
+                    </div>
+                    <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">{activeCoverageCount}</div>
+                    <div className="text-sm text-[var(--ag-text-secondary)]">
+                      Selected repositories with an active registered connector
+                    </div>
+                  </Card>
+                  <Card className="space-y-1">
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+                      Connector fleet
+                    </div>
+                    <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
+                      {connectionQuery.data.totalConnectorCount}
+                    </div>
+                    <div className="text-sm text-[var(--ag-text-secondary)]">
+                      {connectionQuery.data.activeConnectorCount} active, {connectionQuery.data.staleConnectorCount}{" "}
+                      stale, {connectionQuery.data.revokedConnectorCount} revoked
                     </div>
                   </Card>
                 </div>
@@ -179,15 +244,20 @@ export function RepositoryConnectionDialog({
                 ) : (
                   <Card className="space-y-4">
                     <div className="space-y-1">
-                      <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">Workspace repository scope</h3>
+                      <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">
+                        Workspace repository scope
+                      </h3>
                       <p className="text-sm text-[var(--ag-text-secondary)]">
-                        Repository selection controls which repos appear across dashboard, approvals, runs, snapshots, and audit for this workspace.
+                        Repository selection controls which repos appear across dashboard, approvals, runs, snapshots,
+                        and audit for this workspace.
                       </p>
                     </div>
                     <div className="space-y-3">
                       {connectionQuery.data.availableRepositories.map((repository) => {
                         const isSelected = selectedRepositoryIds.includes(repository.id);
-                        const hasActiveCoverage = connectionQuery.data.activeConnectorRepositoryIds.includes(repository.id);
+                        const hasActiveCoverage = connectionQuery.data.activeConnectorRepositoryIds.includes(
+                          repository.id,
+                        );
 
                         return (
                           <label
@@ -228,9 +298,12 @@ export function RepositoryConnectionDialog({
                 {saveMutation.data?.connectorBootstrapSuggested ? (
                   <Card className="space-y-4 border-[var(--ag-color-warning)]/40">
                     <div className="space-y-1">
-                      <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">Bootstrap a local connector</h3>
+                      <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">
+                        Bootstrap a local connector
+                      </h3>
                       <p className="text-sm text-[var(--ag-text-secondary)]">
-                        Repository scope is saved, but at least one selected repo still needs an active local connector to sync live state, commands, and governed writeback.
+                        Repository scope is saved, but at least one selected repo still needs an active local connector
+                        to sync live state, commands, and governed writeback.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-3">
@@ -238,12 +311,15 @@ export function RepositoryConnectionDialog({
                         {bootstrapMutation.isPending ? "Generating..." : "Generate bootstrap token"}
                       </Button>
                       <div className="text-sm text-[var(--ag-text-secondary)]">
-                        Use this when the selected repos live on a machine that has not registered with this workspace yet.
+                        Use this when the selected repos live on a machine that has not registered with this workspace
+                        yet.
                       </div>
                     </div>
                     {bootstrapDetails ? (
                       <div className="space-y-2 rounded-[var(--ag-radius-lg)] border border-[var(--ag-border-default)] bg-[var(--ag-bg-page)] p-4">
-                        <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Bootstrap command</div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+                          Bootstrap command
+                        </div>
                         <code className="block overflow-x-auto text-sm text-[var(--ag-text-primary)]">
                           {bootstrapDetails.commandHint}
                         </code>
@@ -274,6 +350,20 @@ export function RepositoryConnectionDialog({
             ) : null}
           </div>
         </div>
+      ) : null}
+      {toast ? (
+        <ToastViewport>
+          <ToastCard
+            className={
+              toast.tone === "success" ? "border-[color:rgb(34_197_94_/_0.28)]" : "border-[color:rgb(239_68_68_/_0.28)]"
+            }
+          >
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">{toast.title}</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{toast.message}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
       ) : null}
     </>
   );

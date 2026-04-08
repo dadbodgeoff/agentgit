@@ -1,10 +1,5 @@
 import type { SessionCredentialBroker } from "@agentgit/credential-broker";
-import type {
-  AdapterRegistry,
-  OwnedDraftStore,
-  OwnedNoteStore,
-  OwnedTicketStore,
-} from "@agentgit/execution-adapters";
+import type { AdapterRegistry, OwnedDraftStore, OwnedNoteStore, OwnedTicketStore } from "@agentgit/execution-adapters";
 import type { McpPublicHostPolicyRegistry, McpServerRegistry } from "@agentgit/mcp-registry";
 import type { StaticCompensationRegistry } from "@agentgit/recovery-engine";
 import type { RunJournal } from "@agentgit/run-journal";

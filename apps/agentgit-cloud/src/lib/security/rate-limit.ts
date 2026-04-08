@@ -62,6 +62,11 @@ function createLocalRateLimitStore() {
   });
 }
 
+export function ensureLocalRateLimitStoreInitialized(): void {
+  const store = createLocalRateLimitStore();
+  store.close();
+}
+
 function hashIdentifier(identifier: string) {
   return createHash("sha256").update(identifier, "utf8").digest("hex");
 }
@@ -71,12 +76,7 @@ function buildBucketKey(scope: RateLimitScope, identifierHash: string, windowMs:
   return `${scope}:${identifierHash}:${windowSlot}`;
 }
 
-function buildDecision(params: {
-  count: number;
-  limit: number;
-  nowMs: number;
-  resetAt: string;
-}): RateLimitDecision {
+function buildDecision(params: { count: number; limit: number; nowMs: number; resetAt: string }): RateLimitDecision {
   const resetMs = new Date(params.resetAt).getTime();
   return {
     allowed: params.count <= params.limit,
@@ -103,7 +103,15 @@ async function consumeRateLimit(params: {
     try {
       for (const bucket of store.list("buckets")) {
         if (new Date(bucket.resetAt).getTime() < nowMs) {
-          store.delete("buckets", buildBucketKey(bucket.scope, bucket.identifierHash, params.windowMs, new Date(bucket.resetAt).getTime() - 1));
+          store.delete(
+            "buckets",
+            buildBucketKey(
+              bucket.scope,
+              bucket.identifierHash,
+              params.windowMs,
+              new Date(bucket.resetAt).getTime() - 1,
+            ),
+          );
         }
       }
 
@@ -195,10 +203,7 @@ function isWriteMethod(request: Request) {
   return request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS";
 }
 
-export async function enforceApiRateLimits(
-  request: Request,
-  workspaceId: string,
-): Promise<NextResponse | null> {
+export async function enforceApiRateLimits(request: Request, workspaceId: string): Promise<NextResponse | null> {
   const ipDecision = await consumeRateLimit({
     scope: "api_ip",
     identifier: getClientIp(request),
@@ -222,10 +227,7 @@ export async function enforceApiRateLimits(
   return null;
 }
 
-export async function enforceConnectorRateLimits(
-  request: Request,
-  workspaceId: string,
-): Promise<NextResponse | null> {
+export async function enforceConnectorRateLimits(request: Request, workspaceId: string): Promise<NextResponse | null> {
   const ipDecision = await consumeRateLimit({
     scope: "connector_ip",
     identifier: getClientIp(request),
@@ -270,7 +272,10 @@ export async function enforceConnectorRegistrationRateLimits(
     windowMs: 60_000,
   });
   if (!workspaceDecision.allowed) {
-    return buildRateLimitResponse(workspaceDecision, "Workspace connector registration quota exceeded. Retry in a minute.");
+    return buildRateLimitResponse(
+      workspaceDecision,
+      "Workspace connector registration quota exceeded. Retry in a minute.",
+    );
   }
 
   return null;

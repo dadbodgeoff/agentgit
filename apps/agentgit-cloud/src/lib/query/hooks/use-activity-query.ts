@@ -1,11 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
-
 import { getWorkspaceActivity } from "@/lib/api/endpoints/activity";
+import { useCursorPaginatedQuery } from "@/lib/query/hooks/use-cursor-paginated-query";
 import { queryKeys } from "@/lib/query/keys";
 
 export function useActivityQuery() {
-  return useQuery({
+  return useCursorPaginatedQuery({
     queryKey: queryKeys.activity,
-    queryFn: () => getWorkspaceActivity(),
+    queryFn: ({ cursor }) => getWorkspaceActivity({ cursor }),
   });
 }

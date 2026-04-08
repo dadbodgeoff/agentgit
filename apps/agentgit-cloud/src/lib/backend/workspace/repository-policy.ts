@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,23 +20,59 @@ import type {
   PolicyLoadedSourceScope,
   PolicyThresholdRecommendation,
 } from "@agentgit/schemas";
+import { desc, eq } from "drizzle-orm";
 
 import { withScopedAuthorityClient } from "@/lib/backend/authority/client";
-import { findRepositoryRuntimeRecord } from "@/lib/backend/workspace/repository-inventory";
 import {
+  findRepositoryPolicyVersionLocal,
+  listRepositoryPolicyVersionsLocal,
+  saveRepositoryPolicyVersionLocal,
+} from "@/lib/backend/workspace/cloud-state.local";
+import { findRepositoryRuntimeRecord } from "@/lib/backend/workspace/repository-inventory";
+import { getCloudDatabase, hasDatabaseUrl } from "@/lib/db/client";
+import { cloudRepositoryPolicyVersions } from "@/lib/db/schema";
+import {
+  RepositoryPolicyChangeSourceSchema,
   RepositoryPolicyDocumentInputSchema,
   RepositoryPolicySaveResponseSchema,
   RepositoryPolicySnapshotSchema,
   RepositoryPolicyValidationSchema,
+  RepositoryPolicyVersionDiffEntrySchema,
+  RepositoryPolicyVersionSummarySchema,
+  StoredRepositoryPolicyVersionSchema,
+  type RepositoryPolicyChangeSource,
   type RepositoryPolicySaveResponse,
   type RepositoryPolicySnapshot,
   type RepositoryPolicyValidation,
+  type RepositoryPolicyVersionDiffEntry,
+  type RepositoryPolicyVersionSummary,
+  type StoredRepositoryPolicyVersion,
 } from "@/schemas/cloud";
 
 type PolicyFileCandidate = {
   scope: PolicyLoadedSourceScope;
   path: string | null;
 };
+
+type RepositoryPolicyActor = {
+  userId: string;
+  name: string;
+  email: string;
+};
+
+type RepositoryPolicyVersionSeed = {
+  workspaceId: string;
+  repositoryId: string;
+  repositoryOwner: string;
+  repositoryName: string;
+  policyPath: string;
+  config: PolicyConfig;
+  actor: RepositoryPolicyActor | null;
+  changeSource: RepositoryPolicyChangeSource;
+  createdAt?: string;
+};
+
+type RepositoryPolicyRuntimeRecord = Awaited<ReturnType<typeof findRepositoryRuntimeRecord>>;
 
 export class RepositoryPolicyInputError extends Error {
   constructor(
@@ -44,6 +81,13 @@ export class RepositoryPolicyInputError extends Error {
   ) {
     super(message);
     this.name = "RepositoryPolicyInputError";
+  }
+}
+
+export class RepositoryPolicyVersionNotFoundError extends Error {
+  constructor(message = "Repository policy version was not found.") {
+    super(message);
+    this.name = "RepositoryPolicyVersionNotFoundError";
   }
 }
 
@@ -87,7 +131,9 @@ function loadPolicyDocumentFromFile(filePath: string): unknown {
   return parsePolicyDocumentText(fs.readFileSync(filePath, "utf8"));
 }
 
-function validatePolicyDocument(document: unknown): RepositoryPolicyValidation & { normalizedConfig: PolicyConfig | null } {
+function validatePolicyDocument(
+  document: unknown,
+): RepositoryPolicyValidation & { normalizedConfig: PolicyConfig | null } {
   const validation = validatePolicyConfigDocument(document);
 
   return {
@@ -226,7 +272,10 @@ function getJournalPath(repoRoot: string): string {
   return path.join(repoRoot, ".agentgit", "state", "authority.db");
 }
 
-function getLocalRecommendations(repoRoot: string, compiledPolicy: ReturnType<typeof compilePolicyPack>): PolicyThresholdRecommendation[] {
+function getLocalRecommendations(
+  repoRoot: string,
+  compiledPolicy: ReturnType<typeof compilePolicyPack>,
+): PolicyThresholdRecommendation[] {
   const journalPath = getJournalPath(repoRoot);
   if (!fs.existsSync(journalPath)) {
     return [];
@@ -243,7 +292,6 @@ function getLocalRecommendations(repoRoot: string, compiledPolicy: ReturnType<ty
       min_samples: 5,
     });
   } catch {
-    // Policy reads should degrade gracefully even when calibration history is malformed or incomplete.
     return [];
   } finally {
     journal.close();
@@ -267,11 +315,373 @@ function serializePolicyDocument(config: PolicyConfig): string {
   return `${TOML.stringify(config as never).trimEnd()}\n`;
 }
 
+function serializePolicyVersionDocument(config: PolicyConfig): string {
+  return `${JSON.stringify(config, null, 2)}\n`;
+}
+
 function writePolicyDocument(policyPath: string, config: PolicyConfig): void {
   fs.mkdirSync(path.dirname(policyPath), { recursive: true });
   const tempPath = `${policyPath}.tmp`;
   fs.writeFileSync(tempPath, serializePolicyDocument(config), "utf8");
   fs.renameSync(tempPath, policyPath);
+}
+
+function hashPolicyDocument(document: string): string {
+  return createHash("sha256").update(document, "utf8").digest("hex");
+}
+
+function getThresholdCount(config: PolicyConfig): number {
+  return config.thresholds?.low_confidence.length ?? 0;
+}
+
+function parseStoredPolicyConfig(document: string): PolicyConfig {
+  const validation = validatePolicyDocument(parsePolicyDocumentText(document));
+  if (!validation.valid || !validation.normalizedConfig) {
+    throw new RepositoryPolicyInputError("Stored policy version is invalid.", validation.issues);
+  }
+
+  return validation.normalizedConfig;
+}
+
+function formatThresholdValue(value: number | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  return value.toFixed(2);
+}
+
+function getRuleLabel(rule: PolicyConfig["rules"][number], index: number): string {
+  const explicitRuleId =
+    typeof rule.rule_id === "string" && rule.rule_id.trim().length > 0 ? rule.rule_id.trim() : null;
+  return explicitRuleId ?? `rule-${index + 1}`;
+}
+
+function buildThresholdMap(config: PolicyConfig): Map<string, number> {
+  return new Map((config.thresholds?.low_confidence ?? []).map((entry) => [entry.action_family, entry.ask_below]));
+}
+
+function buildRuleMap(config: PolicyConfig): Map<string, string> {
+  return new Map(config.rules.map((rule, index) => [getRuleLabel(rule, index), JSON.stringify(rule, null, 2)]));
+}
+
+function buildPolicyDiff(
+  previousConfig: PolicyConfig | null,
+  currentConfig: PolicyConfig,
+): RepositoryPolicyVersionDiffEntry[] {
+  if (!previousConfig) {
+    return [];
+  }
+
+  const diffEntries: RepositoryPolicyVersionDiffEntry[] = [];
+
+  if (previousConfig.profile_name !== currentConfig.profile_name) {
+    diffEntries.push(
+      RepositoryPolicyVersionDiffEntrySchema.parse({
+        id: "metadata:profile_name",
+        section: "metadata",
+        change: "changed",
+        label: "profile_name",
+        before: previousConfig.profile_name,
+        after: currentConfig.profile_name,
+      }),
+    );
+  }
+
+  if (previousConfig.policy_version !== currentConfig.policy_version) {
+    diffEntries.push(
+      RepositoryPolicyVersionDiffEntrySchema.parse({
+        id: "metadata:policy_version",
+        section: "metadata",
+        change: "changed",
+        label: "policy_version",
+        before: previousConfig.policy_version,
+        after: currentConfig.policy_version,
+      }),
+    );
+  }
+
+  const thresholdKeys = new Set([
+    ...buildThresholdMap(previousConfig).keys(),
+    ...buildThresholdMap(currentConfig).keys(),
+  ]);
+  const previousThresholds = buildThresholdMap(previousConfig);
+  const currentThresholds = buildThresholdMap(currentConfig);
+  for (const key of [...thresholdKeys].sort((left, right) => left.localeCompare(right))) {
+    const before = previousThresholds.get(key) ?? null;
+    const after = currentThresholds.get(key) ?? null;
+    if (before === after) {
+      continue;
+    }
+
+    diffEntries.push(
+      RepositoryPolicyVersionDiffEntrySchema.parse({
+        id: `threshold:${key}`,
+        section: "threshold",
+        change: before === null ? "added" : after === null ? "removed" : "changed",
+        label: key,
+        before: formatThresholdValue(before),
+        after: formatThresholdValue(after),
+      }),
+    );
+  }
+
+  const previousRules = buildRuleMap(previousConfig);
+  const currentRules = buildRuleMap(currentConfig);
+  const ruleKeys = new Set([...previousRules.keys(), ...currentRules.keys()]);
+  for (const key of [...ruleKeys].sort((left, right) => left.localeCompare(right))) {
+    const before = previousRules.get(key) ?? null;
+    const after = currentRules.get(key) ?? null;
+    if (before === after) {
+      continue;
+    }
+
+    diffEntries.push(
+      RepositoryPolicyVersionDiffEntrySchema.parse({
+        id: `rule:${key}`,
+        section: "rule",
+        change: before === null ? "added" : after === null ? "removed" : "changed",
+        label: key,
+        before,
+        after,
+      }),
+    );
+  }
+
+  return diffEntries;
+}
+
+function summarizePolicyDiff(
+  diffEntries: RepositoryPolicyVersionDiffEntry[],
+  changeSource: RepositoryPolicyChangeSource,
+): string {
+  if (changeSource === "seed") {
+    return "Seeded version history from the current workspace override.";
+  }
+
+  if (diffEntries.length === 0) {
+    return changeSource === "rollback"
+      ? "Rolled back to a previous version with no additional effective changes."
+      : "Saved with no effective policy diff from the prior version.";
+  }
+
+  const metadataChanges = diffEntries.filter((entry) => entry.section === "metadata").length;
+  const thresholdChanges = diffEntries.filter((entry) => entry.section === "threshold").length;
+  const ruleChanges = diffEntries.filter((entry) => entry.section === "rule").length;
+  const summaryParts = [
+    metadataChanges > 0 ? `${metadataChanges} metadata` : null,
+    thresholdChanges > 0 ? `${thresholdChanges} threshold` : null,
+    ruleChanges > 0 ? `${ruleChanges} rule` : null,
+  ].filter((entry): entry is string => entry !== null);
+
+  return `${changeSource === "rollback" ? "Rolled back" : "Saved"} with ${summaryParts.join(", ")} change${diffEntries.length === 1 ? "" : "s"}.`;
+}
+
+function createStoredRepositoryPolicyVersion(seed: RepositoryPolicyVersionSeed): StoredRepositoryPolicyVersion {
+  const document = serializePolicyVersionDocument(seed.config);
+  const actorName = seed.actor?.name?.trim() || "AgentGit Cloud";
+  const actorEmail = seed.actor?.email?.trim() || "system@agentgit.dev";
+
+  return StoredRepositoryPolicyVersionSchema.parse({
+    id: `polver_${randomUUID().replaceAll("-", "")}`,
+    workspaceId: seed.workspaceId,
+    repositoryId: seed.repositoryId,
+    repositoryOwner: seed.repositoryOwner,
+    repositoryName: seed.repositoryName,
+    policyPath: seed.policyPath,
+    document,
+    documentHash: hashPolicyDocument(document),
+    profileName: seed.config.profile_name,
+    policyVersion: seed.config.policy_version,
+    ruleCount: seed.config.rules.length,
+    thresholdCount: getThresholdCount(seed.config),
+    changeSource: RepositoryPolicyChangeSourceSchema.parse(seed.changeSource),
+    actorUserId: seed.actor?.userId ?? null,
+    actorName,
+    actorEmail,
+    createdAt: seed.createdAt ?? new Date().toISOString(),
+  });
+}
+
+async function listPersistedRepositoryPolicyVersions(
+  workspaceId: string,
+  repositoryId: string,
+): Promise<StoredRepositoryPolicyVersion[]> {
+  if (!hasDatabaseUrl()) {
+    return listRepositoryPolicyVersionsLocal(workspaceId, repositoryId);
+  }
+
+  const db = getCloudDatabase();
+  const rows = await db
+    .select()
+    .from(cloudRepositoryPolicyVersions)
+    .where(eq(cloudRepositoryPolicyVersions.workspaceId, workspaceId))
+    .orderBy(desc(cloudRepositoryPolicyVersions.createdAt));
+
+  return rows
+    .filter((row) => row.repositoryId === repositoryId)
+    .map((row) =>
+      StoredRepositoryPolicyVersionSchema.parse({
+        id: row.id,
+        workspaceId: row.workspaceId,
+        repositoryId: row.repositoryId,
+        repositoryOwner: row.repositoryOwner,
+        repositoryName: row.repositoryName,
+        policyPath: row.policyPath,
+        document: row.document,
+        documentHash: row.documentHash,
+        profileName: row.profileName,
+        policyVersion: row.policyVersion,
+        ruleCount: row.ruleCount,
+        thresholdCount: row.thresholdCount,
+        changeSource: row.changeSource,
+        actorUserId: row.actorUserId,
+        actorName: row.actorName,
+        actorEmail: row.actorEmail,
+        createdAt: row.createdAt.toISOString(),
+      }),
+    );
+}
+
+async function findPersistedRepositoryPolicyVersion(
+  workspaceId: string,
+  repositoryId: string,
+  versionId: string,
+): Promise<StoredRepositoryPolicyVersion | null> {
+  if (!hasDatabaseUrl()) {
+    return findRepositoryPolicyVersionLocal(workspaceId, repositoryId, versionId);
+  }
+
+  const db = getCloudDatabase();
+  const row = await db.query.cloudRepositoryPolicyVersions.findFirst({
+    where: eq(cloudRepositoryPolicyVersions.id, versionId),
+  });
+
+  if (!row || row.workspaceId !== workspaceId || row.repositoryId !== repositoryId) {
+    return null;
+  }
+
+  return StoredRepositoryPolicyVersionSchema.parse({
+    id: row.id,
+    workspaceId: row.workspaceId,
+    repositoryId: row.repositoryId,
+    repositoryOwner: row.repositoryOwner,
+    repositoryName: row.repositoryName,
+    policyPath: row.policyPath,
+    document: row.document,
+    documentHash: row.documentHash,
+    profileName: row.profileName,
+    policyVersion: row.policyVersion,
+    ruleCount: row.ruleCount,
+    thresholdCount: row.thresholdCount,
+    changeSource: row.changeSource,
+    actorUserId: row.actorUserId,
+    actorName: row.actorName,
+    actorEmail: row.actorEmail,
+    createdAt: row.createdAt.toISOString(),
+  });
+}
+
+async function persistRepositoryPolicyVersion(
+  version: StoredRepositoryPolicyVersion,
+): Promise<StoredRepositoryPolicyVersion> {
+  if (!hasDatabaseUrl()) {
+    return saveRepositoryPolicyVersionLocal(version);
+  }
+
+  const db = getCloudDatabase();
+  await db.insert(cloudRepositoryPolicyVersions).values({
+    id: version.id,
+    workspaceId: version.workspaceId,
+    repositoryId: version.repositoryId,
+    repositoryOwner: version.repositoryOwner,
+    repositoryName: version.repositoryName,
+    policyPath: version.policyPath,
+    document: version.document,
+    documentHash: version.documentHash,
+    profileName: version.profileName,
+    policyVersion: version.policyVersion,
+    ruleCount: version.ruleCount,
+    thresholdCount: version.thresholdCount,
+    changeSource: version.changeSource,
+    actorUserId: version.actorUserId,
+    actorName: version.actorName,
+    actorEmail: version.actorEmail,
+    createdAt: new Date(version.createdAt),
+  });
+
+  return version;
+}
+
+async function ensureRepositoryPolicyHistorySeeded(
+  workspaceId: string,
+  repository: NonNullable<RepositoryPolicyRuntimeRecord>,
+  workspacePolicyPath: string,
+  workspaceConfig: PolicyConfig | null,
+): Promise<StoredRepositoryPolicyVersion[]> {
+  const existing = await listPersistedRepositoryPolicyVersions(workspaceId, repository.inventory.id);
+  if (!workspaceConfig) {
+    return existing;
+  }
+
+  const currentDocument = serializePolicyVersionDocument(workspaceConfig);
+  const currentHash = hashPolicyDocument(currentDocument);
+  const latest = existing[0] ?? null;
+  if (latest?.documentHash === currentHash) {
+    return existing;
+  }
+
+  const seededVersion = createStoredRepositoryPolicyVersion({
+    workspaceId,
+    repositoryId: repository.inventory.id,
+    repositoryOwner: repository.inventory.owner,
+    repositoryName: repository.inventory.name,
+    policyPath: workspacePolicyPath,
+    config: workspaceConfig,
+    actor: null,
+    changeSource: "seed",
+  });
+  await persistRepositoryPolicyVersion(seededVersion);
+  return [seededVersion, ...existing];
+}
+
+function toRepositoryPolicyVersionHistory(versions: StoredRepositoryPolicyVersion[]): RepositoryPolicyVersionSummary[] {
+  return versions.map((version, index) => {
+    const previous = versions[index + 1] ?? null;
+    const currentConfig = parseStoredPolicyConfig(version.document);
+    const previousConfig = previous ? parseStoredPolicyConfig(previous.document) : null;
+    const diffFromPrevious = buildPolicyDiff(previousConfig, currentConfig);
+
+    return RepositoryPolicyVersionSummarySchema.parse({
+      id: version.id,
+      createdAt: version.createdAt,
+      changeSource: version.changeSource,
+      actorUserId: version.actorUserId,
+      actorName: version.actorName,
+      actorEmail: version.actorEmail,
+      profileName: version.profileName,
+      policyVersion: version.policyVersion,
+      ruleCount: version.ruleCount,
+      thresholdCount: version.thresholdCount,
+      document: version.document,
+      isCurrent: index === 0,
+      summary: summarizePolicyDiff(diffFromPrevious, version.changeSource),
+      diffFromPrevious,
+    });
+  });
+}
+
+async function maybePersistRepositoryPolicyVersion(seed: RepositoryPolicyVersionSeed): Promise<boolean> {
+  const existing = await listPersistedRepositoryPolicyVersions(seed.workspaceId, seed.repositoryId);
+  const nextVersion = createStoredRepositoryPolicyVersion(seed);
+  const latest = existing[0] ?? null;
+
+  if (seed.changeSource === "save" && latest?.documentHash === nextVersion.documentHash) {
+    return false;
+  }
+
+  await persistRepositoryPolicyVersion(nextVersion);
+  return true;
 }
 
 export function validateRepositoryPolicyDocument(document: string): RepositoryPolicyValidation {
@@ -313,6 +723,15 @@ export async function resolveRepositoryPolicy(
   const recommendations = getLocalRecommendations(repository.metadata.root, runtime.compiled);
   const workspaceConfig = runtime.workspaceConfig ?? runtime.effectivePolicy.policy;
   const validation = validatePolicyDocument(workspaceConfig);
+  const storedHistory = runtime.hasWorkspaceOverride
+    ? await ensureRepositoryPolicyHistorySeeded(
+        workspaceId,
+        repository,
+        runtime.workspacePolicyPath,
+        runtime.workspaceConfig,
+      )
+    : [];
+  const history = toRepositoryPolicyVersionHistory(storedHistory);
 
   return RepositoryPolicySnapshotSchema.parse({
     repoId: repository.inventory.id,
@@ -326,6 +745,8 @@ export async function resolveRepositoryPolicy(
     validation: toRepositoryPolicyValidation(validation),
     recommendations,
     loadedSources: runtime.loadedSources,
+    currentVersionId: history[0]?.id ?? null,
+    history,
   });
 }
 
@@ -334,6 +755,8 @@ export async function saveRepositoryPolicy(
   name: string,
   document: string,
   workspaceId: string,
+  actor: RepositoryPolicyActor,
+  changeSource: RepositoryPolicyChangeSource = "save",
 ): Promise<RepositoryPolicySaveResponse | null> {
   const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
@@ -344,7 +767,9 @@ export async function saveRepositoryPolicy(
   try {
     parsedDocument = parsePolicyDocumentText(document);
   } catch (error) {
-    throw new RepositoryPolicyInputError(error instanceof Error ? error.message : "Policy document could not be parsed.");
+    throw new RepositoryPolicyInputError(
+      error instanceof Error ? error.message : "Policy document could not be parsed.",
+    );
   }
 
   const validation = validatePolicyDocument(parsedDocument);
@@ -352,16 +777,56 @@ export async function saveRepositoryPolicy(
     throw new RepositoryPolicyInputError("Policy document is invalid.", validation.issues);
   }
 
-  writePolicyDocument(getWorkspacePolicyPath(repository.metadata.root), validation.normalizedConfig);
+  const policyPath = getWorkspacePolicyPath(repository.metadata.root);
+  writePolicyDocument(policyPath, validation.normalizedConfig);
+  const versionRecorded = await maybePersistRepositoryPolicyVersion({
+    workspaceId,
+    repositoryId: repository.inventory.id,
+    repositoryOwner: repository.inventory.owner,
+    repositoryName: repository.inventory.name,
+    policyPath,
+    config: validation.normalizedConfig,
+    actor,
+    changeSource,
+  });
 
   const policy = await resolveRepositoryPolicy(owner, name, workspaceId);
   if (!policy) {
     return null;
   }
 
+  const message =
+    changeSource === "rollback"
+      ? versionRecorded
+        ? "Policy rolled back."
+        : "Policy already matched the selected version."
+      : versionRecorded
+        ? "Policy saved."
+        : "Policy saved. No effective diff from the latest version.";
+
   return RepositoryPolicySaveResponseSchema.parse({
     policy,
     savedAt: new Date().toISOString(),
-    message: "Policy saved.",
+    message,
   });
+}
+
+export async function rollbackRepositoryPolicyVersion(
+  owner: string,
+  name: string,
+  versionId: string,
+  workspaceId: string,
+  actor: RepositoryPolicyActor,
+): Promise<RepositoryPolicySaveResponse | null> {
+  const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
+  if (!repository) {
+    return null;
+  }
+
+  const targetVersion = await findPersistedRepositoryPolicyVersion(workspaceId, repository.inventory.id, versionId);
+  if (!targetVersion) {
+    throw new RepositoryPolicyVersionNotFoundError();
+  }
+
+  return saveRepositoryPolicy(owner, name, targetVersion.document, workspaceId, actor, "rollback");
 }

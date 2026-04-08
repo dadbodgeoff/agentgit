@@ -43,7 +43,8 @@
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "prepack": "pnpm run build",
     "test": "pnpm --filter @agentgit/authority-daemon build && mkdir -p coverage/.tmp && vitest run --dir src",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "lint": "eslint . --max-warnings=0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

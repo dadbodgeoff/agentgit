@@ -7,6 +7,7 @@ import { getRepositoryConnectorAvailability } from "@/lib/backend/control-plane/
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { getStoredWorkspaceSettings } from "@/lib/backend/workspace/cloud-state";
 import { ApprovalListResponseSchema, type ApprovalListItem } from "@/schemas/cloud";
+import { paginateItems } from "@/lib/pagination/cursor";
 
 type ApprovalRepositoryContext = {
   repositoryOwner: string;
@@ -87,18 +88,6 @@ function pickLatestByTimestamp<T extends { updatedAt: string }>(current: T | nul
 
 function futureMinutesTimestamp(occurredAt: string, minutes: number): string {
   return new Date(new Date(occurredAt).getTime() + minutes * 60 * 1000).toISOString();
-}
-
-function resolveApprovalDecisionStatus(status: ApprovalListItem["status"]): "approved" | "rejected" | "expired" {
-  if (status === "approved") {
-    return "approved";
-  }
-
-  if (status === "expired") {
-    return "expired";
-  }
-
-  return "rejected";
 }
 
 export async function listWorkspaceApprovalProjections(workspaceId: string): Promise<WorkspaceApprovalProjection[]> {
@@ -185,7 +174,11 @@ export async function listWorkspaceApprovalProjections(workspaceId: string): Pro
         approval.decisionCommandNextAttemptAt = command.nextAttemptAt;
         approval.decisionCommandMessage = command.message;
 
-        if (command.commandStatus === "pending" || command.commandStatus === "acked" || command.commandStatus === "completed") {
+        if (
+          command.commandStatus === "pending" ||
+          command.commandStatus === "acked" ||
+          command.commandStatus === "completed"
+        ) {
           approval.status = command.resolution === "approved" ? "approved" : "rejected";
           approval.resolvedAt = command.acknowledgedAt ?? command.updatedAt;
           approval.resolutionNote = command.note ?? approval.resolutionNote;
@@ -195,7 +188,8 @@ export async function listWorkspaceApprovalProjections(workspaceId: string): Pro
       if (approval.status === "pending" && new Date(approval.expiresAt).getTime() <= new Date(referenceAt).getTime()) {
         approval.status = "expired";
         approval.resolvedAt = approval.expiresAt;
-        approval.resolutionNote = approval.resolutionNote ?? "Approval timed out before a reviewer decision was delivered.";
+        approval.resolutionNote =
+          approval.resolutionNote ?? "Approval timed out before a reviewer decision was delivered.";
       }
 
       const expiresSoonMs = EXPIRING_SOON_WINDOW_MINUTES * 60 * 1000;
@@ -241,8 +235,8 @@ export async function listWorkspaceApprovalProjections(workspaceId: string): Pro
       }
     }
 
-    const leftTimestamp = left.status === "pending" ? left.requestedAt : left.resolvedAt ?? left.requestedAt;
-    const rightTimestamp = right.status === "pending" ? right.requestedAt : right.resolvedAt ?? right.requestedAt;
+    const leftTimestamp = left.status === "pending" ? left.requestedAt : (left.resolvedAt ?? left.requestedAt);
+    const rightTimestamp = right.status === "pending" ? right.requestedAt : (right.resolvedAt ?? right.requestedAt);
     return new Date(rightTimestamp).getTime() - new Date(leftTimestamp).getTime();
   });
 
@@ -256,14 +250,16 @@ export async function getWorkspaceApprovalProjection(
   return (await listWorkspaceApprovalProjections(workspaceId)).find((approval) => approval.id === approvalId) ?? null;
 }
 
-export async function listWorkspaceApprovalQueue(workspaceId: string) {
-  const items = (await listWorkspaceApprovalProjections(workspaceId)).map(({ commandId: _commandId, ...approval }) => approval);
+export async function listWorkspaceApprovalQueue(
+  workspaceId: string,
+  params: { cursor?: string | null; limit: number } = { limit: 25 },
+) {
+  const items = (await listWorkspaceApprovalProjections(workspaceId)).map(
+    ({ commandId: _commandId, ...approval }) => approval,
+  );
+  const page = paginateItems(items, params);
 
   return ApprovalListResponseSchema.parse({
-    items,
-    total: items.length,
-    page: 1,
-    per_page: items.length === 0 ? 25 : items.length,
-    has_more: false,
+    ...page,
   });
 }

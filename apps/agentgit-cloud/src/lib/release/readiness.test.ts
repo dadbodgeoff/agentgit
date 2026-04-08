@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { getCloudReadinessChecks, summarizeReadiness } from "@/lib/release/readiness";
+import { getCloudReadinessChecks, summarizeOperationalHealth, summarizeReadiness } from "@/lib/release/readiness";
 
 describe("cloud readiness checks", () => {
   const tempDirs: string[] = [];
@@ -159,9 +159,16 @@ describe("cloud readiness checks", () => {
   });
 
   it("summarizes readiness to warn when no failing checks exist but warnings do", () => {
-    const level = summarizeReadiness([
-      { level: "ok" },
-      { level: "warn" },
+    const level = summarizeReadiness([{ level: "ok" }, { level: "warn" }]);
+
+    expect(level).toBe("warn");
+  });
+
+  it("downgrades go-live-only failures to warnings for operational health", () => {
+    const level = summarizeOperationalHealth([
+      { id: "auth_secret", level: "ok" },
+      { id: "cloud_database_configured", level: "fail" },
+      { id: "request_metrics", level: "fail" },
     ]);
 
     expect(level).toBe("warn");

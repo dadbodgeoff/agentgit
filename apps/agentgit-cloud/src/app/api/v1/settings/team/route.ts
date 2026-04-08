@@ -40,11 +40,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
     return jsonWithRequestId(await saveWorkspaceTeam(access.workspaceSession, parsed.data), undefined, requestId);
   } catch (error) {
     if (error instanceof WorkspaceBillingLimitError) {
-      return jsonWithRequestId(
-        { message: error.message, breaches: error.breaches },
-        { status: 409 },
-        requestId,
-      );
+      return jsonWithRequestId({ message: error.message, breaches: error.breaches }, { status: 409 }, requestId);
     }
 
     throw error;

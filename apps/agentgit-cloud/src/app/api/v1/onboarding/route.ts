@@ -42,16 +42,20 @@ export async function GET(request: Request): Promise<NextResponse> {
   const persistedState = await getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
   const availableRepositories = await listWorkspaceRepositoryOptions(access.workspaceSession.activeWorkspace.id);
 
-  return jsonWithRequestId({
-    suggestedWorkspaceName: persistedState?.workspaceName ?? access.workspaceSession.activeWorkspace.name,
-    suggestedWorkspaceSlug: persistedState?.workspaceSlug ?? access.workspaceSession.activeWorkspace.slug,
-    availableRepositories,
-    connectedRepositoryIds: persistedState?.repositoryIds ?? [],
-    invites: persistedState?.invites ?? [],
-    defaultNotificationChannel: persistedState?.defaultNotificationChannel ?? "slack",
-    recommendedPolicyPack: persistedState?.policyPack ?? "guarded",
-    launchedAt: persistedState?.launchedAt,
-  }, undefined, requestId);
+  return jsonWithRequestId(
+    {
+      suggestedWorkspaceName: persistedState?.workspaceName ?? access.workspaceSession.activeWorkspace.name,
+      suggestedWorkspaceSlug: persistedState?.workspaceSlug ?? access.workspaceSession.activeWorkspace.slug,
+      availableRepositories,
+      connectedRepositoryIds: persistedState?.repositoryIds ?? [],
+      invites: persistedState?.invites ?? [],
+      defaultNotificationChannel: persistedState?.defaultNotificationChannel ?? "slack",
+      recommendedPolicyPack: persistedState?.policyPack ?? "guarded",
+      launchedAt: persistedState?.launchedAt,
+    },
+    undefined,
+    requestId,
+  );
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -104,9 +108,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     launchedAt,
   });
 
-  return jsonWithRequestId({
-    ...launchOnboardingFixture(payload.data),
-    workspaceId: savedState.workspaceId,
-    launchedAt,
-  }, undefined, requestId);
+  return jsonWithRequestId(
+    {
+      ...launchOnboardingFixture(payload.data),
+      workspaceId: savedState.workspaceId,
+      launchedAt,
+    },
+    undefined,
+    requestId,
+  );
 }

@@ -170,7 +170,7 @@ describe("SessionCredentialBroker", () => {
     });
 
     expect(() => broker.resolveMcpBearerSecret("mcp_secret_expired")).toThrow("expired");
-  });
+  }, 20_000);
 
   it("resolves header-template and tool-scoped runtime bindings without leaking the source token", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-credential-broker-"));

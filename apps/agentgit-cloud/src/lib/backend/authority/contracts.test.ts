@@ -1,7 +1,4 @@
-import {
-  QueryApprovalInboxResponsePayloadSchema,
-  QueryTimelineResponsePayloadSchema,
-} from "@agentgit/schemas";
+import { QueryApprovalInboxResponsePayloadSchema, QueryTimelineResponsePayloadSchema } from "@agentgit/schemas";
 
 import { mapApprovalInboxToCloud, mapTimelineToRunDetail } from "@/lib/backend/authority/contracts";
 

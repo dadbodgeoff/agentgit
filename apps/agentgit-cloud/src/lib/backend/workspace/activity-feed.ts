@@ -4,6 +4,7 @@ import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { ActivityFeedResponseSchema, type ActivityEvent } from "@/schemas/cloud";
 import { listWorkspaceRunContexts } from "@/lib/backend/workspace/workspace-runtime";
+import { paginateItems } from "@/lib/pagination/cursor";
 
 function buildRepoLabel(owner: string, name: string) {
   return `${owner}/${name}`;
@@ -16,7 +17,11 @@ function describeConnectorCommand(command: {
   nextAttemptAt?: string | null;
   result?: Record<string, unknown> | null;
 }): string {
-  if (command.result && command.command.type === "open_pull_request" && typeof command.result.pullRequestUrl === "string") {
+  if (
+    command.result &&
+    command.command.type === "open_pull_request" &&
+    typeof command.result.pullRequestUrl === "string"
+  ) {
     return `Pull request opened: ${command.result.pullRequestUrl}`;
   }
 
@@ -73,10 +78,7 @@ function titleForConnectorCommand(command: {
   return "Connector command";
 }
 
-function toneForConnectorCommand(command: {
-  status: string;
-  nextAttemptAt?: string | null;
-}) {
+function toneForConnectorCommand(command: { status: string; nextAttemptAt?: string | null }) {
   if (command.status === "failed") {
     return "error" as const;
   }
@@ -110,9 +112,7 @@ function detailPathForConnectorCommand(command: {
   return repositoryRoute(owner, name);
 }
 
-function externalUrlForConnectorCommand(command: {
-  result?: Record<string, unknown> | null;
-}) {
+function externalUrlForConnectorCommand(command: { result?: Record<string, unknown> | null }) {
   return typeof command.result?.pullRequestUrl === "string" ? command.result.pullRequestUrl : undefined;
 }
 
@@ -124,7 +124,9 @@ function mapRunEventToActivity(params: {
 }): ActivityEvent | null {
   const repoLabel = buildRepoLabel(params.owner, params.name);
   const actionId = typeof params.event.payload?.action_id === "string" ? params.event.payload.action_id : undefined;
-  const detailPath = actionId ? actionDetailRoute(params.owner, params.name, params.runId, actionId) : runDetailRoute(params.owner, params.name, params.runId);
+  const detailPath = actionId
+    ? actionDetailRoute(params.owner, params.name, params.runId, actionId)
+    : runDetailRoute(params.owner, params.name, params.runId);
 
   switch (params.event.event_type) {
     case "approval.requested":
@@ -217,7 +219,10 @@ function mapRunEventToActivity(params: {
   }
 }
 
-export async function listWorkspaceActivity(workspaceId: string) {
+export async function listWorkspaceActivity(
+  workspaceId: string,
+  params: { cursor?: string | null; limit: number } = { limit: 25 },
+) {
   const items: ActivityEvent[] = [];
 
   for (const context of await listWorkspaceRunContexts(workspaceId)) {
@@ -256,9 +261,9 @@ export async function listWorkspaceActivity(workspaceId: string) {
   });
 
   const sorted = items.sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+  const page = paginateItems(sorted, params);
   return ActivityFeedResponseSchema.parse({
-    items: sorted.slice(0, 50),
-    total: sorted.length,
+    ...page,
     generatedAt: new Date().toISOString(),
   });
 }

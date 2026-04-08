@@ -8,7 +8,10 @@ vi.mock("server-only", () => ({}));
 
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { saveStoredWorkspaceSettings } from "@/lib/backend/workspace/cloud-state";
-import { listWorkspaceApprovalProjections, listWorkspaceApprovalQueue } from "@/lib/backend/workspace/workspace-approvals";
+import {
+  listWorkspaceApprovalProjections,
+  listWorkspaceApprovalQueue,
+} from "@/lib/backend/workspace/workspace-approvals";
 
 function seedApprovalRequestedEvent(requestedAt = new Date().toISOString()) {
   const ingestedAt = new Date(new Date(requestedAt).getTime() + 5_000).toISOString();
@@ -153,6 +156,17 @@ describe("workspace approval projection", () => {
       approvalTtlMinutes: 15,
       requireRejectComment: true,
       freezeDeploysOutsideBusinessHours: false,
+      enterpriseSso: {
+        enabled: false,
+        providerType: "oidc",
+        providerLabel: "Enterprise SSO",
+        issuerUrl: "https://idp.example.com/realms/agentgit",
+        clientId: "agentgit-cloud",
+        emailDomains: [],
+        autoProvisionMembers: true,
+        defaultRole: "member",
+        clientSecretConfigured: false,
+      },
     });
 
     seedApprovalRequestedEvent("2026-04-07T19:00:00Z");

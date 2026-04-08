@@ -52,8 +52,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
     "prepack": "pnpm run build",
-    "test": "pnpm clean && pnpm exec turbo run build --filter=@agentgit/authority-daemon^... && mkdir -p coverage/.tmp && vitest run --dir src",
-    "start": "node dist/main.js"
+    "test": "pnpm exec turbo run build --filter=@agentgit/authority-daemon^... && mkdir -p coverage/.tmp && vitest run --dir src",
+    "start": "node dist/main.js",
+    "lint": "eslint . --max-warnings=0"
   },
   "devDependencies": {
     "@agentgit/action-normalizer": "workspace:*",

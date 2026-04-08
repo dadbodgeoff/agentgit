@@ -1,5 +1,5 @@
 {
-  "status_date": "2026-04-03",
+  "status_date": "2026-04-08",
   "thresholds": {
     "lines": 50,
     "functions": 50,
@@ -7,12 +7,18 @@
     "branches": 40
   },
   "aggregate": {
-    "lines": 73.99,
-    "functions": 82.79,
-    "statements": 74.07,
-    "branches": 61.12
+    "lines": 72.04,
+    "functions": 78.91,
+    "statements": 71.98,
+    "branches": 58.71
   },
   "files": {
+    "apps/agentgit-cloud/coverage/coverage-summary.json": {
+      "lines": 64.76,
+      "functions": 68.44,
+      "statements": 64.26,
+      "branches": 48.01
+    },
     "apps/inspector-ui/coverage/coverage-summary.json": {
       "lines": 71,
       "functions": 74.41,
@@ -20,16 +26,16 @@
       "branches": 58.67
     },
     "packages/action-normalizer/coverage/coverage-summary.json": {
-      "lines": 82.42,
+      "lines": 86.11,
       "functions": 100,
-      "statements": 81.81,
-      "branches": 84.51
+      "statements": 85.93,
+      "branches": 85.63
     },
     "packages/agent-runtime-integration/coverage/coverage-summary.json": {
-      "lines": 76.3,
-      "functions": 87.27,
-      "statements": 76.44,
-      "branches": 63.88
+      "lines": 75.79,
+      "functions": 86.47,
+      "statements": 75.85,
+      "branches": 64.02
     },
     "packages/authority-cli/coverage/coverage-summary.json": {
       "lines": 62.51,
@@ -38,16 +44,34 @@
       "branches": 49.03
     },
     "packages/authority-daemon/coverage/coverage-summary.json": {
-      "lines": 82.84,
-      "functions": 89.22,
-      "statements": 82.73,
-      "branches": 65.93
+      "lines": 79.04,
+      "functions": 85.14,
+      "statements": 78.93,
+      "branches": 62.1
     },
     "packages/authority-sdk-ts/coverage/coverage-summary.json": {
-      "lines": 76.53,
+      "lines": 77.33,
       "functions": 90.14,
-      "statements": 76.61,
-      "branches": 54.93
+      "statements": 77.41,
+      "branches": 55.31
+    },
+    "packages/cloud-connector/coverage/coverage-summary.json": {
+      "lines": 69.94,
+      "functions": 85.55,
+      "statements": 69.5,
+      "branches": 42.41
+    },
+    "packages/cloud-sync-protocol/coverage/coverage-summary.json": {
+      "lines": 100,
+      "functions": 100,
+      "statements": 100,
+      "branches": 100
+    },
+    "packages/control-plane-state/coverage/coverage-summary.json": {
+      "lines": 75.29,
+      "functions": 75.67,
+      "statements": 75.55,
+      "branches": 68.67
     },
     "packages/credential-broker/coverage/coverage-summary.json": {
       "lines": 67.9,
@@ -56,10 +80,10 @@
       "branches": 61.57
     },
     "packages/execution-adapters/coverage/coverage-summary.json": {
-      "lines": 73.33,
-      "functions": 71.85,
-      "statements": 73.15,
-      "branches": 58
+      "lines": 73.55,
+      "functions": 73.14,
+      "statements": 73.37,
+      "branches": 58.43
     },
     "packages/hosted-mcp-worker/coverage/coverage-summary.json": {
       "lines": 61.27,
@@ -68,10 +92,10 @@
       "branches": 40.24
     },
     "packages/integration-state/coverage/coverage-summary.json": {
-      "lines": 75.6,
-      "functions": 94.73,
-      "statements": 75.9,
-      "branches": 42
+      "lines": 82.65,
+      "functions": 100,
+      "statements": 82.82,
+      "branches": 60.29
     },
     "packages/mcp-registry/coverage/coverage-summary.json": {
       "lines": 59.25,
@@ -80,10 +104,10 @@
       "branches": 57.18
     },
     "packages/policy-engine/coverage/coverage-summary.json": {
-      "lines": 73.52,
-      "functions": 93.93,
-      "statements": 74.1,
-      "branches": 64.42
+      "lines": 74.81,
+      "functions": 94.02,
+      "statements": 75.35,
+      "branches": 65.94
     },
     "packages/recovery-engine/coverage/coverage-summary.json": {
       "lines": 88.31,
@@ -92,10 +116,10 @@
       "branches": 72.67
     },
     "packages/run-journal/coverage/coverage-summary.json": {
-      "lines": 76.19,
-      "functions": 91.57,
-      "statements": 76.37,
-      "branches": 53.34
+      "lines": 77.1,
+      "functions": 92.78,
+      "statements": 77.26,
+      "branches": 54.11
     },
     "packages/snapshot-engine/coverage/coverage-summary.json": {
       "lines": 68.78,
@@ -104,16 +128,16 @@
       "branches": 61.58
     },
     "packages/timeline-helper/coverage/coverage-summary.json": {
-      "lines": 80.02,
-      "functions": 98.64,
-      "statements": 81.41,
-      "branches": 63.8
+      "lines": 82.8,
+      "functions": 100,
+      "statements": 83.99,
+      "branches": 66.79
     },
     "packages/workspace-index/coverage/coverage-summary.json": {
-      "lines": 75.09,
-      "functions": 80.95,
-      "statements": 75,
-      "branches": 55.69
+      "lines": 73.41,
+      "functions": 80,
+      "statements": 73.34,
+      "branches": 53.46
     }
   }
 }

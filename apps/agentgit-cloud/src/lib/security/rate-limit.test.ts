@@ -6,10 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import {
-  enforceApiRateLimits,
-  enforceConnectorRegistrationRateLimits,
-} from "@/lib/security/rate-limit";
+import { enforceApiRateLimits, enforceConnectorRegistrationRateLimits } from "@/lib/security/rate-limit";
 
 describe("rate limit enforcement", () => {
   const originalAgentGitRoot = process.env.AGENTGIT_ROOT;

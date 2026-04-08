@@ -1,14 +1,6 @@
 import { Card } from "@/components/primitives";
 
-export function MetricCard({
-  label,
-  trend,
-  value,
-}: {
-  label: string;
-  trend?: string;
-  value: string;
-}) {
+export function MetricCard({ label, trend, value }: { label: string; trend?: string; value: string }) {
   return (
     <Card className="ag-dot-grid min-h-36">
       <div className="flex h-full flex-col justify-between gap-4">

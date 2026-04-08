@@ -161,6 +161,42 @@ describe("workspace integrations backend", () => {
       emailNotificationsEnabled: true,
       digestCadence: "realtime",
       notificationEvents: ["approval_requested", "run_failed"],
+      notificationBusinessHours: {
+        timeZone: "America/New_York",
+        startTime: "09:00",
+        endTime: "17:00",
+        weekdays: ["mon", "tue", "wed", "thu", "fri"],
+      },
+      notificationRules: [
+        {
+          event: "approval_requested",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "anytime",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "run_failed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "policy_changed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "snapshot_restored",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "anytime",
+          minimumRiskLevel: "read_only",
+        },
+      ],
     });
     const testResult = await sendWorkspaceIntegrationTest(buildWorkspaceSession(), "slack");
     const emailTest = await sendWorkspaceIntegrationTest(buildWorkspaceSession(), "email");
@@ -217,6 +253,42 @@ describe("workspace integrations backend", () => {
       emailNotificationsEnabled: true,
       digestCadence: "daily",
       notificationEvents: ["approval_requested"],
+      notificationBusinessHours: {
+        timeZone: "America/New_York",
+        startTime: "09:00",
+        endTime: "17:00",
+        weekdays: ["mon", "tue", "wed", "thu", "fri"],
+      },
+      notificationRules: [
+        {
+          event: "approval_requested",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "anytime",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "run_failed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "policy_changed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "snapshot_restored",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "anytime",
+          minimumRiskLevel: "read_only",
+        },
+      ],
     });
 
     await notifyWorkspaceApprovalRequested({
@@ -249,5 +321,108 @@ describe("workspace integrations backend", () => {
     });
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("suppresses approval delivery when repo, risk, and business-hours filters do not match", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+    process.env.AGENTGIT_SLACK_WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/abc";
+    process.env.RESEND_API_KEY = "re_test";
+    process.env.AGENTGIT_EMAIL_FROM = "AgentGit <noreply@agentgit.dev>";
+
+    globalThis.fetch = vi.fn(async () => new Response("ok", { status: 200 })) as typeof fetch;
+
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "admin" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    await saveWorkspaceIntegrations(buildWorkspaceSession(), {
+      slackConnected: true,
+      slackWebhookUrl: "",
+      slackWorkspaceName: "Acme Engineering",
+      slackChannelName: "#ship-room",
+      slackDeliveryMode: "approvals_only",
+      emailNotificationsEnabled: true,
+      digestCadence: "daily",
+      notificationEvents: ["approval_requested"],
+      notificationBusinessHours: {
+        timeZone: "America/New_York",
+        startTime: "09:00",
+        endTime: "17:00",
+        weekdays: ["mon", "tue", "wed", "thu", "fri"],
+      },
+      notificationRules: [
+        {
+          event: "approval_requested",
+          repositoryScope: "selected",
+          repositoryTargets: ["acme/platform-ui"],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "destructive",
+        },
+        {
+          event: "run_failed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "policy_changed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "snapshot_restored",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "anytime",
+          minimumRiskLevel: "read_only",
+        },
+      ],
+    });
+
+    await notifyWorkspaceApprovalRequested({
+      workspaceId: "ws_acme_01",
+      workspaceSlug: "acme-platform",
+      repositoryOwner: "acme",
+      repositoryName: "platform-ui",
+      approval: {
+        approval_id: "appr_02",
+        run_id: "run_02",
+        workflow_name: "Release train",
+        action_id: "act_02",
+        action_summary: "Update release notes",
+        action_domain: "filesystem",
+        side_effect_level: "mutating",
+        status: "pending",
+        requested_at: "2026-04-07T03:00:00Z",
+        resolved_at: null,
+        resolution_note: null,
+        decision_requested: "approve_or_deny",
+        snapshot_required: false,
+        reason_summary: "Manual review needed.",
+        primary_reason: {
+          code: "review.required",
+          message: "Manual review needed.",
+        },
+        target_locator: "file://README.md",
+        target_label: "README.md",
+      },
+    });
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });

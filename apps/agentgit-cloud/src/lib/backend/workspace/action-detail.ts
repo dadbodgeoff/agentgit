@@ -78,7 +78,12 @@ function normalizePolicyReasons(reasons: unknown, decision: string | null) {
     return [
       {
         code: candidate.code,
-        severity: typeof candidate.severity === "string" && candidate.severity.length > 0 ? candidate.severity : decision === "deny" ? "high" : "moderate",
+        severity:
+          typeof candidate.severity === "string" && candidate.severity.length > 0
+            ? candidate.severity
+            : decision === "deny"
+              ? "high"
+              : "moderate",
         message: candidate.message,
       },
     ];
@@ -165,9 +170,18 @@ function extractActionRecord(payload: Record<string, unknown>, runId: string, ac
       tool_kind: "governed_runtime",
     },
     operation: {
-      domain: typeof payload.operation === "object" && payload.operation !== null && "domain" in payload.operation ? (payload.operation as { domain: string }).domain : "filesystem",
-      kind: typeof payload.operation === "object" && payload.operation !== null && "kind" in payload.operation ? (payload.operation as { kind: string }).kind : "unknown",
-      name: typeof payload.operation === "object" && payload.operation !== null && "name" in payload.operation ? (payload.operation as { name: string }).name : "unknown",
+      domain:
+        typeof payload.operation === "object" && payload.operation !== null && "domain" in payload.operation
+          ? (payload.operation as { domain: string }).domain
+          : "filesystem",
+      kind:
+        typeof payload.operation === "object" && payload.operation !== null && "kind" in payload.operation
+          ? (payload.operation as { kind: string }).kind
+          : "unknown",
+      name:
+        typeof payload.operation === "object" && payload.operation !== null && "name" in payload.operation
+          ? (payload.operation as { name: string }).name
+          : "unknown",
       display_name:
         typeof payload.operation === "object" && payload.operation !== null && "display_name" in payload.operation
           ? (payload.operation as { display_name?: string }).display_name
@@ -313,13 +327,15 @@ export async function getActionDetail(
 
     const events = journal.listRunEvents(runId);
     const normalizedEvent =
-      events.find((event) => event.event_type === "action.normalized" && eventActionId(event.payload) === actionId) ?? null;
+      events.find((event) => event.event_type === "action.normalized" && eventActionId(event.payload) === actionId) ??
+      null;
     if (!normalizedEvent) {
       return null;
     }
 
     const policyEvent =
-      events.find((event) => event.event_type === "policy.evaluated" && eventActionId(event.payload) === actionId) ?? null;
+      events.find((event) => event.event_type === "policy.evaluated" && eventActionId(event.payload) === actionId) ??
+      null;
     const executionEvent =
       [...events]
         .reverse()
@@ -331,8 +347,10 @@ export async function getActionDetail(
             eventActionId(event.payload) === actionId,
         ) ?? null;
     const snapshotEvent =
-      events.find((event) => event.event_type === "snapshot.created" && eventActionId(event.payload) === actionId) ?? null;
-    const approval = journal.listApprovals({ run_id: runId }).find((candidate) => candidate.action_id === actionId) ?? null;
+      events.find((event) => event.event_type === "snapshot.created" && eventActionId(event.payload) === actionId) ??
+      null;
+    const approval =
+      journal.listApprovals({ run_id: runId }).find((candidate) => candidate.action_id === actionId) ?? null;
 
     const action = extractActionRecord(normalizedEvent.payload ?? {}, runId, actionId);
     if (!action) {
@@ -386,8 +404,12 @@ export async function getActionDetail(
         redactedInput: action.input.redacted,
       },
       policyOutcome: {
-        decision: typeof policyPayload.decision === "string" ? policyPayload.decision : timelineStep?.decision ?? null,
-        reasons: normalizePolicyReasons(policyPayload.reasons, typeof policyPayload.decision === "string" ? policyPayload.decision : timelineStep?.decision ?? null),
+        decision:
+          typeof policyPayload.decision === "string" ? policyPayload.decision : (timelineStep?.decision ?? null),
+        reasons: normalizePolicyReasons(
+          policyPayload.reasons,
+          typeof policyPayload.decision === "string" ? policyPayload.decision : (timelineStep?.decision ?? null),
+        ),
         snapshotRequired: policyPayload.snapshot_required === true,
         approvalRequired: policyPayload.approval_required === true,
         budgetCheck:
@@ -397,7 +419,7 @@ export async function getActionDetail(
                 policyPayload.budget_effects !== null &&
                 "budget_check" in policyPayload.budget_effects &&
                 typeof (policyPayload.budget_effects as { budget_check?: unknown }).budget_check === "string"
-              ? ((policyPayload.budget_effects as { budget_check: string }).budget_check)
+              ? (policyPayload.budget_effects as { budget_check: string }).budget_check
               : "unknown",
         matchedRules: Array.isArray(policyPayload.matched_rules)
           ? policyPayload.matched_rules.filter((value): value is string => typeof value === "string")

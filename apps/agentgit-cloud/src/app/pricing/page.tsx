@@ -1,8 +1,17 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 
 import { Badge } from "@/components/primitives";
 import { MarketingSection, MarketingShell, marketingLinkClasses } from "@/features/marketing/marketing-shell";
+import { buildPageMetadata } from "@/lib/metadata/site";
 import { publicRoutes } from "@/lib/navigation/routes";
+
+export const metadata: Metadata = buildPageMetadata({
+  title: "Pricing",
+  description:
+    "Compare AgentGit Cloud hosted beta pricing for starter, team, and enterprise control-plane coverage across seats, repositories, and approvals.",
+  path: publicRoutes.pricing,
+});
 
 export default function PricingPage() {
   return (
@@ -17,7 +26,8 @@ export default function PricingPage() {
               Price the control plane by the amount of governed software you need to operate.
             </h1>
             <p className="max-w-3xl text-lg leading-8 text-[var(--ag-text-secondary)]">
-              The daemon stays local and open. The hosted plan pays for approvals, fleet visibility, audit retention, operator workflows, and multi-repository oversight.
+              The daemon stays local and open. The hosted plan pays for approvals, fleet visibility, audit retention,
+              operator workflows, and multi-repository oversight.
             </p>
           </div>
         </div>
@@ -69,7 +79,9 @@ export default function PricingPage() {
                   {plan.accent ? <Badge tone="accent">Recommended</Badge> : null}
                 </div>
                 <div className="flex items-end gap-2">
-                  <div className="text-4xl font-semibold tracking-[-0.04em] text-[var(--ag-text-primary)]">{plan.price}</div>
+                  <div className="text-4xl font-semibold tracking-[-0.04em] text-[var(--ag-text-primary)]">
+                    {plan.price}
+                  </div>
                   <div className="pb-1 text-sm text-[var(--ag-text-secondary)]">{plan.cadence}</div>
                 </div>
                 <p className="text-base leading-7 text-[var(--ag-text-secondary)]">{plan.note}</p>
@@ -103,7 +115,10 @@ export default function PricingPage() {
             ["Notification routing", "Email", "Email + Slack", "Email + Slack"],
             ["Operator onboarding support", "Self-serve", "Guided", "Guided"],
           ].map((row) => (
-            <div className="grid grid-cols-[1.25fr_repeat(3,minmax(0,0.58fr))] border-b border-[var(--ag-border-subtle)] px-4 py-4 text-sm text-[var(--ag-text-secondary)] last:border-b-0" key={row[0]}>
+            <div
+              className="grid grid-cols-[1.25fr_repeat(3,minmax(0,0.58fr))] border-b border-[var(--ag-border-subtle)] px-4 py-4 text-sm text-[var(--ag-text-secondary)] last:border-b-0"
+              key={row[0]}
+            >
               {row.map((cell, index) => (
                 <div className={index === 0 ? "text-[var(--ag-text-primary)]" : ""} key={`${row[0]}-${cell}`}>
                   {cell}
@@ -121,17 +136,30 @@ export default function PricingPage() {
       >
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-[28px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-6">
-            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">During beta</div>
+            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">
+              During beta
+            </div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
-              <p>Owners set the intended plan, the cloud enforces seat and repository caps, and approval volume overages stay visible in billing.</p>
+              <p>
+                Owners set the intended plan, the cloud enforces seat and repository caps, and approval volume overages
+                stay visible in billing.
+              </p>
               <p>No fake invoices. No pretend card portal. No surprise billing behavior that operators cannot trust.</p>
             </div>
           </div>
           <div className="rounded-[28px] border border-[color:rgb(232_255_89_/_0.2)] bg-[color:rgb(232_255_89_/_0.05)] p-6">
-            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-accent)]">When Stripe lands</div>
+            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-accent)]">
+              When Stripe lands
+            </div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
-              <p>Checkout, renewal, customer portal, and invoice history will plug into the same owner-facing billing surface that already exists today.</p>
-              <p>The entitlement model stays the same, so today&apos;s beta gate is a real product step, not throwaway UI.</p>
+              <p>
+                Checkout, renewal, customer portal, and invoice history will plug into the same owner-facing billing
+                surface that already exists today.
+              </p>
+              <p>
+                The entitlement model stays the same, so today&apos;s beta gate is a real product step, not throwaway
+                UI.
+              </p>
             </div>
           </div>
         </div>
@@ -140,7 +168,9 @@ export default function PricingPage() {
       <section className="border-t border-[var(--ag-border-subtle)] bg-[color:rgb(7_11_16_/_0.94)]">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-16 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
           <div className="space-y-4">
-            <div className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-color-brand)]">Ready to evaluate</div>
+            <div className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-color-brand)]">
+              Ready to evaluate
+            </div>
             <h2 className="max-w-3xl text-3xl font-semibold tracking-[-0.03em] text-[var(--ag-text-primary)] sm:text-4xl">
               Start with one repo and prove the approval loop before you widen coverage.
             </h2>

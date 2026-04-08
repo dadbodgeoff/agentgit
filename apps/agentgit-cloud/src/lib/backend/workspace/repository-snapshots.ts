@@ -23,6 +23,7 @@ import {
   type SnapshotRestoreIntent,
   type SnapshotRestorePreview,
 } from "@/schemas/cloud";
+import { paginateItems } from "@/lib/pagination/cursor";
 
 type ActionContext = {
   actionSummary: string;
@@ -190,16 +191,14 @@ async function buildSnapshotItem(params: {
   actionContext: ActionContext | null;
   event: SnapshotEventContext;
   latestRecovery: RepositorySnapshotRecovery | undefined;
-  latestRestoreCommand:
-    | {
-        commandId: string;
-        status: "pending" | "acked" | "completed" | "failed" | "expired";
-        updatedAt: string;
-        message: string | null;
-        runId: string | null;
-        actionId: string | null;
-      }
-    | null;
+  latestRestoreCommand: {
+    commandId: string;
+    status: "pending" | "acked" | "completed" | "failed" | "expired";
+    updatedAt: string;
+    message: string | null;
+    runId: string | null;
+    actionId: string | null;
+  } | null;
   repoRoot: string;
 }): Promise<RepositorySnapshotListItem> {
   const engine = createSnapshotEngine(params.repoRoot);
@@ -239,6 +238,7 @@ async function resolveRepositorySnapshotRuntime(
   owner: string,
   name: string,
   workspaceId: string,
+  params: { cursor?: string | null; limit: number },
 ): Promise<RepositorySnapshotRuntime | null> {
   const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
@@ -254,8 +254,8 @@ async function resolveRepositorySnapshotRuntime(
       snapshots: RepositorySnapshotsResponseSchema.parse({
         items: [],
         total: 0,
-        page: 1,
-        per_page: 25,
+        page_size: params.limit,
+        next_cursor: null,
         has_more: false,
         authorityReachable,
         restorableCount: 0,
@@ -397,15 +397,12 @@ async function resolveRepositorySnapshotRuntime(
     );
 
     items.sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+    const page = paginateItems(items, params);
 
     return {
       repository,
       snapshots: RepositorySnapshotsResponseSchema.parse({
-        items,
-        total: items.length,
-        page: 1,
-        per_page: items.length === 0 ? 25 : items.length,
-        has_more: false,
+        ...page,
         authorityReachable,
         restorableCount: items.filter((item) => item.integrityStatus === "verified").length,
         restoredCount: items.filter((item) => item.latestRecovery).length,
@@ -425,7 +422,9 @@ async function requireSnapshotRuntime(
   repository: RepositorySnapshotRuntime["repository"];
   snapshot: RepositorySnapshotListItem;
 }> {
-  const runtime = await resolveRepositorySnapshotRuntime(owner, name, workspaceId);
+  const runtime = await resolveRepositorySnapshotRuntime(owner, name, workspaceId, {
+    limit: 1000,
+  });
   if (!runtime) {
     throw new RepositorySnapshotRestoreError("Repository snapshot inventory was not found.", 404);
   }
@@ -459,8 +458,9 @@ export async function listRepositorySnapshots(
   owner: string,
   name: string,
   workspaceId: string,
+  params: { cursor?: string | null; limit: number } = { limit: 25 },
 ): Promise<RepositorySnapshotsResponse | null> {
-  const runtime = await resolveRepositorySnapshotRuntime(owner, name, workspaceId);
+  const runtime = await resolveRepositorySnapshotRuntime(owner, name, workspaceId, params);
   return runtime?.snapshots ?? null;
 }
 
@@ -486,12 +486,7 @@ export async function restoreRepositorySnapshot(
       });
     }
 
-    const connector = findConnectorForRepository(
-      workspaceId,
-      owner,
-      name,
-      runtime.repository.metadata.root,
-    );
+    const connector = findConnectorForRepository(workspaceId, owner, name, runtime.repository.metadata.root);
     if (!connector) {
       throw new RepositorySnapshotRestoreError(
         "No registered connector is available for this repository, so restore execution cannot be queued.",

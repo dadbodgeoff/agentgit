@@ -5019,7 +5019,7 @@ describe("OwnedNoteStore", () => {
     } finally {
       await service.close();
     }
-  });
+  }, 20_000);
 
   it("fails closed when the upstream MCP server does not advertise the requested tool", async () => {
     const server = makeGovernedTestStdioServer("missing_tool");

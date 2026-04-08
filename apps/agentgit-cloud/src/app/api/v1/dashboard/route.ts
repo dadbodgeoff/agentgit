@@ -45,9 +45,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return jsonWithRequestId(
       {
         message:
-          error instanceof Error && error.message.length > 0
-            ? error.message
-            : "Could not load dashboard data. Retry.",
+          error instanceof Error && error.message.length > 0 ? error.message : "Could not load dashboard data. Retry.",
       },
       { status: 500 },
       requestId,

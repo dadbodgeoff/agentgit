@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { requireApiRole } from "@/lib/auth/api-session";
 import {
   RepositoryPolicyInputError,
+  RepositoryPolicyVersionNotFoundError,
+  rollbackRepositoryPolicyVersion,
   resolveRepositoryPolicy,
   saveRepositoryPolicy,
   validateRepositoryPolicyDocument,
@@ -102,7 +104,17 @@ export async function PUT(
   const { owner, name } = await context.params;
 
   try {
-    const result = await saveRepositoryPolicy(owner, name, parsed.data.document, access.workspaceSession.activeWorkspace.id);
+    const result = await saveRepositoryPolicy(
+      owner,
+      name,
+      parsed.data.document,
+      access.workspaceSession.activeWorkspace.id,
+      {
+        userId: access.workspaceSession.user.id,
+        name: access.workspaceSession.user.name,
+        email: access.workspaceSession.user.email,
+      },
+    );
     if (!result) {
       return jsonWithRequestId({ message: "Repository policy was not found." }, { status: 404 }, requestId);
     }
@@ -110,14 +122,60 @@ export async function PUT(
     return jsonWithRequestId(result, undefined, requestId);
   } catch (error) {
     if (error instanceof RepositoryPolicyInputError) {
-      return jsonWithRequestId(
-        { message: error.message, issues: error.issues },
-        { status: 400 },
-        requestId,
-      );
+      return jsonWithRequestId({ message: error.message, issues: error.issues }, { status: 400 }, requestId);
     }
 
     logRouteError("repository_policy_put", requestId, error, { owner, name });
     return jsonWithRequestId({ message: "Could not save repository policy. Retry." }, { status: 500 }, requestId);
+  }
+}
+
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ owner: string; name: string }> },
+): Promise<NextResponse> {
+  const requestId = createRequestId(request);
+  const access = await requireApiRole("admin", request);
+
+  if (access.denied) {
+    return access.denied;
+  }
+
+  const body = await request.json().catch(() => null);
+  const versionId =
+    body && typeof body === "object" && "versionId" in body && typeof body.versionId === "string"
+      ? body.versionId.trim()
+      : "";
+
+  if (versionId.length === 0) {
+    return jsonWithRequestId({ message: "Policy rollback payload is invalid." }, { status: 400 }, requestId);
+  }
+
+  const { owner, name } = await context.params;
+
+  try {
+    const result = await rollbackRepositoryPolicyVersion(
+      owner,
+      name,
+      versionId,
+      access.workspaceSession.activeWorkspace.id,
+      {
+        userId: access.workspaceSession.user.id,
+        name: access.workspaceSession.user.name,
+        email: access.workspaceSession.user.email,
+      },
+    );
+    if (!result) {
+      return jsonWithRequestId({ message: "Repository policy was not found." }, { status: 404 }, requestId);
+    }
+
+    return jsonWithRequestId(result, undefined, requestId);
+  } catch (error) {
+    if (error instanceof RepositoryPolicyVersionNotFoundError) {
+      return jsonWithRequestId({ message: error.message }, { status: 404 }, requestId);
+    }
+
+    logRouteError("repository_policy_patch", requestId, error, { owner, name, versionId });
+    return jsonWithRequestId({ message: "Could not roll back repository policy. Retry." }, { status: 500 }, requestId);
   }
 }

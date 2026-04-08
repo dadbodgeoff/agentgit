@@ -2,10 +2,7 @@ import { requireApiRole } from "@/lib/auth/api-session";
 import { ConnectorAccessError, retryConnectorCommand } from "@/lib/backend/control-plane/connectors";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ commandId: string }> },
-) {
+export async function POST(request: Request, context: { params: Promise<{ commandId: string }> }) {
   const requestId = createRequestId(request);
   const access = await requireApiRole("admin", request);
 

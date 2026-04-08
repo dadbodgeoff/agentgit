@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
-import {
-  findWorkspaceConnectionStateBySlug,
-} from "@/lib/backend/workspace/cloud-state";
+import { findWorkspaceConnectionStateBySlug } from "@/lib/backend/workspace/cloud-state";
 import { resolveWorkspaceSettings, saveWorkspaceSettings } from "@/lib/backend/workspace/workspace-settings";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
-import { WorkspaceSettingsSchema } from "@/schemas/cloud";
+import { WorkspaceSettingsUpdateSchema } from "@/schemas/cloud";
 
 export async function GET(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
@@ -27,7 +25,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
     return access.denied;
   }
 
-  const payload = WorkspaceSettingsSchema.safeParse(await request.json().catch(() => ({})));
+  const payload = WorkspaceSettingsUpdateSchema.safeParse(await request.json().catch(() => ({})));
 
   if (!payload.success) {
     return jsonWithRequestId({ message: "Settings payload is invalid." }, { status: 400 }, requestId);
@@ -38,9 +36,16 @@ export async function PUT(request: Request): Promise<NextResponse> {
     return jsonWithRequestId({ message: "Workspace slug is already in use." }, { status: 409 }, requestId);
   }
 
-  return jsonWithRequestId(
-    await saveWorkspaceSettings(access.workspaceSession, payload.data),
-    undefined,
-    requestId,
-  );
+  try {
+    return jsonWithRequestId(await saveWorkspaceSettings(access.workspaceSession, payload.data), undefined, requestId);
+  } catch (error) {
+    return jsonWithRequestId(
+      {
+        message:
+          error instanceof Error && error.message.length > 0 ? error.message : "Could not save workspace settings.",
+      },
+      { status: 400 },
+      requestId,
+    );
+  }
 }

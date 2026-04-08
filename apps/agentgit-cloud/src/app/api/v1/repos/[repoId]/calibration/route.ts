@@ -10,10 +10,7 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ repoId: string }> },
-): Promise<NextResponse> {
+export async function GET(request: Request, context: { params: Promise<{ repoId: string }> }): Promise<NextResponse> {
   const requestId = createRequestId(request);
   const access = await requireApiRole("admin", request);
 

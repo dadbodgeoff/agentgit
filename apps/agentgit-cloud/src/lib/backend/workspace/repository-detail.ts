@@ -16,6 +16,7 @@ import {
 } from "@/schemas/cloud";
 import { buildLocalProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
 import { findRepositoryRuntimeRecord } from "@/lib/backend/workspace/repository-inventory";
+import { paginateItems } from "@/lib/pagination/cursor";
 
 function normalizePathForComparison(input: string): string {
   const resolved = path.resolve(input);
@@ -189,19 +190,21 @@ export async function getRepositoryDetail(
   });
 }
 
-export async function listRepositoryRuns(owner: string, name: string, workspaceId: string) {
+export async function listRepositoryRuns(
+  owner: string,
+  name: string,
+  workspaceId: string,
+  params: { cursor?: string | null; limit: number } = { limit: 25 },
+) {
   const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
     return null;
   }
 
   const items = listRunsForRepository(repository.metadata.root).map(mapRunSummary);
+  const page = paginateItems(items, params);
 
   return RepositoryRunsResponseSchema.parse({
-    items,
-    total: items.length,
-    page: 1,
-    per_page: items.length === 0 ? 25 : items.length,
-    has_more: false,
+    ...page,
   });
 }

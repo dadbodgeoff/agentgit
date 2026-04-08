@@ -38,6 +38,17 @@ describe("workspace settings route", () => {
       approvalTtlMinutes: 30,
       requireRejectComment: true,
       freezeDeploysOutsideBusinessHours: false,
+      enterpriseSso: {
+        enabled: false,
+        providerType: "oidc",
+        providerLabel: "Enterprise SSO",
+        issuerUrl: "https://idp.example.com/realms/agentgit",
+        clientId: "agentgit-cloud",
+        emailDomains: [],
+        autoProvisionMembers: true,
+        defaultRole: "member",
+        clientSecretConfigured: false,
+      },
     });
 
     const { GET } = await import("./route");
@@ -85,6 +96,17 @@ describe("workspace settings route", () => {
         approvalTtlMinutes: 45,
         requireRejectComment: false,
         freezeDeploysOutsideBusinessHours: true,
+        enterpriseSso: {
+          enabled: true,
+          providerType: "oidc",
+          providerLabel: "Acme Okta",
+          issuerUrl: "https://acme.okta.com/oauth2/default",
+          clientId: "agentgit-cloud",
+          emailDomains: ["acme.dev"],
+          autoProvisionMembers: true,
+          defaultRole: "member",
+          clientSecretConfigured: true,
+        },
       },
       savedAt: "2026-04-07T12:00:00Z",
       message: "Settings saved.",
@@ -101,6 +123,17 @@ describe("workspace settings route", () => {
           approvalTtlMinutes: 45,
           requireRejectComment: false,
           freezeDeploysOutsideBusinessHours: true,
+          enterpriseSso: {
+            enabled: true,
+            providerType: "oidc",
+            providerLabel: "Acme Okta",
+            issuerUrl: "https://acme.okta.com/oauth2/default",
+            clientId: "agentgit-cloud",
+            clientSecret: "secret",
+            emailDomains: ["acme.dev"],
+            autoProvisionMembers: true,
+            defaultRole: "member",
+          },
         }),
       }),
     );

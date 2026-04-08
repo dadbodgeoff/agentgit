@@ -39,7 +39,9 @@ export async function withAuthorityClient<T>(run: (client: AuthorityClient) => P
 }
 
 export async function resolveAuthorityWorkspaceRoots(workspaceId: string): Promise<string[]> {
-  const runtimeRoots = [...new Set((await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).map((record) => record.metadata.root))];
+  const runtimeRoots = [
+    ...new Set((await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).map((record) => record.metadata.root)),
+  ];
   return runtimeRoots;
 }
 

@@ -44,7 +44,8 @@
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "prepack": "pnpm run build",
     "test": "vitest run --dir src",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
