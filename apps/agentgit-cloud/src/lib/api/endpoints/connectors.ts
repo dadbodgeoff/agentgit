@@ -1,4 +1,4 @@
-import { fetchJson } from "@/lib/api/client";
+import { fetchJson, fetchJsonWithResponse } from "@/lib/api/client";
 import { appendCursorPagination, type CursorPaginationRequest } from "@/lib/api/endpoints/pagination";
 import {
   ConnectorBootstrapResponseSchema,
@@ -15,6 +15,8 @@ import {
   type WorkspaceConnectorInventory,
 } from "@/schemas/cloud";
 
+const CONNECTOR_BOOTSTRAP_TOKEN_HEADER = "x-agentgit-connector-bootstrap-token";
+
 export async function getWorkspaceConnectors(
   params: CursorPaginationRequest = {},
 ): Promise<WorkspaceConnectorInventory> {
@@ -24,10 +26,19 @@ export async function getWorkspaceConnectors(
 }
 
 export async function issueConnectorBootstrapToken(): Promise<ConnectorBootstrapResponse> {
-  const response = await fetchJson<unknown>("/api/v1/sync/bootstrap-token", {
+  const { data, response } = await fetchJsonWithResponse<unknown>("/api/v1/sync/bootstrap-token", {
     method: "POST",
   });
-  return ConnectorBootstrapResponseSchema.parse(response);
+  const parsed = ConnectorBootstrapResponseSchema.omit({ bootstrapToken: true }).parse(data);
+  const bootstrapToken = response.headers.get(CONNECTOR_BOOTSTRAP_TOKEN_HEADER)?.trim();
+  if (!bootstrapToken) {
+    throw new Error("Connector bootstrap response did not include a bootstrap token header.");
+  }
+
+  return ConnectorBootstrapResponseSchema.parse({
+    ...parsed,
+    bootstrapToken,
+  });
 }
 
 export async function dispatchConnectorCommand(

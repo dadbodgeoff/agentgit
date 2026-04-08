@@ -38,6 +38,24 @@ interface HostedMcpWorkerIdentityMaterial {
   worker_image_digest: string;
 }
 
+const MAX_HOSTED_MCP_REQUEST_BUFFER_BYTES = 16 * 1024 * 1024;
+const MAX_HOSTED_MCP_LIST_TOOLS_ITERATIONS = 100;
+
+function writeSecretJsonFile(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  const handle = fs.openSync(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+  try {
+    fs.writeFileSync(handle, payload, "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  fs.renameSync(tempPath, filePath);
+  fs.chmodSync(filePath, 0o600);
+}
+
 function stableJsonStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
@@ -69,6 +87,18 @@ function createInlineArtifact(
 
 function textPreview(value: string, maxLength = 160): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function removeUnixSocketFile(socketPath: string): void {
+  try {
+    fs.unlinkSync(socketPath);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : null;
+    if (code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
 }
 
 function summarizeMcpContent(result: unknown): string {
@@ -390,9 +420,17 @@ class HostedMcpWorkerAttestor {
   readonly workerImageDigest: string;
 
   constructor(keyPath: string, workerImageDigest?: string) {
-    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
+    fs.mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
     if (fs.existsSync(keyPath)) {
-      const stored = JSON.parse(fs.readFileSync(keyPath, "utf8")) as Partial<HostedMcpWorkerIdentityMaterial>;
+      let stored: Partial<HostedMcpWorkerIdentityMaterial>;
+      try {
+        stored = JSON.parse(fs.readFileSync(keyPath, "utf8")) as Partial<HostedMcpWorkerIdentityMaterial>;
+      } catch (error) {
+        throw new InternalError("Hosted MCP worker attestation key material could not be loaded.", {
+          key_path: keyPath,
+          cause: error instanceof Error ? error.message : String(error),
+        });
+      }
       if (
         typeof stored.private_key_pem !== "string" ||
         typeof stored.public_key_pem !== "string" ||
@@ -417,20 +455,12 @@ class HostedMcpWorkerAttestor {
     this.workerImageDigest =
       workerImageDigest ??
       `sha256:${createHash("sha256").update("agentgit-hosted-mcp-worker-v2", "utf8").digest("hex")}`;
-    fs.writeFileSync(
-      keyPath,
-      JSON.stringify(
-        {
-          private_key_pem: this.privateKeyPem,
-          public_key_pem: this.publicKeyPem,
-          worker_runtime_id: this.workerRuntimeId,
-          worker_image_digest: this.workerImageDigest,
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
+    writeSecretJsonFile(keyPath, {
+      private_key_pem: this.privateKeyPem,
+      public_key_pem: this.publicKeyPem,
+      worker_runtime_id: this.workerRuntimeId,
+      worker_image_digest: this.workerImageDigest,
+    });
   }
 
   signBundle(value: unknown): string {
@@ -541,7 +571,16 @@ async function executeHostedMcp(
 
     const listedTools: Array<{ name: string; annotations?: Record<string, unknown> }> = [];
     let cursor: string | undefined;
+    let listToolsIterations = 0;
     do {
+      if (listToolsIterations >= MAX_HOSTED_MCP_LIST_TOOLS_ITERATIONS) {
+        throw new AgentGitError("Hosted MCP tool discovery exceeded the maximum pagination depth.", "PRECONDITION_FAILED", {
+          action_id: payload.action_id,
+          server_id: payload.server_id,
+          max_iterations: MAX_HOSTED_MCP_LIST_TOOLS_ITERATIONS,
+        });
+      }
+      listToolsIterations += 1;
       const listed = await withTimeout(
         client.listTools(cursor ? { cursor } : undefined),
         timeoutMs,
@@ -728,18 +767,35 @@ export function startHostedMcpWorkerServer(options: HostedMcpWorkerServerOptions
   const endpoint = parseEndpoint(options.endpoint);
   const controlToken = options.controlToken?.trim() || null;
   const activeExecutions = new Map<string, AbortController>();
+  const openSockets = new Set<net.Socket>();
 
   if (endpoint.kind === "unix") {
     fs.mkdirSync(path.dirname(endpoint.socketPath), { recursive: true });
-    if (fs.existsSync(endpoint.socketPath)) {
-      fs.rmSync(endpoint.socketPath, { force: true });
-    }
+    removeUnixSocketFile(endpoint.socketPath);
   }
 
   const server = net.createServer((socket) => {
+    openSockets.add(socket);
     let buffer = "";
     socket.setEncoding("utf8");
+    socket.on("close", () => {
+      openSockets.delete(socket);
+    });
     socket.on("data", async (chunk) => {
+      if (
+        Buffer.byteLength(buffer, "utf8") + Buffer.byteLength(chunk, "utf8") >
+        MAX_HOSTED_MCP_REQUEST_BUFFER_BYTES
+      ) {
+        const response = makeErrorResponse(
+          "unknown",
+          new AgentGitError("Hosted MCP worker request exceeded the maximum supported size.", "BAD_REQUEST", {
+            max_bytes: MAX_HOSTED_MCP_REQUEST_BUFFER_BYTES,
+          }),
+        );
+        socket.end(`${JSON.stringify(response)}\n`);
+        buffer = "";
+        return;
+      }
       buffer += chunk;
 
       while (buffer.includes("\n")) {
@@ -833,9 +889,31 @@ export function startHostedMcpWorkerServer(options: HostedMcpWorkerServerOptions
     });
   });
 
+  const originalClose = server.close.bind(server);
+  server.close = ((callback?: (error?: Error) => void) => {
+    for (const controller of activeExecutions.values()) {
+      controller.abort(
+        new AgentGitError("Hosted MCP worker server is shutting down.", "CONFLICT", {
+          reason: "worker_shutdown",
+        }),
+      );
+    }
+    activeExecutions.clear();
+
+    for (const socket of openSockets) {
+      socket.end();
+      socket.destroySoon?.();
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+    }
+
+    return originalClose(callback);
+  }) as typeof server.close;
+
   server.on("close", () => {
-    if (endpoint.kind === "unix" && fs.existsSync(endpoint.socketPath)) {
-      fs.rmSync(endpoint.socketPath, { force: true });
+    if (endpoint.kind === "unix") {
+      removeUnixSocketFile(endpoint.socketPath);
     }
   });
 

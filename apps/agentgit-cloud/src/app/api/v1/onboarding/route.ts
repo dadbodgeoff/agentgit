@@ -6,10 +6,12 @@ import {
   getWorkspaceConnectionState,
   saveWorkspaceConnectionState,
 } from "@/lib/backend/workspace/cloud-state";
+import { loadPreviewFixture, resolvePreviewState } from "@/lib/dev/preview-fixtures";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { listWorkspaceRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
-import { getOnboardingBootstrapFixture, launchOnboardingFixture } from "@/mocks/fixtures";
+import { launchOnboardingFixture } from "@/mocks/fixtures";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
-import { OnboardingFormValuesSchema, PreviewStateSchema } from "@/schemas/cloud";
+import { OnboardingFormValuesSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,9 +25,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return access.denied;
   }
 
-  const url = new URL(request.url);
-  const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
-  const previewState = parsed.success ? parsed.data : "ready";
+  const previewState = resolvePreviewState(request);
 
   if (previewState === "loading") {
     await sleep(1200);
@@ -36,7 +36,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   if (previewState !== "ready") {
-    return jsonWithRequestId(getOnboardingBootstrapFixture(previewState), undefined, requestId);
+    const fixture = await loadPreviewFixture("onboarding", previewState);
+    if (fixture) {
+      return jsonWithRequestId(fixture, undefined, requestId);
+    }
   }
 
   const persistedState = await getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
@@ -66,7 +69,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     return access.denied;
   }
 
-  const payload = OnboardingFormValuesSchema.safeParse(await request.json().catch(() => ({})));
+  let rawPayload: unknown;
+  try {
+    rawPayload = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  const payload = OnboardingFormValuesSchema.safeParse(rawPayload);
 
   if (!payload.success) {
     return jsonWithRequestId({ message: "Onboarding payload is invalid." }, { status: 400 }, requestId);

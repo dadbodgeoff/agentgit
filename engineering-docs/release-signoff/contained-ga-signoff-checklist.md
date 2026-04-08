@@ -83,8 +83,8 @@ Use this checklist before declaring the contained runtime path fully production 
 
 ## Signoff Record
 
-- Engineering:
-- Security:
-- QA:
-- Product / UX:
-- Release date:
+- Engineering: Pending final human signoff after post-hardening verification completes.
+- Security: Blocked pending human review of the adversarial audit rerun and registry/runtime hardening deltas.
+- QA: Pending final end-to-end regression pass against the hardened build.
+- Product / UX: Pending final contained-GA scope review.
+- Release date: Not scheduled until all signoff owners approve.

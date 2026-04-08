@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentGitError, type ActionRecord } from "@agentgit/schemas";
 import { createTempDirTracker } from "@agentgit/test-fixtures";
 
-import { LocalSnapshotEngine, selectSnapshotClass } from "./index.js";
+import { LocalSnapshotEngine, MetadataOnlySnapshotEngine, selectSnapshotClass } from "./index.js";
 
 let tempDir: string | null = null;
 const tempDirs = createTempDirTracker("agentgit-snapshot-");
@@ -495,7 +495,7 @@ describe("LocalSnapshotEngine", () => {
     const engine = new LocalSnapshotEngine({
       rootDir: path.join(tempDir, "snapshots"),
     });
-    const writeSpy = vi.spyOn(fsPromises, "writeFile").mockRejectedValueOnce(
+    const openSpy = vi.spyOn(fsPromises, "open").mockRejectedValueOnce(
       Object.assign(new Error("no space left on device"), {
         code: "ENOSPC",
       }),
@@ -515,7 +515,7 @@ describe("LocalSnapshotEngine", () => {
       expect((error as AgentGitError).details?.low_disk_pressure).toBe(true);
       expect((error as AgentGitError).details?.storage_error_code).toBe("ENOSPC");
     } finally {
-      writeSpy.mockRestore();
+      openSpy.mockRestore();
     }
   });
 
@@ -696,6 +696,9 @@ describe("LocalSnapshotEngine", () => {
     await expect(engine.getSnapshotManifest(snapshot.snapshot_id)).rejects.toMatchObject({
       code: "INTERNAL_ERROR",
     });
+    await expect(engine.verifyIntegrity(snapshot.snapshot_id)).rejects.toMatchObject({
+      code: "INTERNAL_ERROR",
+    });
   });
 
   it("surfaces corrupted layered manifests as internal errors", async () => {
@@ -721,5 +724,23 @@ describe("LocalSnapshotEngine", () => {
     await expect(engine.getSnapshotManifest(snapshot.snapshot_id)).rejects.toMatchObject({
       code: "INTERNAL_ERROR",
     });
+    await expect(engine.restore(snapshot.snapshot_id)).rejects.toMatchObject({
+      code: "INTERNAL_ERROR",
+    });
+  });
+});
+
+describe("MetadataOnlySnapshotEngine", () => {
+  it("only reports integrity for snapshots created by the current engine instance", async () => {
+    const engine = new MetadataOnlySnapshotEngine();
+    const snapshot = await engine.createSnapshot({
+      action: makeAction("README.md"),
+      requested_class: "metadata_only",
+      workspace_root: "/tmp/workspace",
+    });
+
+    await expect(engine.verifyIntegrity(snapshot.snapshot_id)).resolves.toBe(true);
+    await expect(engine.verifyIntegrity("snap_missing")).resolves.toBe(false);
+    await expect(engine.restore(snapshot.snapshot_id)).resolves.toBe(false);
   });
 });

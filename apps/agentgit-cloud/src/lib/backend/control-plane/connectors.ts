@@ -16,6 +16,7 @@ import {
   PushBranchCommandPayloadSchema,
   RefreshRepoStateCommandPayloadSchema,
   SyncRunHistoryCommandPayloadSchema,
+  ConnectorCommandAckResponseSchema,
   ConnectorCommandPullResponseSchema,
   ConnectorEventBatchResponseSchema,
   ConnectorHeartbeatResponseSchema,
@@ -37,6 +38,7 @@ import {
   notifyWorkspaceRunFailed,
   notifyWorkspaceSnapshotRestored,
 } from "@/lib/backend/workspace/workspace-integrations";
+import { appendWorkspaceAuditEntries, appendWorkspaceAuditEntry } from "@/lib/backend/workspace/workspace-audit-events";
 import { actionDetailRoute, repositoryRoute, repositorySnapshotsRoute, runDetailRoute } from "@/lib/navigation/routes";
 import {
   ConnectorBootstrapResponseSchema,
@@ -97,6 +99,37 @@ const COMMAND_LEASE_MINUTES = 5;
 const CONNECTOR_STALE_MINUTES = 10;
 const AUTOMATIC_RETRY_DELAYS_MINUTES = [1, 5, 15] as const;
 const AUTOMATIC_RETRY_COMMAND_TYPES = new Set<ConnectorCommandType>(["refresh_repo_state", "sync_run_history"]);
+export const CONNECTOR_ACCESS_TOKEN_HEADER = "x-agentgit-connector-access-token";
+export const CONNECTOR_BOOTSTRAP_TOKEN_HEADER = "x-agentgit-connector-bootstrap-token";
+
+function parseStoredSyncResponse<T>(raw: string, parser: { parse(input: unknown): T }): T {
+  return parser.parse(JSON.parse(raw) as unknown);
+}
+
+function requireActiveConnectorAccess(store: ControlPlaneStateStore, access: ConnectorAccessContext): ConnectorAccessContext {
+  const token = store.getConnectorToken(access.token.tokenHash);
+  if (!token) {
+    throw new ConnectorAccessError("Connector access token is invalid.", 401);
+  }
+
+  if (token.revokedAt) {
+    throw new ConnectorAccessError("Connector access token has been revoked.", 401);
+  }
+
+  if (new Date(token.expiresAt).getTime() <= Date.now()) {
+    throw new ConnectorAccessError("Connector access token has expired.", 401);
+  }
+
+  const connector = store.getConnector(token.connectorId);
+  if (!connector || connector.workspaceId !== access.connector.workspaceId) {
+    throw new ConnectorAccessError("Connector record was not found.", 401);
+  }
+
+  return {
+    connector,
+    token,
+  };
+}
 
 function normalizeWorkspacePath(candidate: string): string {
   const resolved = path.resolve(candidate);
@@ -337,11 +370,206 @@ function getCommandExternalUrl(command: {
   command: { type: ConnectorCommandType };
   result: Record<string, unknown> | null;
 }) {
-  if (command.command.type === "open_pull_request" && typeof command.result?.pullRequestUrl === "string") {
-    return command.result.pullRequestUrl;
+  return null;
+}
+
+function buildQueuedConnectorCommandAuditEntry(params: {
+  workspaceId: string;
+  commandId: string;
+  issuedAt: string;
+  commandType: ConnectorCommandType;
+  repositoryOwner: string;
+  repositoryName: string;
+  connectorMachineName: string;
+}) {
+  return {
+    workspaceId: params.workspaceId,
+    id: `command:${params.commandId}:queued`,
+    occurredAt: params.issuedAt,
+    actorLabel: "AgentGit cloud control plane",
+    actorType: "system" as const,
+    category: "connector" as const,
+    action: `${params.commandType}_queued`,
+    target: `${params.repositoryOwner}/${params.repositoryName}`,
+    outcome: "info" as const,
+    repo: `${params.repositoryOwner}/${params.repositoryName}`,
+    runId: null,
+    actionId: null,
+    detailPath: repositoryRoute(params.repositoryOwner, params.repositoryName),
+    externalUrl: null,
+    details: `${params.commandType} was queued for ${params.connectorMachineName}.`,
+  };
+}
+
+function buildAcknowledgedConnectorCommandAuditEntry(params: {
+  workspaceId: string;
+  commandId: string;
+  acknowledgedAt: string;
+  command: {
+    command: {
+      type: ConnectorCommandType;
+      repository: { owner: string; name: string };
+    };
+    status: "pending" | "acked" | "completed" | "failed" | "expired";
+    lastMessage: string | null;
+    result: Record<string, unknown> | null;
+  };
+}) {
+  const baseAction = params.command.command.type;
+  const action =
+    params.command.status === "completed"
+      ? `${baseAction}_completed`
+      : params.command.status === "failed"
+        ? `${baseAction}_failed`
+        : params.command.status === "expired"
+          ? `${baseAction}_expired`
+          : `${baseAction}_${params.command.status}`;
+
+  return {
+    workspaceId: params.workspaceId,
+    id: `command:${params.commandId}:${params.command.status}:${params.acknowledgedAt}`,
+    occurredAt: params.acknowledgedAt,
+    actorLabel: "AgentGit cloud connector",
+    actorType: "system" as const,
+    category: "connector" as const,
+    action,
+    target: `${params.command.command.repository.owner}/${params.command.command.repository.name}`,
+    outcome:
+      params.command.status === "completed"
+        ? ("success" as const)
+        : params.command.status === "failed"
+          ? ("failure" as const)
+          : params.command.status === "expired"
+            ? ("warning" as const)
+            : ("info" as const),
+    repo: `${params.command.command.repository.owner}/${params.command.command.repository.name}`,
+    runId: typeof params.command.result?.runId === "string" ? params.command.result.runId : null,
+    actionId: typeof params.command.result?.actionId === "string" ? params.command.result.actionId : null,
+    detailPath: getCommandDetailPath({
+      command: params.command.command,
+      result: params.command.result,
+    }),
+    externalUrl: getCommandExternalUrl({
+      command: params.command.command,
+      result: params.command.result,
+    }),
+    details: params.command.lastMessage ?? `${baseAction} is ${params.command.status}.`,
+  };
+}
+
+function buildAuditEntriesForConnectorEvents(params: {
+  workspaceId: string;
+  events: ConnectorEventBatchRequest["events"];
+}) {
+  const entries: Array<Parameters<typeof appendWorkspaceAuditEntries>[0][number]> = [];
+
+  for (const event of params.events) {
+    if (event.type === "approval.requested" || event.type === "approval.resolution") {
+      const parsedApproval = ApprovalInboxItemSchema.safeParse(event.payload);
+      if (!parsedApproval.success) {
+        continue;
+      }
+
+      const approval = parsedApproval.data;
+      const resolved = event.type === "approval.resolution" || approval.status !== "pending";
+      const resolutionStatus = approval.status === "approved" ? "success" : approval.status === "denied" ? "failure" : "info";
+      entries.push({
+        workspaceId: params.workspaceId,
+        id: `event:${event.eventId}`,
+        occurredAt: event.occurredAt,
+        actorLabel: resolved ? "Workspace reviewer" : "AgentGit policy engine",
+        actorType: resolved ? "human" : "system",
+        category: "approval",
+        action: resolved ? `approval_${approval.status}` : "approval_requested",
+        target: approval.action_summary,
+        outcome: resolved ? resolutionStatus : "info",
+        repo: `${event.repository.owner}/${event.repository.name}`,
+        runId: approval.run_id,
+        actionId: approval.action_id,
+        detailPath:
+          approval.run_id && approval.action_id
+            ? actionDetailRoute(event.repository.owner, event.repository.name, approval.run_id, approval.action_id)
+            : approval.run_id
+              ? runDetailRoute(event.repository.owner, event.repository.name, approval.run_id)
+              : repositoryRoute(event.repository.owner, event.repository.name),
+        externalUrl: null,
+        details:
+          approval.resolution_note ??
+          approval.primary_reason?.message ??
+          (resolved ? "Approval resolution was synchronized into the control plane." : "Approval request entered the cloud review queue."),
+      });
+      continue;
+    }
+
+    if (event.type === "policy.state") {
+      entries.push({
+        workspaceId: params.workspaceId,
+        id: `event:${event.eventId}`,
+        occurredAt: event.occurredAt,
+        actorLabel: "Local connector",
+        actorType: "system",
+        category: "policy",
+        action: event.type,
+        target: `${event.repository.owner}/${event.repository.name}`,
+        outcome: "info",
+        repo: `${event.repository.owner}/${event.repository.name}`,
+        runId: null,
+        actionId: null,
+        detailPath: repositoryRoute(event.repository.owner, event.repository.name),
+        externalUrl: null,
+        details: "Policy state was synchronized into the control plane.",
+      });
+      continue;
+    }
+
+    if (event.type !== "run.event") {
+      continue;
+    }
+
+    const runId = typeof event.payload.runId === "string" ? event.payload.runId : null;
+    const runEvent = typeof event.payload.event === "object" && event.payload.event !== null ? event.payload.event : null;
+    const eventType =
+      typeof (runEvent as { event_type?: unknown } | null)?.event_type === "string"
+        ? (runEvent as { event_type: string }).event_type
+        : null;
+    const eventPayload =
+      typeof (runEvent as { payload?: unknown } | null)?.payload === "object" &&
+      (runEvent as { payload?: unknown }).payload !== null
+        ? (runEvent as { payload: Record<string, unknown> }).payload
+        : null;
+
+    if (eventType !== "execution.failed" && eventType !== "recovery.executed") {
+      continue;
+    }
+
+    entries.push({
+      workspaceId: params.workspaceId,
+      id: `event:${event.eventId}`,
+      occurredAt: event.occurredAt,
+      actorLabel: "AgentGit runtime",
+      actorType: "system",
+      category: eventType === "recovery.executed" ? "recovery" : "run",
+      action: eventType,
+      target: typeof eventPayload?.workflow_name === "string" ? eventPayload.workflow_name : `${event.repository.owner}/${event.repository.name}`,
+      outcome: eventType === "recovery.executed" ? "warning" : "failure",
+      repo: `${event.repository.owner}/${event.repository.name}`,
+      runId,
+      actionId: typeof eventPayload?.action_id === "string" ? eventPayload.action_id : null,
+      detailPath:
+        runId && typeof eventPayload?.action_id === "string"
+          ? actionDetailRoute(event.repository.owner, event.repository.name, runId, eventPayload.action_id)
+          : runId
+            ? runDetailRoute(event.repository.owner, event.repository.name, runId)
+            : repositoryRoute(event.repository.owner, event.repository.name),
+      externalUrl: null,
+      details:
+        eventType === "recovery.executed"
+          ? `Snapshot recovery executed for governed run ${runId ?? "unknown"}.`
+          : `Governed run ${runId ?? "unknown"} reported an execution failure.`,
+    });
   }
 
-  return null;
+  return entries;
 }
 
 export function issueConnectorBootstrapToken(
@@ -367,11 +595,12 @@ export function issueConnectorBootstrapToken(
   });
 
   const commandHint = [
+    "AGENTGIT_BOOTSTRAP_TOKEN=<paste-token-once>",
     "agentgit-cloud-connector bootstrap",
     `--cloud-url ${cloudBaseUrl}`,
     `--workspace-id ${workspaceSession.activeWorkspace.id}`,
     `--workspace-root ${JSON.stringify(process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS?.split(",")[0] ?? process.cwd())}`,
-    `--bootstrap-token ${bootstrapToken}`,
+    "--bootstrap-token \"$AGENTGIT_BOOTSTRAP_TOKEN\"",
     "&&",
     "agentgit-cloud-connector run",
     `--workspace-root ${JSON.stringify(process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS?.split(",")[0] ?? process.cwd())}`,
@@ -390,29 +619,31 @@ function consumeConnectorBootstrapToken(rawToken: string, consumedAt: string) {
   const tokenHash = hashConnectorToken(rawToken);
 
   return withControlPlaneState((store) => {
-    const token = store.getConnectorBootstrapToken(tokenHash);
-    if (!token) {
-      throw new ConnectorAccessError("Connector bootstrap token is invalid.", 401);
-    }
+    return store.withImmediateTransaction((transactionalStore) => {
+      const token = transactionalStore.getConnectorBootstrapToken(tokenHash);
+      if (!token) {
+        throw new ConnectorAccessError("Connector bootstrap token is invalid.", 401);
+      }
 
-    if (token.revokedAt) {
-      throw new ConnectorAccessError("Connector bootstrap token has been revoked.", 401);
-    }
+      if (token.revokedAt) {
+        throw new ConnectorAccessError("Connector bootstrap token has been revoked.", 401);
+      }
 
-    if (token.consumedAt) {
-      throw new ConnectorAccessError("Connector bootstrap token has already been used.", 401);
-    }
+      if (token.consumedAt) {
+        throw new ConnectorAccessError("Connector bootstrap token has already been used.", 401);
+      }
 
-    if (new Date(token.expiresAt).getTime() <= Date.now()) {
-      throw new ConnectorAccessError("Connector bootstrap token has expired.", 401);
-    }
+      if (new Date(token.expiresAt).getTime() <= Date.now()) {
+        throw new ConnectorAccessError("Connector bootstrap token has expired.", 401);
+      }
 
-    const next = {
-      ...token,
-      consumedAt,
-    };
-    store.putConnectorBootstrapToken(next);
-    return next;
+      const next = {
+        ...token,
+        consumedAt,
+      };
+      transactionalStore.putConnectorBootstrapToken(next);
+      return next;
+    });
   });
 }
 
@@ -518,30 +749,44 @@ export function recordConnectorHeartbeat(
   }
 
   return withControlPlaneState((store) => {
+    const currentAccess = requireActiveConnectorAccess(store, access);
+    const existingReceipt = store.getRequestReceipt(currentAccess.connector.id, "heartbeat", heartbeat.requestId);
+    if (existingReceipt) {
+      return parseStoredSyncResponse(existingReceipt.responseJson, ConnectorHeartbeatResponseSchema);
+    }
+
     store.putHeartbeat(
       createHeartbeatRecord({
-        workspaceId: access.connector.workspaceId,
+        workspaceId: currentAccess.connector.workspaceId,
         receivedAt: acceptedAt,
         heartbeat,
       }),
     );
     store.putConnector({
-      ...access.connector,
+      ...currentAccess.connector,
       repository: heartbeat.repository,
       lastSeenAt: acceptedAt,
       status: "active",
     });
 
     const pendingCommandCount = store
-      .listCommands(access.connector.id)
+      .listCommands(currentAccess.connector.id)
       .filter((command) => command.status === "pending" || command.status === "acked").length;
-    return ConnectorHeartbeatResponseSchema.parse({
+    const response = ConnectorHeartbeatResponseSchema.parse({
       schemaVersion: "cloud-sync.v1",
-      connectorId: access.connector.id,
+      connectorId: currentAccess.connector.id,
       acceptedAt,
       status: "active",
       pendingCommandCount,
     });
+    store.putRequestReceipt({
+      connectorId: currentAccess.connector.id,
+      requestKind: "heartbeat",
+      requestId: heartbeat.requestId,
+      acceptedAt,
+      responseJson: JSON.stringify(response),
+    });
+    return response;
   });
 }
 
@@ -561,7 +806,21 @@ export async function ingestConnectorEvents(
   }
 
   const { response, approvalRequests, notifications } = withControlPlaneState((store) => {
-    const existingEventIds = new Set(store.listEvents(access.connector.id).map((event) => event.event.eventId));
+    const currentAccess = requireActiveConnectorAccess(store, access);
+    const existingReceipt = store.getRequestReceipt(currentAccess.connector.id, "events", batch.requestId);
+    if (existingReceipt) {
+      return {
+        response: parseStoredSyncResponse(existingReceipt.responseJson, ConnectorEventBatchResponseSchema),
+        approvalRequests: [] as Array<{
+          repositoryOwner: string;
+          repositoryName: string;
+          approval: import("@agentgit/schemas").ApprovalInboxItem;
+        }>,
+        notifications: [] as Array<Promise<void>>,
+      };
+    }
+    const existingEventIds = new Set(store.listEvents(currentAccess.connector.id).map((event) => event.event.eventId));
+    let highestAcceptedSequence = store.getHighestEventSequence(currentAccess.connector.id);
     const approvalRequests: Array<{
       repositoryOwner: string;
       repositoryName: string;
@@ -570,12 +829,21 @@ export async function ingestConnectorEvents(
     const notifications: Array<Promise<void>> = [];
 
     for (const event of batch.events) {
+      if (existingEventIds.has(event.eventId)) {
+        continue;
+      }
+
+      if (event.sequence <= highestAcceptedSequence) {
+        throw new ConnectorAccessError("Connector event sequence must increase monotonically across batches.", 409);
+      }
+      highestAcceptedSequence = event.sequence;
+
       store.appendEvent({
         event,
         ingestedAt: acceptedAt,
       });
 
-      if (!existingEventIds.has(event.eventId) && event.type === "approval.requested") {
+      if (event.type === "approval.requested") {
         const parsedApproval = ApprovalInboxItemSchema.safeParse(event.payload);
         if (parsedApproval.success) {
           approvalRequests.push({
@@ -586,11 +854,11 @@ export async function ingestConnectorEvents(
         }
       }
 
-      if (!existingEventIds.has(event.eventId) && event.type === "policy.state") {
+      if (event.type === "policy.state") {
         notifications.push(
           notifyWorkspacePolicyChanged({
-            workspaceId: access.connector.workspaceId,
-            workspaceSlug: access.connector.workspaceSlug,
+            workspaceId: currentAccess.connector.workspaceId,
+            workspaceSlug: currentAccess.connector.workspaceSlug,
             repositoryOwner: event.repository.owner,
             repositoryName: event.repository.name,
             kind: typeof event.payload.kind === "string" ? event.payload.kind : "workspace_policy",
@@ -599,7 +867,7 @@ export async function ingestConnectorEvents(
         );
       }
 
-      if (!existingEventIds.has(event.eventId) && event.type === "run.event") {
+      if (event.type === "run.event") {
         const runId = typeof event.payload.runId === "string" ? event.payload.runId : null;
         const runEvent =
           typeof event.payload.event === "object" && event.payload.event !== null ? event.payload.event : null;
@@ -617,8 +885,8 @@ export async function ingestConnectorEvents(
         if (eventType === "execution.failed" && runId) {
           notifications.push(
             notifyWorkspaceRunFailed({
-              workspaceId: access.connector.workspaceId,
-              workspaceSlug: access.connector.workspaceSlug,
+              workspaceId: currentAccess.connector.workspaceId,
+              workspaceSlug: currentAccess.connector.workspaceSlug,
               repositoryOwner: event.repository.owner,
               repositoryName: event.repository.name,
               runId,
@@ -634,8 +902,8 @@ export async function ingestConnectorEvents(
         ) {
           notifications.push(
             notifyWorkspaceSnapshotRestored({
-              workspaceId: access.connector.workspaceId,
-              workspaceSlug: access.connector.workspaceSlug,
+              workspaceId: currentAccess.connector.workspaceId,
+              workspaceSlug: currentAccess.connector.workspaceSlug,
               repositoryOwner: event.repository.owner,
               repositoryName: event.repository.name,
               runId,
@@ -647,24 +915,38 @@ export async function ingestConnectorEvents(
     }
 
     store.putConnector({
-      ...access.connector,
+      ...currentAccess.connector,
       lastSeenAt: acceptedAt,
       status: "active",
     });
 
-    const highestAcceptedSequence = batch.events.reduce((highest, event) => Math.max(highest, event.sequence), 0);
+    const response = ConnectorEventBatchResponseSchema.parse({
+      schemaVersion: "cloud-sync.v1",
+      connectorId: currentAccess.connector.id,
+      acceptedAt,
+      acceptedCount: batch.events.filter((event) => !existingEventIds.has(event.eventId)).length,
+      highestAcceptedSequence,
+    });
+    store.putRequestReceipt({
+      connectorId: currentAccess.connector.id,
+      requestKind: "events",
+      requestId: batch.requestId,
+      acceptedAt,
+      responseJson: JSON.stringify(response),
+    });
     return {
-      response: ConnectorEventBatchResponseSchema.parse({
-        schemaVersion: "cloud-sync.v1",
-        connectorId: access.connector.id,
-        acceptedAt,
-        acceptedCount: batch.events.length,
-        highestAcceptedSequence,
-      }),
+      response,
       approvalRequests,
       notifications,
     };
   });
+
+  await appendWorkspaceAuditEntries(
+    buildAuditEntriesForConnectorEvents({
+      workspaceId: access.connector.workspaceId,
+      events: batch.events,
+    }),
+  );
 
   await Promise.allSettled([
     ...approvalRequests.map((request) =>
@@ -692,25 +974,38 @@ export function pullPendingConnectorCommands(
   }
 
   return withControlPlaneState((store) => {
+    const currentAccess = requireActiveConnectorAccess(store, access);
+    const existingReceipt = store.getRequestReceipt(currentAccess.connector.id, "command_pull", request.requestId);
+    if (existingReceipt) {
+      return parseStoredSyncResponse(existingReceipt.responseJson, ConnectorCommandPullResponseSchema);
+    }
     store.putConnector({
-      ...access.connector,
+      ...currentAccess.connector,
       lastSeenAt: acceptedAt,
       status: "active",
     });
 
     const leaseExpiresAt = futureMinutesTimestamp(COMMAND_LEASE_MINUTES);
-    return ConnectorCommandPullResponseSchema.parse({
+    const response = ConnectorCommandPullResponseSchema.parse({
       schemaVersion: "cloud-sync.v1",
-      connectorId: access.connector.id,
+      connectorId: currentAccess.connector.id,
       commands: store
         .claimDispatchableCommands({
-          connectorId: access.connector.id,
+          connectorId: currentAccess.connector.id,
           claimedAt: acceptedAt,
           leaseExpiresAt,
         })
         .map((row) => row.command),
       acceptedAt,
     });
+    store.putRequestReceipt({
+      connectorId: currentAccess.connector.id,
+      requestKind: "command_pull",
+      requestId: request.requestId,
+      acceptedAt,
+      responseJson: JSON.stringify(response),
+    });
+    return response;
   });
 }
 
@@ -723,17 +1018,54 @@ export function acknowledgeConnectorCommand(
     throw new ConnectorAccessError("Command acknowledgement connector id did not match the access token.", 403);
   }
 
-  return withControlPlaneState((store) => {
+  const response = withControlPlaneState((store) => {
+    const currentAccess = requireActiveConnectorAccess(store, access);
+    const idempotentRequest = request as ConnectorCommandAckRequest & {
+      idempotencyKey?: string | null;
+    };
+    const receiptKey = idempotentRequest.idempotencyKey ?? request.requestId;
+    const existingReceipt = store.getRequestReceipt(currentAccess.connector.id, "command_ack", receiptKey);
+    if (existingReceipt) {
+      return {
+        response: parseStoredSyncResponse(existingReceipt.responseJson, ConnectorCommandAckResponseSchema),
+        updatedCommand: store.getCommand(request.commandId),
+      };
+    }
     const command = store.getCommand(request.commandId);
     if (!command) {
       throw new ConnectorAccessError("Connector command was not found.", 404);
     }
 
     if (
-      command.command.connectorId !== access.connector.id ||
-      command.command.workspaceId !== access.connector.workspaceId
+      command.command.connectorId !== currentAccess.connector.id ||
+      command.command.workspaceId !== currentAccess.connector.workspaceId
     ) {
       throw new ConnectorAccessError("Connector command is outside the connector workspace scope.", 403);
+    }
+
+    if (
+      command.status === request.status &&
+      (request.status !== "acked" || command.acknowledgedAt === request.acknowledgedAt) &&
+      (request.message ?? null) === command.lastMessage &&
+      JSON.stringify(request.result ?? null) === JSON.stringify(command.result ?? null)
+    ) {
+      const ackResponse = createCommandAckResponse({
+        commandId: request.commandId,
+        connectorId: currentAccess.connector.id,
+        acceptedAt,
+        status: request.status,
+      });
+      store.putRequestReceipt({
+        connectorId: currentAccess.connector.id,
+        requestKind: "command_ack",
+        requestId: receiptKey,
+        acceptedAt,
+        responseJson: JSON.stringify(ackResponse),
+      });
+      return {
+        response: ackResponse,
+        updatedCommand: command,
+      };
     }
 
     const updatedCommand = store.updateCommandStatus({
@@ -765,18 +1097,42 @@ export function acknowledgeConnectorCommand(
     }
 
     store.putConnector({
-      ...access.connector,
+      ...currentAccess.connector,
       lastSeenAt: acceptedAt,
       status: "active",
     });
 
-    return createCommandAckResponse({
+    const ackResponse = createCommandAckResponse({
       commandId: request.commandId,
-      connectorId: access.connector.id,
+      connectorId: currentAccess.connector.id,
       acceptedAt,
       status: request.status,
     });
+    store.putRequestReceipt({
+      connectorId: currentAccess.connector.id,
+      requestKind: "command_ack",
+      requestId: receiptKey,
+      acceptedAt,
+      responseJson: JSON.stringify(ackResponse),
+    });
+    return {
+      response: ackResponse,
+      updatedCommand,
+    };
   });
+
+  if (response.updatedCommand) {
+    void appendWorkspaceAuditEntry(
+      buildAcknowledgedConnectorCommandAuditEntry({
+        workspaceId: access.connector.workspaceId,
+        commandId: request.commandId,
+        acknowledgedAt: acceptedAt,
+        command: response.updatedCommand,
+      }),
+    );
+  }
+
+  return response.response;
 }
 
 export async function listWorkspaceConnectors(
@@ -827,12 +1183,8 @@ export async function listWorkspaceConnectors(
         capabilities: connector.capabilities,
         repositoryOwner: connector.repository.repo.owner,
         repositoryName: connector.repository.repo.name,
-        currentBranch: connector.repository.currentBranch,
-        headSha: connector.repository.headSha,
-        isDirty: connector.repository.isDirty,
         aheadBy: connector.repository.aheadBy,
         behindBy: connector.repository.behindBy,
-        workspaceRoot: connector.repository.workspaceRoot,
         daemonReachable: heartbeat?.localDaemon.reachable ?? false,
         pendingCommandCount,
         leasedCommandCount,
@@ -860,7 +1212,7 @@ export async function listWorkspaceConnectors(
               attemptCount: lastCommand.attemptCount,
               nextAttemptAt: lastCommand.nextAttemptAt,
               message: lastCommand.lastMessage,
-              result: lastCommand.result,
+              result: null,
             }
           : null,
         recentCommands: commands.slice(0, 8).map((command) => {
@@ -882,9 +1234,9 @@ export async function listWorkspaceConnectors(
             attemptCount: command.attemptCount,
             nextAttemptAt: command.nextAttemptAt,
             message: command.lastMessage,
-            result: command.result,
+            result: null,
             detailPath: getCommandDetailPath(command),
-            externalUrl: getCommandExternalUrl(command),
+            externalUrl: null,
             replayable: replay.replayable,
             replayStatus: replay.replayStatus,
             replayReason: replay.replayReason,
@@ -980,7 +1332,7 @@ export function queueConnectorCommand(
   request: ConnectorCommandDispatchRequest,
   queuedAt: string,
 ) {
-  return withControlPlaneState((store) => {
+  const queued = withControlPlaneState((store) => {
     const connector = store.getConnector(connectorId);
     if (!connector || connector.workspaceId !== workspaceSession.activeWorkspace.id) {
       throw new ConnectorAccessError("Connector was not found for the active workspace.", 404);
@@ -992,6 +1344,27 @@ export function queueConnectorCommand(
         health.reason ?? `Connector ${connector.machineName} is not available for command dispatch.`,
         409,
       );
+    }
+
+    if (request.type === "resolve_approval") {
+      const duplicateApprovalCommand = store
+        .listCommands(connectorId)
+        .find((candidate) => {
+          if (
+            candidate.command.workspaceId !== workspaceSession.activeWorkspace.id ||
+            candidate.command.type !== "resolve_approval" ||
+            (candidate.status !== "pending" && candidate.status !== "acked" && candidate.status !== "completed")
+          ) {
+            return false;
+          }
+
+          const payload = candidate.command.payload as { approvalId?: unknown; resolution?: unknown };
+          return payload.approvalId === request.approvalId && payload.resolution === request.resolution;
+        });
+
+      if (duplicateApprovalCommand) {
+        throw new ConnectorAccessError("Approval decision is already queued for connector delivery.", 409);
+      }
     }
 
     const commandId = `cmd_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
@@ -1023,8 +1396,25 @@ export function queueConnectorCommand(
       status: "pending" as const,
       queuedAt,
       message: `${request.type} queued for ${connector.machineName}.`,
+      repositoryOwner: connector.repository.repo.owner,
+      repositoryName: connector.repository.repo.name,
+      connectorMachineName: connector.machineName,
     };
   });
+
+  void appendWorkspaceAuditEntry(
+    buildQueuedConnectorCommandAuditEntry({
+      workspaceId: workspaceSession.activeWorkspace.id,
+      commandId: queued.commandId,
+      issuedAt: queued.queuedAt,
+      commandType: request.type as ConnectorCommandType,
+      repositoryOwner: queued.repositoryOwner,
+      repositoryName: queued.repositoryName,
+      connectorMachineName: queued.connectorMachineName,
+    }),
+  );
+
+  return queued;
 }
 
 export function findConnectorForRepository(

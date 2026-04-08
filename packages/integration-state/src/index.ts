@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -94,12 +95,45 @@ function resolveSqliteJournalMode(): SqliteJournalMode {
   });
 }
 
+function loadOrCreateIntegrityKey(keyPath: string): Buffer {
+  try {
+    const existing = fs.readFileSync(keyPath, "utf8").trim();
+    const decoded = Buffer.from(existing, "base64");
+    if (decoded.length !== 32) {
+      throw new InternalError("Integration state integrity key is malformed.", {
+        key_path: keyPath,
+      });
+    }
+    return decoded;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : null;
+    if (code && code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
+  const created = randomBytes(32);
+  const tempPath = `${keyPath}.${process.pid}.${Date.now()}.tmp`;
+  const handle = fs.openSync(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+  try {
+    fs.writeFileSync(handle, created.toString("base64"), "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  fs.renameSync(tempPath, keyPath);
+  fs.chmodSync(keyPath, 0o600);
+  return created;
+}
+
 export interface IntegrationStateCollection<TDocument> {
   parse(key: string, value: unknown): TDocument;
 }
 
 export interface IntegrationStateOptions<TCollections extends Record<string, unknown>> {
   dbPath: string;
+  integrityKeyPath?: string;
   collections: {
     [K in keyof TCollections & string]: IntegrationStateCollection<TCollections[K]>;
   };
@@ -118,17 +152,22 @@ export interface SqliteCheckpointResult {
 export class IntegrationState<TCollections extends Record<string, unknown>> {
   private readonly db: BetterSqliteDatabase;
   private readonly collections: Map<string, IntegrationStateCollection<unknown>>;
+  private readonly integrityKey: Buffer;
 
   constructor(options: IntegrationStateOptions<TCollections>) {
     this.collections = new Map(Object.entries(options.collections));
 
     try {
-      fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
+      fs.mkdirSync(path.dirname(options.dbPath), { recursive: true, mode: 0o700 });
+      this.integrityKey = loadOrCreateIntegrityKey(
+        options.integrityKeyPath ?? path.join(path.dirname(options.dbPath), ".state-integrity.key"),
+      );
       this.db = new Database(options.dbPath);
       this.db.pragma(`journal_mode = ${resolveSqliteJournalMode()}`);
       this.db.pragma(`busy_timeout = ${resolveSqliteBusyTimeoutMs()}`);
       this.db.pragma("foreign_keys = ON");
       this.migrate();
+      this.backfillDocumentIntegrity();
     } catch (error) {
       throw new InternalError("Failed to initialize integration state.", {
         cause: error instanceof Error ? error.message : String(error),
@@ -143,6 +182,7 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
         collection TEXT NOT NULL,
         key TEXT NOT NULL,
         body_json TEXT NOT NULL,
+        body_hmac TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         PRIMARY KEY (collection, key)
@@ -151,6 +191,44 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
       CREATE INDEX IF NOT EXISTS idx_documents_collection_updated
         ON documents (collection, updated_at);
     `);
+    const columns = this.db.prepare("PRAGMA table_info(documents)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "body_hmac")) {
+      this.db.exec("ALTER TABLE documents ADD COLUMN body_hmac TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  private computeDocumentHmac(collection: string, key: string, bodyJson: string): string {
+    return createHmac("sha256", this.integrityKey).update(collection, "utf8").update("\0", "utf8").update(key, "utf8").update("\0", "utf8").update(bodyJson, "utf8").digest("hex");
+  }
+
+  private verifyDocumentIntegrity(collection: string, key: string, bodyJson: string, bodyHmac: string): void {
+    const expected = this.computeDocumentHmac(collection, key, bodyJson);
+    if (bodyHmac !== expected) {
+      throw new AgentGitError("Integration state document failed integrity verification.", "STORAGE_UNAVAILABLE", {
+        collection,
+        key,
+      });
+    }
+  }
+
+  private backfillDocumentIntegrity(): void {
+    try {
+      const rows = this.db
+        .prepare("SELECT collection, key, body_json FROM documents WHERE body_hmac = '' OR body_hmac IS NULL")
+        .all() as Array<{ collection: string; key: string; body_json: string }>;
+      if (rows.length === 0) {
+        return;
+      }
+
+      const update = this.db.prepare("UPDATE documents SET body_hmac = ? WHERE collection = ? AND key = ?");
+      this.withImmediateTransaction(() => {
+        for (const row of rows) {
+          update.run(this.computeDocumentHmac(row.collection, row.key, row.body_json), row.collection, row.key);
+        }
+      });
+    } catch (error) {
+      throw storageUnavailableError("Integration state integrity backfill failed.", error);
+    }
   }
 
   private getCollection<K extends CollectionName<TCollections>>(
@@ -190,7 +268,9 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
     collection: K,
     key: string,
     bodyJson: string,
+    bodyHmac: string,
   ): TCollections[K] {
+    this.verifyDocumentIntegrity(collection, key, bodyJson, bodyHmac);
     let parsed: unknown;
     try {
       parsed = JSON.parse(bodyJson);
@@ -208,18 +288,20 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
   put<K extends CollectionName<TCollections>>(collection: K, key: string, document: TCollections[K]): TCollections[K] {
     const normalized = this.parseDocument(collection, key, document);
     const bodyJson = JSON.stringify(normalized);
+    const bodyHmac = this.computeDocumentHmac(collection, key, bodyJson);
     const now = new Date().toISOString();
 
     try {
       this.db
         .prepare(
-          `INSERT INTO documents (collection, key, body_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)
+          `INSERT INTO documents (collection, key, body_json, body_hmac, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(collection, key) DO UPDATE SET
              body_json = excluded.body_json,
+             body_hmac = excluded.body_hmac,
              updated_at = excluded.updated_at`,
         )
-        .run(collection, key, bodyJson, now, now);
+        .run(collection, key, bodyJson, bodyHmac, now, now);
     } catch (error) {
       throw storageUnavailableError("Integration state document could not be written.", error, {
         collection,
@@ -233,15 +315,16 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
   putIfAbsent<K extends CollectionName<TCollections>>(collection: K, key: string, document: TCollections[K]): boolean {
     const normalized = this.parseDocument(collection, key, document);
     const bodyJson = JSON.stringify(normalized);
+    const bodyHmac = this.computeDocumentHmac(collection, key, bodyJson);
     const now = new Date().toISOString();
 
     try {
       const result = this.db
         .prepare(
-          `INSERT OR IGNORE INTO documents (collection, key, body_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO documents (collection, key, body_json, body_hmac, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(collection, key, bodyJson, now, now);
+        .run(collection, key, bodyJson, bodyHmac, now, now);
       return result.changes > 0;
     } catch (error) {
       throw storageUnavailableError("Integration state document could not be written.", error, {
@@ -252,10 +335,12 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
   }
 
   get<K extends CollectionName<TCollections>>(collection: K, key: string): TCollections[K] | null {
-    let row: { body_json: string } | undefined;
+    let row: { body_json: string; body_hmac: string } | undefined;
     try {
-      row = this.db.prepare("SELECT body_json FROM documents WHERE collection = ? AND key = ?").get(collection, key) as
-        | { body_json: string }
+      row = this.db
+        .prepare("SELECT body_json, body_hmac FROM documents WHERE collection = ? AND key = ?")
+        .get(collection, key) as
+        | { body_json: string; body_hmac: string }
         | undefined;
     } catch (error) {
       throw storageUnavailableError("Integration state document could not be read.", error, {
@@ -268,22 +353,22 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
       return null;
     }
 
-    return this.deserializeRow(collection, key, row.body_json);
+    return this.deserializeRow(collection, key, row.body_json, row.body_hmac);
   }
 
   list<K extends CollectionName<TCollections>>(collection: K, filter?: Partial<TCollections[K]>): TCollections[K][] {
-    let rows: Array<{ key: string; body_json: string }>;
+    let rows: Array<{ key: string; body_json: string; body_hmac: string }>;
     try {
       rows = this.db
-        .prepare("SELECT key, body_json FROM documents WHERE collection = ? ORDER BY key ASC")
-        .all(collection) as Array<{ key: string; body_json: string }>;
+        .prepare("SELECT key, body_json, body_hmac FROM documents WHERE collection = ? ORDER BY key ASC")
+        .all(collection) as Array<{ key: string; body_json: string; body_hmac: string }>;
     } catch (error) {
       throw storageUnavailableError("Integration state documents could not be listed.", error, {
         collection,
       });
     }
 
-    const documents = rows.map((row) => this.deserializeRow(collection, row.key, row.body_json));
+    const documents = rows.map((row) => this.deserializeRow(collection, row.key, row.body_json, row.body_hmac));
     if (!filter) {
       return documents;
     }
@@ -299,12 +384,36 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
   delete<K extends CollectionName<TCollections>>(collection: K, key: string): boolean {
     try {
       const result = this.db.prepare("DELETE FROM documents WHERE collection = ? AND key = ?").run(collection, key);
+      if (result.changes > 0) {
+        this.checkpointWal();
+      }
       return result.changes > 0;
     } catch (error) {
       throw storageUnavailableError("Integration state document could not be deleted.", error, {
         collection,
         key,
       });
+    }
+  }
+
+  withImmediateTransaction<T>(run: () => T): T {
+    try {
+      this.db.prepare("BEGIN IMMEDIATE").run();
+    } catch (error) {
+      throw storageUnavailableError("Integration state transaction failed.", error);
+    }
+
+    try {
+      const result = run();
+      this.db.prepare("COMMIT").run();
+      return result;
+    } catch (error) {
+      try {
+        this.db.prepare("ROLLBACK").run();
+      } catch (rollbackError) {
+        throw storageUnavailableError("Integration state transaction rollback failed.", rollbackError);
+      }
+      throw error;
     }
   }
 

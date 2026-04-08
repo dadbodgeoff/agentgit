@@ -72,7 +72,7 @@ describe("authority session hardening", () => {
 
     expect(result.daemon_started).toBe(false);
     expect(buildCalls.length).toBe(2);
-    expect(sleepCalls).toBe(1);
+    expect(sleepCalls).toBe(0);
   });
 
   it("retries after a started daemon still fails its first hello and shuts that daemon down", async () => {
@@ -85,7 +85,7 @@ describe("authority session hardening", () => {
     const result = await __testables.ensureAuthoritySession(tempDir, process.env, path.join(tempDir, "runtime"), {
       build_client: () => {
         buildCalls += 1;
-        if (buildCalls <= 2) {
+        if (buildCalls <= 3) {
           return fakeClient(async () => {
             throw connectFailure();
           });

@@ -341,9 +341,21 @@ export const WorkspaceBillingSchema = z
     invoices: z.array(BillingInvoiceSchema),
     stripeCustomerId: z.string().min(1).optional(),
     stripeSubscriptionId: z.string().min(1).optional(),
+    lastStripeEventId: z.string().min(1).optional(),
+    lastStripeEventCreatedAt: TimestampStringSchema.optional(),
+    lastStripeSyncedAt: TimestampStringSchema.optional(),
   })
   .strict();
 export type WorkspaceBilling = z.infer<typeof WorkspaceBillingSchema>;
+
+export const WorkspaceBillingApiSchema = WorkspaceBillingSchema.omit({
+  stripeCustomerId: true,
+  stripeSubscriptionId: true,
+  lastStripeEventId: true,
+  lastStripeEventCreatedAt: true,
+  lastStripeSyncedAt: true,
+});
+export type WorkspaceBillingApi = z.infer<typeof WorkspaceBillingApiSchema>;
 
 export const BillingUpdateSchema = z
   .object({
@@ -358,7 +370,7 @@ export type BillingUpdate = z.infer<typeof BillingUpdateSchema>;
 
 export const BillingSaveResponseSchema = z
   .object({
-    billing: WorkspaceBillingSchema,
+    billing: WorkspaceBillingApiSchema,
     savedAt: TimestampStringSchema,
     message: z.string().min(1),
   })
@@ -1321,9 +1333,7 @@ export const RepositoryPolicyVersionSummarySchema = z
     id: z.string().min(1),
     createdAt: TimestampStringSchema,
     changeSource: RepositoryPolicyChangeSourceSchema,
-    actorUserId: z.string().min(1).nullable().default(null),
     actorName: z.string().min(1),
-    actorEmail: z.string().email(),
     profileName: z.string().min(1),
     policyVersion: z.string().min(1),
     ruleCount: z.number().int().nonnegative(),
@@ -1491,12 +1501,8 @@ export const WorkspaceConnectorSummarySchema = z
     providerIdentity: ProviderRepositoryIdentitySchema,
     repositoryOwner: z.string().min(1),
     repositoryName: z.string().min(1),
-    currentBranch: z.string().min(1),
-    headSha: z.string().min(7),
-    isDirty: z.boolean(),
     aheadBy: z.number().int().nonnegative(),
     behindBy: z.number().int().nonnegative(),
-    workspaceRoot: z.string().min(1),
     daemonReachable: z.boolean(),
     pendingCommandCount: z.number().int().nonnegative(),
     leasedCommandCount: z.number().int().nonnegative(),

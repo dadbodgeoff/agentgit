@@ -22,6 +22,11 @@ function makeJournal(options: Partial<RunJournalOptions> = {}): RunJournal {
   return currentJournal;
 }
 
+function artifactPathFor(runId: string, artifactId: string): string {
+  const digest = crypto.createHash("sha256").update(`${runId}:${artifactId}`).digest("hex");
+  return path.join(currentDir!, "artifacts", runId, digest.slice(0, 2), digest.slice(2, 4), `${artifactId}.txt`);
+}
+
 function makeConfidenceAssessment(score: number): ActionRecord["confidence_assessment"] {
   return {
     engine_version: "test-confidence/v1",
@@ -223,6 +228,46 @@ describe("RunJournal", () => {
     expect(sequence).toBe(3);
     expect(summary?.event_count).toBe(3);
     expect(summary?.latest_event?.event_type).toBe("action.normalized");
+  });
+
+  it("uses server-side monotonic timestamps for lifecycle and appended events", () => {
+    vi.useFakeTimers();
+    try {
+      const journal = makeJournal();
+      vi.setSystemTime(new Date("2026-04-01T12:00:00.000Z"));
+      journal.registerRunLifecycle({
+        run_id: "run_test",
+        session_id: "sess_test",
+        workflow_name: "workflow",
+        agent_framework: "cli",
+        agent_name: "agentgit-cli",
+        workspace_roots: ["/workspace/project"],
+        client_metadata: {},
+        budget_config: {
+          max_mutating_actions: null,
+          max_destructive_actions: null,
+        },
+        created_at: "2001-01-01T00:00:00.000Z",
+      });
+
+      vi.setSystemTime(new Date("2026-04-01T12:00:05.000Z"));
+      journal.appendRunEvent("run_test", {
+        event_type: "action.normalized",
+        occurred_at: "1999-01-01T00:00:00.000Z",
+        recorded_at: "1999-01-01T00:00:00.000Z",
+        payload: {
+          action_id: "act_test",
+        },
+      });
+
+      const summary = journal.getRunSummary("run_test");
+      expect(summary?.created_at).toBe("2026-04-01T12:00:00.000Z");
+      expect(summary?.started_at).toBe("2026-04-01T12:00:00.001Z");
+      expect(summary?.latest_event?.occurred_at).toBe("2026-04-01T12:00:05.000Z");
+      expect(summary?.latest_event?.recorded_at).toBe("2026-04-01T12:00:05.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("clears cached helper facts when new run events arrive", () => {
@@ -503,14 +548,7 @@ describe("RunJournal", () => {
     });
 
     const availableDigest = journal.getRunArtifactStateDigest("run_artifact_digest");
-    const digest = crypto.createHash("sha256").update(artifactId).digest("hex");
-    const artifactPath = path.join(
-      currentDir!,
-      "artifacts",
-      digest.slice(0, 2),
-      digest.slice(2, 4),
-      `${artifactId}.txt`,
-    );
+    const artifactPath = artifactPathFor("run_artifact_digest", artifactId);
     fs.rmSync(artifactPath, { force: true });
 
     const missingDigest = journal.getRunArtifactStateDigest("run_artifact_digest");
@@ -657,14 +695,8 @@ describe("RunJournal", () => {
       content: "hello",
     });
 
-    const referencedDigest = crypto.createHash("sha256").update("artifact_referenced_tampered").digest("hex");
-    const referencedPath = path.join(
-      currentDir!,
-      "artifacts",
-      referencedDigest.slice(0, 2),
-      referencedDigest.slice(2, 4),
-      "artifact_referenced_tampered.txt",
-    );
+    const referencedPath = artifactPathFor("run_artifact_orphans", "artifact_referenced_tampered");
+    fs.mkdirSync(path.dirname(referencedPath), { recursive: true });
     fs.writeFileSync(referencedPath, "HELLO!", "utf8");
 
     const orphanPath = path.join(currentDir!, "artifacts", "or", "ph", "artifact_orphaned_blob.txt");
@@ -749,17 +781,7 @@ describe("RunJournal", () => {
       content: "three",
     });
 
-    const missingDigest = crypto.createHash("sha256").update("artifact_missing_status").digest("hex");
-    fs.rmSync(
-      path.join(
-        currentDir!,
-        "artifacts",
-        missingDigest.slice(0, 2),
-        missingDigest.slice(2, 4),
-        "artifact_missing_status.txt",
-      ),
-      { force: true },
-    );
+    fs.rmSync(artifactPathFor("run_maintenance", "artifact_missing_status"), { force: true });
     const rawDb = new Database(path.join(currentDir!, "authority.db"));
     rawDb
       .prepare("UPDATE artifacts SET expires_at = ?, expired_at = ? WHERE artifact_id = ?")
@@ -912,9 +934,7 @@ describe("RunJournal", () => {
       content: "oops",
     });
 
-    const artifactDir = path.join(currentDir!, "artifacts");
-    const digest = crypto.createHash("sha256").update("artifact_missing_blob").digest("hex");
-    const artifactPath = path.join(artifactDir, digest.slice(0, 2), digest.slice(2, 4), "artifact_missing_blob.txt");
+    const artifactPath = artifactPathFor("run_artifact_missing", "artifact_missing_blob");
     fs.rmSync(artifactPath, { force: true });
 
     expect(journal.getArtifactStatus("artifact_missing_blob")).toBe("missing");
@@ -955,9 +975,7 @@ describe("RunJournal", () => {
       content: "retained",
     });
 
-    const artifactDir = path.join(currentDir!, "artifacts");
-    const digest = crypto.createHash("sha256").update("artifact_expired_blob").digest("hex");
-    const artifactPath = path.join(artifactDir, digest.slice(0, 2), digest.slice(2, 4), "artifact_expired_blob.txt");
+    const artifactPath = artifactPathFor("run_artifact_expired", "artifact_expired_blob");
 
     expect(fs.existsSync(artifactPath)).toBe(false);
     expect(journal.getArtifactStatus("artifact_expired_blob")).toBe("expired");
@@ -1000,9 +1018,7 @@ describe("RunJournal", () => {
       content: "corrupted",
     });
 
-    const artifactDir = path.join(currentDir!, "artifacts");
-    const digest = crypto.createHash("sha256").update("artifact_corrupted_blob").digest("hex");
-    const artifactPath = path.join(artifactDir, digest.slice(0, 2), digest.slice(2, 4), "artifact_corrupted_blob.txt");
+    const artifactPath = artifactPathFor("run_artifact_corrupted", "artifact_corrupted_blob");
     fs.rmSync(artifactPath, { force: true });
     fs.mkdirSync(artifactPath, { recursive: true });
 
@@ -1044,9 +1060,8 @@ describe("RunJournal", () => {
       content: "original!",
     });
 
-    const artifactDir = path.join(currentDir!, "artifacts");
-    const digest = crypto.createHash("sha256").update("artifact_tampered_blob").digest("hex");
-    const artifactPath = path.join(artifactDir, digest.slice(0, 2), digest.slice(2, 4), "artifact_tampered_blob.txt");
+    const artifactPath = artifactPathFor("run_artifact_tampered", "artifact_tampered_blob");
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
     fs.writeFileSync(artifactPath, "tampered!", "utf8");
 
     expect(journal.getArtifactStatus("artifact_tampered_blob")).toBe("tampered");

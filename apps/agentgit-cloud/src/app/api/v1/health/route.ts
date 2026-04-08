@@ -27,21 +27,18 @@ export async function GET(request: Request): Promise<Response> {
   const authority = await withWorkspaceAuthorityClient(access.workspaceSession.activeWorkspace.id, async () => ({
     level: "ok" as const,
     message: "Authority daemon responded successfully.",
-  })).catch((error) => ({
+  })).catch((_error) => ({
     level: "warn" as const,
-    message:
-      error instanceof Error && error.message.length > 0
-        ? error.message
-        : "Authority daemon did not respond to the readiness probe.",
+    message: "Authority daemon did not respond to the readiness probe.",
   }));
   const database = await pingCloudDatabase()
     .then(() => ({
       level: "ok" as const,
       message: "Cloud database responded successfully.",
     }))
-    .catch((error) => ({
+    .catch((_error) => ({
       level: "warn" as const,
-      message: error instanceof Error && error.message.length > 0 ? error.message : "Cloud database did not respond.",
+      message: "Cloud database did not respond.",
     }));
 
   const allChecks = [
@@ -62,12 +59,10 @@ export async function GET(request: Request): Promise<Response> {
     {
       status: summarizeOperationalHealth(allChecks),
       checkedAt: new Date().toISOString(),
-      workspaceId: access.workspaceSession.activeWorkspace.id,
       runtime: {
         mode: runtime.mode,
-        authBaseUrl: runtime.authBaseUrl,
-        agentgitRoot: runtime.agentgitRoot,
-        workspaceRoots: runtime.workspaceRoots,
+        authConfigured: Boolean(runtime.authBaseUrl),
+        workspaceRootsConfigured: runtime.workspaceRoots.length,
       },
       checks: allChecks,
     },

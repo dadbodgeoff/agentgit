@@ -2,6 +2,7 @@ import { ConnectorHeartbeatRequestSchema } from "@agentgit/cloud-sync-protocol";
 
 import { requireConnectorSession } from "@/lib/auth/connector-session";
 import { ConnectorAccessError, recordConnectorHeartbeat } from "@/lib/backend/control-plane/connectors";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
 export async function POST(request: Request) {
@@ -12,8 +13,16 @@ export async function POST(request: Request) {
     return connectorSession.denied;
   }
 
-  const body = await request.json().catch(() => null);
-  const parsed = ConnectorHeartbeatRequestSchema.safeParse(body);
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+    throw error;
+  }
+  const parsed = ConnectorHeartbeatRequestSchema.safeParse(rawBody);
 
   if (!parsed.success) {
     return jsonWithRequestId(

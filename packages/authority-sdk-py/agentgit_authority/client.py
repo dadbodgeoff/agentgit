@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import stat
 import time
 import uuid
 from dataclasses import dataclass
@@ -30,13 +31,102 @@ class AuthorityClientOptions:
     connect_retry_delay_s: float = 0.05
 
 
+MAX_CONNECT_RETRY_DELAY_S = 5.0
+MAX_RESPONSE_BYTES = 1_048_576
+
+
+def _current_uid() -> int | None:
+    getuid = getattr(os, "getuid", None)
+    return getuid() if callable(getuid) else None
+
+
+def _validate_trusted_local_path(
+    path: Path,
+    *,
+    code: str,
+    message: str,
+    expected_type: str,
+    allow_missing: bool,
+) -> None:
+    try:
+        path_stat = path.lstat()
+    except FileNotFoundError:
+        if allow_missing:
+            return
+        raise AuthorityClientTransportError(
+            message,
+            code,
+            False,
+            {"path": str(path), "reason": "missing"},
+        ) from None
+
+    if stat.S_ISLNK(path_stat.st_mode):
+        raise AuthorityClientTransportError(
+            message,
+            code,
+            False,
+            {"path": str(path), "reason": "symlink"},
+        )
+
+    current_uid = _current_uid()
+    if current_uid is not None and path_stat.st_uid != current_uid:
+        raise AuthorityClientTransportError(
+            message,
+            code,
+            False,
+            {"path": str(path), "reason": "owner_mismatch", "owner_uid": path_stat.st_uid},
+        )
+
+    if expected_type == "directory" and not stat.S_ISDIR(path_stat.st_mode):
+        raise AuthorityClientTransportError(
+            message,
+            code,
+            False,
+            {"path": str(path), "reason": "not_directory"},
+        )
+    if expected_type == "socket" and not stat.S_ISSOCK(path_stat.st_mode):
+        raise AuthorityClientTransportError(
+            message,
+            code,
+            False,
+            {"path": str(path), "reason": "not_socket"},
+        )
+    if expected_type == "file" and not stat.S_ISREG(path_stat.st_mode):
+        raise AuthorityClientTransportError(
+            message,
+            code,
+            False,
+            {"path": str(path), "reason": "not_file"},
+        )
+
+
+def _resolve_project_root() -> str:
+    for env_key in ("AGENTGIT_ROOT", "INIT_CWD"):
+        configured = os.environ.get(env_key)
+        if not configured:
+            continue
+        candidate = Path(configured).expanduser().resolve(strict=False)
+        _validate_trusted_local_path(
+            candidate,
+            code="SOCKET_PATH_UNTRUSTED",
+            message="Authority daemon root directory is not trusted.",
+            expected_type="directory",
+            allow_missing=False,
+        )
+        return str(candidate)
+
+    return os.path.abspath(os.getcwd())
+
+
 class AuthorityClient:
     """Minimal local IPC client for the authority daemon."""
 
     def __init__(self, options: AuthorityClientOptions | None = None) -> None:
         resolved = options or AuthorityClientOptions()
-        project_root = os.environ.get("AGENTGIT_ROOT") or os.environ.get("INIT_CWD") or os.getcwd()
-        self._socket_path = resolved.socket_path or str(Path(project_root) / ".agentgit" / "authority.sock")
+        project_root = _resolve_project_root()
+        self._socket_path = os.path.abspath(
+            resolved.socket_path or os.path.join(project_root, ".agentgit", "authority.sock")
+        )
         self._client_type = resolved.client_type
         self._client_version = resolved.client_version
         self._connect_timeout_s = resolved.connect_timeout_s
@@ -44,6 +134,38 @@ class AuthorityClient:
         self._max_connect_retries = resolved.max_connect_retries
         self._connect_retry_delay_s = resolved.connect_retry_delay_s
         self._session_id: str | None = None
+
+    def _validate_socket_path(self) -> None:
+        socket_path = Path(self._socket_path)
+        _validate_trusted_local_path(
+            socket_path.parent,
+            code="SOCKET_PATH_UNTRUSTED",
+            message="Authority daemon socket directory is not trusted.",
+            expected_type="directory",
+            allow_missing=True,
+        )
+        _validate_trusted_local_path(
+            socket_path,
+            code="SOCKET_PATH_UNTRUSTED",
+            message="Authority daemon socket path is not trusted.",
+            expected_type="socket",
+            allow_missing=True,
+        )
+
+    def _read_socket_auth_token(self) -> str | None:
+        token_path = Path(f"{self._socket_path}.token")
+        if not token_path.exists():
+            return None
+
+        _validate_trusted_local_path(
+            token_path,
+            code="SOCKET_AUTH_TOKEN_UNTRUSTED",
+            message="Authority daemon auth token path is not trusted.",
+            expected_type="file",
+            allow_missing=False,
+        )
+        token = token_path.read_text(encoding="utf-8").strip()
+        return token or None
 
     @property
     def session_id(self) -> str | None:
@@ -1275,7 +1397,7 @@ class AuthorityClient:
                 )
                 if not can_retry:
                     raise
-                time.sleep(self._connect_retry_delay_s)
+                time.sleep(min(max(self._connect_retry_delay_s, 0.0), MAX_CONNECT_RETRY_DELAY_S))
 
         if last_error:
             raise last_error
@@ -1288,7 +1410,9 @@ class AuthorityClient:
         )
 
     def _write_and_read_line_once(self, payload: JSONObject) -> JSONObject:
-        request_body = f"{json.dumps(payload)}\n".encode("utf-8")
+        self._validate_socket_path()
+        auth_token = self._read_socket_auth_token()
+        request_body = f"{f'{auth_token}\\n' if auth_token else ''}{json.dumps(payload)}\n".encode("utf-8")
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 
         try:
@@ -1301,7 +1425,7 @@ class AuthorityClient:
                     "SOCKET_CONNECT_TIMEOUT",
                     True,
                     {
-                        "socket_path": self._socket_path,
+                        "socket_name": Path(self._socket_path).name,
                         "timeout_s": self._connect_timeout_s,
                     },
                 ) from error
@@ -1311,7 +1435,7 @@ class AuthorityClient:
                     "SOCKET_CONNECT_FAILED",
                     True,
                     {
-                        "socket_path": self._socket_path,
+                        "socket_name": Path(self._socket_path).name,
                         "cause": str(error),
                     },
                 ) from error
@@ -1329,7 +1453,7 @@ class AuthorityClient:
                         "SOCKET_RESPONSE_TIMEOUT",
                         False,
                         {
-                            "socket_path": self._socket_path,
+                            "socket_name": Path(self._socket_path).name,
                             "timeout_s": self._response_timeout_s,
                         },
                     ) from error
@@ -1340,19 +1464,42 @@ class AuthorityClient:
                         "SOCKET_CLOSED",
                         False,
                         {
-                            "socket_path": self._socket_path,
+                            "socket_name": Path(self._socket_path).name,
                         },
                     )
 
                 buffer.extend(chunk)
+                if len(buffer) > MAX_RESPONSE_BYTES:
+                    raise AuthorityClientTransportError(
+                        "Authority daemon response exceeded the maximum supported size.",
+                        "INVALID_RESPONSE",
+                        False,
+                        {
+                            "max_bytes": MAX_RESPONSE_BYTES,
+                        },
+                    )
                 newline_index = buffer.find(b"\n")
                 if newline_index >= 0:
                     line = buffer[:newline_index].decode("utf-8").strip()
                     try:
-                        parsed = json.loads(line)
+                        parsed = json.loads(
+                            line,
+                            parse_constant=lambda value: (_ for _ in ()).throw(
+                                ValueError(f"Unsupported constant: {value}")
+                            ),
+                        )
                     except json.JSONDecodeError as error:
                         raise AuthorityClientTransportError(
                             "Daemon returned malformed JSON.",
+                            "INVALID_RESPONSE",
+                            False,
+                            {
+                                "cause": str(error),
+                            },
+                        ) from error
+                    except ValueError as error:
+                        raise AuthorityClientTransportError(
+                            "Daemon returned unsupported JSON values.",
                             "INVALID_RESPONSE",
                             False,
                             {
@@ -1377,8 +1524,16 @@ def _is_response_envelope(value: object) -> bool:
     if not isinstance(value, dict):
         return False
 
-    required_keys = {"api_version", "request_id", "ok", "result", "error"}
-    return required_keys.issubset(value.keys())
+    api_version = value.get("api_version")
+    request_id = value.get("request_id")
+    ok = value.get("ok")
+    if not isinstance(api_version, str) or not isinstance(request_id, str) or not isinstance(ok, bool):
+        return False
+
+    if ok:
+        return isinstance(value.get("result"), dict)
+
+    return isinstance(value.get("error"), dict)
 
 
 def _normalize_recovery_payload(target: str | JSONObject) -> JSONObject:

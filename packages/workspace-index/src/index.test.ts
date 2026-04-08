@@ -253,20 +253,29 @@ describe("WorkspaceIndex", () => {
     expect(prepared.files.map((file) => file.path)).toEqual(["src/app.ts"]);
   });
 
-  it("returns no-op compaction in v1", async () => {
+  it("compacts snapshots beyond the configured retention window", async () => {
     await writeFile(workspaceRoot, "file.txt", "hello");
-    const prepared = await index.prepareScan();
+    const firstPrepared = await index.prepareScan();
     await index.commitSnapshot({
-      preparedSet: prepared,
+      preparedSet: firstPrepared,
       trigger_reason: "initial",
       anchor_path: path.join(workspaceRoot, "file.txt"),
     });
 
-    await expect(index.compact(20)).resolves.toEqual({
-      snaps_removed: 0,
-      bytes_freed: 0,
-      compacted_snap_id: null,
+    await writeFile(workspaceRoot, "file.txt", "hello again");
+    const secondPrepared = await index.prepareScan();
+    await index.commitSnapshot({
+      preparedSet: secondPrepared,
+      trigger_reason: "update",
+      anchor_path: path.join(workspaceRoot, "file.txt"),
     });
+
+    const result = await index.compact(1);
+
+    expect(result.snaps_removed).toBe(1);
+    expect(result.bytes_freed).toBeGreaterThanOrEqual(0);
+    expect(result.compacted_snap_id).not.toBeNull();
+    expect(index.listSnapshots()).toHaveLength(1);
   });
 
   it("restores only the requested path subset from a prior snapshot", async () => {

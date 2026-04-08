@@ -14,6 +14,8 @@ import { cloudRateLimitBuckets } from "@/lib/db/schema";
 type RateLimitScope =
   | "api_ip"
   | "api_workspace"
+  | "connector_bootstrap_ip"
+  | "connector_bootstrap_workspace"
   | "connector_ip"
   | "connector_workspace"
   | "connector_register_ip"
@@ -33,6 +35,9 @@ type RateLimitDecision = {
   resetAt: string;
   retryAfterSeconds: number;
 };
+
+let lastCloudRateLimitPruneAt = 0;
+const CLOUD_RATE_LIMIT_PRUNE_INTERVAL_MS = 60_000;
 
 function getRateLimitDbPath() {
   const root = process.env.AGENTGIT_ROOT ?? process.cwd();
@@ -135,7 +140,18 @@ async function consumeRateLimit(params: {
   }
 
   const db = getCloudDatabase();
-  await db.delete(cloudRateLimitBuckets).where(sql`${cloudRateLimitBuckets.resetAt} < ${new Date(nowMs)}`);
+  if (nowMs - lastCloudRateLimitPruneAt >= CLOUD_RATE_LIMIT_PRUNE_INTERVAL_MS) {
+    lastCloudRateLimitPruneAt = nowMs;
+    void db.execute(sql`
+      delete from cloud_rate_limit_buckets
+      where ctid in (
+        select ctid
+        from cloud_rate_limit_buckets
+        where reset_at < ${new Date(nowMs)}
+        limit 1000
+      )
+    `);
+  }
 
   const [row] = await db
     .insert(cloudRateLimitBuckets)
@@ -186,12 +202,19 @@ function buildRateLimitResponse(decision: RateLimitDecision, message: string) {
   );
 }
 
+function trustProxyHeaders() {
+  const value = process.env.AGENTGIT_TRUST_PROXY_HEADERS?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 function getClientIp(request: Request): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const [firstIp] = forwarded.split(",");
-    if (firstIp?.trim()) {
-      return firstIp.trim();
+  if (trustProxyHeaders()) {
+    const forwarded = request.headers.get("x-forwarded-for");
+    if (forwarded) {
+      const [firstIp] = forwarded.split(",");
+      if (firstIp?.trim()) {
+        return firstIp.trim();
+      }
     }
   }
 
@@ -275,6 +298,36 @@ export async function enforceConnectorRegistrationRateLimits(
     return buildRateLimitResponse(
       workspaceDecision,
       "Workspace connector registration quota exceeded. Retry in a minute.",
+    );
+  }
+
+  return null;
+}
+
+export async function enforceConnectorBootstrapTokenRateLimits(
+  request: Request,
+  workspaceId: string,
+): Promise<NextResponse | null> {
+  const ipDecision = await consumeRateLimit({
+    scope: "connector_bootstrap_ip",
+    identifier: getClientIp(request),
+    limit: 10,
+    windowMs: 60_000,
+  });
+  if (!ipDecision.allowed) {
+    return buildRateLimitResponse(ipDecision, "Too many bootstrap token requests. Retry in a minute.");
+  }
+
+  const workspaceDecision = await consumeRateLimit({
+    scope: "connector_bootstrap_workspace",
+    identifier: workspaceId,
+    limit: 20,
+    windowMs: 60_000,
+  });
+  if (!workspaceDecision.allowed) {
+    return buildRateLimitResponse(
+      workspaceDecision,
+      "Workspace bootstrap token quota exceeded. Retry in a minute.",
     );
   }
 

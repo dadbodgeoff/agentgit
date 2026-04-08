@@ -51,6 +51,7 @@ describe("sync heartbeat route", () => {
           authorization: "Bearer agcs_test",
         },
         body: JSON.stringify({
+          requestId: "req_heartbeat_01",
           connectorId: "conn_01",
           sentAt: "2026-04-07T18:05:00Z",
           repository: {

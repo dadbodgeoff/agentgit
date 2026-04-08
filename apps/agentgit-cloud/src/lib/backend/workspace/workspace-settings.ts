@@ -50,6 +50,7 @@ const DEFAULT_WORKSPACE_SETTINGS = {
   | "requireRejectComment"
   | "enterpriseSso"
 >;
+const OIDC_DISCOVERY_TIMEOUT_MS = 5_000;
 
 export async function resolveWorkspaceSettings(workspaceSession: WorkspaceSession): Promise<WorkspaceSettings> {
   const persistedSettings = await getStoredWorkspaceSettings(workspaceSession.activeWorkspace.id);
@@ -104,6 +105,7 @@ export async function saveWorkspaceSettings(
     const normalizedIssuer = settings.enterpriseSso.issuerUrl.replace(/\/+$/, "");
     const response = await fetch(`${normalizedIssuer}/.well-known/openid-configuration`, {
       cache: "no-store",
+      signal: AbortSignal.timeout(OIDC_DISCOVERY_TIMEOUT_MS),
     }).catch(() => null);
 
     if (!response?.ok) {

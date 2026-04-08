@@ -1,3 +1,4 @@
+import dns from "node:dns/promises";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -28,9 +29,12 @@ function parseHostRule(input: string): HostRule {
       value: input,
     });
   }
-  const host = parts[0]!;
+  const host = parts[0]!.replace(/\.$/, "");
   const port = parts[1] ? Number(parts[1]) : undefined;
-  if (!/^[a-z0-9.-]+$/.test(host) || host.startsWith(".") || host.endsWith(".")) {
+  if (
+    host.length === 0 ||
+    (!net.isIP(host) && (!/^[a-z0-9.-]+$/.test(host) || host.startsWith(".") || host.endsWith(".") || !host.includes(".")))
+  ) {
     throw new AgentGitError("Contained egress host entry is malformed.", "BAD_REQUEST", {
       value: input,
     });
@@ -47,7 +51,7 @@ function parseHostRule(input: string): HostRule {
 }
 
 function isAllowed(rules: HostRule[], host: string, port?: number): boolean {
-  const normalizedHost = host.toLowerCase();
+  const normalizedHost = host.toLowerCase().replace(/\.$/, "");
   return rules.some((rule) => rule.host === normalizedHost && (rule.port === undefined || rule.port === port));
 }
 
@@ -58,9 +62,19 @@ function mapSpecialHost(host: string): string {
   return host;
 }
 
+async function resolvePinnedAddress(host: string): Promise<string> {
+  const mappedHost = mapSpecialHost(host.toLowerCase().replace(/\.$/, ""));
+  if (net.isIP(mappedHost)) {
+    return mappedHost;
+  }
+
+  const resolved = await dns.lookup(mappedHost, { all: false, verbatim: true });
+  return resolved.address;
+}
+
 export async function startContainedEgressProxy(allowlistHosts: string[]): Promise<EgressProxyHandle> {
   const rules = allowlistHosts.map((entry) => parseHostRule(entry));
-  const server = http.createServer((request, response) => {
+  const server = http.createServer(async (request, response) => {
     if (!request.url) {
       response.writeHead(400).end("missing target url");
       return;
@@ -81,12 +95,19 @@ export async function startContainedEgressProxy(allowlistHosts: string[]): Promi
     }
 
     const transport = target.protocol === "https:" ? https : http;
+    const pinnedAddress = await resolvePinnedAddress(target.hostname).catch(() => null);
+    if (!pinnedAddress) {
+      response.writeHead(502).end("could not resolve allowlisted host");
+      return;
+    }
+
     const upstream = transport.request({
       protocol: target.protocol,
-      hostname: mapSpecialHost(target.hostname),
+      hostname: pinnedAddress,
       port: targetPort,
       method: request.method,
       path: `${target.pathname}${target.search}`,
+      servername: target.hostname,
       headers: {
         ...request.headers,
         host: target.host,
@@ -111,27 +132,34 @@ export async function startContainedEgressProxy(allowlistHosts: string[]): Promi
       return;
     }
 
-    const upstreamSocket = net.connect({
-      host: mapSpecialHost(host.toLowerCase()),
-      port,
-    });
-    upstreamSocket.on("connect", () => {
-      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (head.length > 0) {
-        upstreamSocket.write(head);
-      }
-      upstreamSocket.pipe(clientSocket);
-      clientSocket.pipe(upstreamSocket);
-    });
-    upstreamSocket.on("error", () => {
-      clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
-      clientSocket.destroy();
-    });
+    void resolvePinnedAddress(host)
+      .then((pinnedAddress) => {
+        const upstreamSocket = net.connect({
+          host: pinnedAddress,
+          port,
+        });
+        upstreamSocket.on("connect", () => {
+          clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          if (head.length > 0) {
+            upstreamSocket.write(head);
+          }
+          upstreamSocket.pipe(clientSocket);
+          clientSocket.pipe(upstreamSocket);
+        });
+        upstreamSocket.on("error", () => {
+          clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+          clientSocket.destroy();
+        });
+      })
+      .catch(() => {
+        clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+        clientSocket.destroy();
+      });
   });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "0.0.0.0", () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", reject);
       resolve();
     });

@@ -26,5 +26,5 @@
     "tsBuildInfoFile": "tsconfig.tsbuildinfo"
   },
   "include": ["next-env.d.ts", "middleware.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "src/mocks/**"]
 }

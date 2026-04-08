@@ -104,7 +104,7 @@ For a more adversarial autonomy-style validation pass, run:
 pnpm stress:autonomy
 ```
 
-That harness seeds a workspace policy that biases recoverable filesystem and shell mutations toward `allow_with_snapshot`, performs randomized governed actions over time, periodically executes recovery on the latest action boundary, and writes a JSON report plus evidence files under a temp session root so you can inspect whether exact file restore held up.
+That harness seeds a workspace policy that biases recoverable filesystem and shell mutations toward `allow_with_snapshot`, performs randomized governed actions over time, periodically exercises recovery planning and supported restore paths on the latest action boundary, and writes a JSON report plus evidence files under a temp session root so you can inspect whether the recorded recovery boundary held up.
 
 ---
 
@@ -190,16 +190,16 @@ Rules are explicit, layered, and operator-controlled. Outcomes are one of: `allo
 
 ### Recovery-Ready
 
-Every recoverable action gets a recovery plan pre-computed at execution time:
+Recovery planning is driven by the boundary actually captured at execution time:
 
-- **Reversible**: restore from snapshot (e.g., a file write)
+- **Exact snapshot restore**: available for snapshot classes that captured enough local state to restore safely
 - **Compensatable**: inverse operation (e.g., delete a created ticket)
-- **Review-only**: explain the outcome, no automatic action
+- **Review-only**: explain the outcome, show impact, and require operator follow-up instead of automatic rollback
 - **Irreversible**: document and prevent escalation
 
 ### Durable Audit Journal
 
-SQLite append-only history ties every action to its policy outcome, snapshot, execution result, and approvals. Export a full evidence bundle with `run-audit-export`, verify its integrity with `run-audit-verify`, and share a redacted version with `run-audit-share`.
+SQLite-backed journal history ties every action to its policy outcome, snapshot, execution result, and approvals. Operational maintenance can still compact SQLite/WAL files, so "append-only" refers to the logical event model rather than immutable on-disk bytes.
 
 ### MCP with Real Trust Controls
 

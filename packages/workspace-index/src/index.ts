@@ -162,6 +162,55 @@ function storageUnavailableError(message: string, error: unknown, details?: Reco
   );
 }
 
+async function removeInternalPathIfSafe(targetPath: string, details?: Record<string, unknown>): Promise<boolean> {
+  try {
+    const stats = await fs.lstat(targetPath);
+    if (stats.isSymbolicLink()) {
+      throw new InternalError("Workspace index refused to remove a symlinked internal path.", {
+        target_path: targetPath,
+        ...details,
+      });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+
+  await fs.rm(targetPath, { recursive: true, force: true });
+  return true;
+}
+
+async function copyRegularFileNoFollow(sourcePath: string, destinationPath: string, details?: Record<string, unknown>) {
+  const sourceStats = await fs.lstat(sourcePath);
+  if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
+    throw new InternalError("Workspace index refused to copy a non-regular file.", {
+      source_path: sourcePath,
+      destination_path: destinationPath,
+      ...details,
+    });
+  }
+
+  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+  await fs.cp(sourcePath, destinationPath, {
+    force: true,
+    recursive: false,
+    dereference: false,
+    verbatimSymlinks: true,
+  });
+
+  const destinationStats = await fs.lstat(destinationPath);
+  if (destinationStats.isSymbolicLink() || !destinationStats.isFile()) {
+    await fs.rm(destinationPath, { force: true }).catch(() => undefined);
+    throw new InternalError("Workspace index detected a symlink while copying a regular file.", {
+      source_path: sourcePath,
+      destination_path: destinationPath,
+      ...details,
+    });
+  }
+}
+
 export interface SnapshotListEntry {
   snap_id: string;
   parent_snap_id: string | null;
@@ -295,6 +344,105 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+async function measurePathBytes(targetPath: string): Promise<number> {
+  const stats = await fs.stat(targetPath);
+  if (stats.isFile()) {
+    return stats.size;
+  }
+
+  if (stats.isDirectory()) {
+    const entries = await fs.readdir(targetPath);
+    const sizes = await Promise.all(entries.map((entry) => measurePathBytes(path.join(targetPath, entry))));
+    return sizes.reduce((total, size) => total + size, 0);
+  }
+
+  return 0;
+}
+
+function resolveWorkspaceRelativePath(workspaceRoot: string, inputPath: string, details?: Record<string, unknown>): string {
+  const resolvedRoot = path.resolve(workspaceRoot);
+  const resolvedPath = path.resolve(resolvedRoot, inputPath);
+  if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new InternalError("Workspace snapshot referenced a path outside the workspace root.", {
+      workspace_root: resolvedRoot,
+      candidate_path: inputPath,
+      resolved_candidate_path: resolvedPath,
+      ...details,
+    });
+  }
+
+  const relativePath = path.relative(resolvedRoot, resolvedPath);
+  return relativePath.length === 0 ? "." : path.normalize(relativePath);
+}
+
+function resolveWorkspaceFullPath(workspaceRoot: string, inputPath: string, details?: Record<string, unknown>): string {
+  const relativePath = resolveWorkspaceRelativePath(workspaceRoot, inputPath, details);
+  return relativePath === "." ? path.resolve(workspaceRoot) : path.join(workspaceRoot, relativePath);
+}
+
+function resolveSnapshotFilePath(snapshotDir: string, snapId: string, filePath: string): string {
+  const baseDir = path.join(snapshotDir, "snaps", snapId, "files");
+  const resolvedPath = path.resolve(baseDir, filePath);
+  if (resolvedPath !== baseDir && !resolvedPath.startsWith(`${baseDir}${path.sep}`)) {
+    throw new InternalError("Workspace snapshot file entry escaped the snapshot root.", {
+      snap_id: snapId,
+      file_path: filePath,
+    });
+  }
+
+  return resolvedPath;
+}
+
+async function removeWorkspacePathIfSafe(
+  workspaceRoot: string,
+  inputPath: string,
+  details?: Record<string, unknown>,
+): Promise<boolean> {
+  const fullPath = resolveWorkspaceFullPath(workspaceRoot, inputPath, details);
+  try {
+    const stats = await fs.lstat(fullPath);
+    if (stats.isSymbolicLink()) {
+      throw new InternalError("Workspace restore refused to remove a symlinked path.", {
+        workspace_root: workspaceRoot,
+        target_path: inputPath,
+        ...details,
+      });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+
+  await fs.rm(fullPath, { recursive: true, force: true });
+  return true;
+}
+
+async function assertWorkspaceRestoreDestinationSafe(
+  workspaceRoot: string,
+  inputPath: string,
+  details?: Record<string, unknown>,
+): Promise<string> {
+  const fullPath = resolveWorkspaceFullPath(workspaceRoot, inputPath, details);
+  try {
+    const stats = await fs.lstat(fullPath);
+    if (stats.isSymbolicLink()) {
+      throw new InternalError("Workspace restore refused to overwrite a symlinked path.", {
+        workspace_root: workspaceRoot,
+        target_path: inputPath,
+        ...details,
+      });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  return fullPath;
+}
+
 function normalizeSubsetSelectors(paths: string[], workspaceRoot: string): string[] {
   const resolvedRoot = path.resolve(workspaceRoot);
   const selectors = new Set<string>();
@@ -307,16 +455,15 @@ function normalizeSubsetSelectors(paths: string[], workspaceRoot: string): strin
       });
     }
 
-    const resolvedPath = path.isAbsolute(trimmed) ? path.resolve(trimmed) : path.resolve(resolvedRoot, trimmed);
-    if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    try {
+      selectors.add(resolveWorkspaceRelativePath(resolvedRoot, trimmed));
+    } catch (error) {
       throw new AgentGitError("Path subset selectors must stay within the workspace root.", "PRECONDITION_FAILED", {
         path: inputPath,
         workspace_root: resolvedRoot,
+        cause: error instanceof Error ? error.message : String(error),
       });
     }
-
-    const relativePath = path.relative(resolvedRoot, resolvedPath);
-    selectors.add(relativePath.length === 0 ? "." : path.normalize(relativePath));
   }
 
   return Array.from(selectors).sort();
@@ -671,12 +818,13 @@ export class WorkspaceIndex {
       .prepare("SELECT snap_id FROM snapshots ORDER BY baseline_revision DESC, created_at DESC LIMIT 1")
       .get() as { snap_id: string } | undefined;
     const parentSnapId = parentRow?.snap_id ?? null;
-    const relativeAnchorPath =
+    const normalizedAnchorPath =
       typeof options.anchor_path === "string" && options.anchor_path.length > 0
-        ? path.isAbsolute(options.anchor_path)
-          ? path.relative(this.workspaceRoot, options.anchor_path)
-          : options.anchor_path
+        ? resolveWorkspaceRelativePath(this.workspaceRoot, options.anchor_path, {
+            trigger_reason: options.trigger_reason,
+          })
         : null;
+    const relativeAnchorPath = normalizedAnchorPath === "." ? null : normalizedAnchorPath;
     const anchorState =
       relativeAnchorPath === null ? null : await this.statLiveFile(path.join(this.workspaceRoot, relativeAnchorPath));
 
@@ -697,7 +845,11 @@ export class WorkspaceIndex {
         const srcPath = path.join(this.workspaceRoot, file.path);
         const destPath = path.join(stagingFilesDir, file.path);
         await fs.mkdir(path.dirname(destPath), { recursive: true });
-        await fs.copyFile(srcPath, destPath);
+        await copyRegularFileNoFollow(srcPath, destPath, {
+          snap_id: snapId,
+          workspace_root: this.workspaceRoot,
+          file_path: file.path,
+        });
         totalBytes += file.size_bytes;
       }
 
@@ -710,7 +862,11 @@ export class WorkspaceIndex {
         const anchorSrcPath = path.join(this.workspaceRoot, relativeAnchorPath);
         const anchorDestPath = path.join(stagingFilesDir, relativeAnchorPath);
         await fs.mkdir(path.dirname(anchorDestPath), { recursive: true });
-        await fs.copyFile(anchorSrcPath, anchorDestPath);
+        await copyRegularFileNoFollow(anchorSrcPath, anchorDestPath, {
+          snap_id: snapId,
+          workspace_root: this.workspaceRoot,
+          file_path: relativeAnchorPath,
+        });
         totalBytes += anchorState.size_bytes ?? 0;
       }
 
@@ -832,7 +988,10 @@ export class WorkspaceIndex {
         })();
       } catch (error) {
         try {
-          await fs.rm(finalBaseDir, { recursive: true, force: true });
+          await removeInternalPathIfSafe(finalBaseDir, {
+            snap_id: snapId,
+            workspace_root: this.workspaceRoot,
+          });
         } catch {
           // Best-effort cleanup for failed commits.
         }
@@ -868,8 +1027,14 @@ export class WorkspaceIndex {
 
       if (isLowDiskPressureError(error)) {
         try {
-          await fs.rm(stagingBaseDir, { recursive: true, force: true });
-          await fs.rm(finalBaseDir, { recursive: true, force: true });
+          await removeInternalPathIfSafe(stagingBaseDir, {
+            snap_id: snapId,
+            workspace_root: this.workspaceRoot,
+          });
+          await removeInternalPathIfSafe(finalBaseDir, {
+            snap_id: snapId,
+            workspace_root: this.workspaceRoot,
+          });
         } catch {
           // Best-effort cleanup for failed low-disk commits.
         }
@@ -913,23 +1078,28 @@ export class WorkspaceIndex {
     const filesRestored: RestoreResult["files_restored"] = [];
 
     for (const [filePath, entry] of restorationSet) {
-      const fullPath = path.join(this.workspaceRoot, filePath);
+      const fullPath = await assertWorkspaceRestoreDestinationSafe(this.workspaceRoot, filePath, {
+        snap_id: targetSnapId,
+      });
 
       if (entry.state === "deleted") {
-        if (await pathExists(fullPath)) {
-          await fs.rm(fullPath, { recursive: true, force: true });
+        if (await removeWorkspacePathIfSafe(this.workspaceRoot, filePath, { snap_id: targetSnapId })) {
           filesRestored.push({ path: filePath, action: "removed" });
         }
         continue;
       }
 
-      const srcPath = path.join(this.snapshotDir, "snaps", entry.snap_id, "files", filePath);
+      const srcPath = resolveSnapshotFilePath(this.snapshotDir, entry.snap_id, filePath);
       if (!(await pathExists(srcPath))) {
         continue;
       }
 
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.copyFile(srcPath, fullPath);
+      await copyRegularFileNoFollow(srcPath, fullPath, {
+        snap_id: targetSnapId,
+        workspace_root: this.workspaceRoot,
+        file_path: filePath,
+      });
       try {
         await fs.chmod(fullPath, entry.file_mode);
       } catch {
@@ -947,19 +1117,13 @@ export class WorkspaceIndex {
         continue;
       }
 
-      const fullPath = path.join(this.workspaceRoot, row.path);
-      if (!(await pathExists(fullPath))) {
-        continue;
+      if (await removeWorkspacePathIfSafe(this.workspaceRoot, row.path, { snap_id: targetSnapId })) {
+        filesRestored.push({ path: row.path, action: "removed" });
       }
-
-      await fs.rm(fullPath, { recursive: true, force: true });
-      filesRestored.push({ path: row.path, action: "removed" });
     }
 
     if (manifest.anchor_path && !manifest.anchor_exists && !restorationSet.has(manifest.anchor_path)) {
-      const anchorFullPath = path.join(this.workspaceRoot, manifest.anchor_path);
-      if (await pathExists(anchorFullPath)) {
-        await fs.rm(anchorFullPath, { recursive: true, force: true });
+      if (await removeWorkspacePathIfSafe(this.workspaceRoot, manifest.anchor_path, { snap_id: targetSnapId })) {
         filesRestored.push({ path: manifest.anchor_path, action: "removed" });
       }
     }
@@ -996,23 +1160,28 @@ export class WorkspaceIndex {
     const filesRestored: RestoreResult["files_restored"] = [];
 
     for (const [filePath, entry] of filteredRestorationSet) {
-      const fullPath = path.join(this.workspaceRoot, filePath);
+      const fullPath = await assertWorkspaceRestoreDestinationSafe(this.workspaceRoot, filePath, {
+        snap_id: targetSnapId,
+      });
 
       if (entry.state === "deleted") {
-        if (await pathExists(fullPath)) {
-          await fs.rm(fullPath, { recursive: true, force: true });
+        if (await removeWorkspacePathIfSafe(this.workspaceRoot, filePath, { snap_id: targetSnapId })) {
           filesRestored.push({ path: filePath, action: "removed" });
         }
         continue;
       }
 
-      const srcPath = path.join(this.snapshotDir, "snaps", entry.snap_id, "files", filePath);
+      const srcPath = resolveSnapshotFilePath(this.snapshotDir, entry.snap_id, filePath);
       if (!(await pathExists(srcPath))) {
         continue;
       }
 
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.copyFile(srcPath, fullPath);
+      await copyRegularFileNoFollow(srcPath, fullPath, {
+        snap_id: targetSnapId,
+        workspace_root: this.workspaceRoot,
+        file_path: filePath,
+      });
       try {
         await fs.chmod(fullPath, entry.file_mode);
       } catch {
@@ -1027,13 +1196,9 @@ export class WorkspaceIndex {
         continue;
       }
 
-      const fullPath = path.join(this.workspaceRoot, entry.relativePath);
-      if (!(await pathExists(fullPath))) {
-        continue;
+      if (await removeWorkspacePathIfSafe(this.workspaceRoot, entry.relativePath, { snap_id: targetSnapId })) {
+        filesRestored.push({ path: entry.relativePath, action: "removed" });
       }
-
-      await fs.rm(fullPath, { recursive: true, force: true });
-      filesRestored.push({ path: entry.relativePath, action: "removed" });
     }
 
     if (
@@ -1042,9 +1207,7 @@ export class WorkspaceIndex {
       !manifest.anchor_exists &&
       !filteredRestorationSet.has(manifest.anchor_path)
     ) {
-      const anchorFullPath = path.join(this.workspaceRoot, manifest.anchor_path);
-      if (await pathExists(anchorFullPath)) {
-        await fs.rm(anchorFullPath, { recursive: true, force: true });
+      if (await removeWorkspacePathIfSafe(this.workspaceRoot, manifest.anchor_path, { snap_id: targetSnapId })) {
         filesRestored.push({ path: manifest.anchor_path, action: "removed" });
       }
     }
@@ -1462,15 +1625,43 @@ export class WorkspaceIndex {
   }
 
   private async persistAnchorSource(manifest: SnapManifest, anchorSourceSnapId: string | null): Promise<void> {
-    this.db
+    const result = this.db
       .prepare("UPDATE snapshots SET anchor_source_snap_id = ? WHERE snap_id = ?")
       .run(anchorSourceSnapId, manifest.snap_id);
+    if (result.changes === 0) {
+      throw new NotFoundError(`Snapshot not found: ${manifest.snap_id}`, {
+        snap_id: manifest.snap_id,
+      });
+    }
     await fs.writeFile(
       this.snapshotManifestPath(manifest.snap_id),
       JSON.stringify(
         {
           ...manifest,
           anchor_source_snap_id: anchorSourceSnapId,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  }
+
+  private async persistParentSnapshot(manifest: SnapManifest, parentSnapId: string | null): Promise<void> {
+    const result = this.db
+      .prepare("UPDATE snapshots SET parent_snap_id = ? WHERE snap_id = ?")
+      .run(parentSnapId, manifest.snap_id);
+    if (result.changes === 0) {
+      throw new NotFoundError(`Snapshot not found: ${manifest.snap_id}`, {
+        snap_id: manifest.snap_id,
+      });
+    }
+    await fs.writeFile(
+      this.snapshotManifestPath(manifest.snap_id),
+      JSON.stringify(
+        {
+          ...manifest,
+          parent_snap_id: parentSnapId,
         },
         null,
         2,
@@ -1532,7 +1723,11 @@ export class WorkspaceIndex {
 
           if (currentBlobExists) {
             summary.bytes_freed += (await fs.stat(currentBlobPath)).size;
-            await fs.rm(currentBlobPath, { force: true });
+            await removeInternalPathIfSafe(currentBlobPath, {
+              snap_id: manifest.snap_id,
+              workspace_root: this.workspaceRoot,
+              file_path: manifest.anchor_path,
+            });
 
             let currentDir = path.dirname(currentBlobPath);
             const filesRoot = this.snapshotFilesRoot(manifest.snap_id);
@@ -1592,12 +1787,99 @@ export class WorkspaceIndex {
     }
   }
 
-  async compact(_keepLastN: number = 20): Promise<CompactionResult> {
-    return {
-      snaps_removed: 0,
-      bytes_freed: 0,
-      compacted_snap_id: null,
-    };
+  async compact(keepLastN: number = 20): Promise<CompactionResult> {
+    const keepCount = Math.max(1, Math.trunc(keepLastN));
+    const snapshots = this.listSnapshots();
+    if (snapshots.length <= keepCount) {
+      return {
+        snaps_removed: 0,
+        bytes_freed: 0,
+        compacted_snap_id: null,
+      };
+    }
+
+    const keptSnapshots = snapshots.slice(0, keepCount);
+    const removableSnapshots = snapshots.slice(keepCount);
+    const removableIds = new Set(removableSnapshots.map((snapshot) => snapshot.snap_id));
+    let bytesFreed = 0;
+    let snapsRemoved = 0;
+
+    try {
+      const oldestKept = keptSnapshots[keptSnapshots.length - 1] ?? null;
+      if (oldestKept) {
+        const oldestKeptManifest = this.getSnapshotManifest(oldestKept.snap_id);
+        if (oldestKeptManifest?.parent_snap_id && removableIds.has(oldestKeptManifest.parent_snap_id)) {
+          await this.persistParentSnapshot(oldestKeptManifest, null);
+        }
+      }
+
+      for (const keptSnapshot of keptSnapshots) {
+        const manifest = this.getSnapshotManifest(keptSnapshot.snap_id);
+        if (!manifest?.anchor_exists || !manifest.anchor_path) {
+          continue;
+        }
+
+        const normalizedSource = this.normalizeAnchorSourceSnapId(manifest);
+        if (!normalizedSource || !removableIds.has(normalizedSource)) {
+          continue;
+        }
+
+        if (!this.snapshotHasTrackedPath(manifest.snap_id, manifest.anchor_path)) {
+          const sourceBlobPath = this.anchorBlobPath(normalizedSource, manifest.anchor_path);
+          const localBlobPath = this.anchorBlobPath(manifest.snap_id, manifest.anchor_path);
+          if ((await pathExists(sourceBlobPath)) && !(await pathExists(localBlobPath))) {
+            await copyRegularFileNoFollow(sourceBlobPath, localBlobPath, {
+              workspace_root: this.workspaceRoot,
+              snap_id: manifest.snap_id,
+              source_snap_id: normalizedSource,
+              anchor_path: manifest.anchor_path,
+            });
+          }
+        }
+
+        await this.persistAnchorSource(manifest, manifest.snap_id);
+      }
+
+      const deleteSnapFiles = this.db.prepare("DELETE FROM snap_files WHERE snap_id = ?");
+      const deleteSnapshot = this.db.prepare("DELETE FROM snapshots WHERE snap_id = ?");
+
+      for (const removableSnapshot of removableSnapshots) {
+        const snapshotPath = path.join(this.snapshotDir, "snaps", removableSnapshot.snap_id);
+        bytesFreed += (await measurePathBytes(snapshotPath).catch(() => 0)) ?? 0;
+        deleteSnapFiles.run(removableSnapshot.snap_id);
+        deleteSnapshot.run(removableSnapshot.snap_id);
+        await removeInternalPathIfSafe(snapshotPath, {
+          workspace_root: this.workspaceRoot,
+          snap_id: removableSnapshot.snap_id,
+        });
+        snapsRemoved += 1;
+      }
+
+      return {
+        snaps_removed: snapsRemoved,
+        bytes_freed: bytesFreed,
+        compacted_snap_id: keptSnapshots[keptSnapshots.length - 1]?.snap_id ?? null,
+      };
+    } catch (error) {
+      if (error instanceof AgentGitError) {
+        throw error;
+      }
+
+      if (isLowDiskPressureError(error)) {
+        throw storageUnavailableError("Failed to compact workspace snapshots.", error, {
+          workspace_root: this.workspaceRoot,
+          keep_last_n: keepCount,
+          snaps_removed: snapsRemoved,
+        });
+      }
+
+      throw new InternalError("Failed to compact workspace snapshots.", {
+        workspace_root: this.workspaceRoot,
+        keep_last_n: keepCount,
+        snaps_removed: snapsRemoved,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   getStats(): {

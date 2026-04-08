@@ -37,7 +37,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "prepack": "pnpm run build",
+    "prepack": "node ../../scripts/verify-package-build.mjs",
     "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {

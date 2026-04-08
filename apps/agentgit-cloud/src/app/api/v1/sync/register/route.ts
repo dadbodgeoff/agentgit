@@ -1,18 +1,28 @@
 import { requireApiRole } from "@/lib/auth/api-session";
 import { getBearerToken } from "@/lib/auth/connector-session";
 import {
+  CONNECTOR_ACCESS_TOKEN_HEADER,
   ConnectorAccessError,
   registerConnector,
   registerConnectorWithBootstrapToken,
 } from "@/lib/backend/control-plane/connectors";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { enforceConnectorRegistrationRateLimits } from "@/lib/security/rate-limit";
 import { ConnectorRegistrationRequestSchema } from "@agentgit/cloud-sync-protocol";
 
 export async function POST(request: Request) {
   const requestId = createRequestId(request);
-  const body = await request.json().catch(() => null);
-  const parsed = ConnectorRegistrationRequestSchema.safeParse(body);
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+    throw error;
+  }
+  const parsed = ConnectorRegistrationRequestSchema.safeParse(rawBody);
 
   if (!parsed.success) {
     return jsonWithRequestId(
@@ -54,7 +64,16 @@ export async function POST(request: Request) {
             now,
           );
         })();
-    return jsonWithRequestId(registration, undefined, requestId);
+    const { accessToken, ...safeRegistration } = registration;
+    return jsonWithRequestId(
+      safeRegistration,
+      {
+        headers: {
+          [CONNECTOR_ACCESS_TOKEN_HEADER]: accessToken,
+        },
+      },
+      requestId,
+    );
   } catch (error) {
     if (error instanceof Response) {
       return error;

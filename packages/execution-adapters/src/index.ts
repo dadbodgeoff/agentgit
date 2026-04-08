@@ -877,6 +877,7 @@ function ensureBuiltOciImage(
     buildArgs.push("--target", server.sandbox.build.target);
   }
   for (const [key, value] of Object.entries(server.sandbox.build.build_args ?? {})) {
+    assertContainerEnvEntrySafe("build_arg", key, value);
     buildArgs.push("--build-arg", `${key}=${value}`);
   }
   buildArgs.push(contextPath);
@@ -905,6 +906,31 @@ function ensureBuiltOciImage(
       context_path: contextPath,
       exit_code: buildResult.status,
       stderr: buildResult.stderr.trim() || null,
+    });
+  }
+}
+
+function assertContainerEnvEntrySafe(kind: "env" | "build_arg", key: string, value: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+    throw new PreconditionError(`Governed stdio MCP OCI ${kind} name is invalid.`, {
+      key,
+      kind,
+    });
+  }
+
+  if (/[\0\r\n]/u.test(value)) {
+    throw new PreconditionError(`Governed stdio MCP OCI ${kind} value contains unsupported control characters.`, {
+      key,
+      kind,
+    });
+  }
+}
+
+function assertAdditionalMountHostPathAllowed(hostPath: string): void {
+  const resolvedPath = path.resolve(hostPath);
+  if (resolvedPath === path.parse(resolvedPath).root) {
+    throw new PreconditionError("Governed stdio MCP OCI additional mounts cannot bind the filesystem root.", {
+      host_path: resolvedPath,
     });
   }
 }
@@ -999,6 +1025,7 @@ function createSandboxedStdioLaunch(
   }
 
   for (const mount of server.sandbox.additional_mounts ?? []) {
+    assertAdditionalMountHostPathAllowed(mount.host_path);
     const mountMode = mount.read_only === false ? "" : ",readonly";
     args.push("--mount", `type=bind,src=${path.resolve(mount.host_path)},dst=${mount.container_path}${mountMode}`);
   }
@@ -1008,6 +1035,7 @@ function createSandboxedStdioLaunch(
     if (!envAllowlist.has(key)) {
       continue;
     }
+    assertContainerEnvEntrySafe("env", key, value);
     args.push("--env", `${key}=${value}`);
   }
 
@@ -1669,6 +1697,26 @@ async function resolvePathInsideRoot(targetPath: string, rootPath: string): Prom
   }
 
   return normalizedTarget;
+}
+
+async function removeResolvedPathIfSafe(targetPath: string, details?: Record<string, unknown>): Promise<boolean> {
+  try {
+    const stats = await fs.lstat(targetPath);
+    if (stats.isSymbolicLink()) {
+      throw new PreconditionError("Governed filesystem execution refused to remove a symlinked target path.", {
+        target_path: targetPath,
+        ...details,
+      });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+
+  await fs.rm(targetPath, { recursive: true, force: true });
+  return true;
 }
 
 function fileContentArtifact(targetPath: string, byteSize: number): ExecutionArtifact {
@@ -3554,7 +3602,10 @@ export class FilesystemExecutionAdapter implements ExecutionAdapter {
     if (operation === "delete") {
       const executionId = `exec_fs_${Date.now()}`;
       const previousContent = await readExistingText(targetPath);
-      await fs.rm(targetPath, { recursive: true, force: true });
+      await removeResolvedPathIfSafe(targetPath, {
+        action_id: context.action.action_id,
+        workspace_root: context.workspace_root,
+      });
 
       const completedAt = new Date().toISOString();
       const diffPreview = previousContent !== null ? `- ${textPreview(previousContent)}` : `Removed ${targetPath}.`;

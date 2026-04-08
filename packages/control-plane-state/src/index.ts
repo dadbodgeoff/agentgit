@@ -11,7 +11,7 @@ import {
   ConnectorEventEnvelopeSchema,
   RepositoryStateSnapshotSchema,
 } from "@agentgit/cloud-sync-protocol";
-import { TimestampStringSchema } from "@agentgit/schemas";
+import { AgentGitError, TimestampStringSchema } from "@agentgit/schemas";
 import { z } from "zod";
 
 export const ConnectorTokenRecordSchema = z
@@ -75,6 +75,17 @@ export const ConnectorCommandRecordSchema = z
   .strict();
 export type ConnectorCommandRecord = z.infer<typeof ConnectorCommandRecordSchema>;
 
+export const ConnectorRequestReceiptSchema = z
+  .object({
+    connectorId: z.string().min(1),
+    requestKind: z.enum(["heartbeat", "events", "command_pull", "command_ack"]),
+    requestId: z.string().min(1),
+    acceptedAt: TimestampStringSchema,
+    responseJson: z.string().min(1),
+  })
+  .strict();
+export type ConnectorRequestReceipt = z.infer<typeof ConnectorRequestReceiptSchema>;
+
 type ControlPlaneCollections = {
   connectors: z.infer<typeof ConnectorRecordSchema>;
   connectorTokens: ConnectorTokenRecord;
@@ -82,6 +93,7 @@ type ControlPlaneCollections = {
   connectorHeartbeats: ConnectorHeartbeatRecord;
   connectorEvents: IngestedConnectorEvent;
   connectorCommands: ConnectorCommandRecord;
+  connectorRequestReceipts: ConnectorRequestReceipt;
 };
 
 export class ControlPlaneStateStore {
@@ -121,12 +133,21 @@ export class ControlPlaneStateStore {
             return ConnectorCommandRecordSchema.parse(value);
           },
         },
+        connectorRequestReceipts: {
+          parse(_key, value) {
+            return ConnectorRequestReceiptSchema.parse(value);
+          },
+        },
       },
     });
   }
 
   close(): void {
     this.store.close();
+  }
+
+  withImmediateTransaction<T>(run: (store: ControlPlaneStateStore) => T): T {
+    return this.store.withImmediateTransaction(() => run(this));
   }
 
   putConnector(record: z.infer<typeof ConnectorRecordSchema>) {
@@ -172,7 +193,14 @@ export class ControlPlaneStateStore {
   }
 
   appendEvent(record: IngestedConnectorEvent) {
-    this.store.putIfAbsent("connectorEvents", record.event.eventId, record);
+    const inserted = this.store.putIfAbsent("connectorEvents", record.event.eventId, record);
+    if (!inserted) {
+      throw new AgentGitError("Connector event already exists and cannot be appended twice.", "CONFLICT", {
+        event_id: record.event.eventId,
+        connector_id: record.event.connectorId,
+      });
+    }
+
     return record;
   }
 
@@ -233,6 +261,22 @@ export class ControlPlaneStateStore {
   listCommands(connectorId?: string) {
     const rows = this.store.list("connectorCommands");
     return connectorId ? rows.filter((row) => row.command.connectorId === connectorId) : rows;
+  }
+
+  private requestReceiptKey(connectorId: string, requestKind: ConnectorRequestReceipt["requestKind"], requestId: string) {
+    return `${connectorId}:${requestKind}:${requestId}`;
+  }
+
+  putRequestReceipt(record: ConnectorRequestReceipt) {
+    return this.store.put(
+      "connectorRequestReceipts",
+      this.requestReceiptKey(record.connectorId, record.requestKind, record.requestId),
+      record,
+    );
+  }
+
+  getRequestReceipt(connectorId: string, requestKind: ConnectorRequestReceipt["requestKind"], requestId: string) {
+    return this.store.get("connectorRequestReceipts", this.requestReceiptKey(connectorId, requestKind, requestId));
   }
 
   revokeConnector(connectorId: string, revokedAt: string) {

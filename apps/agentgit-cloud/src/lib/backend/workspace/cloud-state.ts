@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 
-import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 
 import { getCloudDatabase, hasDatabaseUrl } from "@/lib/db/client";
 import {
@@ -403,6 +403,8 @@ export async function saveWorkspaceConnectionState(state: WorkspaceConnectionSta
   const now = new Date();
 
   await db.transaction(async (tx) => {
+    await tx.execute(sql`set local transaction isolation level serializable`);
+
     const upsertMember = async (member: WorkspaceMembership) => {
       const [existing] = await tx.select().from(cloudUsers).where(eq(cloudUsers.email, member.email)).limit(1);
       if (existing) {
@@ -647,51 +649,58 @@ export async function provisionWorkspaceMembershipForIdentity(params: {
     lastSignedInAt: new Date().toISOString(),
   });
 
-  const [existingMembership, invite] = await Promise.all([
-    db.query.cloudWorkspaceMemberships.findFirst({
+  const { role, source } = await db.transaction(async (tx) => {
+    const now = new Date();
+    const existingMembership = await tx.query.cloudWorkspaceMemberships.findFirst({
       where: and(
         eq(cloudWorkspaceMemberships.workspaceId, params.workspaceId),
         eq(cloudWorkspaceMemberships.userId, user.id),
       ),
-    }),
-    db.query.cloudWorkspaceInvites.findFirst({
-      where: and(
-        eq(cloudWorkspaceInvites.workspaceId, params.workspaceId),
-        eq(cloudWorkspaceInvites.email, email),
-        isNull(cloudWorkspaceInvites.acceptedAt),
-        isNull(cloudWorkspaceInvites.revokedAt),
-      ),
-    }),
-  ]);
-
-  const role = existingMembership?.role ?? invite?.role ?? params.fallbackRole;
-  const now = new Date();
-
-  if (!existingMembership) {
-    await db.insert(cloudWorkspaceMemberships).values({
-      workspaceId: params.workspaceId,
-      userId: user.id,
-      role,
-      joinedAt: now,
-      updatedAt: now,
     });
-  }
 
-  if (invite) {
-    await db
+    const [acceptedInvite] = await tx
       .update(cloudWorkspaceInvites)
       .set({
         acceptedAt: now,
       })
-      .where(eq(cloudWorkspaceInvites.id, invite.id));
-  }
+      .where(
+        and(
+          eq(cloudWorkspaceInvites.workspaceId, params.workspaceId),
+          eq(cloudWorkspaceInvites.email, email),
+          isNull(cloudWorkspaceInvites.acceptedAt),
+          isNull(cloudWorkspaceInvites.revokedAt),
+        ),
+      )
+      .returning({
+        role: cloudWorkspaceInvites.role,
+      });
+
+    const resolvedRole = existingMembership?.role ?? acceptedInvite?.role ?? params.fallbackRole;
+    if (!existingMembership) {
+      await tx
+        .insert(cloudWorkspaceMemberships)
+        .values({
+          workspaceId: params.workspaceId,
+          userId: user.id,
+          role: resolvedRole,
+          joinedAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing();
+    }
+
+    return {
+      role: resolvedRole,
+      source: acceptedInvite ? ("invite" as const) : ("member" as const),
+    };
+  });
 
   return {
     workspaceId: workspace.id,
     workspaceName: workspace.name,
     workspaceSlug: workspace.slug,
     role,
-    source: invite ? "invite" : "member",
+    source,
   };
 }
 

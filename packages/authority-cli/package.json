@@ -42,7 +42,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
-    "prepack": "pnpm run build",
+    "prepack": "node ../../scripts/verify-package-build.mjs",
     "test": "vitest run --dir src",
     "start": "node dist/main.js",
     "lint": "eslint . --max-warnings=0"

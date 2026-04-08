@@ -4,6 +4,8 @@ import { requireConnectorSession } from "@/lib/auth/connector-session";
 import { ConnectorAccessError, ingestConnectorEvents } from "@/lib/backend/control-plane/connectors";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
+const MAX_EVENT_BATCH_BODY_BYTES = 1_000_000;
+
 export async function POST(request: Request) {
   const requestId = createRequestId(request);
   const connectorSession = await requireConnectorSession(request);
@@ -12,7 +14,31 @@ export async function POST(request: Request) {
     return connectorSession.denied;
   }
 
-  const body = await request.json().catch(() => null);
+  const contentLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
+  if (Number.isFinite(contentLength) && contentLength > MAX_EVENT_BATCH_BODY_BYTES) {
+    return jsonWithRequestId(
+      { message: "Connector event batch payload is too large." },
+      { status: 413 },
+      requestId,
+    );
+  }
+
+  const rawBody = await request.text().catch(() => "");
+  if (Buffer.byteLength(rawBody, "utf8") > MAX_EVENT_BATCH_BODY_BYTES) {
+    return jsonWithRequestId(
+      { message: "Connector event batch payload is too large." },
+      { status: 413 },
+      requestId,
+    );
+  }
+
+  const body = (() => {
+    try {
+      return rawBody.length > 0 ? JSON.parse(rawBody) : null;
+    } catch {
+      return null;
+    }
+  })();
   const parsed = ConnectorEventBatchRequestSchema.safeParse(body);
 
   if (!parsed.success) {

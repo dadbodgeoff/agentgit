@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
 import { getRepositoryCalibrationReport } from "@/lib/backend/authority/calibration";
+import { loadPreviewFixture, resolvePreviewState } from "@/lib/dev/preview-fixtures";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
-import { getCalibrationFixture } from "@/mocks/fixtures";
-import { PreviewStateSchema } from "@/schemas/cloud";
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -18,9 +17,7 @@ export async function GET(request: Request, context: { params: Promise<{ repoId:
     return access.denied;
   }
 
-  const url = new URL(request.url);
-  const parsed = PreviewStateSchema.safeParse(url.searchParams.get("state") ?? "ready");
-  const previewState = parsed.success ? parsed.data : "ready";
+  const previewState = resolvePreviewState(request);
   const { repoId } = await context.params;
 
   if (previewState === "loading") {
@@ -32,7 +29,10 @@ export async function GET(request: Request, context: { params: Promise<{ repoId:
   }
 
   if (previewState !== "ready") {
-    return jsonWithRequestId(getCalibrationFixture(previewState), undefined, requestId);
+    const fixture = await loadPreviewFixture("calibration", previewState);
+    if (fixture) {
+      return jsonWithRequestId(fixture, undefined, requestId);
+    }
   }
 
   try {

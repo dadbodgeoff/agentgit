@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -272,10 +273,11 @@ describe("SessionCredentialBroker", () => {
 
     expect(ticketBinding.resolved_value.startsWith("agtkt.")).toBe(true);
     expect(ticketBinding.expires_at).toBeTruthy();
-    const [, encodedPayload] = ticketBinding.resolved_value.split(".");
+    const [, encodedPayload, signature] = ticketBinding.resolved_value.split(".");
     expect(encodedPayload).toBeTruthy();
+    expect(signature).toBeTruthy();
     const payload = JSON.parse(Buffer.from(encodedPayload!, "base64url").toString("utf8")) as {
-      audience?: string;
+      audience: string;
       binding_id: string;
       broker_source_ref: string;
       kind: string;
@@ -288,5 +290,53 @@ describe("SessionCredentialBroker", () => {
       audience: "https://api.example.com",
     });
     expect(Date.parse(payload.exp)).toBeGreaterThan(Date.now());
+
+    const keyAccess = broker["mcpSecretStore"] as unknown as {
+      runtimeTicketSigningKey: Buffer;
+      encryptionKey: Buffer;
+    };
+    const expectedSignature = createHmac("sha256", keyAccess.runtimeTicketSigningKey)
+      .update(`${encodedPayload!}.runtime-ticket-secret`)
+      .digest("base64url");
+    const legacySignature = createHmac("sha256", keyAccess.encryptionKey)
+      .update(`${encodedPayload!}.runtime-ticket-secret`)
+      .digest("base64url");
+    expect(signature).toBe(expectedSignature);
+    expect(signature).not.toBe(legacySignature);
+  });
+
+  it("rejects runtime tickets without an explicit audience", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-credential-broker-"));
+    dirs.push(root);
+    const serviceName = `com.agentgit.tests.credential-broker.runtime-ticket.no-audience.${Date.now()}`;
+    const broker = new SessionCredentialBroker({
+      mcpSecretStore: new LocalEncryptedSecretStore({
+        dbPath: path.join(root, "mcp-secrets.db"),
+        keyPath: path.join(root, "mcp-secrets.key"),
+        serviceName,
+      }),
+    });
+
+    broker.upsertMcpBearerSecret({
+      secret_id: "mcp_secret_ticket",
+      bearer_token: "runtime-ticket-secret",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    });
+
+    expect(() =>
+      broker.resolveRuntimeCredentialBinding({
+        binding_id: "rcb_ticket",
+        kind: "runtime_ticket",
+        target: {
+          surface: "file",
+          relative_path: "auth/runtime.ticket",
+        },
+        broker_source_ref: "mcp_secret_ticket",
+        redacted_delivery_metadata: {
+          ticket_ttl_seconds: 120,
+        },
+        rotates: true,
+      }),
+    ).toThrow("Runtime credential tickets require a non-empty audience.");
   });
 });

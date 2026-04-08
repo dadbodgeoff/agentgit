@@ -28,9 +28,11 @@ import {
   listRepositoryPolicyVersionsLocal,
   saveRepositoryPolicyVersionLocal,
 } from "@/lib/backend/workspace/cloud-state.local";
+import { appendWorkspaceAuditEntry } from "@/lib/backend/workspace/workspace-audit-events";
 import { findRepositoryRuntimeRecord } from "@/lib/backend/workspace/repository-inventory";
 import { getCloudDatabase, hasDatabaseUrl } from "@/lib/db/client";
 import { cloudRepositoryPolicyVersions } from "@/lib/db/schema";
+import { repositoryPolicyRoute } from "@/lib/navigation/routes";
 import {
   RepositoryPolicyChangeSourceSchema,
   RepositoryPolicyDocumentInputSchema,
@@ -656,9 +658,7 @@ function toRepositoryPolicyVersionHistory(versions: StoredRepositoryPolicyVersio
       id: version.id,
       createdAt: version.createdAt,
       changeSource: version.changeSource,
-      actorUserId: version.actorUserId,
       actorName: version.actorName,
-      actorEmail: version.actorEmail,
       profileName: version.profileName,
       policyVersion: version.policyVersion,
       ruleCount: version.ruleCount,
@@ -803,10 +803,29 @@ export async function saveRepositoryPolicy(
       : versionRecorded
         ? "Policy saved."
         : "Policy saved. No effective diff from the latest version.";
+  const savedAt = new Date().toISOString();
+
+  await appendWorkspaceAuditEntry({
+    workspaceId,
+    id: `policy:${randomUUID().replaceAll("-", "")}`,
+    occurredAt: savedAt,
+    actorLabel: actor.name,
+    actorType: "human",
+    category: "policy",
+    action: changeSource === "rollback" ? "policy_rollback" : "policy_saved",
+    target: `${repository.inventory.owner}/${repository.inventory.name}`,
+    outcome: versionRecorded ? "success" : "info",
+    repo: `${repository.inventory.owner}/${repository.inventory.name}`,
+    runId: null,
+    actionId: null,
+    detailPath: repositoryPolicyRoute(repository.inventory.owner, repository.inventory.name),
+    externalUrl: null,
+    details: message,
+  });
 
   return RepositoryPolicySaveResponseSchema.parse({
     policy,
-    savedAt: new Date().toISOString(),
+    savedAt,
     message,
   });
 }

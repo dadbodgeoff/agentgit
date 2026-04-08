@@ -35,23 +35,30 @@ async function fetchGitHubPrimaryEmail(accessToken?: string): Promise<string | n
     return null;
   }
 
-  const response = await fetch("https://api.github.com/user/emails", {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    cache: "no-store",
-  }).catch(() => null);
-
-  if (!response?.ok) {
+  let response: Response;
+  try {
+    response = await fetch("https://api.github.com/user/emails", {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch {
     return null;
   }
 
-  const payload = (await response.json().catch(() => null)) as Array<{
-    email?: string;
-    primary?: boolean;
-    verified?: boolean;
-  }> | null;
+  if (!response.ok) {
+    return null;
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return null;
+  }
 
   if (!Array.isArray(payload)) {
     return null;
@@ -144,6 +151,7 @@ async function buildProviders(request?: Request) {
 
 const authSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
 const isNextProductionBuild = process.env.NEXT_PHASE === "phase-production-build";
+const resolvedAuthSecret = authSecret ?? (!isProductionAuth ? "agentgit-cloud-dev-secret" : undefined);
 
 if (isProductionAuth && !authSecret && !isNextProductionBuild) {
   throw new Error("AUTH_SECRET or NEXTAUTH_SECRET must be set in production.");
@@ -243,7 +251,7 @@ const nextAuthResult: NextAuthResult = NextAuth(async (request) => {
       signIn: publicRoutes.signIn,
     },
     providers,
-    secret: authSecret ?? (isNextProductionBuild ? "agentgit-cloud-build-secret" : "agentgit-cloud-dev-secret"),
+    secret: resolvedAuthSecret,
     session: {
       strategy: "jwt",
     },

@@ -11,6 +11,7 @@ import { enforceApiRateLimits, enforceConnectorRegistrationRateLimits } from "@/
 describe("rate limit enforcement", () => {
   const originalAgentGitRoot = process.env.AGENTGIT_ROOT;
   const originalDatabaseUrl = process.env.DATABASE_URL;
+  const originalTrustProxyHeaders = process.env.AGENTGIT_TRUST_PROXY_HEADERS;
   const tempDirs: string[] = [];
 
   afterEach(() => {
@@ -28,6 +29,12 @@ describe("rate limit enforcement", () => {
       process.env.DATABASE_URL = originalDatabaseUrl;
     }
 
+    if (originalTrustProxyHeaders === undefined) {
+      delete process.env.AGENTGIT_TRUST_PROXY_HEADERS;
+    } else {
+      process.env.AGENTGIT_TRUST_PROXY_HEADERS = originalTrustProxyHeaders;
+    }
+
     for (const tempDir of tempDirs.splice(0, tempDirs.length)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -38,6 +45,7 @@ describe("rate limit enforcement", () => {
     tempDirs.push(tempDir);
     process.env.AGENTGIT_ROOT = tempDir;
     delete process.env.DATABASE_URL;
+    process.env.AGENTGIT_TRUST_PROXY_HEADERS = "true";
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T19:00:00Z"));
 
@@ -69,6 +77,7 @@ describe("rate limit enforcement", () => {
     tempDirs.push(tempDir);
     process.env.AGENTGIT_ROOT = tempDir;
     delete process.env.DATABASE_URL;
+    process.env.AGENTGIT_TRUST_PROXY_HEADERS = "true";
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-07T19:10:00Z"));
 

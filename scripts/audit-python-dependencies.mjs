@@ -6,9 +6,12 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pythonPackageDir = path.join(repoRoot, "packages", "authority-sdk-py");
 const pyprojectPath = path.join(pythonPackageDir, "pyproject.toml");
+const PYTHON3 = resolveCommandPath("python3");
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -82,7 +85,7 @@ output_path.write_text("\\n".join(deduped), encoding="utf-8")
 print(output_path)
 `;
 
-  await runCommand("python3", ["-c", pythonScript], {
+  await runCommand(PYTHON3, ["-c", pythonScript], {
     cwd: repoRoot,
   });
   return requirementsPath;
@@ -116,7 +119,7 @@ async function main() {
       return;
     }
 
-    await runCommand("python3", ["-m", "venv", venvRoot], {
+    await runCommand(PYTHON3, ["-m", "venv", venvRoot], {
       cwd: repoRoot,
     });
 

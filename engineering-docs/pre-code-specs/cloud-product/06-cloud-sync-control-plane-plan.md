@@ -90,7 +90,6 @@ Initial operational command families:
 
 - `refresh_repo_state`
 - `sync_run_history`
-- `plan_restore`
 - `execute_restore`
 - `create_commit`
 - `push_branch`

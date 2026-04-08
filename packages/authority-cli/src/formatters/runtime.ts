@@ -44,8 +44,31 @@ interface TimelineTrustSummary {
   unknown: number;
 }
 
+interface PolicySummaryLatencyMetrics {
+  latency_metrics?: {
+    policy_eval_ms: {
+      count: number;
+      p95_ms: number | null;
+      target_ms: number;
+      within_target: boolean | null;
+    };
+    fast_action_ms: {
+      count: number;
+      p95_ms: number | null;
+      target_ms: number;
+      within_target: boolean | null;
+    };
+  };
+}
+
 function formatReasonDetail(reason: ReasonDetail | null | undefined): string | null {
   return reason ? `${reason.code}: ${reason.message}` : null;
+}
+
+function hasLatencyMetrics(
+  policySummary: NonNullable<DiagnosticsResult["policy_summary"]>,
+): policySummary is NonNullable<DiagnosticsResult["policy_summary"]> & PolicySummaryLatencyMetrics {
+  return "latency_metrics" in policySummary;
 }
 
 function summarizeTimelineTrust(steps: TimelineStep[]): TimelineTrustSummary {
@@ -131,6 +154,21 @@ function formatPreviewBlocks(step: TimelineStep): string | null {
       lines(`Preview ${preview.label ?? preview.type}:`, indentBlock(clipText(preview.preview), 4)),
     )
     .join("\n");
+}
+
+function formatLatencyMetric(
+  label: string,
+  metric: {
+    count: number;
+    p95_ms: number | null;
+    target_ms: number;
+    within_target: boolean | null;
+  },
+): string {
+  const p95 = metric.p95_ms === null ? "no samples" : `${metric.p95_ms}ms`;
+  const status =
+    metric.within_target === null ? "n/a" : metric.within_target ? "within target" : "above target";
+  return `${label}: ${p95} p95 against ${metric.target_ms}ms target (${status}, ${metric.count} samples)`;
 }
 
 export function formatRunSummary(result: RunSummaryResult): string {
@@ -256,6 +294,12 @@ export function formatDiagnostics(result: DiagnosticsResult): string {
           `Policy summary: ${result.policy_summary.profile_name}`,
           `Policy versions: ${joinOrNone(result.policy_summary.policy_versions)}`,
           `Compiled rules: ${result.policy_summary.compiled_rule_count}`,
+          hasLatencyMetrics(result.policy_summary) && result.policy_summary.latency_metrics
+            ? formatLatencyMetric("Policy eval latency", result.policy_summary.latency_metrics.policy_eval_ms)
+            : null,
+          hasLatencyMetrics(result.policy_summary) && result.policy_summary.latency_metrics
+            ? formatLatencyMetric("Fast action latency", result.policy_summary.latency_metrics.fast_action_ms)
+            : null,
           result.policy_summary.loaded_sources.length > 0
             ? `Policy sources: ${result.policy_summary.loaded_sources
                 .map((source) => `${source.scope}:${source.profile_name}@${source.policy_version}`)

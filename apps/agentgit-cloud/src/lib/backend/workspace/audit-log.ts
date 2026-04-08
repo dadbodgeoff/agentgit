@@ -3,8 +3,13 @@ import "server-only";
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { AuditLogResponseSchema, type AuditEntry, type AuditExportFormat } from "@/schemas/cloud";
+import { hasDatabaseUrl } from "@/lib/db/client";
 import { listWorkspaceApprovals, listWorkspaceRunContexts } from "@/lib/backend/workspace/workspace-runtime";
 import { paginateItems } from "@/lib/pagination/cursor";
+import {
+  appendWorkspaceAuditEntries,
+  listStoredWorkspaceAuditEntries,
+} from "@/lib/backend/workspace/workspace-audit-events";
 
 function repoLabel(owner: string, name: string) {
   return `${owner}/${name}`;
@@ -30,12 +35,8 @@ function describeConnectorAuditDetails(command: {
   nextAttemptAt: string | null;
   result?: Record<string, unknown> | null;
 }) {
-  if (
-    command.result &&
-    command.command.type === "open_pull_request" &&
-    typeof command.result.pullRequestUrl === "string"
-  ) {
-    return `Provider PR opened at ${command.result.pullRequestUrl}.`;
+  if (command.command.type === "open_pull_request" && command.status === "completed") {
+    return "Provider pull request was opened through the local connector.";
   }
 
   if (command.result && command.command.type === "execute_restore" && typeof command.result.snapshotId === "string") {
@@ -88,12 +89,14 @@ function detailPathForCommand(command: {
 }
 
 function externalUrlForCommand(command: { result?: Record<string, unknown> | null }) {
-  return typeof command.result?.pullRequestUrl === "string" ? command.result.pullRequestUrl : null;
+  return null;
 }
 
 function csvCell(value: string | null | undefined) {
   const normalized = value ?? "";
-  return `"${normalized.replaceAll('"', '""')}"`;
+  const formulaEscaped =
+    normalized.length > 0 && /^[=+\-@\t\r]/.test(normalized) ? `'${normalized}` : normalized;
+  return `"${formulaEscaped.replaceAll('"', '""')}"`;
 }
 
 function formatAuditExportTimestamp(value: string) {
@@ -123,7 +126,7 @@ function filterAuditItems(items: AuditEntry[], options: WorkspaceAuditLogOptions
   });
 }
 
-async function collectWorkspaceAuditItems(workspaceId: string) {
+async function collectProjectedWorkspaceAuditItems(workspaceId: string) {
   const items: AuditEntry[] = [];
 
   for (const { repository, approval } of await listWorkspaceApprovals(workspaceId)) {
@@ -220,6 +223,16 @@ async function collectWorkspaceAuditItems(workspaceId: string) {
   });
 
   return items.sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime());
+}
+
+async function collectWorkspaceAuditItems(workspaceId: string) {
+  if (!hasDatabaseUrl()) {
+    return collectProjectedWorkspaceAuditItems(workspaceId);
+  }
+
+  const projected = await collectProjectedWorkspaceAuditItems(workspaceId);
+  await appendWorkspaceAuditEntries(projected.map((entry) => ({ workspaceId, ...entry })));
+  return listStoredWorkspaceAuditEntries(workspaceId);
 }
 
 function serializeAuditExport(

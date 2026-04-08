@@ -39,6 +39,7 @@ import type { ServiceOptions } from "../types.js";
 import type { PolicyRuntimeState } from "../../policy-runtime.js";
 import type { AuthorityState } from "../../state.js";
 import { prepareActionAttemptEvaluation } from "../../handlers/submit-action.js";
+import type { LatencyMetricsStore } from "../../latency-metrics.js";
 
 export function handleHello(
   state: AuthorityState,
@@ -148,6 +149,7 @@ export function handleExplainPolicyAction(
   state: AuthorityState,
   journal: RunJournal,
   policyRuntime: PolicyRuntimeState,
+  latencyMetrics: LatencyMetricsStore,
   runtimeOptions: Pick<ServiceOptions, "capabilityRefreshStaleMs">,
   mcpRegistry: McpServerRegistry,
   request: RequestEnvelope<unknown>,
@@ -159,6 +161,7 @@ export function handleExplainPolicyAction(
   const prepared = prepareActionAttemptEvaluation({
     journal,
     mcpRegistry,
+    latencyMetrics,
     policyRuntime,
     runtimeOptions,
     buildCachedCapabilityState,

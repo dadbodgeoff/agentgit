@@ -5,6 +5,8 @@ import { exportWorkspaceAuditLog } from "@/lib/backend/workspace/audit-log";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { AuditExportQuerySchema } from "@/schemas/cloud";
 
+const AUDIT_EXPORT_MAX_RECORDS = 5_000;
+
 function parseExportQuery(request: Request) {
   const url = new URL(request.url);
   const raw = {
@@ -29,7 +31,7 @@ export async function GET(request: Request) {
     const exported = await exportWorkspaceAuditLog(workspaceSession.activeWorkspace.id, query.format, {
       from: query.from ?? null,
       to: query.to ?? null,
-      limit: null,
+      limit: AUDIT_EXPORT_MAX_RECORDS,
     });
 
     return new Response(exported.body, {

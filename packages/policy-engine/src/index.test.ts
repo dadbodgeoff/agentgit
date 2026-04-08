@@ -11,6 +11,7 @@ import {
   evaluatePolicy,
   replayPolicyThresholds,
   recommendPolicyThresholds,
+  validatePolicyConfigDocument,
   type PolicyEvaluationContext,
 } from "./index.js";
 
@@ -913,6 +914,62 @@ describe("evaluatePolicy", () => {
     expect(compiled.rules.length).toBeGreaterThan(0);
     expect(compiled.thresholds.low_confidence["filesystem/*"]).toBe(0.3);
     expect(compiled.thresholds.low_confidence["function/*"]).toBe(0.5);
+    expect(Object.isFrozen(compiled)).toBe(true);
+    expect(Object.isFrozen(compiled.rules)).toBe(true);
+    expect(Object.isFrozen(compiled.rules[0]?.rule)).toBe(true);
+  });
+
+  it("should reject invalid or unsafe regex predicates at policy validation time", () => {
+    const invalidPolicy: PolicyConfig = {
+      profile_name: "invalid-regex",
+      policy_version: "1",
+      rules: [
+        {
+          rule_id: "invalid.regex",
+          description: "Invalid regex rule.",
+          rationale: "Test invalid regex rejection.",
+          binding_scope: "workspace",
+          decision: "ask",
+          enforcement_mode: "enforce",
+          priority: 1,
+          match: {
+            type: "field",
+            field: "target.primary.locator",
+            operator: "matches",
+            value: "(a+)+",
+          },
+          reason: {
+            code: "INVALID_REGEX",
+            severity: "high",
+            message: "Invalid regex.",
+          },
+        },
+      ],
+    };
+
+    const validation = validatePolicyConfigDocument(invalidPolicy);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.compiled_policy).toBeNull();
+    expect(validation.issues.some((issue) => issue.includes("anchored"))).toBe(true);
+    expect(validation.issues.some((issue) => issue.includes("nested quantifiers"))).toBe(true);
+    expect(() => compilePolicyPack([invalidPolicy])).toThrow();
+  });
+
+  it("should deny unknown action domains by default", () => {
+    const outcome = evaluatePolicy(
+      makeAction({
+        operation: {
+          domain: "database" as ActionRecord["operation"]["domain"],
+          kind: "query",
+          name: "database.query",
+          display_name: "Query database",
+        },
+      }),
+    );
+
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("POLICY_DOMAIN_UNSUPPORTED");
   });
 
   it("should let require_approval rules strengthen an otherwise allowed action", () => {
@@ -941,7 +998,7 @@ describe("evaluatePolicy", () => {
                 type: "field",
                 field: "target.primary.locator",
                 operator: "matches",
-                value: "/package\\.json$",
+                value: "^(?:.*\\/)?package\\.json$",
               },
             ],
           },
@@ -1067,7 +1124,7 @@ describe("evaluatePolicy", () => {
             type: "field",
             field: "target.primary.locator",
             operator: "matches",
-            value: "/\\.env$",
+            value: "^(?:.*\\/)?\\.env$",
           },
           reason: {
             code: "TEST_ALLOW",

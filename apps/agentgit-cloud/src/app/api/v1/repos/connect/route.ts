@@ -1,6 +1,7 @@
 import { requireApiRole } from "@/lib/auth/api-session";
 import { listWorkspaceConnectors } from "@/lib/backend/control-plane/connectors";
 import { getWorkspaceConnectionState, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { listWorkspaceRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
 import {
   assertWorkspaceUsageWithinBillingLimits,
@@ -71,7 +72,18 @@ export async function POST(request: Request) {
     return access.denied;
   }
 
-  const payload = RepositoryConnectionUpdateSchema.safeParse(await request.json().catch(() => ({})));
+  let rawPayload: unknown;
+  try {
+    rawPayload = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  const payload = RepositoryConnectionUpdateSchema.safeParse(rawPayload);
   if (!payload.success) {
     return jsonWithRequestId({ message: "Repository connection payload is invalid." }, { status: 400 }, requestId);
   }

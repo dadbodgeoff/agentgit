@@ -1,3 +1,5 @@
+import { CSRF_HEADER_NAME, readCsrfTokenFromDocumentCookies } from "@/lib/security/csrf";
+
 export class ApiClientError extends Error {
   readonly status: number;
   readonly details: unknown;
@@ -10,11 +12,23 @@ export class ApiClientError extends Error {
   }
 }
 
-export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+export async function fetchJson<T = unknown>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  return (await fetchJsonWithResponse<T>(input, init)).data;
+}
+
+export async function fetchJsonWithResponse<T = unknown>(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<{ data: T; response: Response }> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const csrfToken = method === "GET" || method === "HEAD" ? null : readCsrfTokenFromDocumentCookies();
+
   const response = await fetch(input, {
     ...init,
+    credentials: init?.credentials ?? "same-origin",
     headers: {
       "Content-Type": "application/json",
+      ...(csrfToken ? { [CSRF_HEADER_NAME]: csrfToken } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -29,7 +43,10 @@ export async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit)
     throw new ApiClientError(`Request failed with status ${response.status}`, response.status, details);
   }
 
-  return (await response.json()) as T;
+  return {
+    data: (await response.json()) as T,
+    response,
+  };
 }
 
 export function getApiErrorMessage(error: unknown, fallback: string): string {

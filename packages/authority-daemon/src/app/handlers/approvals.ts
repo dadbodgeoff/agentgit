@@ -25,6 +25,7 @@ import { buildCachedCapabilityState } from "../capabilities.js";
 import { makeSuccessResponse } from "../response-helpers.js";
 import type { ServiceOptions } from "../types.js";
 import { executeGovernedAction as executeGovernedActionFlow } from "../../services/action-execution.js";
+import type { LatencyMetricsStore } from "../../latency-metrics.js";
 import {
   deriveSnapshotCapabilityState as deriveSnapshotCapabilityStateService,
   deriveSnapshotRunRiskContext as deriveSnapshotRunRiskContextService,
@@ -155,6 +156,7 @@ export async function handleResolveApproval(
   ticketStore: OwnedTicketStore,
   mcpRegistry: McpServerRegistry,
   hostedExecutionQueue: HostedExecutionQueue,
+  latencyMetrics: LatencyMetricsStore,
   runtimeOptions: Pick<ServiceOptions, "capabilityRefreshStaleMs">,
   request: RequestEnvelope<unknown>,
   _context: RequestContext,
@@ -240,6 +242,7 @@ export async function handleResolveApproval(
     draftStore,
     noteStore,
     ticketStore,
+    latencyMetrics,
     executeHostedDelegatedAction: (action) =>
       executeHostedDelegatedAction({
         action,

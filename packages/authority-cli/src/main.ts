@@ -362,7 +362,8 @@ if (isDirectExecution) {
     if (jsonOutput) {
       console.error(JSON.stringify(formatCliJsonError(cliError), null, 2));
     } else {
-      console.error(`Error [${cliError.code}]: ${cliError.message}`);
+      const safeMessage = cliError.message.replace(/[\r\n]+/g, " ");
+      console.error(`Error [${cliError.code}]: ${safeMessage}`);
     }
 
     process.exit(cliError.exitCode);

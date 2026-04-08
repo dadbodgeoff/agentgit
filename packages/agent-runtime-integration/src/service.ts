@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -63,6 +63,97 @@ import { DefaultCommandRunner, type CommandRunner, resolveWorkspaceRoot } from "
 
 const PRODUCT_CLIENT_VERSION = "0.1.0";
 const CONTAINED_SECRET_MOUNT_ROOT = "/run/agentgit-secrets";
+const CHILD_CLEANUP_TIMEOUT_MS = 5_000;
+
+function currentUid(): number | null {
+  return typeof process.getuid === "function" ? process.getuid() : null;
+}
+
+function ensurePrivateDirectory(directoryPath: string): void {
+  fs.mkdirSync(directoryPath, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directoryPath, 0o700);
+  const stats = fs.lstatSync(directoryPath);
+  if (!stats.isDirectory()) {
+    throw new AgentGitError("AgentGit runtime expected a directory but found another file type.", "PRECONDITION_FAILED", {
+      path: directoryPath,
+    });
+  }
+
+  const uid = currentUid();
+  if (uid !== null && stats.uid !== uid) {
+    throw new AgentGitError("AgentGit runtime directory is not owned by the current user.", "PRECONDITION_FAILED", {
+      path: directoryPath,
+      expected_uid: uid,
+      actual_uid: stats.uid,
+    });
+  }
+}
+
+function writeSecureTextFile(filePath: string, content: string): void {
+  ensurePrivateDirectory(path.dirname(filePath));
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const handle = fs.openSync(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+  try {
+    fs.writeFileSync(handle, content, "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  fs.renameSync(tempPath, filePath);
+  fs.chmodSync(filePath, 0o600);
+}
+
+function resolveContainedSecretTarget(secretFileRoot: string, relativePath: string): string {
+  const normalizedRelativePath = relativePath.replace(/^\/+/, "");
+  const targetPath = path.join(secretFileRoot, normalizedRelativePath);
+  const relativeToRoot = path.relative(secretFileRoot, targetPath);
+  if (
+    relativeToRoot.length === 0 ||
+    relativeToRoot === "." ||
+    relativeToRoot.startsWith(`..${path.sep}`) ||
+    relativeToRoot === ".." ||
+    path.isAbsolute(relativeToRoot)
+  ) {
+    throw new AgentGitError(
+      `Contained secret file binding escapes the managed mount root: ${relativePath}`,
+      "BAD_REQUEST",
+      { relative_path: relativePath },
+    );
+  }
+
+  return targetPath;
+}
+
+function assertPathWithinRoot(rootPath: string, candidatePath: string, envKey: string): string {
+  const resolvedRoot = path.resolve(rootPath);
+  const resolvedCandidate = path.isAbsolute(candidatePath)
+    ? path.resolve(candidatePath)
+    : path.resolve(resolvedRoot, candidatePath);
+  if (resolvedCandidate !== resolvedRoot && !resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new AgentGitError(`AgentGit rejected ${envKey} because it escapes the managed runtime root.`, "PRECONDITION_FAILED", {
+      env_key: envKey,
+      candidate_path: candidatePath,
+      resolved_root: resolvedRoot,
+      resolved_candidate_path: resolvedCandidate,
+    });
+  }
+
+  return resolvedCandidate;
+}
+
+function resolveRuntimeScopedPath(
+  rootPath: string,
+  configuredValue: string | undefined,
+  fallbackPath: string,
+  envKey: string,
+): string {
+  const trimmed = configuredValue?.trim();
+  if (!trimmed) {
+    return fallbackPath;
+  }
+
+  return assertPathWithinRoot(rootPath, trimmed, envKey);
+}
 
 function isConnectFailure(error: unknown): boolean {
   return (
@@ -105,6 +196,7 @@ export interface AuthoritySession {
   daemon_config: ReturnType<typeof resolveAuthorityDaemonRuntimeConfig>;
   daemon_started: boolean;
   daemon?: StartedAuthorityDaemon;
+  runtime_lock_release?: () => void;
 }
 
 interface AuthoritySessionRuntime {
@@ -123,12 +215,37 @@ function runtimeHash(workspaceRoot: string): string {
   return createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 12);
 }
 
+function acquireRuntimeLock(runtimeRoot: string): (() => void) | null {
+  const lockPath = path.join(runtimeRoot, "authority.lock");
+
+  try {
+    const handle = fs.openSync(lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+    fs.writeFileSync(handle, String(process.pid), "utf8");
+    fs.closeSync(handle);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return null;
+    }
+    throw error;
+  }
+
+  return () => {
+    try {
+      fs.rmSync(lockPath, { force: true });
+    } catch {
+      // Best-effort cleanup for short-lived runtime lock files.
+    }
+  };
+}
+
 function buildAuthorityEnvironmentForWorkspace(
   workspaceRoot: string,
   env: NodeJS.ProcessEnv,
   runtimeRoot: string,
 ): NodeJS.ProcessEnv {
   const mcpRoot = path.join(runtimeRoot, "mcp");
+  ensurePrivateDirectory(runtimeRoot);
+  ensurePrivateDirectory(mcpRoot);
   return {
     ...env,
     AGENTGIT_ROOT: workspaceRoot,
@@ -136,8 +253,18 @@ function buildAuthorityEnvironmentForWorkspace(
     AGENTGIT_JOURNAL_PATH: path.join(runtimeRoot, "authority.db"),
     AGENTGIT_SNAPSHOT_ROOT: path.join(runtimeRoot, "snapshots"),
     AGENTGIT_MCP_REGISTRY_PATH: path.join(mcpRoot, "registry.db"),
-    AGENTGIT_MCP_SECRET_STORE_PATH: env.AGENTGIT_MCP_SECRET_STORE_PATH ?? path.join(mcpRoot, "secret-store.db"),
-    AGENTGIT_MCP_SECRET_KEY_PATH: env.AGENTGIT_MCP_SECRET_KEY_PATH ?? path.join(mcpRoot, "secret-store.key"),
+    AGENTGIT_MCP_SECRET_STORE_PATH: resolveRuntimeScopedPath(
+      mcpRoot,
+      env.AGENTGIT_MCP_SECRET_STORE_PATH,
+      path.join(mcpRoot, "secret-store.db"),
+      "AGENTGIT_MCP_SECRET_STORE_PATH",
+    ),
+    AGENTGIT_MCP_SECRET_KEY_PATH: resolveRuntimeScopedPath(
+      mcpRoot,
+      env.AGENTGIT_MCP_SECRET_KEY_PATH,
+      path.join(mcpRoot, "secret-store.key"),
+      "AGENTGIT_MCP_SECRET_KEY_PATH",
+    ),
     AGENTGIT_MCP_HOST_POLICY_PATH: path.join(mcpRoot, "host-policies.db"),
     AGENTGIT_MCP_CONCURRENCY_LEASE_PATH: path.join(mcpRoot, "concurrency.db"),
     AGENTGIT_MCP_HOSTED_WORKER_ENDPOINT: `unix:${path.join(mcpRoot, "hosted-worker.sock")}`,
@@ -193,9 +320,7 @@ function createWorkspaceSecretStore(
 
           const created = randomBytes(32);
           if (params.legacyKeyPath) {
-            fs.mkdirSync(path.dirname(params.legacyKeyPath), { recursive: true });
-            fs.writeFileSync(params.legacyKeyPath, created.toString("base64"), { encoding: "utf8", mode: 0o600 });
-            fs.chmodSync(params.legacyKeyPath, 0o600);
+            writeSecureTextFile(params.legacyKeyPath, created.toString("base64"));
           }
           return created;
         },
@@ -210,7 +335,8 @@ async function ensureAuthoritySession(
   runtimeRoot: string,
   runtime: AuthoritySessionRuntime = DEFAULT_AUTHORITY_SESSION_RUNTIME,
 ): Promise<AuthoritySession> {
-  fs.mkdirSync(runtimeRoot, { recursive: true });
+  ensurePrivateDirectory(path.dirname(runtimeRoot));
+  ensurePrivateDirectory(runtimeRoot);
   const daemonEnv = buildAuthorityEnvironmentForWorkspace(workspaceRoot, env, runtimeRoot);
   const daemonConfig = resolveAuthorityDaemonRuntimeConfig(daemonEnv, workspaceRoot);
   let lastError: unknown;
@@ -232,10 +358,37 @@ async function ensureAuthoritySession(
       lastError = error;
     }
 
+    const releaseRuntimeLock = acquireRuntimeLock(runtimeRoot);
+    if (!releaseRuntimeLock) {
+      if (attempt < AUTHORITY_SESSION_MAX_ATTEMPTS) {
+        await runtime.sleep(AUTHORITY_SESSION_RETRY_DELAY_MS);
+        continue;
+      }
+      break;
+    }
+
+    client = runtime.build_client(daemonConfig.socketPath);
+    try {
+      await client.hello([workspaceRoot]);
+      releaseRuntimeLock();
+      return {
+        client,
+        daemon_config: daemonConfig,
+        daemon_started: false,
+      };
+    } catch (error) {
+      if (!isConnectFailure(error)) {
+        releaseRuntimeLock();
+        throw error;
+      }
+      lastError = error;
+    }
+
     let daemon: StartedAuthorityDaemon | undefined;
     try {
       daemon = await runtime.start_daemon(daemonConfig);
     } catch (error) {
+      releaseRuntimeLock();
       lastError = error;
       if (isAddressInUseFailure(error) && attempt < AUTHORITY_SESSION_MAX_ATTEMPTS) {
         await runtime.sleep(AUTHORITY_SESSION_RETRY_DELAY_MS);
@@ -252,10 +405,12 @@ async function ensureAuthoritySession(
         daemon_config: daemonConfig,
         daemon_started: true,
         daemon,
+        runtime_lock_release: releaseRuntimeLock,
       };
     } catch (error) {
       lastError = error;
       await daemon.shutdown().catch(() => undefined);
+      releaseRuntimeLock();
       if (isConnectFailure(error) && attempt < AUTHORITY_SESSION_MAX_ATTEMPTS) {
         await runtime.sleep(AUTHORITY_SESSION_RETRY_DELAY_MS);
         continue;
@@ -283,14 +438,11 @@ export const __testables = {
 };
 
 async function suppressRuntimeNoise<T>(callback: () => Promise<T>): Promise<T> {
-  const originalConsoleLog = console.log;
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
-  console.log = () => undefined;
   process.stdout.write = ((..._args: unknown[]) => true) as typeof process.stdout.write;
   try {
     return await callback();
   } finally {
-    console.log = originalConsoleLog;
     process.stdout.write = originalStdoutWrite;
   }
 }
@@ -308,6 +460,7 @@ async function withAuthoritySession<T>(
     if (session.daemon) {
       await session.daemon.shutdown();
     }
+    session.runtime_lock_release?.();
   }
 }
 
@@ -918,10 +1071,111 @@ function governedShimBinDirFromProfile(profile: RuntimeProfileDocument): string 
 }
 
 function commandWords(command: string): string[] {
-  return command
-    .trim()
-    .split(/\s+/)
-    .filter((value) => value.length > 0);
+  const words: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+  let tokenStarted = false;
+
+  for (const character of command.trim()) {
+    if (escaping) {
+      current += character;
+      escaping = false;
+      tokenStarted = true;
+      continue;
+    }
+
+    if (character === "\\") {
+      escaping = true;
+      tokenStarted = true;
+      continue;
+    }
+
+    if (quote) {
+      if (character === quote) {
+        quote = null;
+      } else {
+        current += character;
+      }
+      tokenStarted = true;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      tokenStarted = true;
+      continue;
+    }
+
+    if (/\s/u.test(character)) {
+      if (tokenStarted) {
+        words.push(current);
+        current = "";
+        tokenStarted = false;
+      }
+      continue;
+    }
+
+    current += character;
+    tokenStarted = true;
+  }
+
+  if (escaping || quote) {
+    throw new AgentGitError("Launch command contains an unterminated escape or quote.", "PRECONDITION_FAILED", {
+      launch_command: command,
+    });
+  }
+
+  if (tokenStarted) {
+    words.push(current);
+  }
+
+  return words.filter((value) => value.length > 0);
+}
+
+function parseLaunchCommand(command: string): { command: string; args: string[] } {
+  const words = commandWords(command);
+  if (words.length === 0) {
+    throw new AgentGitError("Launch command is empty.", "PRECONDITION_FAILED", {
+      launch_command: command,
+    });
+  }
+
+  return {
+    command: words[0]!,
+    args: words.slice(1),
+  };
+}
+
+async function terminateChildProcessIfNeeded(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve();
+    };
+
+    const timeout = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+      finish();
+    }, CHILD_CLEANUP_TIMEOUT_MS);
+
+    child.once("close", () => {
+      clearTimeout(timeout);
+      finish();
+    });
+
+    child.kill("SIGTERM");
+  });
 }
 
 function assuranceCeilingForProfile(
@@ -1221,27 +1475,17 @@ export class AgentRuntimeIntegrationService {
           const resolvedBinding = secretStore.resolveRuntimeCredentialBinding(binding);
           return `${binding.target.env_key}=${resolvedBinding.resolved_value}`;
         });
-        fs.writeFileSync(envFilePath, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
+        writeSecureTextFile(envFilePath, `${lines.join("\n")}\n`);
         resolved.env_file_path = envFilePath;
       }
 
       if (fileBindings.length > 0) {
         const secretFileRoot = path.join(containedRoot, "brokered-secrets");
-        fs.mkdirSync(secretFileRoot, { recursive: true });
+        ensurePrivateDirectory(secretFileRoot);
         for (const binding of fileBindings) {
-          const normalizedRelativePath = binding.target.relative_path.replace(/^\/+/, "");
-          const targetPath = path.join(secretFileRoot, normalizedRelativePath);
-          const normalizedTargetPath = path.normalize(targetPath);
-          if (!normalizedTargetPath.startsWith(path.normalize(secretFileRoot + path.sep))) {
-            throw new AgentGitError(
-              `Contained secret file binding escapes the managed mount root: ${binding.target.relative_path}`,
-              "BAD_REQUEST",
-              { relative_path: binding.target.relative_path },
-            );
-          }
-          fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+          const targetPath = resolveContainedSecretTarget(secretFileRoot, binding.target.relative_path);
           const resolvedBinding = secretStore.resolveRuntimeCredentialBinding(binding);
-          fs.writeFileSync(targetPath, `${resolvedBinding.resolved_value}\n`, { encoding: "utf8", mode: 0o600 });
+          writeSecureTextFile(targetPath, `${resolvedBinding.resolved_value}\n`);
         }
         resolved.secret_file_root = secretFileRoot;
       }
@@ -1602,6 +1846,7 @@ export class AgentRuntimeIntegrationService {
         daemon_started: session.daemon_started,
       };
     } finally {
+      await terminateChildProcessIfNeeded(child);
       if (resolvedSecretArtifacts.env_file_path) {
         fs.rmSync(resolvedSecretArtifacts.env_file_path, { force: true });
       }
@@ -2446,7 +2691,7 @@ export class AgentRuntimeIntegrationService {
       }
 
       const shimBinDir = governedShimBinDirFromProfile(profile);
-      const launchExecutable = commandWords(profile.launch_command)[0];
+      const parsedLaunch = parseLaunchCommand(profile.launch_command);
       const childEnv: NodeJS.ProcessEnv = {
         ...this.env,
         AGENTGIT_ROOT: workspaceRoot,
@@ -2455,13 +2700,10 @@ export class AgentRuntimeIntegrationService {
         AGENTGIT_RUNTIME_PROFILE_ID: profile.profile_id,
         AGENTGIT_RUNTIME_ID: profile.runtime_id,
         ...(shimBinDir ? { PATH: prependPathEntry(this.env.PATH, shimBinDir) } : {}),
-        ...(shimBinDir ? { AGENTGIT_ORIGINAL_PATH: this.env.PATH ?? "" } : {}),
-        ...(shimBinDir && launchExecutable ? { AGENTGIT_SHIM_BYPASS_COMMANDS: launchExecutable } : {}),
       };
-      const child = this.spawnProcess(profile.launch_command, {
+      const child = this.spawnProcess(parsedLaunch.command, parsedLaunch.args, {
         cwd: workspaceRoot,
         env: childEnv,
-        shell: true,
         stdio: "inherit",
       });
 
@@ -2520,12 +2762,14 @@ export class AgentRuntimeIntegrationService {
         });
         return result;
       } finally {
+        await terminateChildProcessIfNeeded(child);
         detachSignalHandlers();
       }
     } finally {
       if (session.daemon) {
         await session.daemon.shutdown();
       }
+      session.runtime_lock_release?.();
     }
   }
 }

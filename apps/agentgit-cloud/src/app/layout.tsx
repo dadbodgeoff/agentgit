@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 
@@ -53,7 +54,9 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  await connection();
+
   return (
     <html className={`${plexSans.variable} ${plexMono.variable}`} lang="en">
       <body>

@@ -407,6 +407,24 @@ describe("McpPublicHostPolicyRegistry", () => {
 
     registry.close();
   });
+
+  it("rejects wildcard subdomain host policies", () => {
+    const root = dirs.make();
+    const registry = new McpPublicHostPolicyRegistry({
+      dbPath: path.join(root, "host-policies.db"),
+    });
+
+    expect(() =>
+      registry.upsertPolicy({
+        host: "example.com",
+        display_name: "Example",
+        allow_subdomains: true,
+        allowed_ports: [443],
+      }),
+    ).toThrow("allow_subdomains is not supported");
+
+    registry.close();
+  });
 });
 
 describe("McpServerRegistry", () => {

@@ -403,7 +403,7 @@ describe("connector routing and dispatch safety", () => {
     const inventory = await listWorkspaceConnectors("ws_acme_01", "2026-04-07T18:12:00Z");
     expect(inventory.items[0]?.recentCommands[0]).toMatchObject({
       detailPath: "/app/repos/acme/platform-ui",
-      externalUrl: "https://github.com/acme/platform-ui/pull/42",
+      externalUrl: null,
     });
   });
 });

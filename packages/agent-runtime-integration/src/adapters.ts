@@ -258,16 +258,18 @@ function parseGovernedAssetMetadata(value: unknown): GovernedLaunchAssetMetadata
     return null;
   }
 
+  const helperScriptSha256 = typeof record.helper_script_sha256 === "string" ? record.helper_script_sha256 : null;
   const helperScriptPath = typeof record.helper_script_path === "string" ? record.helper_script_path : null;
   const shimBinDir = typeof record.shim_bin_dir === "string" ? record.shim_bin_dir : null;
   const generatedAssetRoot = typeof record.generated_asset_root === "string" ? record.generated_asset_root : null;
-  if (!helperScriptPath || !shimBinDir || !generatedAssetRoot) {
+  if (!helperScriptSha256 || !helperScriptPath || !shimBinDir || !generatedAssetRoot) {
     return null;
   }
 
   return {
     generated_asset_root: generatedAssetRoot,
     helper_script_path: helperScriptPath,
+    helper_script_sha256: helperScriptSha256,
     shim_bin_dir: shimBinDir,
     shim_commands: Array.isArray(record.shim_commands)
       ? record.shim_commands.filter((entry): entry is string => typeof entry === "string")

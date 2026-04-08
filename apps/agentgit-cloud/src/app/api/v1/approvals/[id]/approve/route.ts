@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { NextResponse } from "next/server";
 
 import { requireApiSession } from "@/lib/auth/api-session";
@@ -7,8 +9,11 @@ import {
   getRepositoryConnectorAvailability,
   queueConnectorCommand,
 } from "@/lib/backend/control-plane/connectors";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { getWorkspaceApprovalProjection } from "@/lib/backend/workspace/workspace-approvals";
+import { appendWorkspaceAuditEntry } from "@/lib/backend/workspace/workspace-audit-events";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
+import { validateCsrfRequest } from "@/lib/security/csrf";
 import { ApprovalDecisionRequestSchema } from "@/schemas/cloud";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }): Promise<NextResponse> {
@@ -19,8 +24,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return unauthorized;
   }
 
+  const csrfError = validateCsrfRequest(request);
+  if (csrfError) {
+    return jsonWithRequestId({ message: csrfError }, { status: 403 }, requestId);
+  }
+
   const { id } = await context.params;
-  const payload = ApprovalDecisionRequestSchema.safeParse(await request.json().catch(() => ({})));
+  let rawPayload: unknown;
+  try {
+    rawPayload = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  const payload = ApprovalDecisionRequestSchema.safeParse(rawPayload);
   if (!payload.success) {
     return jsonWithRequestId(
       { message: "Approval decision payload is invalid.", issues: payload.error.flatten() },
@@ -31,6 +52,27 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const actorName = session.user.name ?? session.user.email ?? "Workspace reviewer";
   const queuedAt = new Date().toISOString();
   const approval = await getWorkspaceApprovalProjection(workspaceSession.activeWorkspace.id, id);
+  const appendDuplicateDecisionAudit = async (details: string) =>
+    appendWorkspaceAuditEntry({
+      workspaceId: workspaceSession.activeWorkspace.id,
+      id: `approval:${id}:approve:${randomUUID()}`,
+      occurredAt: queuedAt,
+      actorLabel: actorName,
+      actorType: "human",
+      category: "approval",
+      action: "approval_approved_duplicate",
+      target: approval?.actionSummary ?? id,
+      outcome: "warning",
+      repo: approval ? `${approval.repositoryOwner}/${approval.repositoryName}` : null,
+      runId: approval?.runId ?? null,
+      actionId: approval?.actionId ?? null,
+      detailPath:
+        approval?.runId && approval?.actionId
+          ? `/repositories/${approval.repositoryOwner}/${approval.repositoryName}/runs/${approval.runId}/actions/${approval.actionId}`
+          : null,
+      externalUrl: null,
+      details,
+    });
 
   if (!approval) {
     return jsonWithRequestId({ message: "Approval request was not found." }, { status: 404 }, requestId);
@@ -41,6 +83,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     approval.decisionCommandStatus === "acked" ||
     approval.decisionCommandStatus === "completed"
   ) {
+    await appendDuplicateDecisionAudit("Approval approve replay was rejected because the decision is already queued.");
     return jsonWithRequestId(
       {
         id,
@@ -56,6 +99,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   if (approval.status !== "pending") {
+    await appendDuplicateDecisionAudit("Approval approve replay was rejected because the decision is already settled.");
     return jsonWithRequestId(
       {
         id,

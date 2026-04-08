@@ -43,7 +43,7 @@ describe("audit export route", () => {
     expect(exportWorkspaceAuditLog).toHaveBeenCalledWith("ws_acme_01", "csv", {
       from: "2026-04-07T00:00:00.000Z",
       to: "2026-04-08T23:59:59.999Z",
-      limit: null,
+      limit: 5000,
     });
     expect(response.headers.get("content-type")).toContain("text/csv");
     expect(response.headers.get("content-disposition")).toContain("audit-ws_acme_01-test.csv");

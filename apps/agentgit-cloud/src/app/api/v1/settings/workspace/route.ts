@@ -7,6 +7,7 @@ import {
   saveWorkspaceSettings,
   WorkspaceSettingsValidationError,
 } from "@/lib/backend/workspace/workspace-settings";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { WorkspaceSettingsUpdateSchema } from "@/schemas/cloud";
 
@@ -29,7 +30,18 @@ export async function PUT(request: Request): Promise<NextResponse> {
     return access.denied;
   }
 
-  const payload = WorkspaceSettingsUpdateSchema.safeParse(await request.json().catch(() => ({})));
+  let rawPayload: unknown;
+  try {
+    rawPayload = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  const payload = WorkspaceSettingsUpdateSchema.safeParse(rawPayload);
 
   if (!payload.success) {
     return jsonWithRequestId({ message: "Settings payload is invalid." }, { status: 400 }, requestId);
@@ -56,8 +68,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
 
     return jsonWithRequestId(
       {
-        message:
-          error instanceof Error && error.message.length > 0 ? error.message : "Could not save workspace settings.",
+        message: "Could not save workspace settings.",
       },
       { status: 400 },
       requestId,

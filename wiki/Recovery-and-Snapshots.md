@@ -1,6 +1,6 @@
 # Recovery & Snapshots
 
-agentgit pre-computes a recovery plan for every recoverable action before it executes. This page explains how snapshots work, what the recovery strategies mean, and how to plan and execute recovery.
+agentgit plans recovery from the boundary it actually captured for an action. This page explains how snapshots work, what the recovery strategies mean, and when automatic restore is or is not available.
 
 ---
 
@@ -8,7 +8,7 @@ agentgit pre-computes a recovery plan for every recoverable action before it exe
 
 | Strategy | When used | What recovery does |
 |----------|-----------|------------------|
-| Restore from snapshot | Filesystem writes with snapshot boundary | Restore files to their exact pre-action state |
+| Restore from snapshot | Filesystem writes with `journal_plus_anchor` or `exact_anchor` snapshots | Restore supported workspace files to their exact pre-action state |
 | Compensation | Owned-function actions (ticket, note, draft) | Execute inverse operation (delete, reopen, restore field) |
 | Remediation | Shell commands or bounded external effects | Describe outcome and manual steps; no automatic undo |
 | Review only | Actions without a recovery path | Document event; surface impact; no automatic action |
@@ -23,14 +23,14 @@ The policy engine decides when to require a snapshot (via the `allow_with_snapsh
 
 ### Snapshot classes
 
-| Class | What's captured | Use case |
-|-------|----------------|----------|
-| `full` | Complete file content + metadata | High-risk writes requiring exact rollback |
-| `metadata_only` | File metadata only (path, size, mode, hash) | Lower-risk operations; detect changes |
-| `content_only` | Content without metadata (rare) | Specific narrow scopes |
-| `none` | No snapshot taken | Read-only or non-recoverable actions |
+| Class | What's captured | Recovery capability |
+|-------|----------------|---------------------|
+| `metadata_only` | Path and metadata only | Detects state and supports review, but does not provide automatic restore |
+| `journal_only` | Journal lineage without a content anchor | Supports recovery planning and impact reasoning, not exact file restore |
+| `journal_plus_anchor` | Journal lineage plus a bounded content anchor | Supports exact restore for the anchored workspace boundary |
+| `exact_anchor` | Full anchored content boundary | Supports exact local restore for the captured scope |
 
-The engine considers: operation family, scope breadth, side-effect level, confidence score, disk pressure, and whether an explicit branch point was flagged.
+The engine considers operation family, scope breadth, side-effect level, confidence score, disk pressure, and whether an explicit branch point was flagged. Lower-fidelity classes can still produce a useful recovery plan, but they intentionally degrade to review-only instead of pretending an automatic rollback exists.
 
 ### Snapshot IDs
 

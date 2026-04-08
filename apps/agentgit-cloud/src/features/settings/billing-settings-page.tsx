@@ -31,6 +31,7 @@ import {
 } from "@/lib/api/endpoints/billing";
 import { useWorkspaceBillingQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
+import { isTrustedStripeHostedUrl } from "@/lib/security/external-url";
 import { formatAbsoluteDate, formatCurrencyUsd, formatNumber } from "@/lib/utils/format";
 import {
   BillingUpdateSchema,
@@ -183,7 +184,13 @@ export function BillingSettingsPage() {
       return await createWorkspaceStripeCheckoutSession();
     },
     onSuccess: ({ url }) => {
-      window.location.href = url;
+      if (!isTrustedStripeHostedUrl(url)) {
+        setSubmitError("Received an unexpected Stripe checkout URL.");
+        setErrorToast("Received an unexpected Stripe checkout URL.");
+        return;
+      }
+
+      window.location.assign(url);
     },
     onError: (error) => {
       const message =
@@ -204,7 +211,13 @@ export function BillingSettingsPage() {
   const portalMutation = useMutation({
     mutationFn: createWorkspaceStripePortalSession,
     onSuccess: ({ url }) => {
-      window.location.href = url;
+      if (!isTrustedStripeHostedUrl(url)) {
+        setSubmitError("Received an unexpected Stripe billing portal URL.");
+        setErrorToast("Received an unexpected Stripe billing portal URL.");
+        return;
+      }
+
+      window.location.assign(url);
     },
     onError: (error) => {
       const message =

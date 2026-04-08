@@ -2,6 +2,8 @@ import { requireApiSession } from "@/lib/auth/api-session";
 import { getActionDetail } from "@/lib/backend/workspace/action-detail";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
+const REPOSITORY_SEGMENT_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
+
 export async function GET(request: Request, context: { params: Promise<{ runId: string; actionId: string }> }) {
   const requestId = createRequestId(request);
   const { unauthorized, workspaceSession } = await requireApiSession(request);
@@ -20,6 +22,10 @@ export async function GET(request: Request, context: { params: Promise<{ runId: 
       { status: 400 },
       requestId,
     );
+  }
+
+  if (!REPOSITORY_SEGMENT_PATTERN.test(owner) || !REPOSITORY_SEGMENT_PATTERN.test(name)) {
+    return jsonWithRequestId({ message: "Repository owner or name is invalid." }, { status: 400 }, requestId);
   }
 
   try {

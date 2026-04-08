@@ -5,6 +5,7 @@ import {
   RepositorySnapshotRestoreError,
   restoreRepositorySnapshot,
 } from "@/lib/backend/workspace/repository-snapshots";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { SnapshotRestoreRequestSchema } from "@/schemas/cloud";
 
@@ -19,8 +20,16 @@ export async function POST(
     return access.denied;
   }
 
-  const body = await request.json().catch(() => null);
-  const parsed = SnapshotRestoreRequestSchema.safeParse(body);
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+    throw error;
+  }
+  const parsed = SnapshotRestoreRequestSchema.safeParse(rawBody);
 
   if (!parsed.success) {
     return jsonWithRequestId(

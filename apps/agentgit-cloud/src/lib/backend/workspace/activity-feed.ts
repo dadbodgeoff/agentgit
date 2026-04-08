@@ -22,11 +22,11 @@ function describeConnectorCommand(command: {
     command.command.type === "open_pull_request" &&
     typeof command.result.pullRequestUrl === "string"
   ) {
-    return `Pull request opened: ${command.result.pullRequestUrl}`;
+    return "Pull request opened through the local connector.";
   }
 
   if (command.result && command.command.type === "create_commit" && typeof command.result.commitSha === "string") {
-    return `Commit created: ${command.result.commitSha.slice(0, 12)}.`;
+    return "Commit created through the local connector.";
   }
 
   if (command.result && command.command.type === "push_branch" && typeof command.result.branch === "string") {
@@ -141,7 +141,7 @@ function detailPathForConnectorCommand(command: {
 }
 
 function externalUrlForConnectorCommand(command: { result?: Record<string, unknown> | null }) {
-  return typeof command.result?.pullRequestUrl === "string" ? command.result.pullRequestUrl : undefined;
+  return undefined;
 }
 
 function mapRunEventToActivity(params: {

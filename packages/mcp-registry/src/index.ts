@@ -180,6 +180,19 @@ export function classifyMcpNetworkScope(url: URL): "loopback" | "private" | "pub
   return reachability === "loopback" ? "loopback" : reachability === "private" ? "private" : "public_https";
 }
 
+function stableJsonStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJsonStringify(entry)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJsonStringify(entryValue)}`).join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
 function normalizeIdentifier(value: string, field: string): string {
   const normalized = value.trim();
   if (normalized.length === 0) {
@@ -205,6 +218,15 @@ function normalizeHostname(value: string, field: string): string {
 
 function normalizePublicHostPolicy(policy: McpPublicHostPolicy): McpPublicHostPolicy {
   const parsed = validate(McpPublicHostPolicySchema, policy);
+  if (parsed.allow_subdomains) {
+    throw new AgentGitError(
+      "Governed public HTTPS host policies must enumerate exact hosts; allow_subdomains is not supported.",
+      "CAPABILITY_UNAVAILABLE",
+      {
+        host: parsed.host,
+      },
+    );
+  }
   return {
     host: normalizeHostname(parsed.host, "host"),
     display_name: parsed.display_name?.trim() || undefined,
@@ -726,6 +748,16 @@ function normalizeHostedExecutionAttestationRecord(
   record: HostedMcpExecutionAttestationRecord,
 ): HostedMcpExecutionAttestationRecord {
   const parsed = validate(HostedMcpExecutionAttestationRecordSchema, record);
+  if (!parsed.verified_at) {
+    throw new AgentGitError(
+      "Hosted MCP execution attestations must be verified before they are persisted.",
+      "CAPABILITY_UNAVAILABLE",
+      {
+        attestation_id: parsed.attestation_id,
+        lease_id: parsed.lease_id,
+      },
+    );
+  }
   return {
     attestation_id: normalizeIdentifier(parsed.attestation_id, "attestation_id"),
     lease_id: normalizeIdentifier(parsed.lease_id, "lease_id"),
@@ -736,7 +768,7 @@ function normalizeHostedExecutionAttestationRecord(
     result_hash: normalizeIdentifier(parsed.result_hash, "result_hash"),
     artifact_manifest_hash: normalizeIdentifier(parsed.artifact_manifest_hash, "artifact_manifest_hash"),
     signature: normalizeIdentifier(parsed.signature, "signature"),
-    verified_at: parsed.verified_at ?? null,
+    verified_at: parsed.verified_at,
   };
 }
 
@@ -1135,6 +1167,29 @@ export class McpServerRegistry {
       publicHostPolicyRegistry: this.publicHostPolicyRegistry,
     });
     const existing = this.state.get("servers", normalizedServer.server_id);
+    if (existing) {
+      const existingCapabilities = {
+        tools: existing.server.tools,
+        transport: existing.server.transport,
+        sandbox: existing.server.transport === "stdio" ? existing.server.sandbox ?? null : null,
+      };
+      const nextCapabilities = {
+        tools: normalizedServer.tools,
+        transport: normalizedServer.transport,
+        sandbox: normalizedServer.transport === "stdio" ? normalizedServer.sandbox ?? null : null,
+      };
+      if (stableJsonStringify(existingCapabilities) !== stableJsonStringify(nextCapabilities)) {
+        throw new AgentGitError(
+          "Governed MCP registration changes tool capabilities or sandbox posture and requires explicit re-approval.",
+          "CAPABILITY_UNAVAILABLE",
+          {
+            server_id: normalizedServer.server_id,
+            existing_transport: existing.server.transport,
+            requested_transport: normalizedServer.transport,
+          },
+        );
+      }
+    }
     const now = new Date().toISOString();
     const record: McpServerRegistrationRecord = {
       server: normalizedServer,

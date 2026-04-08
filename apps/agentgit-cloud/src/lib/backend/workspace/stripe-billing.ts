@@ -10,6 +10,7 @@ import type {
   StripeBillingStatus,
   WorkspaceBilling,
 } from "@/schemas/cloud";
+import { isProductionAuth } from "@/lib/auth/provider-config";
 
 const STRIPE_PRICE_ENV: Record<BillingPlanTier, Record<BillingCycle, string>> = {
   starter: {
@@ -66,7 +67,12 @@ export function getStripeWebhookSecret(): string | null {
 }
 
 function getStripePriceId(planTier: BillingPlanTier, billingCycle: BillingCycle): string | null {
-  return normalizeEnv(process.env[STRIPE_PRICE_ENV[planTier][billingCycle]]);
+  const priceId = normalizeEnv(process.env[STRIPE_PRICE_ENV[planTier][billingCycle]]);
+  if (!priceId) {
+    return null;
+  }
+
+  return priceId.startsWith("price_") ? priceId : null;
 }
 
 function getConfiguredPriceIds() {
@@ -91,6 +97,12 @@ function getStripeClient(): Stripe {
   if (!secretKey) {
     throw new WorkspaceStripeConfigurationError(
       "Stripe is not configured in this environment yet. Add STRIPE_SECRET_KEY and the plan price ids to enable live billing.",
+    );
+  }
+
+  if (isProductionAuth && !secretKey.startsWith("sk_live_")) {
+    throw new WorkspaceStripeConfigurationError(
+      "Production Stripe billing requires a live secret key that starts with sk_live_.",
     );
   }
 
@@ -246,6 +258,13 @@ export async function createWorkspaceStripeCheckoutSession(params: {
     );
   }
 
+  const price = await stripe.prices.retrieve(priceId);
+  if (!price.active || price.type !== "recurring" || typeof price.unit_amount !== "number" || price.unit_amount <= 0) {
+    throw new WorkspaceStripeConfigurationError(
+      `Stripe price ${priceId} is inactive or invalid for the ${params.billing.planTier} ${params.billing.billingCycle} plan.`,
+    );
+  }
+
   let customerId = params.billing.stripeCustomerId ?? null;
   if (customerId) {
     await stripe.customers.update(customerId, {
@@ -253,7 +272,6 @@ export async function createWorkspaceStripeCheckoutSession(params: {
       name: params.workspaceName,
       metadata: {
         workspaceId: params.workspaceId,
-        workspaceName: params.workspaceName,
       },
     });
   } else {
@@ -262,7 +280,6 @@ export async function createWorkspaceStripeCheckoutSession(params: {
       name: params.workspaceName,
       metadata: {
         workspaceId: params.workspaceId,
-        workspaceName: params.workspaceName,
       },
     });
     customerId = customer.id;
@@ -270,7 +287,7 @@ export async function createWorkspaceStripeCheckoutSession(params: {
 
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
-    allow_promotion_codes: true,
+    allow_promotion_codes: false,
     billing_address_collection: "auto",
     customer: customerId,
     success_url: params.successUrl,
@@ -278,14 +295,12 @@ export async function createWorkspaceStripeCheckoutSession(params: {
     line_items: [{ price: priceId, quantity: 1 }],
     metadata: {
       workspaceId: params.workspaceId,
-      workspaceName: params.workspaceName,
       planTier: params.billing.planTier,
       billingCycle: params.billing.billingCycle,
     },
     subscription_data: {
       metadata: {
         workspaceId: params.workspaceId,
-        workspaceName: params.workspaceName,
       },
     },
   });

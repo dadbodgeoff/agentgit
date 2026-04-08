@@ -8,6 +8,34 @@ import { queryKeys } from "@/lib/query/keys";
 import type { WorkspaceSession } from "@/schemas/cloud";
 import { LiveUpdateStatusProvider } from "@/components/providers/live-update-context";
 
+function parseLiveUpdateTopics(
+  workspaceId: string,
+  rawData: string,
+): {
+  topics: string[];
+  valid: boolean;
+} {
+  try {
+    const parsed = JSON.parse(rawData) as { topics?: string[]; workspaceId?: string };
+    if (parsed.workspaceId !== workspaceId || !Array.isArray(parsed.topics)) {
+      return {
+        topics: [],
+        valid: false,
+      };
+    }
+
+    return {
+      topics: parsed.topics.filter((topic) => typeof topic === "string"),
+      valid: true,
+    };
+  } catch {
+    return {
+      topics: [],
+      valid: false,
+    };
+  }
+}
+
 export function LiveUpdateProvider({
   children,
   workspaceSession,
@@ -22,11 +50,17 @@ export function LiveUpdateProvider({
 
   useEffect(() => {
     if (!workspaceSession) {
+      setStatus("connecting");
+      setLastInvalidatedAt(null);
+      setInvalidationCount(0);
       return;
     }
 
+    const workspaceId = workspaceSession.activeWorkspace.id;
     setStatus("connecting");
-    const source = new EventSource("/api/v1/live/stream");
+    setLastInvalidatedAt(null);
+    setInvalidationCount(0);
+    const source = new EventSource(`/api/v1/live/stream?workspaceId=${encodeURIComponent(workspaceId)}`);
     const invalidateGovernedQueries = () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.repositories }).catch(() => undefined);
       queryClient.invalidateQueries({ queryKey: ["repository"] }).catch(() => undefined);
@@ -41,10 +75,15 @@ export function LiveUpdateProvider({
     });
     source.addEventListener("invalidate", (event) => {
       setStatus("connected");
+      const parsed = parseLiveUpdateTopics(workspaceId, (event as MessageEvent<string>).data);
+      if (!parsed.valid) {
+        setStatus("degraded");
+        return;
+      }
+
       setLastInvalidatedAt(new Date().toISOString());
       setInvalidationCount((current) => current + 1);
-      const parsed = JSON.parse((event as MessageEvent<string>).data) as { topics?: string[] };
-      const topics = parsed.topics ?? [];
+      const topics = parsed.topics;
       if (topics.includes("approvals")) {
         queryClient.invalidateQueries({ queryKey: queryKeys.approvals }).catch(() => undefined);
       }

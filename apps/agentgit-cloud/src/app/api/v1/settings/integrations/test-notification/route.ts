@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
+import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { sendWorkspaceIntegrationTest } from "@/lib/backend/workspace/workspace-integrations";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { IntegrationTestRequestSchema } from "@/schemas/cloud";
@@ -13,7 +14,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     return access.denied;
   }
 
-  const payload = IntegrationTestRequestSchema.safeParse(await request.json().catch(() => ({})));
+  let rawPayload: unknown;
+  try {
+    rawPayload = await readJsonBody(request);
+  } catch (error) {
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  const payload = IntegrationTestRequestSchema.safeParse(rawPayload);
 
   if (!payload.success) {
     return jsonWithRequestId({ message: "Test notification payload is invalid." }, { status: 400 }, requestId);

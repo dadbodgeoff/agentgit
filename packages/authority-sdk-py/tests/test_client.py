@@ -179,6 +179,76 @@ class AuthorityClientTest(unittest.TestCase):
         self.assertEqual(client.session_id, "sess_test_1")
         self.assertEqual(daemon.requests[0]["method"], "hello")
 
+    def test_rejects_symlinked_socket_paths(self) -> None:
+        real_socket_path = str(Path(self.temp_dir.name) / "authority-real.sock")
+
+        def handler(request: dict[str, object]) -> bytes:
+            payload = {
+                "api_version": API_VERSION,
+                "request_id": request["request_id"],
+                "session_id": "sess_test_symlink",
+                "ok": True,
+                "result": {
+                    "session_id": "sess_test_symlink",
+                    "accepted_api_version": API_VERSION,
+                    "runtime_version": "0.1.0",
+                    "schema_pack_version": "v1",
+                    "capabilities": {
+                        "local_only": True,
+                        "methods": ["hello"],
+                    },
+                },
+                "error": None,
+            }
+            return f"{json.dumps(payload)}\n".encode("utf-8")
+
+        daemon = FakeDaemon(real_socket_path, handler)
+        daemon.start()
+        self.addCleanup(daemon.stop)
+        os.symlink(real_socket_path, self.socket_path)
+
+        client = self.make_client()
+
+        with self.assertRaises(AuthorityClientTransportError) as context:
+            client.hello()
+
+        self.assertEqual(context.exception.code, "SOCKET_PATH_UNTRUSTED")
+
+    def test_rejects_symlinked_socket_auth_tokens(self) -> None:
+        def handler(request: dict[str, object]) -> bytes:
+            payload = {
+                "api_version": API_VERSION,
+                "request_id": request["request_id"],
+                "session_id": "sess_test_token",
+                "ok": True,
+                "result": {
+                    "session_id": "sess_test_token",
+                    "accepted_api_version": API_VERSION,
+                    "runtime_version": "0.1.0",
+                    "schema_pack_version": "v1",
+                    "capabilities": {
+                        "local_only": True,
+                        "methods": ["hello"],
+                    },
+                },
+                "error": None,
+            }
+            return f"{json.dumps(payload)}\n".encode("utf-8")
+
+        daemon = FakeDaemon(self.socket_path, handler)
+        daemon.start()
+        self.addCleanup(daemon.stop)
+        token_target_path = Path(self.temp_dir.name) / "real-token.txt"
+        token_target_path.write_text("secret-token\n", encoding="utf-8")
+        os.symlink(token_target_path, f"{self.socket_path}.token")
+
+        client = self.make_client()
+
+        with self.assertRaises(AuthorityClientTransportError) as context:
+            client.hello()
+
+        self.assertEqual(context.exception.code, "SOCKET_AUTH_TOKEN_UNTRUSTED")
+
     def test_register_run_bootstraps_hello_before_submit(self) -> None:
         def handler(request: dict[str, object]) -> bytes:
             method = request["method"]

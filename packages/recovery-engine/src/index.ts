@@ -620,7 +620,7 @@ export async function planSnapshotRecovery(
       {
         step_id: createRecoveryStepId(),
         type: "restore_snapshot",
-        idempotent: true,
+        idempotent: false,
         depends_on: [],
       },
     ],
@@ -766,7 +766,7 @@ export async function planPathSubsetRecovery(
       {
         step_id: createRecoveryStepId(),
         type: "restore_path_subset",
-        idempotent: true,
+        idempotent: false,
         depends_on: [],
       },
     ],

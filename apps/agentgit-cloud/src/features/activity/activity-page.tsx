@@ -9,6 +9,7 @@ import { Badge, Button, Card, Input, TabList, TabTrigger } from "@/components/pr
 import { useActivityQuery } from "@/lib/query/hooks";
 import { getApiErrorMessage } from "@/lib/api/client";
 import { authenticatedRoutes, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
+import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 
 type ActivityGroup = "all" | "approvals" | "runs" | "recovery" | "connector" | "policy";
@@ -275,11 +276,11 @@ export function ActivityPage() {
                         Open detail
                       </Link>
                     ) : null}
-                    {item.externalUrl ? (
+                    {sanitizeExternalUrl(item.externalUrl) ? (
                       <a
                         className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                        href={item.externalUrl}
-                        rel="noreferrer"
+                        href={sanitizeExternalUrl(item.externalUrl)!}
+                        rel="noopener noreferrer"
                         target="_blank"
                       >
                         Open provider

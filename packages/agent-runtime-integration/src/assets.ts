@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -38,6 +39,7 @@ export const OPENCLAW_DENIED_CORE_TOOLS = ["exec", "process", "write", "edit", "
 export interface GovernedLaunchAssetMetadata {
   generated_asset_root: string;
   helper_script_path: string;
+  helper_script_sha256: string;
   shim_bin_dir: string;
   shim_commands: string[];
   generated_assets: string[];
@@ -89,10 +91,17 @@ function governedGenericAssets(workspaceRoot: string): string[] {
   ];
 }
 
+function sha256Hex(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
 function buildGovernedRunnerSource(): string {
   return `#!${process.execPath}
 import { randomUUID } from "node:crypto";
 import net from "node:net";
+
+const MAX_RESPONSE_BYTES = 1_000_000;
+const SOCKET_TIMEOUT_MS = 30_000;
 
 async function readStdin() {
   let buffer = "";
@@ -128,14 +137,28 @@ async function sendRequest(socketPath, request) {
     }
 
     socket.setEncoding("utf8");
+    socket.setTimeout(SOCKET_TIMEOUT_MS);
     socket.once("connect", () => {
       socket.write(requestBody);
+    });
+    socket.once("timeout", () => {
+      settle(() => {
+        socket.destroy();
+        reject(new Error("AgentGit helper timed out while waiting for a daemon response."));
+      });
     });
     socket.on("data", (chunk) => {
       if (settled) {
         return;
       }
       buffer += chunk;
+      if (Buffer.byteLength(buffer, "utf8") > MAX_RESPONSE_BYTES) {
+        settle(() => {
+          socket.destroy();
+          reject(new Error("AgentGit helper rejected an oversized daemon response."));
+        });
+        return;
+      }
       const newlineIndex = buffer.indexOf("\\n");
       if (newlineIndex < 0) {
         return;
@@ -361,64 +384,41 @@ await main();
 `;
 }
 
-function buildGovernedShimSource(command: string): string {
+function buildGovernedShimSource(command: string, helperHash: string): string {
   return `#!${process.execPath}
-import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const helperPath = path.join(dirname, "..", "governed-runner.mjs");
-const bypassCommands = new Set(
-  String(process.env.AGENTGIT_SHIM_BYPASS_COMMANDS || "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0),
-);
+const expectedHelperSha256 = ${JSON.stringify(helperHash)};
 
-function resolveExecutable(commandName, pathValue) {
-  if (!pathValue || pathValue.length === 0) {
-    return null;
+function verifyHelperIntegrity() {
+  const actual = createHash("sha256").update(fs.readFileSync(helperPath, "utf8"), "utf8").digest("hex");
+  if (actual !== expectedHelperSha256) {
+    throw new Error("AgentGit governed helper integrity check failed.");
   }
-  for (const entry of pathValue.split(path.delimiter)) {
-    if (!entry) {
-      continue;
-    }
-    const candidate = path.join(entry, commandName);
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return candidate;
-    } catch {}
-  }
-  return null;
-}
-
-if (bypassCommands.has(${JSON.stringify(command)}) && process.env.AGENTGIT_SHIM_ACTIVE_BYPASS !== "1") {
-  const realCommand = resolveExecutable(${JSON.stringify(command)}, process.env.AGENTGIT_ORIGINAL_PATH || "");
-  if (!realCommand) {
-    process.stderr.write("AgentGit could not resolve the real executable for ${command}.\\n");
-    process.exit(127);
-  }
-  const direct = spawnSync(realCommand, process.argv.slice(2), {
-    env: {
-      ...process.env,
-      AGENTGIT_SHIM_ACTIVE_BYPASS: "1",
-    },
-    stdio: "inherit",
-  });
-  process.exit(direct.status ?? 1);
 }
 
 const payload = {
   operation: "shell",
   argv: [${JSON.stringify(command)}, ...process.argv.slice(2)],
 };
-const result = spawnSync(process.execPath, [helperPath], {
-  env: process.env,
-  encoding: "utf8",
-  input: JSON.stringify(payload),
-});
+let result;
+try {
+  verifyHelperIntegrity();
+  result = spawnSync(process.execPath, [helperPath], {
+    env: process.env,
+    encoding: "utf8",
+    input: JSON.stringify(payload),
+  });
+} catch (error) {
+  process.stderr.write((error instanceof Error ? error.message : String(error)) + "\\n");
+  process.exit(1);
+}
 
 if (typeof result.stderr === "string" && result.stderr.length > 0) {
   process.stderr.write(result.stderr);
@@ -495,8 +495,10 @@ function buildOpenClawManifest(): string {
   );
 }
 
-function buildOpenClawPluginSource(): string {
+function buildOpenClawPluginSource(helperHash: string): string {
   return `import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -504,8 +506,17 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const helperPath = path.join(dirname, "..", "governed-runner.mjs");
+const expectedHelperSha256 = ${JSON.stringify(helperHash)};
+
+function verifyHelperIntegrity() {
+  const actual = createHash("sha256").update(fs.readFileSync(helperPath, "utf8"), "utf8").digest("hex");
+  if (actual !== expectedHelperSha256) {
+    throw new Error("AgentGit governed helper integrity check failed.");
+  }
+}
 
 function runHelper(payload) {
+  verifyHelperIntegrity();
   const result = spawnSync(process.execPath, [helperPath], {
     env: process.env,
     encoding: "utf8",
@@ -633,8 +644,16 @@ Use read-only tools such as \`read\` for inspection. Avoid trying to bypass the 
 }
 
 function writeExecutableFile(targetPath: string, content: string): void {
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.writeFileSync(targetPath, content, "utf8");
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o755 });
+  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  const handle = fs.openSync(tempPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o755);
+  try {
+    fs.writeFileSync(handle, content, "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+  fs.renameSync(tempPath, targetPath);
   fs.chmodSync(targetPath, 0o755);
 }
 
@@ -644,9 +663,11 @@ function writeTextFile(targetPath: string, content: string): void {
 }
 
 export function buildGenericGovernedLaunchMetadata(workspaceRoot: string): GovernedLaunchAssetMetadata {
+  const helperSource = buildGovernedRunnerSource();
   return {
     generated_asset_root: governedAssetRoot(workspaceRoot),
     helper_script_path: governedHelperPath(workspaceRoot),
+    helper_script_sha256: sha256Hex(helperSource),
     shim_bin_dir: governedShimBinDir(workspaceRoot),
     shim_commands: [...GOVERNED_SHIM_COMMANDS],
     generated_assets: governedGenericAssets(workspaceRoot),
@@ -668,9 +689,10 @@ export function buildOpenClawGovernedLaunchMetadata(workspaceRoot: string): Gove
 
 export function ensureGenericGovernedLaunchAssets(workspaceRoot: string): GovernedLaunchAssetMetadata {
   const metadata = buildGenericGovernedLaunchMetadata(workspaceRoot);
-  writeExecutableFile(metadata.helper_script_path, buildGovernedRunnerSource());
+  const helperSource = buildGovernedRunnerSource();
+  writeExecutableFile(metadata.helper_script_path, helperSource);
   for (const command of metadata.shim_commands) {
-    writeExecutableFile(governedShimPath(workspaceRoot, command), buildGovernedShimSource(command));
+    writeExecutableFile(governedShimPath(workspaceRoot, command), buildGovernedShimSource(command, metadata.helper_script_sha256));
   }
   return metadata;
 }
@@ -683,7 +705,7 @@ export function ensureOpenClawGovernedLaunchAssets(workspaceRoot: string): Gover
   }
   writeTextFile(path.join(metadata.openclaw_plugin_root, "package.json"), buildOpenClawPluginPackageJson());
   writeTextFile(path.join(metadata.openclaw_plugin_root, "openclaw.plugin.json"), buildOpenClawManifest());
-  writeTextFile(path.join(metadata.openclaw_plugin_root, "index.mjs"), buildOpenClawPluginSource());
+  writeTextFile(path.join(metadata.openclaw_plugin_root, "index.mjs"), buildOpenClawPluginSource(metadata.helper_script_sha256));
   writeTextFile(metadata.openclaw_skill_path, buildOpenClawSkillSource());
   return metadata;
 }
@@ -712,6 +734,13 @@ export function governedLaunchAssetsExist(metadata: Partial<GovernedLaunchAssetM
 
   if (!fs.existsSync(metadata.helper_script_path) || !fs.existsSync(metadata.shim_bin_dir)) {
     return false;
+  }
+
+  if (metadata.helper_script_sha256) {
+    const helperContent = fs.readFileSync(metadata.helper_script_path, "utf8");
+    if (sha256Hex(helperContent) !== metadata.helper_script_sha256) {
+      return false;
+    }
   }
 
   const commands = Array.isArray(metadata.shim_commands) ? metadata.shim_commands : [];

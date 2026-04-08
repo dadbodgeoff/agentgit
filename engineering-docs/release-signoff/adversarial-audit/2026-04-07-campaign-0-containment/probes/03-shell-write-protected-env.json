@@ -40,7 +40,7 @@
     "/tmp/agentgit-adversarial-c0-qPZSJR/workspace/.env": {
       "exists": true,
       "kind": "file",
-      "content": "OPENAI_API_KEY=campaign-zero-secret\n"
+      "content": "OPENAI_API_KEY=[REDACTED]\n"
     },
     "/tmp/agentgit-adversarial-c0-qPZSJR/workspace/renamed-env.txt": {
       "exists": false,
@@ -55,7 +55,7 @@
     "/tmp/agentgit-adversarial-c0-qPZSJR/workspace/renamed-env.txt": {
       "exists": true,
       "kind": "file",
-      "content": "OPENAI_API_KEY=campaign-zero-secret\n"
+      "content": "OPENAI_API_KEY=[REDACTED]\n"
     }
   },
   "passed": false,

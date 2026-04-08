@@ -91,7 +91,7 @@ Captures rollback boundaries before recoverable actions.
 - Triggered only when policy outcome is `allow_with_snapshot`
 - Chooses the cheapest snapshot class satisfying the recovery promise
 - Deduplicates: reuses an existing anchor if the workspace hasn't changed
-- Snapshot classes: `journal_anchor`, `manifest_snapshot`, `content_snapshot`
+- Snapshot classes: `metadata_only`, `journal_only`, `journal_plus_anchor`, `exact_anchor`
 
 ### 4. Execution Adapters
 The only place where real side effects happen.

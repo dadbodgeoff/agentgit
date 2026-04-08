@@ -9,6 +9,8 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { resolveCommandPath } from "./command-paths.mjs";
+
 import {
   ActivityFeedResponseSchema,
   ApprovalDecisionResponseSchema,
@@ -26,6 +28,8 @@ const authorityCli = path.join(repoRoot, "packages", "authority-cli", "dist", "m
 const authorityDaemon = path.join(repoRoot, "packages", "authority-daemon", "dist", "main.js");
 const connectorCli = path.join(repoRoot, "packages", "cloud-connector", "dist", "cli.js");
 const DEFAULT_TIMEOUT_MS = 90_000;
+const DOCKER = resolveCommandPath("docker");
+const PNPM = resolveCommandPath("pnpm");
 
 const parsedArgs = parseArgs(process.argv.slice(2));
 if (parsedArgs.help) {
@@ -55,7 +59,7 @@ async function main() {
     await fsp.mkdir(logDir, { recursive: true });
 
     logStep("Building required cloud, connector, and authority artifacts");
-    await runRequired("pnpm", [
+    await runRequired(PNPM, [
       "exec",
       "turbo",
       "run",
@@ -95,11 +99,11 @@ async function main() {
     });
 
     logStep("Running cloud database migrations");
-    await runRequired("pnpm", ["--filter", "@agentgit/cloud-ui", "db:migrate"], { env: appEnv });
+    await runRequired(PNPM, ["--filter", "@agentgit/cloud-ui", "db:migrate"], { env: appEnv });
 
     logStep("Starting the cloud app in dev mode");
     const cloudApp = startManagedProcess(
-      "pnpm",
+      PNPM,
       ["--filter", "@agentgit/cloud-ui", "dev", "--", "--hostname", "127.0.0.1", "--port", String(cloudPort)],
       {
         cwd: repoRoot,
@@ -149,7 +153,7 @@ async function main() {
     });
 
     logStep("Starting the local authority daemon for the temp workspace");
-    const daemon = startManagedProcess("node", [authorityDaemon], {
+    const daemon = startManagedProcess(process.execPath, [authorityDaemon], {
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -184,7 +188,7 @@ async function main() {
     }
 
     logStep("Registering the cloud connector against the running app");
-    const bootstrapResult = await runRequired("node", [
+    const bootstrapResult = await runRequired(process.execPath, [
       connectorCli,
       "bootstrap",
       "--cloud-url",
@@ -202,7 +206,7 @@ async function main() {
     logStep("Submitting a governed run that must pause for approval");
     const registerRun = parseJsonOutput(
       (
-        await runRequired("node", [
+        await runRequired(process.execPath, [
           authorityCli,
           "--json",
           "--workspace-root",
@@ -218,7 +222,7 @@ async function main() {
     const runId = requireString(registerRun.run_id, "authority register-run run_id");
     const submit = parseJsonOutput(
       (
-        await runRequired("node", [
+        await runRequired(process.execPath, [
           authorityCli,
           "--json",
           "--workspace-root",
@@ -242,7 +246,7 @@ async function main() {
     logStep("Running sync-once to push run and approval events to cloud");
     const firstSync = parseJsonOutput(
       (
-        await runRequired("node", [connectorCli, "sync-once", "--workspace-root", workspaceRoot], {
+        await runRequired(process.execPath, [connectorCli, "sync-once", "--workspace-root", workspaceRoot], {
           env: {
             ...process.env,
             AGENTGIT_AUTHORITY_SOCKET_PATH: path.join(workspaceRoot, ".agentgit", "authority.sock"),
@@ -287,7 +291,7 @@ async function main() {
     logStep("Running sync-once again to pull and acknowledge the approval command");
     const secondSync = parseJsonOutput(
       (
-        await runRequired("node", [connectorCli, "sync-once", "--workspace-root", workspaceRoot], {
+        await runRequired(process.execPath, [connectorCli, "sync-once", "--workspace-root", workspaceRoot], {
           env: {
             ...process.env,
             AGENTGIT_AUTHORITY_SOCKET_PATH: path.join(workspaceRoot, ".agentgit", "authority.sock"),
@@ -349,7 +353,7 @@ async function main() {
   } finally {
     await Promise.allSettled(nextProcesses.map((entry) => stopManagedProcess(entry)));
     if (postgresContainer) {
-      await runCommand("docker", ["rm", "-f", postgresContainer], { cwd: repoRoot }).catch(() => null);
+      await runCommand(DOCKER, ["rm", "-f", postgresContainer], { cwd: repoRoot }).catch(() => null);
     }
     await fsp.rm(tempRoot, { recursive: true, force: true });
   }
@@ -470,7 +474,7 @@ async function writeShellApprovalPolicy(workspaceRoot) {
 }
 
 async function startPostgresContainer(port, logDir) {
-  const dockerCheck = await runCommand("docker", ["info"], { cwd: repoRoot });
+  const dockerCheck = await runCommand(DOCKER, ["info"], { cwd: repoRoot });
   if (dockerCheck.code !== 0) {
     throw new Error(
       "Docker is required to start a temporary Postgres instance when --database-url is not provided. Pass --database-url or start Docker.",
@@ -478,7 +482,7 @@ async function startPostgresContainer(port, logDir) {
   }
 
   const containerName = `agentgit-smoke-pg-${Date.now().toString(36)}`;
-  const started = await runRequired("docker", [
+  const started = await runRequired(DOCKER, [
     "run",
     "--detach",
     "--name",
@@ -496,7 +500,7 @@ async function startPostgresContainer(port, logDir) {
   await waitFor(
     async () => {
       const ready = await runCommand(
-        "docker",
+        DOCKER,
         ["exec", containerName, "pg_isready", "-U", "agentgit", "-d", "agentgit_cloud"],
         {
           cwd: repoRoot,
@@ -505,7 +509,7 @@ async function startPostgresContainer(port, logDir) {
       if (ready.code === 0) {
         return true;
       }
-      const logs = await runCommand("docker", ["logs", containerName], { cwd: repoRoot });
+      const logs = await runCommand(DOCKER, ["logs", containerName], { cwd: repoRoot });
       await fsp.writeFile(path.join(logDir, "postgres.log"), `${logs.stdout}\n${logs.stderr}`.trim(), "utf8");
       return false;
     },

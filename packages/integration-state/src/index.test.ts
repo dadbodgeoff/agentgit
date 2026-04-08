@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -53,6 +54,20 @@ function createDraftState(dbPath: string): IntegrationState<{ drafts: DraftDoc }
       },
     },
   });
+}
+
+function loadIntegrityKey(tempRoot: string): Buffer {
+  return Buffer.from(fs.readFileSync(path.join(tempRoot, ".state-integrity.key"), "utf8").trim(), "base64");
+}
+
+function computeBodyHmac(tempRoot: string, collection: string, key: string, bodyJson: string): string {
+  return createHmac("sha256", loadIntegrityKey(tempRoot))
+    .update(collection, "utf8")
+    .update("\0", "utf8")
+    .update(key, "utf8")
+    .update("\0", "utf8")
+    .update(bodyJson, "utf8")
+    .digest("hex");
 }
 
 afterEach(() => {
@@ -190,8 +205,17 @@ describe("IntegrationState", () => {
     const rawDb = new Database(dbPath);
 
     rawDb
-      .prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run("drafts", "draft_1", "{broken-json", "2026-03-30T00:00:00.000Z", "2026-03-30T00:00:00.000Z");
+      .prepare(
+        "INSERT INTO documents (collection, key, body_json, body_hmac, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        "drafts",
+        "draft_1",
+        "{broken-json",
+        computeBodyHmac(tempDir, "drafts", "draft_1", "{broken-json"),
+        "2026-03-30T00:00:00.000Z",
+        "2026-03-30T00:00:00.000Z",
+      );
 
     try {
       state.get("drafts", "draft_1");
@@ -213,11 +237,14 @@ describe("IntegrationState", () => {
     const rawDb = new Database(dbPath);
 
     rawDb
-      .prepare("INSERT INTO documents (collection, key, body_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .prepare(
+        "INSERT INTO documents (collection, key, body_json, body_hmac, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      )
       .run(
         "drafts",
         "draft_1",
         JSON.stringify({ draft_id: "draft_1", status: "active" }),
+        computeBodyHmac(tempDir, "drafts", "draft_1", JSON.stringify({ draft_id: "draft_1", status: "active" })),
         "2026-03-30T00:00:00.000Z",
         "2026-03-30T00:00:00.000Z",
       );
@@ -225,6 +252,35 @@ describe("IntegrationState", () => {
     try {
       state.get("drafts", "draft_1");
       throw new Error("expected storage failure");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "STORAGE_UNAVAILABLE",
+      });
+    }
+
+    rawDb.close();
+    state.close();
+  });
+
+  it("rejects tampered stored documents whose integrity MAC no longer matches", () => {
+    tempDir = makeTempDir();
+    const dbPath = path.join(tempDir, "state.db");
+    const state = createDraftState(dbPath);
+
+    state.put("drafts", "draft_1", {
+      draft_id: "draft_1",
+      status: "active",
+      action_id: "act_1",
+    });
+
+    const rawDb = new Database(dbPath);
+    rawDb
+      .prepare("UPDATE documents SET body_json = ? WHERE collection = ? AND key = ?")
+      .run(JSON.stringify({ draft_id: "draft_1", status: "archived", action_id: "act_1" }), "drafts", "draft_1");
+
+    try {
+      state.get("drafts", "draft_1");
+      throw new Error("expected integrity failure");
     } catch (error) {
       expect(error).toMatchObject({
         code: "STORAGE_UNAVAILABLE",

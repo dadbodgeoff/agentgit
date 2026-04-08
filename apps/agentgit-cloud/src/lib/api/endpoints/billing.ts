@@ -4,17 +4,17 @@ import {
   BillingUpdateSchema,
   StripeBillingSessionResponseSchema,
   StripeBillingStatusSchema,
-  WorkspaceBillingSchema,
+  WorkspaceBillingApiSchema,
   type BillingSaveResponse,
   type BillingUpdate,
   type StripeBillingSessionResponse,
   type StripeBillingStatus,
-  type WorkspaceBilling,
+  type WorkspaceBillingApi,
 } from "@/schemas/cloud";
 
-export async function getWorkspaceBilling(): Promise<WorkspaceBilling> {
+export async function getWorkspaceBilling(): Promise<WorkspaceBillingApi> {
   const response = await fetchJson<unknown>("/api/v1/settings/billing");
-  return WorkspaceBillingSchema.parse(response);
+  return WorkspaceBillingApiSchema.parse(response);
 }
 
 export async function updateWorkspaceBilling(values: BillingUpdate): Promise<BillingSaveResponse> {

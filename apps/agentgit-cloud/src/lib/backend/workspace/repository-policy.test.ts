@@ -182,7 +182,7 @@ describe("repository policy backend adapter", () => {
     expect(result?.policy.currentVersionId).toMatch(/^polver_/);
     expect(result?.policy.history).toHaveLength(1);
     expect(result?.policy.history[0]?.changeSource).toBe("save");
-    expect(result?.policy.history[0]?.actorEmail).toBe(actor.email);
+    expect(result?.policy.history[0]).not.toHaveProperty("actorEmail");
     expect(fs.existsSync(path.join(repoRoot, ".agentgit", "policy.toml"))).toBe(true);
   });
 

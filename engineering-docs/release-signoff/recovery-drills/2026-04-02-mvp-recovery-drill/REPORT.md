@@ -1,5 +1,7 @@
 # Recovery Drill Evidence
 
+> Historical note recorded on 2026-04-08: this drill only validated mechanical snapshot recovery for the exercised path. It did not cover the adversarial policy-boundary failures reported on 2026-04-07, so this PASS result must not be treated as a contained-GA security signoff.
+
 - Status: PASS
 - Drill Start: 2026-04-02T23:37:59.290Z
 - Drill Finish: 2026-04-02T23:38:03.316Z

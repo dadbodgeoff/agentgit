@@ -32,6 +32,7 @@ import type { HostedExecutionQueue } from "../../hosted-execution-queue.js";
 import type { HostedMcpWorkerClient } from "../../hosted-worker-client.js";
 import type { PolicyRuntimeState } from "../../policy-runtime.js";
 import type { AuthorityState } from "../../state.js";
+import type { LatencyMetricsStore } from "../../latency-metrics.js";
 
 type RegisteredStdioMcpServer = McpServerRegistrationRecord & {
   server: Extract<McpServerDefinition, { transport: "stdio" }>;
@@ -659,6 +660,7 @@ export function handleDiagnostics(
   publicHostPolicyRegistry: McpPublicHostPolicyRegistry,
   hostedWorkerClient: HostedMcpWorkerClient,
   hostedExecutionQueue: HostedExecutionQueue,
+  latencyMetrics: LatencyMetricsStore,
   policyRuntime: PolicyRuntimeState,
   runtimeOptions: Pick<
     ServiceOptions,
@@ -950,8 +952,20 @@ export function handleDiagnostics(
         ? {
             code: "HOSTED_QUEUE_BLOCKED_ON_WORKER",
             message: `${hostedQueueSnapshot.queued_jobs} queued hosted MCP execution job(s) are blocked on worker reachability.`,
-          }
-        : null;
+        }
+      : null;
+  const latencyMetricsSnapshot = latencyMetrics.snapshot();
+  const policySummaryWarnings = [...policyRuntime.effective_policy.summary.warnings];
+  if (latencyMetricsSnapshot.policy_eval_ms.within_target === false) {
+    policySummaryWarnings.push(
+      `Policy evaluation p95 is ${latencyMetricsSnapshot.policy_eval_ms.p95_ms}ms, above the ${latencyMetricsSnapshot.policy_eval_ms.target_ms}ms target.`,
+    );
+  }
+  if (latencyMetricsSnapshot.fast_action_ms.within_target === false) {
+    policySummaryWarnings.push(
+      `Fast local action p95 is ${latencyMetricsSnapshot.fast_action_ms.p95_ms}ms, above the ${latencyMetricsSnapshot.fast_action_ms.target_ms}ms target.`,
+    );
+  }
 
   return makeSuccessResponse(request.request_id, request.session_id, {
     daemon_health: requestedSections.has("daemon_health")
@@ -1030,7 +1044,13 @@ export function handleDiagnostics(
           warnings: capabilitySnapshot === null ? capabilityMaintenanceWarnings : capabilitySummaryWarnings,
         }
       : null,
-    policy_summary: requestedSections.has("policy_summary") ? policyRuntime.effective_policy.summary : null,
+    policy_summary: requestedSections.has("policy_summary")
+      ? {
+          ...policyRuntime.effective_policy.summary,
+          warnings: policySummaryWarnings,
+          latency_metrics: latencyMetricsSnapshot,
+        }
+      : null,
     security_posture: requestedSections.has("security_posture")
       ? {
           status: securityWarnings.length > 0 ? "degraded" : "healthy",

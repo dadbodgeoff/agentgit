@@ -67,9 +67,10 @@ Not every action gets a snapshot. The policy engine decides when to require one 
 
 | Class | What's captured | Recovery capability |
 |-------|----------------|---------------------|
-| `journal_anchor` | Path + hash manifest only | Detect what changed |
-| `manifest_snapshot` | Path list + hashes + timestamps | Identify what to restore |
-| `content_snapshot` | Full file bodies (bounded scope) | Byte-for-byte rollback |
+| `metadata_only` | Path + metadata manifest only | Detect what changed and support review |
+| `journal_only` | Journal lineage without a content anchor | Plan recovery and explain impact |
+| `journal_plus_anchor` | Journal lineage plus a bounded anchor | Exact restore for the anchored scope |
+| `exact_anchor` | Full anchored file bodies and metadata | Byte-for-byte rollback for the captured scope |
 
 ### Why not snapshot everything?
 Snapshots have a cost — disk space, capture time, and maintenance overhead. The engine uses the minimum snapshot class that still satisfies the recovery promise. For many actions, a manifest-level snapshot (hashes, not bodies) is enough to accurately describe what recovery would need to do.
@@ -77,9 +78,9 @@ Snapshots have a cost — disk space, capture time, and maintenance overhead. Th
 ### Snapshot lifecycle
 ```
 1. Policy returns allow_with_snapshot
-2. Snapshot engine captures manifest
+2. Snapshot engine captures the selected boundary class
 3. Action executes via adapter
-4. Recovery engine pre-computes a restore plan from the snapshot
+4. Recovery engine derives the best available restore or review plan from that boundary
 5. Snapshot is held until recovery plan is resolved or expires
 6. Expired snapshots are pruned during inline maintenance
 ```
@@ -94,7 +95,7 @@ The **Run Journal** is the append-only SQLite database that records everything. 
 
 ### Key properties
 
-**Append-only**: records are never updated or deleted during normal operation. Once a `RunEvent` is written, it's there permanently (until explicit cleanup after expiry).
+**Logically append-only**: the audit model is append-only for reconstruction, but some SQLite rows are updated for maintenance and expiry bookkeeping. Treat the journal semantics as append-only, not the raw page layout.
 
 **Causally linked**: each record references the records that produced it. An `ExecutionResult` links to its `Action`, which links to its `PolicyOutcome` and `SnapshotRecord`. Following these links reconstructs the full causal history of a run.
 
@@ -141,7 +142,7 @@ The action can't be rolled back, but can be undone with an inverse operation.
 ### `review_only`
 The action has no automatic recovery path, but agentgit can describe what happened and what was affected.
 
-**Example**: a shell command that modified state in an opaque way. Recovery can't undo the command, but the audit trail documents exactly what ran and what artifacts were captured.
+**Example**: a shell command that modified state in an opaque way. Recovery can't undo the command; the operator gets documentation, impact evidence, and review context rather than a reversible recovery promise.
 
 ### `irreversible`
 The action has known irreversible external effects (e.g., an email was sent).

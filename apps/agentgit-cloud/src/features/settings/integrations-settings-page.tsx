@@ -19,6 +19,7 @@ import {
 import { sendIntegrationTest, updateWorkspaceIntegrations } from "@/lib/api/endpoints/integrations";
 import { useRepositoriesQuery, useWorkspaceConnectorsQuery, useWorkspaceIntegrationsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
+import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import { formatAbsoluteDate, formatNumber, formatRelativeTimestamp } from "@/lib/utils/format";
 import {
   type ConnectorBootstrapResponse,
@@ -87,27 +88,18 @@ type IntegrationToast = {
 };
 
 function formatCommandResultSummary(command: { type: string; result: Record<string, unknown> | null }) {
-  if (!command.result) {
-    return null;
+  switch (command.type) {
+    case "create_commit":
+      return "Commit creation completed through the local connector.";
+    case "push_branch":
+      return "Branch push completed through the local connector.";
+    case "open_pull_request":
+      return "Pull request creation completed through the local connector.";
+    case "execute_restore":
+      return "Snapshot restore command completed through the local connector.";
+    default:
+      return null;
   }
-
-  if (command.type === "create_commit" && typeof command.result.commitSha === "string") {
-    return `Commit ${command.result.commitSha.slice(0, 12)} created.`;
-  }
-
-  if (command.type === "push_branch" && typeof command.result.branch === "string") {
-    return `Branch ${command.result.branch} pushed to ${typeof command.result.remoteName === "string" ? command.result.remoteName : "origin"}.`;
-  }
-
-  if (command.type === "open_pull_request" && typeof command.result.pullRequestUrl === "string") {
-    return `PR opened: ${command.result.pullRequestUrl}`;
-  }
-
-  if (command.type === "execute_restore" && typeof command.result.snapshotId === "string") {
-    return `Snapshot ${command.result.snapshotId} processed${command.result.outcome ? ` (${command.result.outcome})` : ""}.`;
-  }
-
-  return null;
 }
 
 function formatCommandDisplayState(command: { status: string; nextAttemptAt?: string | null }) {
@@ -1045,7 +1037,7 @@ export function IntegrationsSettingsPage() {
                           {connector.machineName}
                         </div>
                         <div className="text-xs text-[var(--ag-text-secondary)]">
-                          {connector.repositoryOwner}/{connector.repositoryName} on {connector.currentBranch}
+                          {connector.repositoryOwner}/{connector.repositoryName}
                         </div>
                       </div>
                       <Badge tone={connector.daemonReachable ? "success" : "warning"}>
@@ -1075,8 +1067,8 @@ export function IntegrationsSettingsPage() {
                           </div>
                         ) : null}
                       </div>
-                      <Badge tone={selectedConnector.isDirty ? "warning" : "success"}>
-                        {selectedConnector.isDirty ? "dirty workspace" : "clean workspace"}
+                      <Badge tone={selectedConnector.daemonReachable ? "success" : "warning"}>
+                        {selectedConnector.daemonReachable ? "daemon reachable" : "daemon offline"}
                       </Badge>
                     </div>
 
@@ -1085,12 +1077,6 @@ export function IntegrationsSettingsPage() {
                         <span>Provider identity</span>
                         <span className="font-mono text-[var(--ag-text-primary)]">
                           {selectedConnector.providerIdentity.provider} / {selectedConnector.providerIdentity.status}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <span>Head SHA</span>
-                        <span className="font-mono text-[var(--ag-text-primary)]">
-                          {selectedConnector.headSha.slice(0, 12)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
@@ -1293,16 +1279,6 @@ export function IntegrationsSettingsPage() {
                                     href={command.detailPath}
                                   >
                                     Open context
-                                  </a>
-                                ) : null}
-                                {command.externalUrl ? (
-                                  <a
-                                    className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                                    href={command.externalUrl}
-                                    rel="noreferrer"
-                                    target="_blank"
-                                  >
-                                    Open provider
                                   </a>
                                 ) : null}
                               </div>

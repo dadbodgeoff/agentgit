@@ -28,9 +28,9 @@ agentgit is a **local-first** tool — the daemon runs on your machine and all d
 
 Key security boundaries:
 
-- **Credentials** are stored in the OS keychain (not in the journal or filesystem) via `@agentgit/credential-broker`
+- **Credentials** are stored in the OS keychain where keychain-backed brokers are implemented. Some integration metadata still lives in encrypted local state, so treat local state protection as part of the credential boundary.
 - **Sensitive journal entries** are marked `sensitive_internal` and excluded from audit exports by default
 - **MCP server trust decisions** require explicit operator approval before credentials are bound
-- **Policy is fail-closed** — if the daemon is unreachable or policy evaluation fails, actions are denied
+- **Policy evaluation failures are fail-closed.** Do not assume every daemon transport outage is denied unless the current release notes and tests explicitly say so.
 
 If you find a way to bypass policy, exfiltrate credentials, or escalate privileges through the daemon IPC, that's a high-severity finding we want to know about immediately.

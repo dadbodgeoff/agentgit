@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -65,6 +65,17 @@ export const CloudConnectorMetadataSchema = z
   .strict();
 export type CloudConnectorMetadata = z.infer<typeof CloudConnectorMetadataSchema>;
 
+export const CloudConnectorCommandReceiptSchema = z
+  .object({
+    commandId: z.string().min(1),
+    finalStatus: z.enum(["completed", "failed"]),
+    acknowledgedAt: z.string().datetime(),
+    message: z.string().min(1),
+    result: ConnectorCommandAckRequestSchema.shape.result.nullish(),
+  })
+  .strict();
+export type CloudConnectorCommandReceipt = z.infer<typeof CloudConnectorCommandReceiptSchema>;
+
 export type CloudConnectorSyncCycleResult = {
   heartbeat: z.infer<typeof ConnectorHeartbeatResponseSchema> | null;
   published: Awaited<ReturnType<CloudConnectorRuntime["publishLocalState"]>>;
@@ -75,7 +86,14 @@ type CloudConnectorCollections = {
   registration: CloudConnectorRegistrationState;
   outbox: CloudConnectorOutboxItem;
   metadata: CloudConnectorMetadata;
+  commandReceipts: CloudConnectorCommandReceipt;
 };
+
+const MAX_CLOUD_SYNC_RESPONSE_BYTES = 1_000_000;
+const MAX_GITHUB_API_RESPONSE_BYTES = 2_000_000;
+const MAX_LOCAL_STATE_FILE_BYTES = 1_000_000;
+const MAX_CLOUD_SYNC_RETRIES = 3;
+const CONNECTOR_ACCESS_TOKEN_HEADER = "x-agentgit-connector-access-token";
 
 function tryExecGit(args: string[], cwd: string): string | null {
   try {
@@ -102,6 +120,19 @@ function isSameOrNestedPath(candidate: string, base: string): boolean {
   const normalizedCandidate = normalizePathForComparison(candidate);
   const normalizedBase = normalizePathForComparison(base);
   return normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(`${normalizedBase}${path.sep}`);
+}
+
+function normalizeGitCommitMessage(message: string): string {
+  const normalized = message.trim();
+  if (normalized.length === 0) {
+    throw new Error("Commit message must not be empty.");
+  }
+
+  if (/[\r\n\0]/u.test(normalized)) {
+    throw new Error("Commit message must be a single line without control characters.");
+  }
+
+  return normalized;
 }
 
 function parseGitRemote(
@@ -232,6 +263,104 @@ function getGitHubAccessToken(): string | null {
   return token && token.trim().length > 0 ? token.trim() : null;
 }
 
+function isJsonContentType(value: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return value.toLowerCase().includes("application/json");
+}
+
+async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    return "";
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (!value) {
+        continue;
+      }
+
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new Error("Response body exceeded the maximum allowed size.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+}
+
+async function readJsonResponseWithLimit<T>(response: Response, parser: z.ZodType<T>, maxBytes: number): Promise<T> {
+  if (!isJsonContentType(response.headers.get("content-type"))) {
+    throw new Error("Cloud sync response did not declare application/json.");
+  }
+
+  const raw = await readResponseTextWithLimit(response, maxBytes);
+  let parsed: unknown;
+  try {
+    parsed = raw.length > 0 ? JSON.parse(raw) : null;
+  } catch {
+    throw new Error("Cloud sync response contained malformed JSON.");
+  }
+
+  return parser.parse(parsed);
+}
+
+function parseRetryAfterMs(response: Response): number | null {
+  const retryAfter = response.headers.get("retry-after")?.trim();
+  if (!retryAfter) {
+    return null;
+  }
+
+  const seconds = Number.parseInt(retryAfter, 10);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1_000;
+  }
+
+  const absolute = Date.parse(retryAfter);
+  if (Number.isNaN(absolute)) {
+    return null;
+  }
+
+  return Math.max(0, absolute - Date.now());
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readUtf8FileWithLimit(filePath: string, maxBytes: number): string {
+  const stats = fs.statSync(filePath);
+  if (stats.size > maxBytes) {
+    throw new Error(`File ${filePath} exceeded the maximum allowed size.`);
+  }
+  return fs.readFileSync(filePath, "utf8");
+}
+
+function safeReadJsonFile(filePath: string, maxBytes: number): Record<string, unknown> {
+  const raw = readUtf8FileWithLimit(filePath, maxBytes);
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`File ${filePath} did not contain a JSON object.`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export function detectRepositoryState(workspaceRoot: string): RepositoryStateSnapshot {
   const repoRoot = detectRepositoryRoot(workspaceRoot);
   const remoteUrl = tryExecGit(["config", "--get", "remote.origin.url"], repoRoot);
@@ -270,9 +399,9 @@ export function detectLocalDaemonStatus(workspaceRoot: string) {
 
   return ConnectorLocalDaemonStatusSchema.parse({
     reachable: fs.existsSync(paths.journalPath),
-    socketPath: process.env.AGENTGIT_AUTHORITY_SOCKET_PATH ?? null,
-    journalPath: fs.existsSync(paths.journalPath) ? paths.journalPath : null,
-    snapshotRootPath: fs.existsSync(paths.snapshotRootPath) ? paths.snapshotRootPath : null,
+    socketPath: null,
+    journalPath: null,
+    snapshotRootPath: null,
   });
 }
 
@@ -303,6 +432,11 @@ export class CloudConnectorStateStore {
             return CloudConnectorMetadataSchema.parse(value);
           },
         },
+        commandReceipts: {
+          parse(_key, value) {
+            return CloudConnectorCommandReceiptSchema.parse(value);
+          },
+        },
       },
     });
   }
@@ -316,7 +450,14 @@ export class CloudConnectorStateStore {
   }
 
   getRegistration() {
-    return this.store.get("registration", "active");
+    const registration = this.store.get("registration", "active");
+    if (
+      registration &&
+      Date.parse(registration.response.expiresAt) <= Date.now()
+    ) {
+      throw new Error("Cloud connector registration is expired. Re-register the connector before syncing again.");
+    }
+    return registration;
   }
 
   hasEvent(eventId: string) {
@@ -362,6 +503,14 @@ export class CloudConnectorStateStore {
       });
     }
   }
+
+  saveCommandReceipt(receipt: CloudConnectorCommandReceipt) {
+    return this.store.put("commandReceipts", receipt.commandId, receipt);
+  }
+
+  getCommandReceipt(commandId: string) {
+    return this.store.get("commandReceipts", commandId);
+  }
 }
 
 export class CloudSyncClient {
@@ -372,20 +521,28 @@ export class CloudSyncClient {
   }
 
   private async request<T>(pathName: string, init: RequestInit, parser: z.ZodType<T>): Promise<T> {
-    const response = await fetch(new URL(pathName, this.baseUrl), {
-      ...init,
-      headers: {
-        "content-type": "application/json",
-        ...(init.headers ?? {}),
-      },
-    });
+    for (let attempt = 0; attempt < MAX_CLOUD_SYNC_RETRIES; attempt += 1) {
+      const response = await fetch(new URL(pathName, this.baseUrl), {
+        ...init,
+        headers: {
+          "content-type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
 
-    if (!response.ok) {
-      throw new Error(`Cloud sync request failed with ${response.status}.`);
+      if (response.status === 429 && attempt + 1 < MAX_CLOUD_SYNC_RETRIES) {
+        await sleep(parseRetryAfterMs(response) ?? (attempt + 1) * 1_000);
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Cloud sync request failed with ${response.status}.`);
+      }
+
+      return readJsonResponseWithLimit(response, parser, MAX_CLOUD_SYNC_RESPONSE_BYTES);
     }
 
-    const json = await response.json();
-    return parser.parse(json);
+    throw new Error("Cloud sync request exhausted retry attempts.");
   }
 
   async registerConnector(
@@ -400,23 +557,49 @@ export class CloudSyncClient {
       headers.authorization = `Bearer ${options.bootstrapToken}`;
     }
 
-    return this.request(
-      "/api/v1/sync/register",
-      {
-        method: "POST",
-        body: JSON.stringify(ConnectorRegistrationRequestSchema.parse(input)),
-        headers,
+    const response = await fetch(new URL("/api/v1/sync/register", this.baseUrl), {
+      method: "POST",
+      body: JSON.stringify(ConnectorRegistrationRequestSchema.parse(input)),
+      headers: {
+        "content-type": "application/json",
+        ...headers,
       },
-      ConnectorRegistrationResponseSchema,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Cloud sync request failed with ${response.status}.`);
+    }
+
+    const body = await readJsonResponseWithLimit(
+      response,
+      ConnectorRegistrationResponseSchema.omit({ accessToken: true }).passthrough(),
+      MAX_CLOUD_SYNC_RESPONSE_BYTES,
     );
+    const responseBodyAccessToken = Reflect.get(body as Record<string, unknown>, "accessToken");
+    const accessToken =
+      response.headers.get(CONNECTOR_ACCESS_TOKEN_HEADER)?.trim() ??
+      (typeof responseBodyAccessToken === "string" ? responseBodyAccessToken.trim() : "");
+    if (!accessToken) {
+      throw new Error("Cloud sync registration response did not include a connector access token header.");
+    }
+
+    return ConnectorRegistrationResponseSchema.parse({
+      ...body,
+      accessToken,
+    });
   }
 
-  async sendHeartbeat(input: z.infer<typeof ConnectorHeartbeatRequestSchema>, accessToken: string) {
+  async sendHeartbeat(input: Omit<z.infer<typeof ConnectorHeartbeatRequestSchema>, "requestId">, accessToken: string) {
     return this.request(
       "/api/v1/sync/heartbeat",
       {
         method: "POST",
-        body: JSON.stringify(ConnectorHeartbeatRequestSchema.parse(input)),
+        body: JSON.stringify(
+          ConnectorHeartbeatRequestSchema.parse({
+            requestId: randomUUID(),
+            ...input,
+          }),
+        ),
         headers: {
           authorization: `Bearer ${accessToken}`,
         },
@@ -425,12 +608,20 @@ export class CloudSyncClient {
     );
   }
 
-  async publishEvents(input: z.infer<typeof ConnectorEventBatchRequestSchema>, accessToken: string) {
+  async publishEvents(
+    input: Omit<z.infer<typeof ConnectorEventBatchRequestSchema>, "requestId">,
+    accessToken: string,
+  ) {
     return this.request(
       "/api/v1/sync/events",
       {
         method: "POST",
-        body: JSON.stringify(ConnectorEventBatchRequestSchema.parse(input)),
+        body: JSON.stringify(
+          ConnectorEventBatchRequestSchema.parse({
+            requestId: randomUUID(),
+            ...input,
+          }),
+        ),
         headers: {
           authorization: `Bearer ${accessToken}`,
         },
@@ -439,12 +630,20 @@ export class CloudSyncClient {
     );
   }
 
-  async pullCommands(input: z.infer<typeof ConnectorCommandPullRequestSchema>, accessToken: string) {
+  async pullCommands(
+    input: Omit<z.infer<typeof ConnectorCommandPullRequestSchema>, "requestId">,
+    accessToken: string,
+  ) {
     return this.request(
       "/api/v1/sync/commands/pull",
       {
         method: "POST",
-        body: JSON.stringify(ConnectorCommandPullRequestSchema.parse(input)),
+        body: JSON.stringify(
+          ConnectorCommandPullRequestSchema.parse({
+            requestId: randomUUID(),
+            ...input,
+          }),
+        ),
         headers: {
           authorization: `Bearer ${accessToken}`,
         },
@@ -453,12 +652,21 @@ export class CloudSyncClient {
     );
   }
 
-  async ackCommand(commandId: string, input: z.infer<typeof ConnectorCommandAckRequestSchema>, accessToken: string) {
+  async ackCommand(
+    commandId: string,
+    input: Omit<z.infer<typeof ConnectorCommandAckRequestSchema>, "requestId">,
+    accessToken: string,
+  ) {
     return this.request(
       `/api/v1/sync/commands/${commandId}/ack`,
       {
         method: "POST",
-        body: JSON.stringify(ConnectorCommandAckRequestSchema.parse(input)),
+        body: JSON.stringify(
+          ConnectorCommandAckRequestSchema.parse({
+            requestId: randomUUID(),
+            ...input,
+          }),
+        ),
         headers: {
           authorization: `Bearer ${accessToken}`,
         },
@@ -517,7 +725,7 @@ export class CloudConnectorService {
     return response;
   }
 
-  async sendHeartbeat(input: z.infer<typeof ConnectorHeartbeatRequestSchema>) {
+  async sendHeartbeat(input: Omit<z.infer<typeof ConnectorHeartbeatRequestSchema>, "requestId">) {
     const registration = this.stateStore.getRegistration();
     if (!registration) {
       throw new Error("Cloud connector is not registered.");
@@ -648,7 +856,7 @@ export class CloudConnectorRuntime {
         continue;
       }
 
-      const document = fs.readFileSync(candidate.filePath, "utf8");
+      const document = readUtf8FileWithLimit(candidate.filePath, MAX_LOCAL_STATE_FILE_BYTES);
       const digest = createDocumentDigest(document);
       this.emitEvent(
         repository,
@@ -677,8 +885,7 @@ export class CloudConnectorRuntime {
 
     for (const fileName of manifests) {
       const manifestPath = path.join(manifestRoot, fileName);
-      const raw = fs.readFileSync(manifestPath, "utf8");
-      const manifest = JSON.parse(raw) as Record<string, unknown>;
+      const manifest = safeReadJsonFile(manifestPath, MAX_LOCAL_STATE_FILE_BYTES);
       const snapshotId =
         typeof manifest.snapshot_id === "string" ? manifest.snapshot_id : fileName.replace(/\.json$/, "");
       const createdAt =
@@ -877,6 +1084,18 @@ export class CloudConnectorRuntime {
   } {
     const payload = CreateCommitCommandPayloadSchema.parse(command.payload);
     const repoRoot = detectRepositoryRoot(this.workspaceRoot);
+    let commitMessage: string;
+    try {
+      commitMessage = normalizeGitCommitMessage(payload.message);
+    } catch (error) {
+      return {
+        status: "failed",
+        message: error instanceof Error ? error.message : "Commit message was invalid.",
+        result: {
+          type: "create_commit",
+        },
+      };
+    }
     const status = tryExecGit(["status", "--porcelain"], repoRoot);
     if (!status || status.length === 0) {
       return {
@@ -902,7 +1121,7 @@ export class CloudConnectorRuntime {
       };
     }
 
-    execFileSync("git", ["commit", "-m", payload.message], { cwd: repoRoot, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", commitMessage], { cwd: repoRoot, stdio: "ignore" });
     const headSha = tryExecGit(["rev-parse", "HEAD"], repoRoot) ?? "unknown";
     const branch = tryExecGit(["branch", "--show-current"], repoRoot) ?? "current branch";
     return {
@@ -1027,7 +1246,16 @@ export class CloudConnectorRuntime {
     if (!response.ok) {
       let details = "";
       try {
-        const parsed = (await response.json()) as { message?: string };
+        const parsed = await readJsonResponseWithLimit(
+          response,
+          z
+            .object({
+              message: z.string().optional(),
+            })
+            .strict()
+            .catchall(z.unknown()),
+          MAX_GITHUB_API_RESPONSE_BYTES,
+        );
         details = parsed.message ? ` ${parsed.message}` : "";
       } catch {
         // Ignore parse failures and fall back to status text.
@@ -1046,7 +1274,17 @@ export class CloudConnectorRuntime {
       };
     }
 
-    const parsed = (await response.json()) as { html_url?: string; number?: number };
+    const parsed = await readJsonResponseWithLimit(
+      response,
+      z
+        .object({
+          html_url: z.string().url().optional(),
+          number: z.number().int().positive().optional(),
+        })
+        .strict()
+        .catchall(z.unknown()),
+      MAX_GITHUB_API_RESPONSE_BYTES,
+    );
     const descriptor = parsed.number ? `#${parsed.number}` : "pull request";
     return {
       status: "completed",
@@ -1348,6 +1586,23 @@ export class CloudConnectorRuntime {
     }> = [];
 
     for (const command of commands.commands) {
+      const storedReceipt = this.options.stateStore.getCommandReceipt(command.commandId);
+      if (storedReceipt) {
+        await this.options.service.acknowledgeCommandWithResult(
+          command.commandId,
+          storedReceipt.finalStatus,
+          storedReceipt.acknowledgedAt,
+          storedReceipt.message,
+          storedReceipt.result ?? undefined,
+        );
+        processed.push({
+          commandId: command.commandId,
+          status: storedReceipt.finalStatus,
+          message: storedReceipt.message,
+        });
+        continue;
+      }
+
       await this.options.service.acknowledgeCommand(
         command.commandId,
         "acked",
@@ -1367,10 +1622,17 @@ export class CloudConnectorRuntime {
           message: error instanceof Error ? error.message : "Connector command execution failed unexpectedly.",
         };
       }
+      this.options.stateStore.saveCommandReceipt({
+        commandId: command.commandId,
+        finalStatus: result.status,
+        acknowledgedAt: this.now(),
+        message: result.message,
+        result: result.result ?? null,
+      });
       await this.options.service.acknowledgeCommandWithResult(
         command.commandId,
         result.status,
-        this.now(),
+        this.options.stateStore.getCommandReceipt(command.commandId)?.acknowledgedAt ?? this.now(),
         result.message,
         result.result,
       );

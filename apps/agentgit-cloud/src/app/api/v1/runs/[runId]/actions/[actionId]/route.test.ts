@@ -108,4 +108,26 @@ describe("run action detail route", () => {
     expect(getActionDetail).toHaveBeenCalledWith("acme", "platform-ui", "run_01", "act_01", "ws_acme_01");
     expect(body.actionId).toBe("act_01");
   });
+
+  it("rejects malformed repository coordinates before loading action detail", async () => {
+    requireApiSession.mockResolvedValue({
+      unauthorized: null,
+      workspaceSession: {
+        activeWorkspace: { id: "ws_acme_01", slug: "acme", role: "member" },
+      },
+    });
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("http://localhost/api/v1/runs/run_01/actions/act_01?owner=acme&name=platform/ui"),
+      {
+        params: Promise.resolve({ runId: "run_01", actionId: "act_01" }),
+      },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(getActionDetail).not.toHaveBeenCalled();
+    expect(body.message).toBe("Repository owner or name is invalid.");
+  });
 });

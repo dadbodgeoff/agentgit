@@ -122,6 +122,7 @@ export type ConnectorRegistrationResponse = z.infer<typeof ConnectorRegistration
 
 export const ConnectorHeartbeatRequestSchema = z
   .object({
+    requestId: z.string().trim().min(1).max(128),
     connectorId: z.string().min(1),
     sentAt: TimestampStringSchema,
     repository: RepositoryStateSnapshotSchema,
@@ -184,9 +185,10 @@ export type ConnectorEventEnvelope = z.infer<typeof ConnectorEventEnvelopeSchema
 
 export const ConnectorEventBatchRequestSchema = z
   .object({
+    requestId: z.string().trim().min(1).max(128),
     connectorId: z.string().min(1),
     sentAt: TimestampStringSchema,
-    events: z.array(ConnectorEventEnvelopeSchema),
+    events: z.array(ConnectorEventEnvelopeSchema).min(1).max(1000),
   })
   .strict();
 export type ConnectorEventBatchRequest = z.infer<typeof ConnectorEventBatchRequestSchema>;
@@ -197,7 +199,7 @@ export const ConnectorEventBatchResponseSchema = z
     connectorId: z.string().min(1),
     acceptedAt: TimestampStringSchema,
     acceptedCount: z.number().int().nonnegative(),
-    highestAcceptedSequence: z.number().int().nonnegative(),
+    highestAcceptedSequence: z.number().int().positive(),
   })
   .strict();
 export type ConnectorEventBatchResponse = z.infer<typeof ConnectorEventBatchResponseSchema>;
@@ -207,7 +209,6 @@ export const ConnectorCommandTypeSchema = z.enum([
   "sync_run_history",
   "replay_run",
   "resolve_approval",
-  "plan_restore",
   "execute_restore",
   "create_commit",
   "push_branch",
@@ -377,6 +378,7 @@ export type ConnectorCommandEnvelope = z.infer<typeof ConnectorCommandEnvelopeSc
 
 export const ConnectorCommandPullRequestSchema = z
   .object({
+    requestId: z.string().trim().min(1).max(128),
     connectorId: z.string().min(1),
     sentAt: TimestampStringSchema,
   })
@@ -395,6 +397,8 @@ export type ConnectorCommandPullResponse = z.infer<typeof ConnectorCommandPullRe
 
 export const ConnectorCommandAckRequestSchema = z
   .object({
+    requestId: z.string().trim().min(1).max(128),
+    idempotencyKey: z.string().trim().min(1).max(128).optional(),
     connectorId: z.string().min(1),
     commandId: z.string().min(1),
     acknowledgedAt: TimestampStringSchema,

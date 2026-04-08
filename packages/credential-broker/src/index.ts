@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes } from "node:crypto";
 
 import { IntegrationState } from "@agentgit/integration-state";
 import { AgentGitError, type RuntimeCredentialBindingRecord } from "@agentgit/schemas";
@@ -181,32 +181,90 @@ function normalizeStoredKeyMaterial(encoded: string, details: Record<string, unk
   return key;
 }
 
+function openSecureExistingFile(filePath: string): number | null {
+  let flags = fs.constants.O_RDONLY;
+  if (typeof fs.constants.O_NOFOLLOW === "number") {
+    flags |= fs.constants.O_NOFOLLOW;
+  }
+
+  try {
+    const fd = fs.openSync(filePath, flags);
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile()) {
+      fs.closeSync(fd);
+      throw new AgentGitError("Local MCP secret store key path is not a regular file.", "STORAGE_UNAVAILABLE", {
+        key_path: filePath,
+      });
+    }
+
+    if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
+      fs.closeSync(fd);
+      throw new AgentGitError("Local MCP secret store key must be owned by the current user.", "STORAGE_UNAVAILABLE", {
+        key_path: filePath,
+        owner_uid: stats.uid,
+      });
+    }
+
+    if (stats.nlink > 1) {
+      fs.closeSync(fd);
+      throw new AgentGitError("Local MCP secret store key cannot be a hard-linked file.", "STORAGE_UNAVAILABLE", {
+        key_path: filePath,
+        link_count: stats.nlink,
+      });
+    }
+
+    return fd;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : null;
+    if (code === "ENOENT") {
+      return null;
+    }
+    if (code === "ELOOP") {
+      throw new AgentGitError("Local MCP secret store key cannot be a symlink.", "STORAGE_UNAVAILABLE", {
+        key_path: filePath,
+      });
+    }
+    throw error;
+  }
+}
+
 function readLegacyKeyFile(keyPath: string): Buffer | null {
-  if (!fs.existsSync(keyPath)) {
+  const fd = openSecureExistingFile(keyPath);
+  if (fd === null) {
     return null;
   }
 
-  const encoded = fs.readFileSync(keyPath, "utf8").trim();
-  const key = normalizeStoredKeyMaterial(encoded, {
-    key_path: keyPath,
-  });
-  fs.chmodSync(keyPath, 0o600);
-  return key;
+  try {
+    fs.fchmodSync(fd, 0o600);
+    const encoded = fs.readFileSync(fd, "utf8").trim();
+    return normalizeStoredKeyMaterial(encoded, {
+      key_path: keyPath,
+    });
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function removeLegacyKeyFile(keyPath: string): void {
-  if (!fs.existsSync(keyPath)) {
-    return;
+  try {
+    fs.unlinkSync(keyPath);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : null;
+    if (code === "ENOENT") {
+      return;
+    }
+    throw error;
   }
-
-  fs.rmSync(keyPath, { force: true });
 }
+
+const SECRET_COMMAND_TIMEOUT_MS = 5_000;
 
 function runSecretCommand(command: string, args: string[], stdin?: string): string {
   const result = spawnSync(command, args, {
     encoding: "utf8",
     input: stdin,
     stdio: ["pipe", "pipe", "pipe"],
+    timeout: SECRET_COMMAND_TIMEOUT_MS,
   });
 
   if (result.error) {
@@ -232,6 +290,7 @@ function commandExists(command: string): boolean {
   const result = spawnSync(command, ["--help"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: SECRET_COMMAND_TIMEOUT_MS,
   });
 
   return !result.error;
@@ -304,7 +363,10 @@ class LinuxSecretServiceKeyProvider implements SecretKeyProvider {
       });
     }
 
-    const label = `${params.serviceName}:${params.keyIdentifier}`;
+    const label = `AgentGit MCP Secret Key ${createHash("sha256")
+      .update(`${params.serviceName}:${params.keyIdentifier}`)
+      .digest("hex")
+      .slice(0, 16)}`;
 
     try {
       const existing = runSecretCommand("secret-tool", [
@@ -501,6 +563,7 @@ function bindingMetadataNumber(metadata: Record<string, unknown>, field: string)
 export class LocalEncryptedSecretStore {
   private readonly state: IntegrationState<{ mcp_bearer_secrets: StoredMcpBearerSecretDocument }>;
   private readonly encryptionKey: Buffer;
+  private readonly runtimeTicketSigningKey: Buffer;
   private readonly keyProviderDetails: SecretKeyProviderDetails;
 
   constructor(options: LocalEncryptedSecretStoreOptions) {
@@ -512,6 +575,15 @@ export class LocalEncryptedSecretStore {
       keyIdentifier,
       legacyKeyPath: options.keyPath,
     });
+    this.runtimeTicketSigningKey = Buffer.from(
+      hkdfSync(
+        "sha256",
+        this.encryptionKey,
+        Buffer.from("agentgit/runtime-ticket-signing/salt.v1", "utf8"),
+        Buffer.from("agentgit/runtime-ticket-signing-key.v1", "utf8"),
+        32,
+      ),
+    );
     this.keyProviderDetails = {
       provider: keyProvider.kind,
       key_identifier: keyIdentifier,
@@ -708,6 +780,18 @@ export class LocalEncryptedSecretStore {
 
     if (binding.kind === "runtime_ticket") {
       const ttlSeconds = Math.max(60, Math.min(bindingMetadataNumber(metadata, "ticket_ttl_seconds") ?? 900, 86_400));
+      const audience = bindingMetadataString(metadata, "audience");
+      if (!audience) {
+        throw new AgentGitError(
+          "Runtime credential tickets require a non-empty audience.",
+          "BROKER_UNAVAILABLE",
+          {
+            binding_id: binding.binding_id,
+            kind: binding.kind,
+            broker_source_ref: binding.broker_source_ref,
+          },
+        );
+      }
       const ticketExpiresAt = new Date(
         Math.min(
           now.getTime() + ttlSeconds * 1_000,
@@ -717,12 +801,12 @@ export class LocalEncryptedSecretStore {
       const payload = JSON.stringify({
         binding_id: binding.binding_id,
         kind: binding.kind,
-        audience: bindingMetadataString(metadata, "audience"),
+        audience,
         broker_source_ref: binding.broker_source_ref,
         exp: ticketExpiresAt.toISOString(),
       });
       const encodedPayload = Buffer.from(payload, "utf8").toString("base64url");
-      const signature = createHmac("sha256", this.encryptionKey)
+      const signature = createHmac("sha256", this.runtimeTicketSigningKey)
         .update(`${encodedPayload}.${resolvedSecret.token}`)
         .digest("base64url");
       return {
