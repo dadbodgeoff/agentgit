@@ -4,11 +4,21 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { RunJournal } from "@agentgit/run-journal";
-import type { GetPolicyCalibrationReportResponsePayload, PolicyThresholdRecommendation } from "@agentgit/schemas";
+import type {
+  GetPolicyCalibrationReportResponsePayload,
+  GetPolicyThresholdReplayResponsePayload,
+  PolicyThresholdRecommendation,
+} from "@agentgit/schemas";
 
 import { withScopedAuthorityClient } from "@/lib/backend/authority/client";
 import { findRepositoryRuntimeRecordById } from "@/lib/backend/workspace/repository-inventory";
-import { CalibrationReportSchema, type CalibrationBand, type CalibrationRecommendation } from "@/schemas/cloud";
+import {
+  CalibrationReplayPreviewSchema,
+  CalibrationReportSchema,
+  type CalibrationBand,
+  type CalibrationRecommendation,
+  type CalibrationReplayCandidateThreshold,
+} from "@/schemas/cloud";
 
 function clampMetric(value: number | null | undefined): number {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -76,6 +86,39 @@ function mapCalibrationReport(params: {
     recommendations: params.recommendations
       .map(mapRecommendation)
       .filter((recommendation): recommendation is CalibrationRecommendation => recommendation !== null),
+  });
+}
+
+function mapCalibrationReplay(params: { replay: GetPolicyThresholdReplayResponsePayload; repoId: string }) {
+  return CalibrationReplayPreviewSchema.parse({
+    repoId: params.repoId,
+    generatedAt: params.replay.generated_at,
+    effectivePolicyProfile: params.replay.effective_policy_profile,
+    candidateThresholds: params.replay.candidate_thresholds.map((threshold) => ({
+      actionFamily: threshold.action_family,
+      askBelow: threshold.ask_below,
+    })),
+    summary: {
+      replayableSamples: params.replay.summary.replayable_samples,
+      skippedSamples: params.replay.summary.skipped_samples,
+      changedDecisions: params.replay.summary.changed_decisions,
+      currentApprovalsRequested: params.replay.summary.current_approvals_requested,
+      candidateApprovalsRequested: params.replay.summary.candidate_approvals_requested,
+      approvalsReduced: params.replay.summary.approvals_reduced,
+      approvalsIncreased: params.replay.summary.approvals_increased,
+      historicallyDeniedAutoAllowed: params.replay.summary.historically_denied_auto_allowed,
+      historicallyAllowedNewlyGated: params.replay.summary.historically_allowed_newly_gated,
+    },
+    actionFamilies: params.replay.action_families.map((family) => ({
+      domain: family.action_family,
+      currentAskThreshold: family.current_ask_below,
+      candidateAskThreshold: family.candidate_ask_below,
+      replayableSamples: family.replayable_samples,
+      changedDecisions: family.changed_decisions,
+      approvalsReduced: family.approvals_reduced,
+      approvalsIncreased: family.approvals_increased,
+    })),
+    samplesTruncated: params.replay.samples_truncated,
   });
 }
 
@@ -156,4 +199,29 @@ export async function getRepositoryCalibrationReport(repoId: string, workspaceId
   } catch {
     return buildLocalFallbackCalibrationReport(repository.inventory.id, repository.metadata.root);
   }
+}
+
+export async function replayRepositoryCalibrationThresholds(
+  repoId: string,
+  workspaceId: string,
+  candidateThresholds: CalibrationReplayCandidateThreshold[],
+) {
+  const repository = await findRepositoryRuntimeRecordById(repoId, workspaceId);
+  if (!repository) {
+    return null;
+  }
+
+  const replay = await withScopedAuthorityClient([repository.metadata.root], (client) =>
+    client.replayPolicyThresholds({
+      candidate_thresholds: candidateThresholds.map((threshold) => ({
+        action_family: threshold.actionFamily,
+        ask_below: threshold.askBelow,
+      })),
+    }),
+  );
+
+  return mapCalibrationReplay({
+    replay,
+    repoId: repository.inventory.id,
+  });
 }

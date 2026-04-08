@@ -10,10 +10,17 @@ vi.mock("@/lib/auth/api-session", () => ({
   requireApiRole,
 }));
 
-vi.mock("@/lib/backend/workspace/workspace-settings", () => ({
-  resolveWorkspaceSettings,
-  saveWorkspaceSettings,
-}));
+vi.mock("@/lib/backend/workspace/workspace-settings", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/backend/workspace/workspace-settings")>(
+    "@/lib/backend/workspace/workspace-settings",
+  );
+
+  return {
+    ...actual,
+    resolveWorkspaceSettings,
+    saveWorkspaceSettings,
+  };
+});
 
 vi.mock("@/lib/backend/workspace/cloud-state", () => ({
   findWorkspaceConnectionStateBySlug: vi.fn(() => null),
@@ -142,5 +149,52 @@ describe("workspace settings route", () => {
     expect(response.status).toBe(200);
     expect(saveWorkspaceSettings).toHaveBeenCalled();
     expect(body.settings.workspaceName).toBe("Platform control");
+  });
+
+  it("returns a field-scoped validation error when issuer discovery fails", async () => {
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+
+    const { WorkspaceSettingsValidationError } = await import("@/lib/backend/workspace/workspace-settings");
+    saveWorkspaceSettings.mockRejectedValue(
+      new WorkspaceSettingsValidationError(
+        "Could not load OIDC discovery metadata from the issuer URL.",
+        "enterpriseSso.issuerUrl",
+      ),
+    );
+
+    const { PUT } = await import("./route");
+    const response = await PUT(
+      new Request("http://localhost/api/v1/settings/workspace", {
+        method: "PUT",
+        body: JSON.stringify({
+          workspaceName: "Platform control",
+          workspaceSlug: "platform-control",
+          defaultNotificationChannel: "email",
+          approvalTtlMinutes: 45,
+          requireRejectComment: false,
+          freezeDeploysOutsideBusinessHours: true,
+          enterpriseSso: {
+            enabled: true,
+            providerType: "oidc",
+            providerLabel: "Acme Okta",
+            issuerUrl: "https://acme.okta.com/oauth2/default",
+            clientId: "agentgit-cloud",
+            clientSecret: "secret",
+            emailDomains: ["acme.dev"],
+            autoProvisionMembers: true,
+            defaultRole: "member",
+          },
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.field).toBe("enterpriseSso.issuerUrl");
   });
 });

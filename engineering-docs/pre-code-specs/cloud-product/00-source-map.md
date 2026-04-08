@@ -55,6 +55,10 @@ Derived from the cloud implementation source and captures:
 - frontend stack and architecture choices
 - testing, performance, and phased delivery requirements
 
+### `08-surface-qualification-tdd.md`
+
+Repo-native production-readiness plan for cloud surfaces that are partially implemented and need explicit end-to-end qualification, including run replay, snapshot restore, enterprise SSO, Slack validation, calibration, and Stripe billing.
+
 ## Update Policy
 
 - If the DOCX source changes materially, update the matching Markdown file in the same commit as any code that depends on the new decision.

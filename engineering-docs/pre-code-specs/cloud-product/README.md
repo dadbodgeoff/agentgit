@@ -29,6 +29,7 @@ This folder defines the hosted cloud product and frontend surface that sits on t
 - `05-foundation-loop-backlog.md`
 - `06-cloud-sync-control-plane-plan.md`
 - `07-production-readiness-runbook.md`
+- `08-surface-qualification-tdd.md`
 
 ## Detailed Reference Folders
 

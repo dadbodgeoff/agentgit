@@ -47,6 +47,12 @@ This file captures scaffolding issues that surfaced during implementation and th
 
 ## Next Up
 
+- Qualify hosted run replay end to end, including browser initiation from run detail, connector completion visibility, and replay-result surfacing in fleet, activity, audit, and run history.
+- Qualify snapshot restore from the hosted UI instead of a direct API call, including queued/running/completed/failed state, restored run/action links, and post-restore operator feedback.
+- Complete enterprise SSO production qualification with issuer validation, owner-facing configuration checks, and browser coverage for allowed-member, invited-member, and denied-domain paths.
+- Validate Slack webhook rotations at save time so an invalid replacement URL cannot silently overwrite the last known good secret.
+- Expand calibration into a real operator workflow with threshold replay preview, patch/apply mutations, and policy-history/audit integration.
+- Qualify the env-gated live Stripe path in test mode end to end, while preserving the honest hosted beta-gate fallback for environments that do not enable Stripe.
 - Reconcile local repository identity with provider-backed metadata so cloud-facing repository records are not derived from local git parsing alone.
 - Expand the connector control surface into fuller fleet management views, including longer command and event history, connector diagnostics, and operator drill-down.
 - Extend restore execution beyond the first queued path with richer operator feedback, command detail, and post-recovery validation rails.

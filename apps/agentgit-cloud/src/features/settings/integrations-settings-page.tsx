@@ -160,6 +160,7 @@ export function IntegrationsSettingsPage() {
     handleSubmit,
     register,
     reset,
+    setError,
     setValue,
     watch,
   } = form;
@@ -231,6 +232,13 @@ export function IntegrationsSettingsPage() {
     },
     onError: (error) => {
       if (error instanceof ApiClientError) {
+        const field =
+          typeof error.details === "object" &&
+          error.details !== null &&
+          "field" in error.details &&
+          error.details.field === "slackWebhookUrl"
+            ? "slackWebhookUrl"
+            : null;
         const message =
           typeof error.details === "object" &&
           error.details !== null &&
@@ -238,6 +246,13 @@ export function IntegrationsSettingsPage() {
           typeof error.details.message === "string"
             ? error.details.message
             : "Could not save integrations. Retry.";
+
+        if (field) {
+          setError(field, {
+            type: "server",
+            message,
+          });
+        }
 
         setSubmitError(message);
         setToast({

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
 import { findWorkspaceConnectionStateBySlug } from "@/lib/backend/workspace/cloud-state";
-import { resolveWorkspaceSettings, saveWorkspaceSettings } from "@/lib/backend/workspace/workspace-settings";
+import {
+  resolveWorkspaceSettings,
+  saveWorkspaceSettings,
+  WorkspaceSettingsValidationError,
+} from "@/lib/backend/workspace/workspace-settings";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { WorkspaceSettingsUpdateSchema } from "@/schemas/cloud";
 
@@ -39,6 +43,17 @@ export async function PUT(request: Request): Promise<NextResponse> {
   try {
     return jsonWithRequestId(await saveWorkspaceSettings(access.workspaceSession, payload.data), undefined, requestId);
   } catch (error) {
+    if (error instanceof WorkspaceSettingsValidationError) {
+      return jsonWithRequestId(
+        {
+          message: error.message,
+          field: error.field,
+        },
+        { status: 400 },
+        requestId,
+      );
+    }
+
     return jsonWithRequestId(
       {
         message:

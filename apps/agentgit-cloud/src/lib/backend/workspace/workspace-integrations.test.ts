@@ -13,7 +13,9 @@ import {
   resolveWorkspaceIntegrations,
   saveWorkspaceIntegrations,
   sendWorkspaceIntegrationTest,
+  WorkspaceIntegrationValidationError,
 } from "@/lib/backend/workspace/workspace-integrations";
+import { getWorkspaceIntegrationSecrets } from "@/lib/backend/workspace/cloud-state";
 import type { WorkspaceSession } from "@/schemas/cloud";
 
 function buildWorkspaceSession(): WorkspaceSession {
@@ -205,6 +207,130 @@ describe("workspace integrations backend", () => {
     expect(saveResult.integrations.slackWebhookConfigured).toBe(true);
     expect(testResult.message).toContain("#ship-room");
     expect(emailTest.message).toContain("active workspace members");
+  });
+
+  it("fails closed when a rotated Slack webhook cannot be validated", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "admin" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementationOnce(async () => new Response("ok", { status: 200 }))
+      .mockImplementationOnce(async () => new Response("blocked", { status: 410 })) as typeof fetch;
+
+    await saveWorkspaceIntegrations(buildWorkspaceSession(), {
+      slackConnected: true,
+      slackWebhookUrl: "https://hooks.slack.test/services/T000/B000/good",
+      slackWorkspaceName: "Acme Engineering",
+      slackChannelName: "#ship-room",
+      slackDeliveryMode: "all",
+      emailNotificationsEnabled: false,
+      digestCadence: "daily",
+      notificationEvents: ["approval_requested"],
+      notificationBusinessHours: {
+        timeZone: "America/New_York",
+        startTime: "09:00",
+        endTime: "17:00",
+        weekdays: ["mon", "tue", "wed", "thu", "fri"],
+      },
+      notificationRules: [
+        {
+          event: "approval_requested",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "anytime",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "run_failed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "policy_changed",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "business_hours",
+          minimumRiskLevel: "read_only",
+        },
+        {
+          event: "snapshot_restored",
+          repositoryScope: "all",
+          repositoryTargets: [],
+          deliveryWindow: "anytime",
+          minimumRiskLevel: "read_only",
+        },
+      ],
+    });
+
+    await expect(
+      saveWorkspaceIntegrations(buildWorkspaceSession(), {
+        slackConnected: true,
+        slackWebhookUrl: "https://hooks.slack.test/services/T000/B000/bad",
+        slackWorkspaceName: "Acme Engineering",
+        slackChannelName: "#ship-room",
+        slackDeliveryMode: "all",
+        emailNotificationsEnabled: false,
+        digestCadence: "daily",
+        notificationEvents: ["approval_requested"],
+        notificationBusinessHours: {
+          timeZone: "America/New_York",
+          startTime: "09:00",
+          endTime: "17:00",
+          weekdays: ["mon", "tue", "wed", "thu", "fri"],
+        },
+        notificationRules: [
+          {
+            event: "approval_requested",
+            repositoryScope: "all",
+            repositoryTargets: [],
+            deliveryWindow: "anytime",
+            minimumRiskLevel: "read_only",
+          },
+          {
+            event: "run_failed",
+            repositoryScope: "all",
+            repositoryTargets: [],
+            deliveryWindow: "business_hours",
+            minimumRiskLevel: "read_only",
+          },
+          {
+            event: "policy_changed",
+            repositoryScope: "all",
+            repositoryTargets: [],
+            deliveryWindow: "business_hours",
+            minimumRiskLevel: "read_only",
+          },
+          {
+            event: "snapshot_restored",
+            repositoryScope: "all",
+            repositoryTargets: [],
+            deliveryWindow: "anytime",
+            minimumRiskLevel: "read_only",
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceIntegrationValidationError);
+
+    const secrets = await getWorkspaceIntegrationSecrets("ws_acme_01");
+    expect(secrets?.slackWebhookUrl).toBe("https://hooks.slack.test/services/T000/B000/good");
   });
 
   it("delivers approval-requested notifications through the configured channels", async () => {

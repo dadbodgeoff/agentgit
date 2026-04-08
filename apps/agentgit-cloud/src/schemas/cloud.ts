@@ -339,6 +339,8 @@ export const WorkspaceBillingSchema = z
     paymentMethodLabel: z.string().min(1),
     paymentMethodStatus: BillingPaymentMethodStatusSchema,
     invoices: z.array(BillingInvoiceSchema),
+    stripeCustomerId: z.string().min(1).optional(),
+    stripeSubscriptionId: z.string().min(1).optional(),
   })
   .strict();
 export type WorkspaceBilling = z.infer<typeof WorkspaceBillingSchema>;
@@ -362,6 +364,23 @@ export const BillingSaveResponseSchema = z
   })
   .strict();
 export type BillingSaveResponse = z.infer<typeof BillingSaveResponseSchema>;
+
+export const StripeBillingStatusSchema = z
+  .object({
+    checkoutEnabled: z.boolean(),
+    portalEnabled: z.boolean(),
+    provider: BillingProviderSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type StripeBillingStatus = z.infer<typeof StripeBillingStatusSchema>;
+
+export const StripeBillingSessionResponseSchema = z
+  .object({
+    url: z.string().url(),
+  })
+  .strict();
+export type StripeBillingSessionResponse = z.infer<typeof StripeBillingSessionResponseSchema>;
 
 export const IntegrationHealthStatusSchema = z.enum(["healthy", "warning", "degraded"]);
 export type IntegrationHealthStatus = z.infer<typeof IntegrationHealthStatusSchema>;
@@ -1209,6 +1228,62 @@ export const CalibrationReportSchema = z
   })
   .strict();
 export type CalibrationReport = z.infer<typeof CalibrationReportSchema>;
+
+export const CalibrationReplayCandidateThresholdSchema = z
+  .object({
+    actionFamily: z.string().min(1),
+    askBelow: z.number().min(0).max(1),
+  })
+  .strict();
+export type CalibrationReplayCandidateThreshold = z.infer<typeof CalibrationReplayCandidateThresholdSchema>;
+
+export const CalibrationReplayRequestSchema = z
+  .object({
+    candidateThresholds: z.array(CalibrationReplayCandidateThresholdSchema).min(1),
+  })
+  .strict();
+export type CalibrationReplayRequest = z.infer<typeof CalibrationReplayRequestSchema>;
+
+export const CalibrationReplaySummarySchema = z
+  .object({
+    replayableSamples: z.number().int().nonnegative(),
+    skippedSamples: z.number().int().nonnegative(),
+    changedDecisions: z.number().int().nonnegative(),
+    currentApprovalsRequested: z.number().int().nonnegative(),
+    candidateApprovalsRequested: z.number().int().nonnegative(),
+    approvalsReduced: z.number().int().nonnegative(),
+    approvalsIncreased: z.number().int().nonnegative(),
+    historicallyDeniedAutoAllowed: z.number().int().nonnegative(),
+    historicallyAllowedNewlyGated: z.number().int().nonnegative(),
+  })
+  .strict();
+export type CalibrationReplaySummary = z.infer<typeof CalibrationReplaySummarySchema>;
+
+export const CalibrationReplayFamilySchema = z
+  .object({
+    domain: z.string().min(1),
+    currentAskThreshold: z.number().min(0).max(1).nullable(),
+    candidateAskThreshold: z.number().min(0).max(1).nullable(),
+    replayableSamples: z.number().int().nonnegative(),
+    changedDecisions: z.number().int().nonnegative(),
+    approvalsReduced: z.number().int().nonnegative(),
+    approvalsIncreased: z.number().int().nonnegative(),
+  })
+  .strict();
+export type CalibrationReplayFamily = z.infer<typeof CalibrationReplayFamilySchema>;
+
+export const CalibrationReplayPreviewSchema = z
+  .object({
+    repoId: z.string().min(1),
+    generatedAt: TimestampStringSchema,
+    effectivePolicyProfile: z.string().min(1),
+    candidateThresholds: z.array(CalibrationReplayCandidateThresholdSchema),
+    summary: CalibrationReplaySummarySchema,
+    actionFamilies: z.array(CalibrationReplayFamilySchema),
+    samplesTruncated: z.boolean(),
+  })
+  .strict();
+export type CalibrationReplayPreview = z.infer<typeof CalibrationReplayPreviewSchema>;
 
 export const RepositoryPolicyValidationSchema = z
   .object({

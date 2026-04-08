@@ -11,7 +11,7 @@ function buildRepoLabel(owner: string, name: string) {
 }
 
 function describeConnectorCommand(command: {
-  command: { type: string };
+  command: { type: string; payload?: Record<string, unknown> | null };
   status: string;
   lastMessage: string | null;
   nextAttemptAt?: string | null;
@@ -39,6 +39,18 @@ function describeConnectorCommand(command: {
       : `Snapshot ${command.result.snapshotId} restore requires follow-up.`;
   }
 
+  if (command.command.type === "replay_run") {
+    if (command.status === "completed" && typeof command.result?.replayRunId === "string") {
+      return `Replay run ${command.result.replayRunId} was created through the local connector.`;
+    }
+
+    if (typeof command.command.payload?.sourceRunId === "string") {
+      return command.status === "completed"
+        ? `Replay for source run ${command.command.payload.sourceRunId} completed through the local connector.`
+        : `Replay for source run ${command.command.payload.sourceRunId} is still in progress or needs follow-up.`;
+    }
+  }
+
   if (command.nextAttemptAt) {
     return `${command.lastMessage ?? `${command.command.type} is ${command.status}.`} Retry scheduled for ${command.nextAttemptAt}.`;
   }
@@ -51,6 +63,14 @@ function titleForConnectorCommand(command: {
   status: string;
   result?: Record<string, unknown> | null;
 }) {
+  if (command.command.type === "replay_run" && command.status === "completed") {
+    return "Run replay completed";
+  }
+
+  if (command.command.type === "replay_run") {
+    return "Run replay updated";
+  }
+
   if (command.command.type === "open_pull_request" && command.status === "completed") {
     return "Pull request opened";
   }
@@ -95,11 +115,19 @@ function toneForConnectorCommand(command: { status: string; nextAttemptAt?: stri
 }
 
 function detailPathForConnectorCommand(command: {
-  command: { repository: { owner: string; name: string } };
+  command: { repository: { owner: string; name: string }; payload?: Record<string, unknown> | null };
   result?: Record<string, unknown> | null;
 }) {
   const owner = command.command.repository.owner;
   const name = command.command.repository.name;
+
+  if (typeof command.result?.replayRunId === "string") {
+    return runDetailRoute(owner, name, command.result.replayRunId);
+  }
+
+  if (typeof command.command.payload?.sourceRunId === "string") {
+    return runDetailRoute(owner, name, command.command.payload.sourceRunId);
+  }
 
   if (typeof command.result?.runId === "string" && typeof command.result?.actionId === "string") {
     return actionDetailRoute(owner, name, command.result.runId, command.result.actionId);

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 
 import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
@@ -23,7 +23,12 @@ import {
   ToastViewport,
 } from "@/components/primitives";
 import { ApiClientError } from "@/lib/api/client";
-import { updateWorkspaceBilling } from "@/lib/api/endpoints/billing";
+import {
+  createWorkspaceStripeCheckoutSession,
+  createWorkspaceStripePortalSession,
+  getWorkspaceStripeBillingStatus,
+  updateWorkspaceBilling,
+} from "@/lib/api/endpoints/billing";
 import { useWorkspaceBillingQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
 import { formatAbsoluteDate, formatCurrencyUsd, formatNumber } from "@/lib/utils/format";
@@ -66,6 +71,10 @@ const breachLabels: Record<BillingLimitBreach, string> = {
 export function BillingSettingsPage() {
   const queryClient = useQueryClient();
   const billingQuery = useWorkspaceBillingQuery();
+  const stripeStatusQuery = useQuery({
+    queryKey: [...queryKeys.billing, "stripe-status"],
+    queryFn: getWorkspaceStripeBillingStatus,
+  });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -141,6 +150,7 @@ export function BillingSettingsPage() {
       });
       setSubmitError(null);
       setToastMessage(result.message);
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.billing, "stripe-status"] }).catch(() => undefined);
     },
     onError: (error) => {
       if (error instanceof ApiClientError) {
@@ -163,6 +173,54 @@ export function BillingSettingsPage() {
   });
 
   const values = watch();
+
+  const checkoutMutation = useMutation({
+    mutationFn: async () => {
+      if (isDirty) {
+        await saveMutation.mutateAsync(values);
+      }
+
+      return await createWorkspaceStripeCheckoutSession();
+    },
+    onSuccess: ({ url }) => {
+      window.location.href = url;
+    },
+    onError: (error) => {
+      const message =
+        error instanceof ApiClientError
+          ? typeof error.details === "object" &&
+            error.details !== null &&
+            "message" in error.details &&
+            typeof error.details.message === "string"
+            ? error.details.message
+            : "Could not start Stripe checkout. Retry."
+          : "Could not start Stripe checkout. Retry.";
+
+      setSubmitError(message);
+      setErrorToast(message);
+    },
+  });
+
+  const portalMutation = useMutation({
+    mutationFn: createWorkspaceStripePortalSession,
+    onSuccess: ({ url }) => {
+      window.location.href = url;
+    },
+    onError: (error) => {
+      const message =
+        error instanceof ApiClientError
+          ? typeof error.details === "object" &&
+            error.details !== null &&
+            "message" in error.details &&
+            typeof error.details.message === "string"
+            ? error.details.message
+            : "Could not open the Stripe billing portal. Retry."
+          : "Could not open the Stripe billing portal. Retry.";
+
+      setSubmitError(message);
+      setErrorToast(message);
+    },
+  });
 
   async function onSubmit(values: BillingUpdate) {
     setSubmitError(null);
@@ -214,6 +272,17 @@ export function BillingSettingsPage() {
   }
 
   const billing = billingQuery.data;
+  const stripeStatus = stripeStatusQuery.data;
+  const stripeProviderActive = billing.billingProvider === "stripe";
+  const checkoutDisabled =
+    checkoutMutation.isPending ||
+    saveMutation.isPending ||
+    stripeStatusQuery.isPending ||
+    !stripeStatus?.checkoutEnabled;
+  const portalDisabled =
+    portalMutation.isPending ||
+    stripeStatusQuery.isPending ||
+    !stripeStatus?.portalEnabled;
 
   return (
     <>
@@ -277,8 +346,9 @@ export function BillingSettingsPage() {
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Plan and billing cycle</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Billing settings now persist durably in the cloud app, and the selected plan is enforced as the hosted
-                beta entitlement envelope.
+                {stripeProviderActive
+                  ? "This workspace is on live Stripe billing. Plan changes now flow through Stripe, while billing contacts remain editable here."
+                  : "Billing settings now persist durably in the cloud app, and the selected plan is enforced as the hosted beta entitlement envelope."}
               </p>
             </div>
 
@@ -297,7 +367,7 @@ export function BillingSettingsPage() {
                   >
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-base font-semibold capitalize">{planTier}</span>
-                      <input type="radio" value={planTier} {...register("planTier")} />
+                      <input disabled={stripeProviderActive} type="radio" value={planTier} {...register("planTier")} />
                     </div>
                     <p className="text-sm text-[var(--ag-text-secondary)]">{planDescriptions[planTier]}</p>
                   </label>
@@ -307,13 +377,14 @@ export function BillingSettingsPage() {
 
             <label className="flex w-full max-w-xs flex-col gap-1">
               <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Billing cycle</span>
-              <select className={selectClassName()} {...register("billingCycle")}>
+              <select className={selectClassName()} disabled={stripeProviderActive} {...register("billingCycle")}>
                 <option value="monthly">Monthly</option>
                 <option value="yearly">Yearly</option>
               </select>
               <span className="text-[12px] text-[var(--ag-text-secondary)]">
-                Yearly mode reflects a discounted effective monthly estimate for procurement planning, even before
-                Stripe is enabled.
+                {stripeProviderActive
+                  ? "The active Stripe subscription controls plan cadence. Use the billing portal to change it."
+                  : "Yearly mode reflects a discounted effective monthly estimate for procurement planning, even before Stripe is enabled."}
               </span>
             </label>
           </Card>
@@ -356,8 +427,9 @@ export function BillingSettingsPage() {
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Invoice history</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Invoice history will populate after Stripe lands. During hosted beta, plan enforcement works without
-                generating invoices.
+                {billing.billingProvider === "stripe"
+                  ? "Stripe invoices sync into this workspace billing surface so owners can review recent billing periods without leaving the control plane."
+                  : "Invoice history appears automatically when live Stripe billing is enabled. During hosted beta, plan enforcement works without generating processor invoices."}
               </p>
             </div>
             {billing.invoices.length === 0 ? (
@@ -443,12 +515,37 @@ export function BillingSettingsPage() {
                 </Badge>
               </div>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Card collection is disabled during hosted beta. Plan enforcement happens through the selected tier and
-                access review instead.
+                {stripeStatus?.message ??
+                  "Card collection is disabled during hosted beta unless live Stripe is configured for this environment."}
               </p>
-              <Button disabled size="sm" variant="secondary">
-                Stripe coming later
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {stripeProviderActive ? (
+                  <Button
+                    disabled={portalDisabled}
+                    onClick={() => void portalMutation.mutateAsync()}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    {portalMutation.isPending ? "Opening portal..." : "Open Stripe portal"}
+                  </Button>
+                ) : (
+                  <Button
+                    disabled={checkoutDisabled}
+                    onClick={() => void checkoutMutation.mutateAsync()}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    {checkoutMutation.isPending
+                      ? "Opening checkout..."
+                      : isDirty
+                        ? "Save and continue to Stripe"
+                        : "Continue to Stripe checkout"}
+                  </Button>
+                )}
+                {!stripeProviderActive && !stripeStatus?.checkoutEnabled ? (
+                  <Badge tone="neutral">Stripe unavailable here</Badge>
+                ) : null}
+              </div>
             </div>
           </Card>
 
@@ -482,11 +579,15 @@ export function BillingSettingsPage() {
             <h2 className="text-lg font-semibold">Shipping status</h2>
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
               <div>Active billing mode:</div>
-              <div>- hosted beta gate with enforced plan caps</div>
+              <div>- {billing.billingProvider === "stripe" ? "live Stripe subscription with webhook sync" : "hosted beta gate with enforced plan caps"}</div>
               <div>- durable owner-managed billing contacts</div>
-              <div>- no live card collection until Stripe ships</div>
+              <div>
+                - {billing.billingProvider === "stripe" ? "customer portal and invoice history are live" : "live card collection only appears when Stripe is configured"}
+              </div>
               <div className="mt-3">Operator expectation:</div>
-              <div>- upgrade the selected tier before adding more seats or repositories</div>
+              <div>
+                - {billing.billingProvider === "stripe" ? "manage plan and payment method in Stripe" : "upgrade the selected tier before adding more seats or repositories"}
+              </div>
               <div>- review approval volume before the next access checkpoint</div>
             </div>
           </Card>

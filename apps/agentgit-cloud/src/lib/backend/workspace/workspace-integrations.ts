@@ -37,6 +37,16 @@ type NotificationDeliveryResult = {
   sent: Array<"email" | "slack" | "in_app">;
 };
 
+export class WorkspaceIntegrationValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly field: "slackWebhookUrl",
+  ) {
+    super(message);
+    this.name = "WorkspaceIntegrationValidationError";
+  }
+}
+
 function normalizeWebhookUrl(value?: string | null): string | null {
   const normalized = value?.trim() ?? "";
   return normalized.length > 0 ? normalized : null;
@@ -221,6 +231,26 @@ async function sendSlackWebhookMessage(workspaceId: string, text: string): Promi
   }
 
   return new Date().toISOString();
+}
+
+async function validateSlackWebhookCandidate(candidateUrl: string): Promise<void> {
+  const response = await fetch(candidateUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      text: "AgentGit validation ping. This confirms the webhook before the workspace secret is rotated.",
+    }),
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new WorkspaceIntegrationValidationError(
+      `Slack webhook validation failed with ${response.status}.${details ? ` ${details}` : ""}`.trim(),
+      "slackWebhookUrl",
+    );
+  }
 }
 
 async function sendEmailMessage(params: {
@@ -519,18 +549,35 @@ export async function saveWorkspaceIntegrations(
     notificationBusinessHours: publicUpdate.notificationBusinessHours ?? current.notificationBusinessHours,
     notificationRules: normalizeNotificationRules(publicUpdate.notificationRules),
   };
-  const nextSlackWebhookUrl = !update.slackConnected
+  const nextStoredSlackWebhookUrl = !update.slackConnected
     ? null
     : (normalizeWebhookUrl(update.slackWebhookUrl) ?? existingSecrets?.slackWebhookUrl ?? null);
+  const effectiveSlackWebhookUrl = nextStoredSlackWebhookUrl ?? getSlackWebhookUrlFromEnvironment();
+
+  if (update.slackConnected && !effectiveSlackWebhookUrl) {
+    throw new WorkspaceIntegrationValidationError(
+      "Enter a Slack webhook URL before enabling Slack delivery.",
+      "slackWebhookUrl",
+    );
+  }
+
+  const incomingSlackWebhookUrl = normalizeWebhookUrl(update.slackWebhookUrl);
+  if (
+    update.slackConnected &&
+    incomingSlackWebhookUrl &&
+    incomingSlackWebhookUrl !== existingSecrets?.slackWebhookUrl
+  ) {
+    await validateSlackWebhookCandidate(incomingSlackWebhookUrl);
+  }
 
   await saveWorkspaceIntegrationSecrets(workspaceSession.activeWorkspace.id, {
-    slackWebhookUrl: nextSlackWebhookUrl,
+    slackWebhookUrl: nextStoredSlackWebhookUrl,
   });
 
   await saveStoredWorkspaceIntegrations(workspaceSession.activeWorkspace.id, {
     ...current,
     ...normalizedUpdate,
-    slackWebhookConfigured: Boolean(nextSlackWebhookUrl ?? getSlackWebhookUrlFromEnvironment()),
+    slackWebhookConfigured: Boolean(effectiveSlackWebhookUrl),
     slackWorkspaceName: update.slackConnected ? update.slackWorkspaceName || current.slackWorkspaceName : undefined,
     slackChannelName: update.slackConnected ? update.slackChannelName || current.slackChannelName : undefined,
   });

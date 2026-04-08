@@ -12,8 +12,16 @@ import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import {
   getStoredWorkspaceBilling,
   getWorkspaceConnectionState,
+  listStoredWorkspaceBillings,
   saveStoredWorkspaceBilling,
 } from "@/lib/backend/workspace/cloud-state";
+import {
+  constructStripeWebhookEvent,
+  createWorkspaceStripeCheckoutSession,
+  createWorkspaceStripePortalSession,
+  getWorkspaceStripeStatus,
+  syncWorkspaceBillingFromStripe,
+} from "@/lib/backend/workspace/stripe-billing";
 
 const DEFAULT_PAYMENT_METHOD_LABEL = "Beta access granted";
 const DEFAULT_PAYMENT_METHOD_STATUS = "active" as const;
@@ -221,7 +229,7 @@ export async function assertWorkspaceUsageWithinBillingLimits(
 export async function resolveWorkspaceBilling(workspaceSession: WorkspaceSession): Promise<WorkspaceBilling> {
   const storedBilling = await getStoredWorkspaceBilling(workspaceSession.activeWorkspace.id);
   if (storedBilling) {
-    return await mergeDerivedUsage(workspaceSession.activeWorkspace.id, {
+    const hydratedBilling = {
       ...storedBilling,
       workspaceName: workspaceSession.activeWorkspace.name,
       billingProvider: storedBilling.billingProvider ?? "beta_gate",
@@ -233,7 +241,23 @@ export async function resolveWorkspaceBilling(workspaceSession: WorkspaceSession
       paymentMethodStatus:
         storedBilling.billingProvider === "stripe" ? storedBilling.paymentMethodStatus : DEFAULT_PAYMENT_METHOD_STATUS,
       invoices: storedBilling.billingProvider === "stripe" ? storedBilling.invoices : DEFAULT_INVOICES,
-    });
+    } satisfies WorkspaceBilling;
+
+    if (hydratedBilling.billingProvider === "stripe" && hydratedBilling.stripeCustomerId) {
+      try {
+        const syncedBilling = await syncWorkspaceBillingFromStripe({
+          billing: hydratedBilling,
+          workspaceName: workspaceSession.activeWorkspace.name,
+        });
+        const mergedBilling = await mergeDerivedUsage(workspaceSession.activeWorkspace.id, syncedBilling);
+        await saveStoredWorkspaceBilling(workspaceSession.activeWorkspace.id, mergedBilling);
+        return mergedBilling;
+      } catch {
+        // Fall through to the stored billing snapshot when live Stripe sync is unavailable.
+      }
+    }
+
+    return await mergeDerivedUsage(workspaceSession.activeWorkspace.id, hydratedBilling);
   }
 
   const planLimits = getPlanLimits("team");
@@ -266,17 +290,19 @@ export async function saveWorkspaceBilling(workspaceSession: WorkspaceSession, u
   const workspaceId = workspaceSession.activeWorkspace.id;
   const currentBilling = await resolveWorkspaceBilling(workspaceSession);
   const planLimits = getPlanLimits(update.planTier);
-  await assertUsageFitsPlan({
-    workspaceId,
-    planTier: update.planTier,
-  });
+  if (currentBilling.billingProvider !== "stripe") {
+    await assertUsageFitsPlan({
+      workspaceId,
+      planTier: update.planTier,
+    });
+  }
 
   const savedBilling = await saveStoredWorkspaceBilling(workspaceId, {
     ...currentBilling,
     workspaceId,
     workspaceName: workspaceSession.activeWorkspace.name,
-    billingProvider: "beta_gate",
-    billingAccessStatus: "active",
+    billingProvider: currentBilling.billingProvider,
+    billingAccessStatus: currentBilling.billingProvider === "stripe" ? currentBilling.billingAccessStatus : "active",
     limitBreaches: [],
     ...update,
     taxId: update.taxId || undefined,
@@ -285,15 +311,159 @@ export async function saveWorkspaceBilling(workspaceSession: WorkspaceSession, u
       update.billingCycle === "yearly"
         ? Math.round(planLimits.monthlyEstimateUsd * 0.85)
         : planLimits.monthlyEstimateUsd,
-    nextInvoiceDate: getNextInvoiceDate(),
-    paymentMethodLabel: DEFAULT_PAYMENT_METHOD_LABEL,
-    paymentMethodStatus: DEFAULT_PAYMENT_METHOD_STATUS,
-    invoices: DEFAULT_INVOICES,
+    nextInvoiceDate: currentBilling.billingProvider === "stripe" ? currentBilling.nextInvoiceDate : getNextInvoiceDate(),
+    paymentMethodLabel:
+      currentBilling.billingProvider === "stripe" ? currentBilling.paymentMethodLabel : DEFAULT_PAYMENT_METHOD_LABEL,
+    paymentMethodStatus:
+      currentBilling.billingProvider === "stripe" ? currentBilling.paymentMethodStatus : DEFAULT_PAYMENT_METHOD_STATUS,
+    invoices: currentBilling.billingProvider === "stripe" ? currentBilling.invoices : DEFAULT_INVOICES,
+    stripeCustomerId: currentBilling.stripeCustomerId,
+    stripeSubscriptionId: currentBilling.stripeSubscriptionId,
   });
 
   return {
     billing: await mergeDerivedUsage(workspaceId, savedBilling),
     savedAt: new Date().toISOString(),
-    message: "Billing settings saved. Hosted beta access now enforces the selected plan limits.",
+    message:
+      currentBilling.billingProvider === "stripe"
+        ? "Billing settings saved. Live Stripe billing remains active for this workspace."
+        : "Billing settings saved. Hosted beta access now enforces the selected plan limits.",
   };
+}
+
+export async function resolveWorkspaceStripeBillingStatus(workspaceSession: WorkspaceSession) {
+  return getWorkspaceStripeStatus(await resolveWorkspaceBilling(workspaceSession));
+}
+
+function resolveBillingReturnUrl(origin: string): string {
+  return `${origin}/app/settings/billing`;
+}
+
+export async function createWorkspaceStripeCheckout(
+  workspaceSession: WorkspaceSession,
+  origin: string,
+): Promise<{ url: string }> {
+  const workspaceId = workspaceSession.activeWorkspace.id;
+  const billing = await resolveWorkspaceBilling(workspaceSession);
+  const session = await createWorkspaceStripeCheckoutSession({
+    workspaceId,
+    workspaceName: workspaceSession.activeWorkspace.name,
+    billing,
+    successUrl: resolveBillingReturnUrl(origin),
+    cancelUrl: resolveBillingReturnUrl(origin),
+  });
+
+  if (session.customerId !== billing.stripeCustomerId) {
+    await saveStoredWorkspaceBilling(workspaceId, {
+      ...billing,
+      stripeCustomerId: session.customerId,
+    });
+  }
+
+  return { url: session.url };
+}
+
+export async function createWorkspaceStripePortal(
+  workspaceSession: WorkspaceSession,
+  origin: string,
+): Promise<{ url: string }> {
+  const billing = await resolveWorkspaceBilling(workspaceSession);
+  return await createWorkspaceStripePortalSession({
+    workspaceId: workspaceSession.activeWorkspace.id,
+    billing,
+    returnUrl: resolveBillingReturnUrl(origin),
+  });
+}
+
+async function findWorkspaceBillingByStripeCustomerId(customerId: string): Promise<WorkspaceBilling | null> {
+  const billings = await listStoredWorkspaceBillings();
+  return billings.find((billing) => billing.stripeCustomerId === customerId) ?? null;
+}
+
+export async function handleWorkspaceStripeWebhook(body: string, signature: string): Promise<void> {
+  const event = constructStripeWebhookEvent(body, signature);
+
+  let workspaceBilling: WorkspaceBilling | null = null;
+  let workspaceId: string | null = null;
+
+  switch (event.type) {
+    case "checkout.session.completed": {
+      const session = event.data.object;
+      const metadataWorkspaceId = typeof session.metadata?.workspaceId === "string" ? session.metadata.workspaceId : null;
+      if (!metadataWorkspaceId) {
+        return;
+      }
+
+      workspaceId = metadataWorkspaceId;
+      const existingBilling = await getStoredWorkspaceBilling(workspaceId);
+      if (!existingBilling) {
+        return;
+      }
+
+      workspaceBilling = {
+        ...existingBilling,
+        billingProvider: "stripe",
+        stripeCustomerId: typeof session.customer === "string" ? session.customer : existingBilling.stripeCustomerId,
+        stripeSubscriptionId:
+          typeof session.subscription === "string" ? session.subscription : existingBilling.stripeSubscriptionId,
+      };
+      break;
+    }
+    case "customer.subscription.created":
+    case "customer.subscription.updated":
+    case "customer.subscription.deleted": {
+      const subscription = event.data.object;
+      workspaceId =
+        typeof subscription.metadata?.workspaceId === "string" ? subscription.metadata.workspaceId : null;
+
+      if (workspaceId) {
+        const existingBilling = await getStoredWorkspaceBilling(workspaceId);
+        if (!existingBilling) {
+          return;
+        }
+
+        workspaceBilling = {
+          ...existingBilling,
+          billingProvider: "stripe",
+          stripeCustomerId: typeof subscription.customer === "string" ? subscription.customer : existingBilling.stripeCustomerId,
+          stripeSubscriptionId: subscription.id,
+        };
+      } else if (typeof subscription.customer === "string") {
+        workspaceBilling = await findWorkspaceBillingByStripeCustomerId(subscription.customer);
+        workspaceId = workspaceBilling?.workspaceId ?? null;
+        if (workspaceBilling) {
+          workspaceBilling = {
+            ...workspaceBilling,
+            billingProvider: "stripe",
+            stripeSubscriptionId: subscription.id,
+          };
+        }
+      }
+      break;
+    }
+    case "invoice.paid":
+    case "invoice.payment_failed":
+    case "invoice.voided": {
+      const invoice = event.data.object;
+      if (typeof invoice.customer === "string") {
+        workspaceBilling = await findWorkspaceBillingByStripeCustomerId(invoice.customer);
+        workspaceId = workspaceBilling?.workspaceId ?? null;
+      }
+      break;
+    }
+    default:
+      return;
+  }
+
+  if (!workspaceBilling || !workspaceId) {
+    return;
+  }
+
+  const workspaceState = await getWorkspaceConnectionState(workspaceId);
+  const syncedBilling = await syncWorkspaceBillingFromStripe({
+    billing: workspaceBilling,
+    workspaceName: workspaceState?.workspaceName ?? workspaceBilling.workspaceName,
+  });
+  const mergedBilling = await mergeDerivedUsage(workspaceId, syncedBilling);
+  await saveStoredWorkspaceBilling(workspaceId, mergedBilling);
 }

@@ -27,6 +27,7 @@ import {
   getWorkspaceSsoSecretsLocal,
   getWorkspaceConnectionStateLocal,
   listWorkspaceConnectionStatesLocal,
+  listStoredWorkspaceBillingsLocal,
   saveStoredWorkspaceBillingLocal,
   saveStoredWorkspaceIntegrationsLocal,
   saveStoredWorkspaceSettingsLocal,
@@ -705,6 +706,20 @@ export async function getStoredWorkspaceBilling(workspaceId: string): Promise<Wo
     where: eq(cloudWorkspaceBilling.workspaceId, workspaceId),
   });
   return row?.billing ?? null;
+}
+
+export async function listStoredWorkspaceBillings(): Promise<WorkspaceBilling[]> {
+  if (!hasDatabaseUrl()) {
+    return listStoredWorkspaceBillingsLocal();
+  }
+
+  const db = getCloudDatabase();
+  const rows = await db.query.cloudWorkspaceBilling.findMany({
+    columns: { billing: true },
+    orderBy: asc(cloudWorkspaceBilling.updatedAt),
+  });
+
+  return rows.map((row) => row.billing);
 }
 
 export async function saveStoredWorkspaceBilling(

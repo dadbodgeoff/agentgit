@@ -1,17 +1,56 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import Link from "next/link";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/primitives";
 import { PageStatePanel } from "@/components/feedback";
-import { Button } from "@/components/primitives";
+import { Badge, Button, ToastCard, ToastViewport } from "@/components/primitives";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { useCalibrationQuery, useRepositoriesQuery } from "@/lib/query/hooks";
+import { getRepositoryPolicy, updateRepositoryPolicy } from "@/lib/api/endpoints/repositories";
+import { replayCalibrationThresholds } from "@/lib/api/endpoints/calibration";
+import { queryKeys } from "@/lib/query/keys";
 import type { PreviewState } from "@/schemas/cloud";
 import { getApiErrorMessage } from "@/lib/api/client";
 import { formatPercent } from "@/lib/utils/format";
+import { repositoryPolicyRoute } from "@/lib/navigation/routes";
+
+function applyThresholdsToPolicyDocument(
+  workspaceConfig: Awaited<ReturnType<typeof getRepositoryPolicy>>["workspaceConfig"],
+  candidateThresholds: Array<{ actionFamily: string; askBelow: number }>,
+) {
+  const thresholdMap = new Map(
+    (workspaceConfig.thresholds?.low_confidence ?? []).map((threshold) => [threshold.action_family, threshold.ask_below]),
+  );
+
+  for (const threshold of candidateThresholds) {
+    thresholdMap.set(threshold.actionFamily, threshold.askBelow);
+  }
+
+  const nextThresholds = [...thresholdMap.entries()]
+    .map(([action_family, ask_below]) => ({
+      action_family,
+      ask_below,
+    }))
+    .sort((left, right) => left.action_family.localeCompare(right.action_family));
+
+  return `${JSON.stringify(
+    {
+      ...workspaceConfig,
+      thresholds: {
+        low_confidence: nextThresholds,
+      },
+    },
+    null,
+    2,
+  )}\n`;
+}
 
 function selectClassName() {
   return "ag-focus-ring h-9 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] px-3 text-[14px] text-[var(--ag-text-primary)] hover:border-[var(--ag-border-strong)] focus:border-[var(--ag-color-brand)]";
@@ -27,7 +66,10 @@ export function CalibrationPage({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const repositoriesQuery = useRepositoriesQuery(previewState);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const repositories = repositoriesQuery.data?.items ?? [];
   const selectedRepoId = useMemo(() => {
     if (repositories.length === 0) {
@@ -43,6 +85,76 @@ export function CalibrationPage({
     previewState,
     repositoriesQuery.isSuccess && Boolean(selectedRepoId),
   );
+  const activeRepository = repositories.find((repository) => repository.id === selectedRepoId) ?? null;
+  const actionableRecommendations = calibrationQuery.data
+    ? calibrationQuery.data.recommendations.filter((recommendation) => recommendation.currentAskThreshold !== recommendation.recommended)
+    : [];
+  const policyQuery = useQuery({
+    queryKey: ["repository-policy-for-calibration", activeRepository?.owner ?? "none", activeRepository?.name ?? "none"],
+    queryFn: () => getRepositoryPolicy(activeRepository?.owner ?? "", activeRepository?.name ?? ""),
+    enabled: previewState === "ready" && Boolean(activeRepository),
+  });
+  const replayMutation = useMutation({
+    mutationFn: () =>
+      replayCalibrationThresholds(selectedRepoId ?? "", {
+        candidateThresholds: actionableRecommendations.map((recommendation) => ({
+          actionFamily: recommendation.domain,
+          askBelow: recommendation.recommended,
+        })),
+      }),
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Could not preview threshold replay. Retry.");
+      setErrorToast(message);
+    },
+  });
+  const applyMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeRepository || !policyQuery.data || !replayMutation.data) {
+        throw new Error("Calibration preview is not ready yet.");
+      }
+
+      const nextDocument = applyThresholdsToPolicyDocument(
+        policyQuery.data.workspaceConfig,
+        replayMutation.data.candidateThresholds,
+      );
+      return updateRepositoryPolicy(activeRepository.owner, activeRepository.name, nextDocument);
+    },
+    onSuccess: (result) => {
+      if (!selectedRepoId) {
+        return;
+      }
+
+      void queryClient.invalidateQueries({ queryKey: queryKeys.calibration(selectedRepoId) });
+      if (activeRepository) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.repositoryPolicy(activeRepository.owner, activeRepository.name) });
+      }
+      setToastMessage(result.message);
+    },
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Could not apply threshold update. Retry.");
+      setErrorToast(message);
+    },
+  });
+
+  useEffect(() => {
+    if (!toastMessage && !errorToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setToastMessage(null);
+      setErrorToast(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeout);
+  }, [toastMessage, errorToast]);
+
+  useEffect(() => {
+    replayMutation.reset();
+    applyMutation.reset();
+    setToastMessage(null);
+    setErrorToast(null);
+  }, [selectedRepoId]);
 
   function handleRepositoryChange(nextRepoId: string) {
     const nextSearchParams = new URLSearchParams(searchParams.toString());
@@ -50,9 +162,21 @@ export function CalibrationPage({
     router.replace(`${pathname}?${nextSearchParams.toString()}`);
   }
 
-  const actionButton = (
-    <Button disabled={!calibrationQuery.data || calibrationQuery.data.recommendations.length === 0} variant="secondary">
-      Apply recommended thresholds
+  const actionButton = replayMutation.data ? (
+    <Button
+      disabled={applyMutation.isPending || !policyQuery.data}
+      onClick={() => applyMutation.mutate()}
+      variant="secondary"
+    >
+      {applyMutation.isPending ? "Applying..." : "Apply recommended thresholds"}
+    </Button>
+  ) : (
+    <Button
+      disabled={actionableRecommendations.length === 0 || replayMutation.isPending}
+      onClick={() => replayMutation.mutate()}
+      variant="secondary"
+    >
+      {replayMutation.isPending ? "Previewing..." : "Preview threshold update"}
     </Button>
   );
 
@@ -132,7 +256,6 @@ export function CalibrationPage({
   }
 
   const calibration = calibrationQuery.data;
-  const activeRepository = repositories.find((repository) => repository.id === selectedRepoId);
 
   if (calibration.recommendations.length === 0 && calibration.totalActions < 50) {
     return (
@@ -227,7 +350,116 @@ export function CalibrationPage({
             </Card>
           ))}
         </div>
+        <Card className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">Threshold replay preview</h2>
+              <p className="text-sm text-[var(--ag-text-secondary)]">
+                Review the projected approval impact before saving the updated policy thresholds.
+              </p>
+            </div>
+            {replayMutation.data ? <Badge tone="accent">{replayMutation.data.summary.changedDecisions} changed</Badge> : null}
+          </div>
+          {actionableRecommendations.length === 0 ? (
+            <PageStatePanel
+              emptyDescription="Current recommendations do not change any stored thresholds for this repository."
+              emptyTitle="No actionable threshold changes"
+              state="empty"
+            />
+          ) : replayMutation.isPending ? (
+            <PageStatePanel state="loading" />
+          ) : replayMutation.data ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Replayable</div>
+                  <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.replayableSamples}</div>
+                </div>
+                <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Approvals reduced</div>
+                  <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.approvalsReduced}</div>
+                </div>
+                <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Approvals increased</div>
+                  <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.approvalsIncreased}</div>
+                </div>
+                <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Unsafe auto-allow</div>
+                  <div className="mt-1 text-lg font-semibold">
+                    {replayMutation.data.summary.historicallyDeniedAutoAllowed}
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {replayMutation.data.actionFamilies.map((family) => (
+                  <div
+                    className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3"
+                    key={family.domain}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="font-medium">{family.domain}</div>
+                      <div className="font-mono text-xs text-[var(--ag-text-secondary)]">
+                        {family.currentAskThreshold === null ? "none" : formatPercent(family.currentAskThreshold)} to{" "}
+                        {family.candidateAskThreshold === null ? "none" : formatPercent(family.candidateAskThreshold)}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
+                      {family.replayableSamples} replayable sample{family.replayableSamples === 1 ? "" : "s"}, {family.changedDecisions} changed decision{family.changedDecisions === 1 ? "" : "s"}, {family.approvalsReduced} approval reduction, {family.approvalsIncreased} approval increase.
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {policyQuery.data && activeRepository ? (
+                <div className="space-y-3">
+                  <div className="text-sm font-medium text-[var(--ag-text-primary)]">Generated policy document</div>
+                  <pre className="overflow-x-auto rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-xs text-[var(--ag-text-secondary)]">
+                    {applyThresholdsToPolicyDocument(policyQuery.data.workspaceConfig, replayMutation.data.candidateThresholds)}
+                  </pre>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button disabled={applyMutation.isPending} onClick={() => applyMutation.mutate()} variant="secondary">
+                      {applyMutation.isPending ? "Applying..." : "Apply recommended thresholds"}
+                    </Button>
+                    <Link
+                      className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                      href={repositoryPolicyRoute(activeRepository.owner, activeRepository.name)}
+                    >
+                      Open repository policy
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-sm text-[var(--ag-text-secondary)]">
+                  Loading the current repository policy before apply is enabled.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-[var(--ag-text-secondary)]">
+              Preview the recommended threshold update before applying it to repository policy.
+            </div>
+          )}
+        </Card>
       </div>
+      {toastMessage ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(34_197_94_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Calibration applied</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
+      ) : null}
+      {errorToast ? (
+        <ToastViewport>
+          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Calibration failed</div>
+              <p className="text-sm text-[var(--ag-text-secondary)]">{errorToast}</p>
+            </div>
+          </ToastCard>
+        </ToastViewport>
+      ) : null}
     </ScaffoldPage>
   );
 }

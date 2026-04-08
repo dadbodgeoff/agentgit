@@ -4,6 +4,7 @@ import { requireApiRole } from "@/lib/auth/api-session";
 import {
   resolveWorkspaceIntegrations,
   saveWorkspaceIntegrations,
+  WorkspaceIntegrationValidationError,
 } from "@/lib/backend/workspace/workspace-integrations";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { WorkspaceIntegrationUpdateSchema } from "@/schemas/cloud";
@@ -33,17 +34,24 @@ export async function PUT(request: Request): Promise<NextResponse> {
     return jsonWithRequestId({ message: "Integration payload is invalid." }, { status: 400 }, requestId);
   }
 
-  if (payload.data.slackConnected && payload.data.slackChannelName?.includes("blocked-channel")) {
+  try {
     return jsonWithRequestId(
-      { message: "Slack could not validate that channel. Choose a different destination." },
-      { status: 409 },
+      await saveWorkspaceIntegrations(access.workspaceSession, payload.data),
+      undefined,
       requestId,
     );
-  }
+  } catch (error) {
+    if (error instanceof WorkspaceIntegrationValidationError) {
+      return jsonWithRequestId(
+        {
+          message: error.message,
+          field: error.field,
+        },
+        { status: 409 },
+        requestId,
+      );
+    }
 
-  return jsonWithRequestId(
-    await saveWorkspaceIntegrations(access.workspaceSession, payload.data),
-    undefined,
-    requestId,
-  );
+    throw error;
+  }
 }

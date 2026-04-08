@@ -112,6 +112,7 @@ Rules:
 - hosted approve/reject mutations must enqueue connector commands that resolve the approval on the local daemon and sync the resulting resolution back into cloud state
 - daemon-backed run-detail and readiness endpoints must initialize authority sessions from the active workspace's connected repository roots rather than process-wide roots
 - Slack webhook secrets must be stored server-side and must never be echoed back through the integrations settings snapshot API
+- integrations save must validate a newly entered or rotated Slack webhook before persisting it; if validation fails, the prior secret must remain active and the response must return a field-scoped error instead of silently accepting the bad URL
 - `approval_requested` notifications are urgent and should fan out immediately through enabled channels even when digest cadence is set to `daily` or `weekly`
 - authenticated workspace APIs must enforce per-IP and per-workspace rate limits, with stricter budgets for write traffic than for reads
 - connector registration and sync endpoints must enforce per-IP and per-workspace quotas and return `429` responses with retry metadata when limits are exceeded
@@ -123,6 +124,7 @@ Rules:
 - connector install guidance must provide a copy-ready bootstrap command, token-copy affordances, expiry context, and immediate feedback while waiting for the first connector heartbeat
 - billing must ship either as a real Stripe-backed subscription flow or as an explicit hosted beta gate; the cloud UI must never present fake card collection or fake invoice history as if it were live billing
 - while Stripe is deferred, the hosted beta gate must enforce the selected plan's seat and repository limits on mutating routes and surface approval-volume overages in the billing UI
+- if Stripe is enabled, hosted billing must include live checkout, webhook-backed subscription state, customer-portal access, and invoice sync; if Stripe is disabled, pricing, docs, and billing must all continue to present the hosted beta gate honestly
 - if a workspace has no persisted repository scope yet, hosted APIs must fail closed for tenant-bound inventory and dashboard data instead of exposing host-wide discovery results
 - onboarding and repository-connect flows must only surface repositories that are either already attached to the active workspace or currently unclaimed by any other workspace
 - workspace-team bootstrap and any other workspace fallback state must default to zero connected repositories rather than seeding visibility from host-wide discovery
@@ -136,6 +138,8 @@ Rules:
 - run detail must expose a replay preview built from journaled governed action inputs, with clear counts for replayable vs skipped steps and an honest connector availability state
 - hosted run replay must queue a real connector command and re-execute the recorded governed inputs locally, producing a new run rather than pretending the old run itself was restarted in place
 - replay preview may skip imported or observed steps, but the UI and API must label those gaps explicitly instead of implying an exact replay when the journal does not support one
+- hosted replay and restore flows must surface connector lifecycle state honestly from queued through completion or failure, including deep links to the resulting run or action when those artifacts exist
+- calibration must expose real threshold recommendation review, replay-preview, and apply flows; disabled placeholder CTAs are not shippable on a page that otherwise claims the action is available
 - the connector CLI must expose a long-lived `run` mode that keeps heartbeats, event publish, and command polling active after bootstrap without requiring operators to re-run `sync-once` by hand
 - connector run mode must apply exponential backoff on sync failures, return to the normal poll cadence after a successful recovery, and reuse the durable local outbox so pending events survive process restarts and transient network outages
 - the audit surface must expose `/api/v1/audit/export` with CSV and JSON output plus explicit date-range filtering, and the exported records must come from the same workspace-scoped audit source that powers the on-screen table
@@ -227,6 +231,7 @@ Required test layers:
 - E2E for the five priority journeys
 - visual regression on key screens
 - automated accessibility checks
+- browser smoke must cover replay queueing, snapshot restore initiation from the hosted UI, billing-mode truthfulness, and workspace settings secret-write behavior before the cloud app is called production-ready
 
 The implementation is not complete when only the happy path works manually.
 

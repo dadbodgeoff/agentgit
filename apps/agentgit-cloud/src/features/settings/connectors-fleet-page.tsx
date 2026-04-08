@@ -107,6 +107,14 @@ function commandTone(
 }
 
 function commandSummary(command: WorkspaceConnectorCommandSummary): string | null {
+  if (command.result?.type === "replay_run" && typeof command.result.replayRunId === "string") {
+    return `Replay created run ${command.result.replayRunId} from ${command.result.sourceRunId}.`;
+  }
+
+  if (command.type === "replay_run" && command.result?.type === "replay_run") {
+    return `Replay processed for ${command.result.sourceRunId}.`;
+  }
+
   if (command.result?.type === "create_commit" && typeof command.result.commitSha === "string") {
     return `Commit ${command.result.commitSha.slice(0, 12)} created.`;
   }

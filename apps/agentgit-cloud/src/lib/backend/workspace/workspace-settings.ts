@@ -16,6 +16,16 @@ import {
   saveWorkspaceConnectionState,
 } from "@/lib/backend/workspace/cloud-state";
 
+export class WorkspaceSettingsValidationError extends Error {
+  constructor(
+    message: string,
+    public readonly field: "enterpriseSso.issuerUrl",
+  ) {
+    super(message);
+    this.name = "WorkspaceSettingsValidationError";
+  }
+}
+
 const DEFAULT_WORKSPACE_SETTINGS = {
   approvalTtlMinutes: 30,
   defaultNotificationChannel: "slack",
@@ -72,6 +82,7 @@ export async function saveWorkspaceSettings(
   workspaceSession: WorkspaceSession,
   settings: WorkspaceSettingsUpdate,
 ): Promise<WorkspaceSettingsSaveResponse> {
+  const existingSettings = await getStoredWorkspaceSettings(workspaceSession.activeWorkspace.id);
   const existingSecrets = await getWorkspaceSsoSecrets(workspaceSession.activeWorkspace.id);
   const nextClientSecret =
     typeof settings.enterpriseSso.clientSecret === "string" && settings.enterpriseSso.clientSecret.trim().length > 0
@@ -80,6 +91,55 @@ export async function saveWorkspaceSettings(
 
   if (settings.enterpriseSso.enabled && !nextClientSecret) {
     throw new Error("Enterprise SSO requires a client secret before it can be enabled.");
+  }
+
+  const enterpriseConfigChanged =
+    settings.enterpriseSso.enabled &&
+    (!existingSettings?.enterpriseSso.enabled ||
+      existingSettings.enterpriseSso.issuerUrl !== settings.enterpriseSso.issuerUrl ||
+      existingSettings.enterpriseSso.clientId !== settings.enterpriseSso.clientId ||
+      (typeof settings.enterpriseSso.clientSecret === "string" && settings.enterpriseSso.clientSecret.trim().length > 0));
+
+  if (enterpriseConfigChanged) {
+    const normalizedIssuer = settings.enterpriseSso.issuerUrl.replace(/\/+$/, "");
+    const response = await fetch(`${normalizedIssuer}/.well-known/openid-configuration`, {
+      cache: "no-store",
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      throw new WorkspaceSettingsValidationError(
+        "Could not load OIDC discovery metadata from the issuer URL.",
+        "enterpriseSso.issuerUrl",
+      );
+    }
+
+    const discovery = (await response.json().catch(() => null)) as
+      | {
+          issuer?: unknown;
+          authorization_endpoint?: unknown;
+          token_endpoint?: unknown;
+          jwks_uri?: unknown;
+        }
+      | null;
+
+    if (
+      !discovery ||
+      typeof discovery.authorization_endpoint !== "string" ||
+      typeof discovery.token_endpoint !== "string" ||
+      typeof discovery.jwks_uri !== "string"
+    ) {
+      throw new WorkspaceSettingsValidationError(
+        "The issuer URL did not return a valid OIDC discovery document.",
+        "enterpriseSso.issuerUrl",
+      );
+    }
+
+    if (typeof discovery.issuer === "string" && discovery.issuer.replace(/\/+$/, "") !== normalizedIssuer) {
+      throw new WorkspaceSettingsValidationError(
+        "The issuer URL does not match the OIDC discovery document.",
+        "enterpriseSso.issuerUrl",
+      );
+    }
   }
 
   await saveWorkspaceSsoSecrets(workspaceSession.activeWorkspace.id, {

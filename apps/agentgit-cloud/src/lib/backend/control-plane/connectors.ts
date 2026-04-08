@@ -301,11 +301,22 @@ function getCommandDetailPath(command: {
   command: {
     repository: { owner: string; name: string };
     type: ConnectorCommandType;
+    payload?: Record<string, unknown> | null;
   };
   result: Record<string, unknown> | null;
 }) {
   const owner = command.command.repository.owner;
   const name = command.command.repository.name;
+
+  if (command.command.type === "replay_run") {
+    if (typeof command.result?.replayRunId === "string") {
+      return runDetailRoute(owner, name, command.result.replayRunId);
+    }
+
+    if (typeof command.command.payload?.sourceRunId === "string") {
+      return runDetailRoute(owner, name, command.command.payload.sourceRunId);
+    }
+  }
 
   if (command.command.type === "execute_restore" || command.command.type === "resolve_approval") {
     if (typeof command.result?.runId === "string" && typeof command.result?.actionId === "string") {

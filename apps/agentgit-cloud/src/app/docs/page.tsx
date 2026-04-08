@@ -134,8 +134,8 @@ agentgit-cloud-connector run \\
             </div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
               <p>
-                Live Stripe checkout, customer billing portal, and a broader self-serve workspace invitation funnel
-                beyond the hosted beta operator path.
+                Broader self-serve workspace invitation funnels and any environment-specific billing work beyond the
+                current Stripe-or-beta-gate operator path.
               </p>
             </div>
           </div>
