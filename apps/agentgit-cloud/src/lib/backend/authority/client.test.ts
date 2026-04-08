@@ -64,7 +64,7 @@ describe("resolveAuthorityWorkspaceRoots", () => {
     const { resolveWorkspaceRoots } = await import("@/lib/backend/workspace/roots");
     const { resolveAuthorityWorkspaceRoots } = await loadModule();
 
-    vi.mocked(collectWorkspaceRepositoryRuntimeRecords).mockReturnValue([
+    vi.mocked(collectWorkspaceRepositoryRuntimeRecords).mockResolvedValue([
       {
         metadata: { root: "/workspace/repo-a" },
       },
@@ -77,17 +77,17 @@ describe("resolveAuthorityWorkspaceRoots", () => {
     ] as never);
     vi.mocked(resolveWorkspaceRoots).mockReturnValue(["/workspace/fallback"]);
 
-    expect(resolveAuthorityWorkspaceRoots("ws_123")).toEqual(["/workspace/repo-a", "/workspace/repo-b"]);
+    await expect(resolveAuthorityWorkspaceRoots("ws_123")).resolves.toEqual(["/workspace/repo-a", "/workspace/repo-b"]);
   });
 
-  it("falls back to configured workspace roots before repository inventory exists", async () => {
+  it("fails closed when the workspace has no scoped repository roots", async () => {
     const { collectWorkspaceRepositoryRuntimeRecords } = await import("@/lib/backend/workspace/repository-inventory");
     const { resolveWorkspaceRoots } = await import("@/lib/backend/workspace/roots");
     const { resolveAuthorityWorkspaceRoots } = await loadModule();
 
-    vi.mocked(collectWorkspaceRepositoryRuntimeRecords).mockReturnValue([] as never);
+    vi.mocked(collectWorkspaceRepositoryRuntimeRecords).mockResolvedValue([] as never);
     vi.mocked(resolveWorkspaceRoots).mockReturnValue(["/workspace/fallback"]);
 
-    expect(resolveAuthorityWorkspaceRoots("ws_123")).toEqual(["/workspace/fallback"]);
+    await expect(resolveAuthorityWorkspaceRoots("ws_123")).resolves.toEqual([]);
   });
 });

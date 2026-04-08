@@ -36,10 +36,10 @@ export type WorkspaceRunContext = {
   events: RunJournalEventRecord[];
 };
 
-export function listWorkspaceRunContexts(workspaceId?: string): WorkspaceRunContext[] {
+export async function listWorkspaceRunContexts(workspaceId: string): Promise<WorkspaceRunContext[]> {
   const contexts: WorkspaceRunContext[] = [];
 
-  for (const repository of collectWorkspaceRepositoryRuntimeRecords(workspaceId)) {
+  for (const repository of await collectWorkspaceRepositoryRuntimeRecords(workspaceId)) {
     const journalPath = getRepositoryJournalPath(repository.metadata.root);
     if (!fs.existsSync(journalPath)) {
       continue;
@@ -75,16 +75,16 @@ export function listWorkspaceRunContexts(workspaceId?: string): WorkspaceRunCont
   });
 }
 
-export function listWorkspaceApprovals(workspaceId?: string): Array<{
+export async function listWorkspaceApprovals(workspaceId: string): Promise<Array<{
   repository: WorkspaceRepositoryRuntimeRecord;
   approval: ApprovalRequest;
-}> {
+}>> {
   const approvals: Array<{
     repository: WorkspaceRepositoryRuntimeRecord;
     approval: ApprovalRequest;
   }> = [];
 
-  for (const repository of collectWorkspaceRepositoryRuntimeRecords(workspaceId)) {
+  for (const repository of await collectWorkspaceRepositoryRuntimeRecords(workspaceId)) {
     const journalPath = getRepositoryJournalPath(repository.metadata.root);
     if (!fs.existsSync(journalPath)) {
       continue;
@@ -108,6 +108,6 @@ export function listWorkspaceApprovals(workspaceId?: string): Array<{
   );
 }
 
-export function findWorkspaceRunContext(runId: string, workspaceId?: string): WorkspaceRunContext | null {
-  return listWorkspaceRunContexts(workspaceId).find((context) => context.run.run_id === runId) ?? null;
+export async function findWorkspaceRunContext(runId: string, workspaceId: string): Promise<WorkspaceRunContext | null> {
+  return (await listWorkspaceRunContexts(workspaceId)).find((context) => context.run.run_id === runId) ?? null;
 }

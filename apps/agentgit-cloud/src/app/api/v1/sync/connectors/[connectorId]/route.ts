@@ -7,7 +7,7 @@ export async function DELETE(
   context: { params: Promise<{ connectorId: string }> },
 ) {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;

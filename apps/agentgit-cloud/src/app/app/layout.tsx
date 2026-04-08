@@ -16,7 +16,7 @@ export default async function AuthenticatedLayout({ children }: { children: Reac
     redirect(`${publicRoutes.signIn}?callbackUrl=${encodeURIComponent(authenticatedRoutes.dashboard)}`);
   }
 
-  const workspaceSession = resolveWorkspaceSession(session);
+  const workspaceSession = await resolveWorkspaceSession(session);
   if (!workspaceSession) {
     redirect(`${publicRoutes.signIn}?callbackUrl=${encodeURIComponent(authenticatedRoutes.dashboard)}&error=AccessDenied`);
   }

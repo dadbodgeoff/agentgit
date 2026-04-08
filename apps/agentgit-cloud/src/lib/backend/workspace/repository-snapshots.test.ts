@@ -8,6 +8,8 @@ import { RunJournal } from "@agentgit/run-journal";
 
 vi.mock("server-only", () => ({}));
 
+import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { listDiscoveredRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
 import { listRepositorySnapshots } from "@/lib/backend/workspace/repository-snapshots";
 
 function runGit(args: string[], cwd: string): string {
@@ -185,7 +187,20 @@ describe("repository snapshots backend adapter", () => {
       includeRecovery: true,
     });
 
-    const snapshots = await listRepositorySnapshots("acme", "platform-ui");
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const snapshots = await listRepositorySnapshots("acme", "platform-ui", "ws_acme_01");
     expect(snapshots).not.toBeNull();
     expect(snapshots?.items).toHaveLength(1);
     expect(snapshots?.items[0]).toMatchObject({
@@ -206,7 +221,20 @@ describe("repository snapshots backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const snapshots = await listRepositorySnapshots("acme", "api-gateway");
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const snapshots = await listRepositorySnapshots("acme", "api-gateway", "ws_acme_01");
 
     expect(snapshots).not.toBeNull();
     expect(snapshots?.items).toHaveLength(0);

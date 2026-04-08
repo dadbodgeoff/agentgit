@@ -5,15 +5,6 @@ import path from "node:path";
 import { vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/backend/workspace/repository-inventory", () => ({
-  collectWorkspaceRepositoryRuntimeRecords: vi.fn(() => [
-    {
-      inventory: {
-        id: "repo_01",
-      },
-    },
-  ]),
-}));
 
 import { getWorkspaceConnectionState, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { resolveWorkspaceTeam, saveWorkspaceTeam } from "@/lib/backend/workspace/workspace-team";
@@ -51,11 +42,11 @@ describe("workspace team backend", () => {
     }
   });
 
-  it("resolves the active member and pending invites from workspace state", () => {
+  it("resolves the active member and pending invites from workspace state", async () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-team-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -67,7 +58,7 @@ describe("workspace team backend", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const snapshot = resolveWorkspaceTeam(buildWorkspaceSession());
+    const snapshot = await resolveWorkspaceTeam(buildWorkspaceSession());
 
     expect(snapshot.workspaceSlug).toBe("acme-platform");
     expect(snapshot.members).toHaveLength(2);
@@ -75,11 +66,11 @@ describe("workspace team backend", () => {
     expect(snapshot.members.find((member) => member.status === "invited")?.email).toBe("riley@acme.dev");
   });
 
-  it("persists invite updates back into workspace state", () => {
+  it("persists invite updates back into workspace state", async () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-team-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const response = saveWorkspaceTeam(buildWorkspaceSession(), {
+    const response = await saveWorkspaceTeam(buildWorkspaceSession(), {
       invites: [
         { name: "Riley", email: "riley@acme.dev", role: "member" },
         { name: "Ari", email: "ari@acme.dev", role: "admin" },
@@ -88,18 +79,18 @@ describe("workspace team backend", () => {
 
     expect(response.team.members.filter((member) => member.status === "invited")).toHaveLength(2);
     expect(response.message).toContain("workspace state");
-    expect(getWorkspaceConnectionState("ws_acme_01")?.repositoryIds).toEqual(["repo_01"]);
+    expect((await getWorkspaceConnectionState("ws_acme_01"))?.repositoryIds).toEqual([]);
   });
 
-  it("preserves discovered repository visibility before onboarding state exists", () => {
+  it("fails closed on repository visibility before onboarding state exists", async () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-team-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const response = saveWorkspaceTeam(buildWorkspaceSession(), {
+    const response = await saveWorkspaceTeam(buildWorkspaceSession(), {
       invites: [{ name: "Riley", email: "riley@acme.dev", role: "member" }],
     });
 
     expect(response.team.members.filter((member) => member.status === "invited")).toHaveLength(1);
-    expect(getWorkspaceConnectionState("ws_acme_01")?.repositoryIds).toEqual(["repo_01"]);
+    expect((await getWorkspaceConnectionState("ws_acme_01"))?.repositoryIds).toEqual([]);
   });
 });

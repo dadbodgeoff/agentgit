@@ -1,4 +1,4 @@
-import { TimestampStringSchema } from "@agentgit/schemas";
+import { ApprovalInboxItemSchema, TimestampStringSchema } from "@agentgit/schemas";
 import { z } from "zod";
 
 export const SyncSchemaVersionSchema = z.literal("cloud-sync.v1");
@@ -14,6 +14,7 @@ export const ConnectorCapabilitySchema = z.enum([
   "repo_state_sync",
   "run_event_sync",
   "snapshot_manifest_sync",
+  "approval_resolution",
   "restore_execution",
   "git_commit",
   "git_push",
@@ -154,10 +155,17 @@ export const ConnectorEventTypeSchema = z.enum([
   "run.lifecycle",
   "run.event",
   "snapshot.manifest",
+  "approval.requested",
   "approval.resolution",
   "policy.state",
 ]);
 export type ConnectorEventType = z.infer<typeof ConnectorEventTypeSchema>;
+
+export const ApprovalRequestedEventPayloadSchema = ApprovalInboxItemSchema;
+export type ApprovalRequestedEventPayload = z.infer<typeof ApprovalRequestedEventPayloadSchema>;
+
+export const ApprovalResolutionEventPayloadSchema = ApprovalInboxItemSchema;
+export type ApprovalResolutionEventPayload = z.infer<typeof ApprovalResolutionEventPayloadSchema>;
 
 export const ConnectorEventEnvelopeSchema = z
   .object({
@@ -197,6 +205,7 @@ export type ConnectorEventBatchResponse = z.infer<typeof ConnectorEventBatchResp
 export const ConnectorCommandTypeSchema = z.enum([
   "refresh_repo_state",
   "sync_run_history",
+  "resolve_approval",
   "plan_restore",
   "execute_restore",
   "create_commit",
@@ -221,6 +230,15 @@ export const SyncRunHistoryCommandPayloadSchema = z
   })
   .strict();
 export type SyncRunHistoryCommandPayload = z.infer<typeof SyncRunHistoryCommandPayloadSchema>;
+
+export const ResolveApprovalCommandPayloadSchema = z
+  .object({
+    approvalId: z.string().min(1),
+    resolution: z.enum(["approved", "denied"]),
+    note: z.string().trim().max(280).optional(),
+  })
+  .strict();
+export type ResolveApprovalCommandPayload = z.infer<typeof ResolveApprovalCommandPayloadSchema>;
 
 export const CreateCommitCommandPayloadSchema = z
   .object({
@@ -272,6 +290,16 @@ export const ConnectorCommandExecutionResultSchema = z.discriminatedUnion("type"
       publishedEventCount: z.number().int().nonnegative().optional(),
       includesSnapshots: z.boolean().optional(),
       syncedAt: TimestampStringSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("resolve_approval"),
+      approvalId: z.string().min(1),
+      runId: z.string().min(1).optional(),
+      actionId: z.string().min(1).optional(),
+      resolution: z.enum(["approved", "denied"]),
+      resolvedAt: TimestampStringSchema.optional(),
     })
     .strict(),
   z

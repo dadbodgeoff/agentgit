@@ -10,18 +10,18 @@ import { WorkspaceIntegrationUpdateSchema } from "@/schemas/cloud";
 
 export async function GET(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
   }
 
-  return jsonWithRequestId(resolveWorkspaceIntegrations(access.workspaceSession), undefined, requestId);
+  return jsonWithRequestId(await resolveWorkspaceIntegrations(access.workspaceSession), undefined, requestId);
 }
 
 export async function PUT(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
@@ -42,7 +42,7 @@ export async function PUT(request: Request): Promise<NextResponse> {
   }
 
   return jsonWithRequestId(
-    saveWorkspaceIntegrations(access.workspaceSession, payload.data),
+    await saveWorkspaceIntegrations(access.workspaceSession, payload.data),
     undefined,
     requestId,
   );

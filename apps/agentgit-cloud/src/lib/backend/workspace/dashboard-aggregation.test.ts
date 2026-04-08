@@ -10,7 +10,7 @@ vi.mock("server-only", () => ({}));
 
 import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { getDashboardSummaryFromWorkspace } from "@/lib/backend/workspace/dashboard-aggregation";
-import { listRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
+import { listDiscoveredRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
 
 function runGit(args: string[], cwd: string): string {
   return execFileSync("git", args, {
@@ -89,7 +89,7 @@ describe("dashboard workspace aggregation", () => {
     }
   });
 
-  it("builds dashboard metrics and recent activity from workspace repositories", () => {
+  it("builds dashboard metrics and recent activity from workspace repositories", async () => {
     const completedRepo = createRepo("git@github.com:acme/platform-ui.git");
     const failedRepo = createRepo("git@github.com:acme/api-gateway.git");
     tempDirs.push(completedRepo, failedRepo);
@@ -100,7 +100,20 @@ describe("dashboard workspace aggregation", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const dashboard = getDashboardSummaryFromWorkspace();
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const dashboard = await getDashboardSummaryFromWorkspace("ws_acme_01");
 
     expect(dashboard.metrics.map((metric) => metric.id)).toEqual([
       "connected_repos",
@@ -118,7 +131,7 @@ describe("dashboard workspace aggregation", () => {
     });
   });
 
-  it("respects the persisted workspace repository scope", () => {
+  it("respects the persisted workspace repository scope", async () => {
     const firstRepo = createRepo("git@github.com:acme/platform-ui.git");
     const secondRepo = createRepo("git@github.com:acme/api-gateway.git");
     tempDirs.push(firstRepo, secondRepo);
@@ -128,8 +141,8 @@ describe("dashboard workspace aggregation", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const inventory = listRepositoryInventory();
-    saveWorkspaceConnectionState({
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -141,14 +154,14 @@ describe("dashboard workspace aggregation", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const dashboard = getDashboardSummaryFromWorkspace("ws_acme_01");
+    const dashboard = await getDashboardSummaryFromWorkspace("ws_acme_01");
 
     expect(dashboard.metrics.find((metric) => metric.id === "connected_repos")?.value).toBe("1");
     expect(dashboard.recentRuns).toHaveLength(1);
     expect(dashboard.recentRuns[0]!.repo).toBe("acme/platform-ui");
   });
 
-  it("fails closed for workspaces without a persisted repository scope", () => {
+  it("fails closed for workspaces without a persisted repository scope", async () => {
     const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
     tempDirs.push(repoRoot);
     createRun(repoRoot, "execution.completed", "2026-04-06T14:32:34Z");
@@ -156,7 +169,7 @@ describe("dashboard workspace aggregation", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const dashboard = getDashboardSummaryFromWorkspace("ws_unknown");
+    const dashboard = await getDashboardSummaryFromWorkspace("ws_unknown");
 
     expect(dashboard.metrics.find((metric) => metric.id === "connected_repos")?.value).toBe("0");
     expect(dashboard.recentRuns).toHaveLength(0);

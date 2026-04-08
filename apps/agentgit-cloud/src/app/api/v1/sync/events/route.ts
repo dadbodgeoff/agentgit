@@ -6,7 +6,7 @@ import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observa
 
 export async function POST(request: Request) {
   const requestId = createRequestId(request);
-  const connectorSession = requireConnectorSession(request);
+  const connectorSession = await requireConnectorSession(request);
 
   if (connectorSession.denied) {
     return connectorSession.denied;
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = ingestConnectorEvents(connectorSession.access, parsed.data, new Date().toISOString());
+    const result = await ingestConnectorEvents(connectorSession.access, parsed.data, new Date().toISOString());
     return jsonWithRequestId(result, undefined, requestId);
   } catch (error) {
     if (error instanceof ConnectorAccessError) {

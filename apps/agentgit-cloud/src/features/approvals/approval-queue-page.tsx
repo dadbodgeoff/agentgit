@@ -51,6 +51,44 @@ function getOldestApproval(items: ApprovalListItem[]): ApprovalListItem | null {
   );
 }
 
+function connectorTone(status: ApprovalListItem["connectorStatus"]): "success" | "warning" | "error" | "neutral" {
+  if (status === "active") {
+    return "success";
+  }
+
+  if (status === "stale") {
+    return "warning";
+  }
+
+  if (status === "revoked") {
+    return "error";
+  }
+
+  return "neutral";
+}
+
+function deliveryTone(
+  status: ApprovalListItem["decisionCommandStatus"],
+): "success" | "warning" | "error" | "accent" | "neutral" {
+  if (status === "completed") {
+    return "success";
+  }
+
+  if (status === "failed") {
+    return "error";
+  }
+
+  if (status === "expired") {
+    return "warning";
+  }
+
+  if (status === "acked") {
+    return "accent";
+  }
+
+  return "neutral";
+}
+
 function ApprovalQueueSkeleton() {
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
@@ -93,7 +131,7 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
   const resolvedApprovals = approvalItems.filter((item) => item.status !== "pending");
   const oldestPendingApproval = getOldestApproval(pendingApprovals);
   const snapshotRequiredCount = pendingApprovals.filter((item) => item.snapshotRequired).length;
-  const destructiveCount = pendingApprovals.filter((item) => item.sideEffectLevel === "destructive").length;
+  const expiringSoonCount = pendingApprovals.filter((item) => item.expiresSoon).length;
   const selectedApproval =
     approvalItems.find((item) => item.id === selectedApprovalId) ?? pendingApprovals[0] ?? resolvedApprovals[0] ?? null;
   const selectedRepositoryHref =
@@ -301,13 +339,23 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
 
       <div className="grid gap-6 md:grid-cols-3">
         <MetricCard label="Pending approvals" trend="workspace-wide" value={String(pendingApprovals.length)} />
-        <MetricCard label="Snapshot gates" trend="recovery capture required" value={String(snapshotRequiredCount)} />
+        <MetricCard label="Expiring soon" trend="within approval TTL" value={String(expiringSoonCount)} />
         <MetricCard
-          label="Destructive scope"
+          label="Oldest request"
           trend={oldestPendingApproval ? `oldest ${formatRelativeTimestamp(oldestPendingApproval.requestedAt)}` : "no active requests"}
-          value={String(destructiveCount)}
+          value={oldestPendingApproval ? oldestPendingApproval.workflowName : "clear"}
         />
       </div>
+
+      {pendingApprovals.some((item) => item.connectorStatus !== "active") ? (
+        <Card className="border border-[color:rgb(245_158_11_/_0.35)] bg-[color:rgb(245_158_11_/_0.08)]">
+          <div className="text-sm font-medium text-[var(--ag-text-primary)]">Connector attention required</div>
+          <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
+            One or more pending approvals cannot be delivered immediately because the repository connector is missing,
+            stale, revoked, or reporting the local daemon as offline.
+          </div>
+        </Card>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
         <div className="space-y-6">
@@ -395,6 +443,17 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                       </Badge>
                       <Badge>{selectedApproval.domain}</Badge>
                       <Badge>{selectedApproval.sideEffectLevel.replaceAll("_", " ")}</Badge>
+                      {selectedApproval.expiresSoon && selectedApproval.status === "pending" ? (
+                        <Badge tone="warning">expiring soon</Badge>
+                      ) : null}
+                      <Badge tone={connectorTone(selectedApproval.connectorStatus)}>
+                        connector {selectedApproval.connectorStatus}
+                      </Badge>
+                      {selectedApproval.decisionCommandStatus ? (
+                        <Badge tone={deliveryTone(selectedApproval.decisionCommandStatus)}>
+                          delivery {selectedApproval.decisionCommandStatus}
+                        </Badge>
+                      ) : null}
                     </div>
                     <h2 className="text-xl font-semibold">{selectedApproval.actionSummary}</h2>
                     <p className="text-sm text-[var(--ag-text-secondary)]">
@@ -403,6 +462,7 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                   </div>
                   <div className="space-y-1 text-right text-xs text-[var(--ag-text-secondary)]">
                     <div>Requested {formatRelativeTimestamp(selectedApproval.requestedAt)}</div>
+                    {selectedApproval.expiresAt ? <div>Expires {formatRelativeTimestamp(selectedApproval.expiresAt)}</div> : null}
                     {selectedApproval.resolvedAt ? <div>Resolved {formatRelativeTimestamp(selectedApproval.resolvedAt)}</div> : null}
                   </div>
                 </div>
@@ -433,6 +493,21 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                     <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">{selectedApproval.runId}</div>
                   </div>
                 </div>
+
+                {selectedApproval.connectorStatusReason ? (
+                  <div className="rounded-[var(--ag-radius-md)] border border-[color:rgb(245_158_11_/_0.25)] bg-[color:rgb(245_158_11_/_0.08)] px-3 py-2 text-sm text-[var(--ag-text-secondary)]">
+                    {selectedApproval.connectorStatusReason}
+                  </div>
+                ) : null}
+
+                {selectedApproval.decisionCommandMessage ? (
+                  <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-hover)] px-3 py-2 text-sm text-[var(--ag-text-secondary)]">
+                    {selectedApproval.decisionCommandMessage}
+                    {selectedApproval.decisionCommandNextAttemptAt
+                      ? ` Retry ${formatRelativeTimestamp(selectedApproval.decisionCommandNextAttemptAt)}.`
+                      : ""}
+                  </div>
+                ) : null}
 
                 <div className="flex flex-wrap gap-2">
                   {selectedRepositoryHref ? (
@@ -506,11 +581,11 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                           Rejecting will pause the agent session and keep the run blocked until a new action is submitted.
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <Button
-                            disabled={decisionMutation.isPending}
-                            onClick={() => submitDecision(selectedApproval.id, "reject")}
-                            variant="destructive"
-                          >
+                        <Button
+                          disabled={decisionMutation.isPending || selectedApproval.connectorStatus !== "active"}
+                          onClick={() => submitDecision(selectedApproval.id, "reject")}
+                          variant="destructive"
+                        >
                             {decisionMutation.isPending && decisionMutation.variables?.approvalId === selectedApproval.id
                               ? "Rejecting..."
                               : "Confirm reject"}
@@ -527,7 +602,7 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                     ) : (
                       <div className="flex flex-wrap gap-2">
                         <Button
-                          disabled={decisionMutation.isPending}
+                          disabled={decisionMutation.isPending || selectedApproval.connectorStatus !== "active"}
                           onClick={() => submitDecision(selectedApproval.id, "approve")}
                           variant="accent"
                         >
@@ -536,7 +611,7 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                             : "Approve action"}
                         </Button>
                         <Button
-                          disabled={decisionMutation.isPending}
+                          disabled={decisionMutation.isPending || selectedApproval.connectorStatus !== "active"}
                           onClick={() => setConfirmRejectId(selectedApproval.id)}
                           variant="destructive"
                         >
@@ -547,7 +622,9 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                   </div>
                 ) : (
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
-                    This approval is no longer actionable. The authority daemon has already recorded the decision and audit trail.
+                    {selectedApproval.status === "expired"
+                      ? "This approval timed out under the workspace TTL and is no longer actionable."
+                      : "This approval is no longer actionable. The authority daemon has already recorded the decision and audit trail."}
                   </div>
                 )}
               </>

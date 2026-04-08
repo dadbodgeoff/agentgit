@@ -8,7 +8,9 @@ import { RunJournal } from "@agentgit/run-journal";
 
 vi.mock("server-only", () => ({}));
 
+import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { getRepositoryDetail, listRepositoryRuns } from "@/lib/backend/workspace/repository-detail";
+import { listDiscoveredRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
 
 function runGit(args: string[], cwd: string): string {
   return execFileSync("git", args, {
@@ -87,7 +89,7 @@ describe("repository detail backend adapter", () => {
     }
   });
 
-  it("builds repository detail and run history from the governed journal", () => {
+  it("builds repository detail and run history from the governed journal", async () => {
     const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
     tempDirs.push(repoRoot);
     process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
@@ -97,8 +99,21 @@ describe("repository detail backend adapter", () => {
     createRun(repoRoot, "sync-policies", "execution.completed", "2026-04-06T14:32:34Z");
     createRun(repoRoot, "deploy-preview", "execution.failed", "2026-04-06T15:10:00Z");
 
-    const detail = getRepositoryDetail("acme", "platform-ui");
-    const runs = listRepositoryRuns("acme", "platform-ui");
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const detail = await getRepositoryDetail("acme", "platform-ui", "ws_acme_01");
+    const runs = await listRepositoryRuns("acme", "platform-ui", "ws_acme_01");
 
     expect(detail).toMatchObject({
       owner: "acme",

@@ -12,7 +12,7 @@ async function sleep(ms: number): Promise<void> {
 
 export async function GET(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const { unauthorized, workspaceSession } = await requireApiSession();
+  const { unauthorized, workspaceSession } = await requireApiSession(request);
 
   if (unauthorized) {
     return unauthorized;
@@ -35,7 +35,11 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   try {
-    return jsonWithRequestId(getDashboardSummaryFromWorkspace(workspaceSession?.activeWorkspace.id), undefined, requestId);
+    return jsonWithRequestId(
+      await getDashboardSummaryFromWorkspace(workspaceSession.activeWorkspace.id),
+      undefined,
+      requestId,
+    );
   } catch (error) {
     logRouteError("dashboard_summary", requestId, error);
     return jsonWithRequestId(

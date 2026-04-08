@@ -14,7 +14,7 @@ export async function GET(
   context: { params: Promise<{ owner: string; name: string }> },
 ): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const { unauthorized, workspaceSession } = await requireApiSession();
+  const { unauthorized, workspaceSession } = await requireApiSession(request);
 
   if (unauthorized) {
     return unauthorized;
@@ -33,7 +33,7 @@ export async function GET(
   }
 
   const { owner, name } = await context.params;
-  const detail = getRepositoryDetail(owner, name, workspaceSession?.activeWorkspace.id);
+  const detail = await getRepositoryDetail(owner, name, workspaceSession.activeWorkspace.id);
 
   if (!detail) {
     return jsonWithRequestId({ message: "Repository not found in the active workspace." }, { status: 404 }, requestId);

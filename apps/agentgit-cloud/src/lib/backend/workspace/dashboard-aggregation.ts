@@ -99,8 +99,8 @@ function countPendingApprovals(records: WorkspaceRepositoryRuntimeRecord[]): num
   return records.reduce((total, record) => total + record.pendingApprovalCount, 0);
 }
 
-export function getDashboardSummaryFromWorkspace(workspaceId?: string): DashboardSummary {
-  const repositories = collectWorkspaceRepositoryRuntimeRecords(workspaceId);
+export async function getDashboardSummaryFromWorkspace(workspaceId: string): Promise<DashboardSummary> {
+  const repositories = await collectWorkspaceRepositoryRuntimeRecords(workspaceId);
   const recentRuns = mapRecentRuns(repositories);
   const recentActivity = mapRecentActivity(repositories);
   const pendingApprovals = countPendingApprovals(repositories);

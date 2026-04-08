@@ -217,10 +217,10 @@ function mapRunEventToActivity(params: {
   }
 }
 
-export function listWorkspaceActivity(workspaceId: string) {
+export async function listWorkspaceActivity(workspaceId: string) {
   const items: ActivityEvent[] = [];
 
-  for (const context of listWorkspaceRunContexts(workspaceId)) {
+  for (const context of await listWorkspaceRunContexts(workspaceId)) {
     for (const event of context.events) {
       const mapped = mapRunEventToActivity({
         owner: context.repository.inventory.owner,

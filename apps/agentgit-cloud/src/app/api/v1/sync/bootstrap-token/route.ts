@@ -4,7 +4,7 @@ import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observa
 
 export async function POST(request: Request) {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;

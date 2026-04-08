@@ -4,14 +4,14 @@ import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observa
 
 export async function GET(request: Request) {
   const requestId = createRequestId(request);
-  const { unauthorized, workspaceSession } = await requireApiSession();
+  const { unauthorized, workspaceSession } = await requireApiSession(request);
 
   if (unauthorized) {
     return unauthorized;
   }
 
   try {
-    return jsonWithRequestId(listWorkspaceAuditLog(workspaceSession.activeWorkspace.id), undefined, requestId);
+    return jsonWithRequestId(await listWorkspaceAuditLog(workspaceSession.activeWorkspace.id), undefined, requestId);
   } catch (error) {
     logRouteError("audit_get", requestId, error, {
       workspaceId: workspaceSession.activeWorkspace.id,

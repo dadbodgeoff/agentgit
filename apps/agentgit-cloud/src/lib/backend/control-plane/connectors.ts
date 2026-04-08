@@ -6,9 +6,11 @@ import path from "node:path";
 
 import type { ConnectorTokenRecord, ControlPlaneStateStore } from "@agentgit/control-plane-state";
 import { createCommandAckResponse, createHeartbeatRecord } from "@agentgit/control-plane-state";
+import { ApprovalInboxItemSchema } from "@agentgit/schemas";
 import {
   CreateCommitCommandPayloadSchema,
   OpenPullRequestCommandPayloadSchema,
+  ResolveApprovalCommandPayloadSchema,
   RestoreCommandPayloadSchema,
   PushBranchCommandPayloadSchema,
   RefreshRepoStateCommandPayloadSchema,
@@ -28,6 +30,7 @@ import {
 
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { resolveProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
+import { notifyWorkspaceApprovalRequested } from "@/lib/backend/workspace/workspace-integrations";
 import {
   actionDetailRoute,
   repositoryRoute,
@@ -56,6 +59,15 @@ export class ConnectorAccessError extends Error {
 export type ConnectorAccessContext = {
   connector: ConnectorRecord;
   token: ConnectorTokenRecord;
+};
+
+export type RepositoryConnectorAvailability = {
+  status: "active" | "stale" | "revoked" | "missing";
+  reason: string | null;
+  connectorId: string | null;
+  machineName: string | null;
+  lastSeenAt: string | null;
+  daemonReachable: boolean | null;
 };
 
 export function hashConnectorToken(rawToken: string): string {
@@ -105,6 +117,12 @@ function normalizeCommandPayload(request: ConnectorCommandDispatchRequest): Reco
     case "sync_run_history":
       return SyncRunHistoryCommandPayloadSchema.parse({
         includeSnapshots: request.includeSnapshots,
+      });
+    case "resolve_approval":
+      return ResolveApprovalCommandPayloadSchema.parse({
+        approvalId: request.approvalId,
+        resolution: request.resolution,
+        note: request.note,
       });
     case "create_commit":
       return CreateCommitCommandPayloadSchema.parse({
@@ -291,7 +309,7 @@ function getCommandDetailPath(command: {
   const owner = command.command.repository.owner;
   const name = command.command.repository.name;
 
-  if (command.command.type === "execute_restore") {
+  if (command.command.type === "execute_restore" || command.command.type === "resolve_approval") {
     if (typeof command.result?.runId === "string" && typeof command.result?.actionId === "string") {
       return actionDetailRoute(owner, name, command.result.runId, command.result.actionId);
     }
@@ -515,7 +533,7 @@ export function recordConnectorHeartbeat(
   });
 }
 
-export function ingestConnectorEvents(
+export async function ingestConnectorEvents(
   access: ConnectorAccessContext,
   batch: ConnectorEventBatchRequest,
   acceptedAt: string,
@@ -530,12 +548,30 @@ export function ingestConnectorEvents(
     }
   }
 
-  return withControlPlaneState((store) => {
+  const { response, approvalRequests } = withControlPlaneState((store) => {
+    const existingEventIds = new Set(store.listEvents(access.connector.id).map((event) => event.event.eventId));
+    const approvalRequests: Array<{
+      repositoryOwner: string;
+      repositoryName: string;
+      approval: import("@agentgit/schemas").ApprovalInboxItem;
+    }> = [];
+
     for (const event of batch.events) {
       store.appendEvent({
         event,
         ingestedAt: acceptedAt,
       });
+
+      if (!existingEventIds.has(event.eventId) && event.type === "approval.requested") {
+        const parsedApproval = ApprovalInboxItemSchema.safeParse(event.payload);
+        if (parsedApproval.success) {
+          approvalRequests.push({
+            repositoryOwner: event.repository.owner,
+            repositoryName: event.repository.name,
+            approval: parsedApproval.data,
+          });
+        }
+      }
     }
 
     store.putConnector({
@@ -545,14 +581,31 @@ export function ingestConnectorEvents(
     });
 
     const highestAcceptedSequence = batch.events.reduce((highest, event) => Math.max(highest, event.sequence), 0);
-    return ConnectorEventBatchResponseSchema.parse({
-      schemaVersion: "cloud-sync.v1",
-      connectorId: access.connector.id,
-      acceptedAt,
-      acceptedCount: batch.events.length,
-      highestAcceptedSequence,
-    });
+    return {
+      response: ConnectorEventBatchResponseSchema.parse({
+        schemaVersion: "cloud-sync.v1",
+        connectorId: access.connector.id,
+        acceptedAt,
+        acceptedCount: batch.events.length,
+        highestAcceptedSequence,
+      }),
+      approvalRequests,
+    };
   });
+
+  await Promise.allSettled(
+    approvalRequests.map((request) =>
+      notifyWorkspaceApprovalRequested({
+        workspaceId: access.connector.workspaceId,
+        workspaceSlug: access.connector.workspaceSlug,
+        repositoryOwner: request.repositoryOwner,
+        repositoryName: request.repositoryName,
+        approval: request.approval,
+      }),
+    ),
+  );
+
+  return response;
 }
 
 export function pullPendingConnectorCommands(
@@ -938,5 +991,86 @@ export function findConnectorForRepository(
           return right.connector.id.localeCompare(left.connector.id);
         })[0]?.connector ?? null
     );
+  });
+}
+
+export function getRepositoryConnectorAvailability(
+  workspaceId: string,
+  owner: string,
+  name: string,
+  workspaceRoot?: string,
+  referenceAt = new Date().toISOString(),
+): RepositoryConnectorAvailability {
+  return withControlPlaneState((store) => {
+    const matchingConnectors = store
+      .listConnectors(workspaceId)
+      .filter((connector) => connector.repository.repo.owner === owner && connector.repository.repo.name === name)
+      .filter((connector) =>
+        workspaceRoot ? sameWorkspaceRoot(connector.repository.workspaceRoot, workspaceRoot) : true,
+      )
+      .map((connector) => {
+        const heartbeat = store.getHeartbeat(connector.id);
+        const health = getConnectorDispatchHealth(store, connector, referenceAt);
+
+        return {
+          connector,
+          heartbeat,
+          health,
+          latestActivityAt: getLatestConnectorActivityAt(store, connector.id, connector.lastSeenAt),
+        };
+      })
+      .sort((left, right) => {
+        const statusPriority = (status: RepositoryConnectorAvailability["status"]) => {
+          switch (status) {
+            case "active":
+              return 3;
+            case "stale":
+              return 2;
+            case "revoked":
+              return 1;
+            default:
+              return 0;
+          }
+        };
+
+        const healthDelta = statusPriority(right.health.status) - statusPriority(left.health.status);
+        if (healthDelta !== 0) {
+          return healthDelta;
+        }
+
+        const activityDelta = new Date(right.latestActivityAt).getTime() - new Date(left.latestActivityAt).getTime();
+        if (activityDelta !== 0) {
+          return activityDelta;
+        }
+
+        return new Date(right.connector.lastSeenAt).getTime() - new Date(left.connector.lastSeenAt).getTime();
+      });
+
+    const bestMatch = matchingConnectors[0];
+    if (!bestMatch) {
+      return {
+        status: "missing",
+        reason: "No connector has registered for this repository yet.",
+        connectorId: null,
+        machineName: null,
+        lastSeenAt: null,
+        daemonReachable: null,
+      };
+    }
+
+    const daemonReachable = bestMatch.heartbeat?.localDaemon.reachable ?? null;
+    const daemonReason =
+      daemonReachable === false
+        ? "The latest connector heartbeat reported the local authority daemon as offline."
+        : null;
+
+    return {
+      status: bestMatch.health.status,
+      reason: daemonReason ?? bestMatch.health.reason,
+      connectorId: bestMatch.connector.id,
+      machineName: bestMatch.connector.machineName,
+      lastSeenAt: bestMatch.connector.lastSeenAt,
+      daemonReachable,
+    };
   });
 }

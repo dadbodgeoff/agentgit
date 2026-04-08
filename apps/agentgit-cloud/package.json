@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:smoke": "sh -c \"pkill -f 'next start --hostname localhost --port 3112' >/dev/null 2>&1 || true; pkill -f '@agentgit/authority-daemon start' >/dev/null 2>&1 || true; pnpm build && playwright test --config=playwright.config.ts\"",
     "typecheck": "next typegen && tsc -p tsconfig.json --noEmit",
-    "clean": "rm -rf .next coverage tsconfig.tsbuildinfo"
+    "clean": "rm -rf .next coverage tsconfig.tsbuildinfo",
+    "db:migrate": "tsx src/lib/db/migrate.ts"
   },
   "dependencies": {
     "@agentgit/authority-sdk": "workspace:*",
@@ -22,15 +23,17 @@
     "@agentgit/run-journal": "workspace:*",
     "@agentgit/schemas": "workspace:*",
     "@agentgit/snapshot-engine": "workspace:*",
-    "@iarna/toml": "^2.2.5",
     "@hookform/resolvers": "5.x",
+    "@iarna/toml": "^2.2.5",
     "@sentry/nextjs": "^10.47.0",
     "@tanstack/react-query": "5.x",
     "@tanstack/react-query-devtools": "5.x",
     "@vercel/analytics": "^1.6.1",
     "clsx": "2.x",
+    "drizzle-orm": "^0.45.2",
     "next": "15.x",
     "next-auth": "^5.0.0-beta.30",
+    "postgres": "^3.4.9",
     "react": "19.x",
     "react-dom": "19.x",
     "react-hook-form": "7.x",

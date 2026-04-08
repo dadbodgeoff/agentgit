@@ -10,6 +10,7 @@ import {
   getFallbackActiveWorkspace,
   isProductionAuth,
 } from "@/lib/auth/provider-config";
+import { upsertCloudUser } from "@/lib/backend/workspace/cloud-state";
 import { resolveWorkspaceAccessForIdentity } from "@/lib/auth/workspace-access";
 import { publicRoutes } from "@/lib/navigation/routes";
 import { WorkspaceRoleSchema } from "@/schemas/cloud";
@@ -147,10 +148,18 @@ const nextAuthResult: NextAuthResult = NextAuth({
         return false;
       }
 
-      const workspaceAccess = resolveWorkspaceAccessForIdentity({ email, login });
+      const workspaceAccess = await resolveWorkspaceAccessForIdentity({ email, login });
       if (!workspaceAccess) {
         return false;
       }
+
+      await upsertCloudUser({
+        email,
+        githubLogin: login,
+        imageUrl: user.image ?? null,
+        lastSignedInAt: new Date().toISOString(),
+        name: user.name ?? login ?? email.split("@")[0] ?? "GitHub user",
+      });
 
       user.email = email;
       user.role = workspaceAccess.role;

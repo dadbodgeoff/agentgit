@@ -38,14 +38,14 @@ export async function withAuthorityClient<T>(run: (client: AuthorityClient) => P
   return withScopedAuthorityClient(resolveWorkspaceRoots(), run);
 }
 
-export function resolveAuthorityWorkspaceRoots(workspaceId: string): string[] {
-  const runtimeRoots = [...new Set(collectWorkspaceRepositoryRuntimeRecords(workspaceId).map((record) => record.metadata.root))];
-  return runtimeRoots.length > 0 ? runtimeRoots : resolveWorkspaceRoots();
+export async function resolveAuthorityWorkspaceRoots(workspaceId: string): Promise<string[]> {
+  const runtimeRoots = [...new Set((await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).map((record) => record.metadata.root))];
+  return runtimeRoots;
 }
 
 export async function withWorkspaceAuthorityClient<T>(
   workspaceId: string,
   run: (client: AuthorityClient) => Promise<T>,
 ): Promise<T> {
-  return withScopedAuthorityClient(resolveAuthorityWorkspaceRoots(workspaceId), run);
+  return withScopedAuthorityClient(await resolveAuthorityWorkspaceRoots(workspaceId), run);
 }

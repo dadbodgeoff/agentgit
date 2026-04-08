@@ -26,9 +26,11 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
+    "@agentgit/authority-sdk": "workspace:*",
     "@agentgit/cloud-sync-protocol": "workspace:*",
     "@agentgit/integration-state": "workspace:*",
     "@agentgit/run-journal": "workspace:*",
+    "@agentgit/schemas": "workspace:*",
     "@agentgit/snapshot-engine": "workspace:*",
     "zod": "^4.3.6"
   }

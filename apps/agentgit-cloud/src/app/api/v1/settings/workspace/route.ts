@@ -10,18 +10,18 @@ import { WorkspaceSettingsSchema } from "@/schemas/cloud";
 
 export async function GET(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
   }
 
-  return jsonWithRequestId(resolveWorkspaceSettings(access.workspaceSession), undefined, requestId);
+  return jsonWithRequestId(await resolveWorkspaceSettings(access.workspaceSession), undefined, requestId);
 }
 
 export async function PUT(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
@@ -33,13 +33,13 @@ export async function PUT(request: Request): Promise<NextResponse> {
     return jsonWithRequestId({ message: "Settings payload is invalid." }, { status: 400 }, requestId);
   }
 
-  const matchingWorkspace = findWorkspaceConnectionStateBySlug(payload.data.workspaceSlug);
+  const matchingWorkspace = await findWorkspaceConnectionStateBySlug(payload.data.workspaceSlug);
   if (matchingWorkspace && matchingWorkspace.workspaceId !== access.workspaceSession.activeWorkspace.id) {
     return jsonWithRequestId({ message: "Workspace slug is already in use." }, { status: 409 }, requestId);
   }
 
   return jsonWithRequestId(
-    saveWorkspaceSettings(access.workspaceSession, payload.data),
+    await saveWorkspaceSettings(access.workspaceSession, payload.data),
     undefined,
     requestId,
   );

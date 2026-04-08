@@ -129,8 +129,8 @@ function buildLocalFallbackCalibrationReport(repoId: string, repoRoot: string) {
   }
 }
 
-export async function getRepositoryCalibrationReport(repoId: string) {
-  const repository = findRepositoryRuntimeRecordById(repoId);
+export async function getRepositoryCalibrationReport(repoId: string, workspaceId: string) {
+  const repository = await findRepositoryRuntimeRecordById(repoId, workspaceId);
   if (!repository) {
     return null;
   }

@@ -7,34 +7,12 @@ import {
   type WorkspaceBilling,
 } from "@/schemas/cloud";
 
-const baseInvoices = [
-  {
-    id: "inv_2026_03",
-    periodLabel: "Mar 2026",
-    amountUsd: 1490,
-    status: "paid",
-    issuedAt: "2026-03-01T12:00:00Z",
-  },
-  {
-    id: "inv_2026_04",
-    periodLabel: "Apr 2026",
-    amountUsd: 1490,
-    status: "open",
-    issuedAt: "2026-04-01T12:00:00Z",
-    dueAt: "2026-04-15T12:00:00Z",
-  },
-  {
-    id: "inv_2026_02",
-    periodLabel: "Feb 2026",
-    amountUsd: 1490,
-    status: "paid",
-    issuedAt: "2026-02-01T12:00:00Z",
-  },
-] as const;
-
 const billingFixture = WorkspaceBillingSchema.parse({
   workspaceId: "ws_acme_01",
   workspaceName: "Acme platform",
+  billingProvider: "beta_gate",
+  billingAccessStatus: "active",
+  limitBreaches: [],
   planTier: "team",
   billingCycle: "yearly",
   billingEmail: "finance@acme.dev",
@@ -48,9 +26,9 @@ const billingFixture = WorkspaceBillingSchema.parse({
   approvalsUsed: 1822,
   monthlyEstimateUsd: 1490,
   nextInvoiceDate: "2026-05-01T12:00:00Z",
-  paymentMethodLabel: "Visa ending in 4242",
+  paymentMethodLabel: "Beta access granted",
   paymentMethodStatus: "active",
-  invoices: baseInvoices,
+  invoices: [],
 });
 
 function getPlanLimits(planTier: BillingPlanTier) {
@@ -97,6 +75,6 @@ export function saveWorkspaceBillingFixture(update: BillingUpdate): BillingSaveR
   return BillingSaveResponseSchema.parse({
     billing,
     savedAt: "2026-04-07T16:22:00Z",
-    message: "Billing settings saved. External processor sync is still mocked.",
+    message: "Billing settings saved. Hosted beta access now enforces the selected plan limits.",
   });
 }

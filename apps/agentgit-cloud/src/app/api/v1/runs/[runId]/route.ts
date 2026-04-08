@@ -17,7 +17,7 @@ export async function GET(
   context: { params: Promise<{ runId: string }> },
 ): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const { unauthorized, workspaceSession } = await requireApiSession();
+  const { unauthorized, workspaceSession } = await requireApiSession(request);
 
   if (unauthorized) {
     return unauthorized;

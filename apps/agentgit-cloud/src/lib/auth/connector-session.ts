@@ -5,6 +5,7 @@ import {
   getConnectorAccessByToken,
   type ConnectorAccessContext,
 } from "@/lib/backend/control-plane/connectors";
+import { enforceConnectorRateLimits } from "@/lib/security/rate-limit";
 
 export function getBearerToken(request: Request): string | null {
   const authorization = request.headers.get("authorization")?.trim();
@@ -16,11 +17,13 @@ export function getBearerToken(request: Request): string | null {
   return match?.[1]?.trim() ?? null;
 }
 
-export function requireConnectorSession(
+export async function requireConnectorSession(
   request: Request,
 ):
-  | { access: ConnectorAccessContext; denied: null }
-  | { access: null; denied: NextResponse } {
+  Promise<
+    | { access: ConnectorAccessContext; denied: null }
+    | { access: null; denied: NextResponse }
+  > {
   const token = getBearerToken(request);
   if (!token) {
     return {
@@ -30,8 +33,17 @@ export function requireConnectorSession(
   }
 
   try {
+    const access = getConnectorAccessByToken(token);
+    const rateLimited = await enforceConnectorRateLimits(request, access.connector.workspaceId);
+    if (rateLimited) {
+      return {
+        access: null,
+        denied: rateLimited,
+      };
+    }
+
     return {
-      access: getConnectorAccessByToken(token),
+      access,
       denied: null,
     };
   } catch (error) {

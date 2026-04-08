@@ -73,7 +73,7 @@ describe("authority calibration adapter", () => {
       });
 
     const { getRepositoryCalibrationReport } = await import("./calibration");
-    const result = await getRepositoryCalibrationReport("repo_01");
+    const result = await getRepositoryCalibrationReport("repo_01", "ws_acme_01");
 
     expect(result).toMatchObject({
       repoId: "repo_01",
@@ -129,7 +129,7 @@ describe("authority calibration adapter", () => {
     vi.spyOn(RunJournal.prototype, "close").mockImplementation(journalClose);
 
     const { getRepositoryCalibrationReport } = await import("./calibration");
-    const result = await getRepositoryCalibrationReport("repo_01");
+    const result = await getRepositoryCalibrationReport("repo_01", "ws_acme_01");
 
     expect(result).toMatchObject({
       repoId: "repo_01",

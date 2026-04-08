@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useMutation } from "@tanstack/react-query";
 
@@ -12,6 +12,7 @@ import { issueConnectorBootstrapToken } from "@/lib/api/endpoints/connectors";
 import { authenticatedRoutes } from "@/lib/navigation/routes";
 import { useRepositoryConnectionBootstrapQuery } from "@/lib/query/hooks";
 import type { ConnectorBootstrapResponse } from "@/schemas/cloud";
+import { ConnectorBootstrapPanel } from "@/features/shared/connector-bootstrap-panel";
 
 type ConnectorInstallGuideProps = {
   title?: string;
@@ -64,6 +65,18 @@ export function ConnectorInstallGuide({
       launched: readinessQuery.data.launchedAt !== null,
     };
   }, [readinessQuery.data]);
+
+  useEffect(() => {
+    if (!bootstrapDetails || !summary || summary.uncoveredRepositories.length === 0) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void readinessQuery.refetch();
+    }, 5_000);
+
+    return () => window.clearInterval(interval);
+  }, [bootstrapDetails, readinessQuery, summary]);
 
   if (readinessQuery.isPending) {
     return (
@@ -155,6 +168,22 @@ export function ConnectorInstallGuide({
         </div>
       </div>
 
+      {summary.uncoveredRepositories.length > 0 ? (
+        <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-page)] px-4 py-3">
+          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Install target</div>
+          <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
+            Run the bootstrap command on the exact machine that has the repository checkout and local AgentGit daemon state for:
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {summary.uncoveredRepositories.map((repository) => (
+              <Badge key={repository.id} tone="warning">
+                {repository.owner}/{repository.name}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {summary.connectedRepositories.length > 0 ? (
         <div className="space-y-2">
           <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Selected repositories</div>
@@ -201,13 +230,11 @@ export function ConnectorInstallGuide({
       ) : null}
 
       {bootstrapDetails ? (
-        <div className="space-y-2 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-page)] px-4 py-3">
-          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Bootstrap command</div>
-          <code className="block overflow-x-auto text-sm text-[var(--ag-text-primary)]">{bootstrapDetails.commandHint}</code>
-          <div className="text-sm text-[var(--ag-text-secondary)]">
-            Run this on the machine that hosts the selected repository checkout, then return here to confirm the connector is active.
-          </div>
-        </div>
+        <ConnectorBootstrapPanel
+          bootstrapDetails={bootstrapDetails}
+          connected={summary.uncoveredRepositories.length === 0 && summary.connectedRepositories.length > 0}
+          waitingForConnection={summary.uncoveredRepositories.length > 0}
+        />
       ) : null}
     </Card>
   );

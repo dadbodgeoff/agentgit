@@ -32,6 +32,8 @@ export type ApprovalResolvedStatus = z.infer<typeof ApprovalResolvedStatusSchema
 
 export const ApprovalDomainSchema = z.enum(["shell", "git", "filesystem", "network", "deploy", "policy"]);
 export type ApprovalDomain = z.infer<typeof ApprovalDomainSchema>;
+export const ApprovalConnectorStatusSchema = z.enum(["active", "stale", "revoked", "missing"]);
+export type ApprovalConnectorStatus = z.infer<typeof ApprovalConnectorStatusSchema>;
 
 export const RunStatusSchema = z.enum(["queued", "running", "completed", "failed", "canceled"]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
@@ -63,11 +65,19 @@ export const ApprovalListItemSchema = z
     requestedAt: TimestampStringSchema,
     resolvedAt: TimestampStringSchema.optional(),
     resolutionNote: z.string().min(1).optional(),
+    expiresAt: TimestampStringSchema.optional(),
+    expiresSoon: z.boolean().default(false),
     actionSummary: z.string().min(1),
     reasonSummary: z.string().min(1).nullable(),
     targetLocator: z.string().min(1),
     targetLabel: z.string().min(1).optional(),
     snapshotRequired: z.boolean(),
+    connectorStatus: ApprovalConnectorStatusSchema.default("missing"),
+    connectorStatusReason: z.string().min(1).nullable().default(null),
+    decisionCommandStatus: ConnectorCommandStatusSchema.nullable().default(null),
+    decisionCommandUpdatedAt: TimestampStringSchema.nullable().default(null),
+    decisionCommandNextAttemptAt: TimestampStringSchema.nullable().default(null),
+    decisionCommandMessage: z.string().min(1).nullable().default(null),
   })
   .strict();
 export type ApprovalListItem = z.infer<typeof ApprovalListItemSchema>;
@@ -165,6 +175,15 @@ export type BillingInvoiceStatus = z.infer<typeof BillingInvoiceStatusSchema>;
 export const BillingPaymentMethodStatusSchema = z.enum(["active", "expiring", "update_required"]);
 export type BillingPaymentMethodStatus = z.infer<typeof BillingPaymentMethodStatusSchema>;
 
+export const BillingProviderSchema = z.enum(["beta_gate", "stripe"]);
+export type BillingProvider = z.infer<typeof BillingProviderSchema>;
+
+export const BillingAccessStatusSchema = z.enum(["active", "over_limit"]);
+export type BillingAccessStatus = z.infer<typeof BillingAccessStatusSchema>;
+
+export const BillingLimitBreachSchema = z.enum(["seats", "repositories", "approvals"]);
+export type BillingLimitBreach = z.infer<typeof BillingLimitBreachSchema>;
+
 export const BillingInvoiceSchema = z
   .object({
     id: z.string().min(1),
@@ -181,6 +200,9 @@ export const WorkspaceBillingSchema = z
   .object({
     workspaceId: z.string().min(1),
     workspaceName: z.string().min(1),
+    billingProvider: BillingProviderSchema.default("beta_gate"),
+    billingAccessStatus: BillingAccessStatusSchema.default("active"),
+    limitBreaches: z.array(BillingLimitBreachSchema).default([]),
     planTier: BillingPlanTierSchema,
     billingCycle: BillingCycleSchema,
     billingEmail: z.string().email(),
@@ -239,6 +261,7 @@ export const WorkspaceIntegrationSnapshotSchema = z
     webhookLastDeliveryAt: TimestampStringSchema,
     webhookFailureCount24h: z.number().int().nonnegative(),
     slackConnected: z.boolean(),
+    slackWebhookConfigured: z.boolean().default(false),
     slackWorkspaceName: z.string().min(1).optional(),
     slackChannelName: z.string().min(1).optional(),
     slackDeliveryMode: SlackDeliveryModeSchema,
@@ -252,6 +275,7 @@ export type WorkspaceIntegrationSnapshot = z.infer<typeof WorkspaceIntegrationSn
 export const WorkspaceIntegrationUpdateSchema = z
   .object({
     slackConnected: z.boolean(),
+    slackWebhookUrl: z.string().trim().url("Enter a valid Slack webhook URL.").optional().or(z.literal("")),
     slackWorkspaceName: z.string().trim().max(48).optional().or(z.literal("")),
     slackChannelName: z.string().trim().max(48).optional().or(z.literal("")),
     slackDeliveryMode: SlackDeliveryModeSchema,
@@ -1077,6 +1101,14 @@ export const ConnectorCommandDispatchRequestSchema = z.discriminatedUnion("type"
     .object({
       type: z.literal("sync_run_history"),
       includeSnapshots: z.boolean().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("resolve_approval"),
+      approvalId: z.string().min(1),
+      resolution: z.enum(["approved", "denied"]),
+      note: z.string().trim().max(280).optional(),
     })
     .strict(),
   z

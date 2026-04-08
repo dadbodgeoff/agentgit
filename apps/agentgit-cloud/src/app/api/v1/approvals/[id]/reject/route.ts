@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { requireApiSession } from "@/lib/auth/api-session";
-import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
-import { mapResolvedApprovalToCloud } from "@/lib/backend/authority/contracts";
-import { toAuthorityRouteErrorResponse } from "@/lib/backend/authority/route-errors";
+import {
+  ConnectorAccessError,
+  findConnectorForRepository,
+  getRepositoryConnectorAvailability,
+  queueConnectorCommand,
+} from "@/lib/backend/control-plane/connectors";
+import { getWorkspaceApprovalProjection } from "@/lib/backend/workspace/workspace-approvals";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { ApprovalDecisionRequestSchema } from "@/schemas/cloud";
 
@@ -12,7 +16,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const { session, unauthorized, workspaceSession } = await requireApiSession();
+  const { session, unauthorized, workspaceSession } = await requireApiSession(request);
 
   if (unauthorized || !session) {
     return unauthorized;
@@ -28,17 +32,98 @@ export async function POST(
     );
   }
   const actorName = session.user.name ?? session.user.email ?? "Workspace reviewer";
+  const queuedAt = new Date().toISOString();
+  const approval = await getWorkspaceApprovalProjection(workspaceSession.activeWorkspace.id, id);
+
+  if (!approval) {
+    return jsonWithRequestId({ message: "Approval request was not found." }, { status: 404 }, requestId);
+  }
+
+  if (approval.commandStatus === "pending" || approval.commandStatus === "acked" || approval.commandStatus === "completed") {
+    return jsonWithRequestId(
+      {
+        id,
+        status: "rejected",
+        resolvedByName: actorName,
+        resolvedAt: approval.resolvedAt ?? queuedAt,
+        message: "Approval is already queued for connector delivery.",
+        comment: approval.resolutionNote,
+      },
+      { status: 409 },
+      requestId,
+    );
+  }
+
+  if (approval.status !== "pending") {
+    return jsonWithRequestId(
+      {
+        id,
+        status: approval.status === "approved" ? "approved" : approval.status === "expired" ? "expired" : "rejected",
+        resolvedByName: actorName,
+        resolvedAt: approval.resolvedAt ?? queuedAt,
+        message:
+          approval.status === "expired"
+            ? "This approval timed out before the connector could deliver a reviewer decision."
+            : "This approval has already been resolved in the workspace control plane.",
+        comment: approval.resolutionNote,
+      },
+      { status: 409 },
+      requestId,
+    );
+  }
 
   try {
-    const result = await withWorkspaceAuthorityClient(workspaceSession.activeWorkspace.id, (client) =>
-      client.resolveApproval(id, "denied", payload.data.comment),
+    const connector = findConnectorForRepository(
+      workspaceSession.activeWorkspace.id,
+      approval.repositoryOwner,
+      approval.repositoryName,
     );
+    if (!connector) {
+      const availability = getRepositoryConnectorAvailability(
+        workspaceSession.activeWorkspace.id,
+        approval.repositoryOwner,
+        approval.repositoryName,
+      );
+      return jsonWithRequestId(
+        {
+          message:
+            availability.reason ??
+            "No active connector is available for this repository. Reconnect the workspace agent and retry.",
+        },
+        { status: 409 },
+        requestId,
+      );
+    }
+
+    queueConnectorCommand(
+      workspaceSession,
+      connector.id,
+      {
+        type: "resolve_approval",
+        approvalId: id,
+        resolution: "denied",
+        note: payload.data.comment,
+      },
+      queuedAt,
+    );
+
     return jsonWithRequestId(
-      mapResolvedApprovalToCloud(result, actorName, "Action rejected. The agent has been paused."),
-      undefined,
+      {
+        id,
+        status: "rejected",
+        resolvedByName: actorName,
+        resolvedAt: queuedAt,
+        message: `Rejection queued for ${connector.machineName}. The connector will deliver it locally and keep the run paused.`,
+        comment: payload.data.comment,
+      },
+      { status: 202 },
       requestId,
     );
   } catch (error) {
-    return toAuthorityRouteErrorResponse(error, "Could not submit the rejection decision. Retry.", { requestId });
+    if (error instanceof ConnectorAccessError) {
+      return jsonWithRequestId({ message: error.message }, { status: error.statusCode }, requestId);
+    }
+
+    return jsonWithRequestId({ message: "Could not submit the rejection decision. Retry." }, { status: 500 }, requestId);
   }
 }

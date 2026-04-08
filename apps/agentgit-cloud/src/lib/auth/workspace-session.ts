@@ -8,15 +8,17 @@ import { getWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state
 import { resolveWorkspaceSettings } from "@/lib/backend/workspace/workspace-settings";
 import type { WorkspaceSession } from "@/schemas/cloud";
 
-export function resolveWorkspaceSession(session: Session | null): WorkspaceSession | null {
+export async function resolveWorkspaceSession(session: Session | null): Promise<WorkspaceSession | null> {
   const workspaceSession = toWorkspaceSession(session);
 
   if (!workspaceSession) {
     return null;
   }
 
-  const persistedState = getWorkspaceConnectionState(workspaceSession.activeWorkspace.id);
-  const persistedSettings = resolveWorkspaceSettings(workspaceSession);
+  const [persistedState, persistedSettings] = await Promise.all([
+    getWorkspaceConnectionState(workspaceSession.activeWorkspace.id),
+    resolveWorkspaceSettings(workspaceSession),
+  ]);
   if (!persistedState) {
     return {
       ...workspaceSession,
@@ -41,5 +43,5 @@ export function resolveWorkspaceSession(session: Session | null): WorkspaceSessi
 
 export async function getWorkspaceSession(): Promise<WorkspaceSession | null> {
   const session = await auth();
-  return resolveWorkspaceSession(session);
+  return await resolveWorkspaceSession(session);
 }

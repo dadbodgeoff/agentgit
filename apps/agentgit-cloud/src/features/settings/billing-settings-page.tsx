@@ -17,6 +17,7 @@ import { formatAbsoluteDate, formatCurrencyUsd, formatNumber } from "@/lib/utils
 import {
   BillingUpdateSchema,
   type BillingInvoice,
+  type BillingLimitBreach,
   type BillingUpdate,
   type BillingPlanTier,
 } from "@/schemas/cloud";
@@ -41,6 +42,12 @@ const planDescriptions: Record<BillingPlanTier, string> = {
   starter: "For a small team getting its first governed repositories online.",
   team: "For an active team that needs approvals, calibration, and cross-repo visibility.",
   enterprise: "For larger organizations with procurement review and higher governance volume.",
+};
+
+const breachLabels: Record<BillingLimitBreach, string> = {
+  seats: "Seat limit exceeded",
+  repositories: "Repository cap exceeded",
+  approvals: "Approval quota exceeded",
 };
 
 export function BillingSettingsPage() {
@@ -205,13 +212,40 @@ export function BillingSettingsPage() {
         />
       </div>
 
+      <Card className="space-y-3 border-[var(--ag-color-brand)] bg-[var(--ag-bg-elevated)]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Hosted beta billing mode</h2>
+            <p className="text-sm text-[var(--ag-text-secondary)]">
+              Stripe is intentionally not live yet. This workspace runs on a hosted beta gate that enforces plan limits without charging a card.
+            </p>
+          </div>
+          <Badge tone={billing.billingAccessStatus === "active" ? "success" : "warning"}>
+            {billing.billingAccessStatus === "active" ? "Beta access active" : "Over beta limits"}
+          </Badge>
+        </div>
+        {billing.limitBreaches.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {billing.limitBreaches.map((breach) => (
+              <Badge key={breach} tone="warning">
+                {breachLabels[breach]}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--ag-text-secondary)]">
+            Current usage is within the selected plan envelope for seats, repositories, and rolling approval volume.
+          </p>
+        )}
+      </Card>
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
         <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
           <Card className="space-y-5">
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Plan and billing cycle</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Billing settings now persist durably in the cloud app, even though external payment-provider sync is still deferred.
+                Billing settings now persist durably in the cloud app, and the selected plan is enforced as the hosted beta entitlement envelope.
               </p>
             </div>
 
@@ -245,7 +279,7 @@ export function BillingSettingsPage() {
                 <option value="yearly">Yearly</option>
               </select>
               <span className="text-[12px] text-[var(--ag-text-secondary)]">
-                Yearly mode reflects a discounted effective monthly estimate in this mock contract.
+                Yearly mode reflects a discounted effective monthly estimate for procurement planning, even before Stripe is enabled.
               </span>
             </label>
           </Card>
@@ -288,34 +322,40 @@ export function BillingSettingsPage() {
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Invoice history</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                Invoice rows are durable app state for now. Downloads and processor sync still wait on the real provider integration.
+                Invoice history will populate after Stripe lands. During hosted beta, plan enforcement works without generating invoices.
               </p>
             </div>
-
-            <TableRoot>
-              <TableHead>
-                <TableRow>
-                  <TableHeaderCell>Period</TableHeaderCell>
-                  <TableHeaderCell>Status</TableHeaderCell>
-                  <TableHeaderCell>Issued</TableHeaderCell>
-                  <TableHeaderCell>Due</TableHeaderCell>
-                  <TableHeaderCell>Amount</TableHeaderCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {billing.invoices.map((invoice) => (
-                  <TableRow key={invoice.id}>
-                    <TableCell className="font-medium">{invoice.periodLabel}</TableCell>
-                    <TableCell>
-                      <Badge tone={getInvoiceTone(invoice.status)}>{invoice.status}</Badge>
-                    </TableCell>
-                    <TableCell>{formatAbsoluteDate(invoice.issuedAt)}</TableCell>
-                    <TableCell>{invoice.dueAt ? formatAbsoluteDate(invoice.dueAt) : "—"}</TableCell>
-                    <TableCell className="font-mono">{formatCurrencyUsd(invoice.amountUsd)}</TableCell>
+            {billing.invoices.length === 0 ? (
+              <EmptyState
+                description="This workspace is still on beta-gated access, so there are no processor-issued invoices yet."
+                title="No invoices yet"
+              />
+            ) : (
+              <TableRoot>
+                <TableHead>
+                  <TableRow>
+                    <TableHeaderCell>Period</TableHeaderCell>
+                    <TableHeaderCell>Status</TableHeaderCell>
+                    <TableHeaderCell>Issued</TableHeaderCell>
+                    <TableHeaderCell>Due</TableHeaderCell>
+                    <TableHeaderCell>Amount</TableHeaderCell>
                   </TableRow>
-                ))}
-              </TableBody>
-            </TableRoot>
+                </TableHead>
+                <TableBody>
+                  {billing.invoices.map((invoice) => (
+                    <TableRow key={invoice.id}>
+                      <TableCell className="font-medium">{invoice.periodLabel}</TableCell>
+                      <TableCell>
+                        <Badge tone={getInvoiceTone(invoice.status)}>{invoice.status}</Badge>
+                      </TableCell>
+                      <TableCell>{formatAbsoluteDate(invoice.issuedAt)}</TableCell>
+                      <TableCell>{invoice.dueAt ? formatAbsoluteDate(invoice.dueAt) : "—"}</TableCell>
+                      <TableCell className="font-mono">{formatCurrencyUsd(invoice.amountUsd)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </TableRoot>
+            )}
           </Card>
 
           {submitError ? (
@@ -329,7 +369,7 @@ export function BillingSettingsPage() {
               <div>
                 <h2 className="text-base font-semibold">Save rail</h2>
                 <p className="text-sm text-[var(--ag-text-secondary)]">
-                  Billing stays on the same explicit-save contract as the rest of settings while provider wiring remains deferred.
+                  Saving here changes the enforced hosted beta envelope immediately for future repo and seat growth.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -368,10 +408,10 @@ export function BillingSettingsPage() {
                 </Badge>
               </div>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                External customer portal and card updates are intentionally not wired yet. This card preserves the final frontend contract.
+                Card collection is disabled during hosted beta. Plan enforcement happens through the selected tier and access review instead.
               </p>
               <Button disabled size="sm" variant="secondary">
-                Manage payment method
+                Stripe coming later
               </Button>
             </div>
           </Card>
@@ -393,22 +433,25 @@ export function BillingSettingsPage() {
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span>Next invoice date</span>
-                <span className="font-mono text-[var(--ag-text-primary)]">{formatAbsoluteDate(billing.nextInvoiceDate)}</span>
+                <span className="font-mono text-[var(--ag-text-primary)]">
+                  {billing.billingProvider === "beta_gate"
+                    ? `Review ${formatAbsoluteDate(billing.nextInvoiceDate)}`
+                    : formatAbsoluteDate(billing.nextInvoiceDate)}
+                </span>
               </div>
             </div>
           </Card>
 
           <Card className="space-y-4">
-            <h2 className="text-lg font-semibold">Build loop backlog</h2>
+            <h2 className="text-lg font-semibold">Shipping status</h2>
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
-              <div>Closed in this pass:</div>
-              <div>- owner-only billing form and invoice surface</div>
-              <div>- protected billing API contract with save flow</div>
-              <div>- plan, usage, and payment placeholder UI on the shared settings rails</div>
-              <div className="mt-3">Next queued:</div>
-              <div>- admin integrations form with notification mutations</div>
-              <div>- connect billing actions to a real processor later</div>
-              <div>- remove development credentials before production launch</div>
+              <div>Active billing mode:</div>
+              <div>- hosted beta gate with enforced plan caps</div>
+              <div>- durable owner-managed billing contacts</div>
+              <div>- no live card collection until Stripe ships</div>
+              <div className="mt-3">Operator expectation:</div>
+              <div>- upgrade the selected tier before adding more seats or repositories</div>
+              <div>- review approval volume before the next access checkpoint</div>
             </div>
           </Card>
         </div>

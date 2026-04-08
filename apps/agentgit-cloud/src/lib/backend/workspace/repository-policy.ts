@@ -301,9 +301,9 @@ export function validateRepositoryPolicyDocument(document: string): RepositoryPo
 export async function resolveRepositoryPolicy(
   owner: string,
   name: string,
-  workspaceId?: string,
+  workspaceId: string,
 ): Promise<RepositoryPolicySnapshot | null> {
-  const repository = findRepositoryRuntimeRecord(owner, name, workspaceId);
+  const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
     return null;
   }
@@ -333,9 +333,9 @@ export async function saveRepositoryPolicy(
   owner: string,
   name: string,
   document: string,
-  workspaceId?: string,
+  workspaceId: string,
 ): Promise<RepositoryPolicySaveResponse | null> {
-  const repository = findRepositoryRuntimeRecord(owner, name, workspaceId);
+  const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
     return null;
   }

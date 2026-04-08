@@ -15,6 +15,17 @@ vi.mock("@/lib/backend/workspace/workspace-team", () => ({
   saveWorkspaceTeam,
 }));
 
+vi.mock("@/lib/backend/workspace/workspace-billing", () => ({
+  WorkspaceBillingLimitError: class WorkspaceBillingLimitError extends Error {
+    constructor(
+      public readonly breaches: string[],
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+}));
+
 describe("team settings route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -106,5 +117,32 @@ describe("team settings route", () => {
     expect(response.status).toBe(200);
     expect(saveWorkspaceTeam).toHaveBeenCalled();
     expect(body.team.workspaceSlug).toBe("acme-platform");
+  });
+
+  it("returns 409 when team invites exceed the workspace beta seat cap", async () => {
+    const { WorkspaceBillingLimitError } = await import("@/lib/backend/workspace/workspace-billing");
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+    saveWorkspaceTeam.mockRejectedValue(
+      new WorkspaceBillingLimitError(["seats"], "Workspace usage exceeds the selected beta plan limits."),
+    );
+
+    const { PUT } = await import("./route");
+    const response = await PUT(
+      new Request("http://localhost/api/v1/settings/team", {
+        method: "PUT",
+        body: JSON.stringify({
+          invites: [{ name: "Riley", email: "riley@acme.dev", role: "member" }],
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.breaches).toEqual(["seats"]);
   });
 });

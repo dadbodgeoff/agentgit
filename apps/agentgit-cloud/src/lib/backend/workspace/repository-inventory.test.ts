@@ -9,7 +9,11 @@ import { RunJournal } from "@agentgit/run-journal";
 vi.mock("server-only", () => ({}));
 
 import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
-import { listRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
+import {
+  listDiscoveredRepositoryInventory,
+  listRepositoryInventory,
+  listWorkspaceRepositoryOptions,
+} from "@/lib/backend/workspace/repository-inventory";
 
 function runGit(args: string[], cwd: string): string {
   return execFileSync("git", args, {
@@ -87,7 +91,7 @@ describe("repository inventory backend adapter", () => {
     }
   });
 
-  it("builds repository inventory from git metadata and a completed run", () => {
+  it("builds repository inventory from git metadata and a completed run", async () => {
     const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
     tempDirs.push(repoRoot);
     createRun(repoRoot, "execution.completed");
@@ -95,7 +99,20 @@ describe("repository inventory backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const inventory = listRepositoryInventory();
+    const discoveredInventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: discoveredInventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const inventory = await listRepositoryInventory("ws_acme_01");
 
     expect(inventory.items).toHaveLength(1);
     expect(inventory.items[0]).toMatchObject({
@@ -108,7 +125,7 @@ describe("repository inventory backend adapter", () => {
     });
   });
 
-  it("marks a repository escalated when the latest run failed", () => {
+  it("marks a repository escalated when the latest run failed", async () => {
     const repoRoot = createRepo("git@github.com:acme/api-gateway.git");
     tempDirs.push(repoRoot);
     createRun(repoRoot, "execution.failed");
@@ -116,7 +133,20 @@ describe("repository inventory backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const inventory = listRepositoryInventory();
+    const discoveredInventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: discoveredInventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const inventory = await listRepositoryInventory("ws_acme_01");
 
     expect(inventory.items[0]).toMatchObject({
       owner: "acme",
@@ -126,7 +156,7 @@ describe("repository inventory backend adapter", () => {
     });
   });
 
-  it("filters inventory down to repositories connected to the active workspace", () => {
+  it("filters inventory down to repositories connected to the active workspace", async () => {
     const firstRepo = createRepo("git@github.com:acme/platform-ui.git");
     const secondRepo = createRepo("git@github.com:acme/api-gateway.git");
     tempDirs.push(firstRepo, secondRepo);
@@ -136,8 +166,8 @@ describe("repository inventory backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const fullInventory = listRepositoryInventory();
-    saveWorkspaceConnectionState({
+    const fullInventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -149,13 +179,13 @@ describe("repository inventory backend adapter", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const filteredInventory = listRepositoryInventory("ws_acme_01");
+    const filteredInventory = await listRepositoryInventory("ws_acme_01");
 
     expect(filteredInventory.items).toHaveLength(1);
     expect(filteredInventory.items[0]!.id).toBe(fullInventory.items[0]!.id);
   });
 
-  it("returns no repositories when the workspace has no persisted repository scope", () => {
+  it("returns no repositories when the workspace has no persisted repository scope", async () => {
     const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
     tempDirs.push(repoRoot);
     createRun(repoRoot, "execution.completed");
@@ -163,9 +193,53 @@ describe("repository inventory backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const inventory = listRepositoryInventory("ws_unknown");
+    const inventory = await listRepositoryInventory("ws_unknown");
 
     expect(inventory.items).toHaveLength(0);
     expect(inventory.total).toBe(0);
+  });
+
+  it("only offers repository options that are unclaimed or already connected to the active workspace", async () => {
+    const firstRepo = createRepo("git@github.com:acme/platform-ui.git");
+    const secondRepo = createRepo("git@github.com:acme/api-gateway.git");
+    tempDirs.push(firstRepo, secondRepo);
+    createRun(firstRepo, "execution.completed");
+    createRun(secondRepo, "execution.completed");
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = [firstRepo, secondRepo].join(",");
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    const discoveredInventory = await listDiscoveredRepositoryInventory();
+    const platformUiId = discoveredInventory.items.find((item) => item.name === "platform-ui")?.id;
+    const apiGatewayId = discoveredInventory.items.find((item) => item.name === "api-gateway")?.id;
+    expect(platformUiId).toBeDefined();
+    expect(apiGatewayId).toBeDefined();
+
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_current",
+      workspaceName: "Current workspace",
+      workspaceSlug: "current-workspace",
+      repositoryIds: [platformUiId!],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_other",
+      workspaceName: "Other workspace",
+      workspaceSlug: "other-workspace",
+      repositoryIds: [apiGatewayId!],
+      members: [{ name: "Taylor Jones", email: "taylor@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const repositoryOptions = await listWorkspaceRepositoryOptions("ws_current");
+
+    expect(repositoryOptions.map((item) => item.name)).toEqual(["platform-ui"]);
   });
 });

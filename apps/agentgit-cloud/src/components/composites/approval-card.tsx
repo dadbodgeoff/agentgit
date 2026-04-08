@@ -20,6 +20,44 @@ function getApprovalTone(status: ApprovalListItem["status"]): "warning" | "succe
   return "neutral";
 }
 
+function getConnectorTone(status: ApprovalListItem["connectorStatus"]): "success" | "warning" | "error" | "neutral" {
+  if (status === "active") {
+    return "success";
+  }
+
+  if (status === "stale") {
+    return "warning";
+  }
+
+  if (status === "revoked") {
+    return "error";
+  }
+
+  return "neutral";
+}
+
+function getDeliveryTone(
+  status: ApprovalListItem["decisionCommandStatus"],
+): "success" | "warning" | "error" | "accent" | "neutral" {
+  if (status === "completed") {
+    return "success";
+  }
+
+  if (status === "failed") {
+    return "error";
+  }
+
+  if (status === "expired") {
+    return "warning";
+  }
+
+  if (status === "acked") {
+    return "accent";
+  }
+
+  return "neutral";
+}
+
 export function ApprovalCard({
   errorMessage,
   isBusy = false,
@@ -73,6 +111,13 @@ export function ApprovalCard({
           <Badge tone={getApprovalTone(item.status)}>{item.status}</Badge>
           <Badge>{item.domain}</Badge>
           <Badge>{item.sideEffectLevel.replaceAll("_", " ")}</Badge>
+          {item.expiresSoon && item.status === "pending" ? <Badge tone="warning">expiring soon</Badge> : null}
+          {item.connectorStatus !== "active" ? (
+            <Badge tone={getConnectorTone(item.connectorStatus)}>connector {item.connectorStatus}</Badge>
+          ) : null}
+          {item.decisionCommandStatus && item.status === "pending" ? (
+            <Badge tone={getDeliveryTone(item.decisionCommandStatus)}>delivery {item.decisionCommandStatus}</Badge>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--ag-text-secondary)]">
           <span>{formatRelativeTimestamp(item.requestedAt)}</span>
@@ -90,11 +135,22 @@ export function ApprovalCard({
           <div className="mt-1">{item.targetLabel ?? item.targetLocator}</div>
         </div>
         {item.reasonSummary ? <p className="text-sm text-[var(--ag-text-secondary)]">{item.reasonSummary}</p> : null}
+        {item.connectorStatusReason ? (
+          <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-hover)] px-3 py-2 text-sm text-[var(--ag-text-secondary)]">
+            {item.connectorStatusReason}
+          </div>
+        ) : null}
+        {item.decisionCommandMessage ? (
+          <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-hover)] px-3 py-2 text-sm text-[var(--ag-text-secondary)]">
+            {item.decisionCommandMessage}
+            {item.decisionCommandNextAttemptAt ? ` Retry ${formatRelativeTimestamp(item.decisionCommandNextAttemptAt)}.` : ""}
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           {item.status === "pending" ? (
             <>
               <Button
-                disabled={isBusy}
+                disabled={isBusy || item.connectorStatus !== "active"}
                 onClick={(event) => {
                   event.stopPropagation();
                   onApprove?.();
@@ -104,7 +160,7 @@ export function ApprovalCard({
                 {isBusy ? "Submitting..." : "Approve"}
               </Button>
               <Button
-                disabled={isBusy}
+                disabled={isBusy || item.connectorStatus !== "active"}
                 onClick={(event) => {
                   event.stopPropagation();
                   onReject?.();

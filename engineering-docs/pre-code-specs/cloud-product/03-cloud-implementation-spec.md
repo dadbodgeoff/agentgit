@@ -29,6 +29,12 @@ Public routes:
 - `/sign-in`
 - `/sign-in/callback`
 
+Public-route expectations:
+
+- `/` must explain the hosted control-plane value proposition without implying that execution moved out of the local daemon
+- `/pricing` must clearly separate the open-source local runtime from the hosted cloud product and must describe the current billing mode truthfully
+- `/docs` must provide a real connector bootstrap and first-run validation quickstart rather than a placeholder documentation landing page
+
 Authenticated routes:
 
 - `/app`
@@ -71,6 +77,7 @@ These journeys are the primary E2E and UX acceptance baseline and should drive i
 - Session stored with httpOnly cookie handling
 - Active workspace scoped by header or route context
 - GitHub OAuth sessions must resolve workspace identity and role from persisted workspace membership data or an explicitly configured bootstrap identity; unresolved or ambiguous identities must be denied instead of falling back to a shared workspace
+- bootstrap identity environment variables may only seed the first persisted owner and workspace; after bootstrap, hosted auth must resolve from persisted cloud data rather than a shared env-defined workspace
 - Production auth must never assign a shared default workspace or elevated role when provider claims are incomplete
 - Session TTL: 24 hours with silent refresh when appropriate
 
@@ -94,8 +101,25 @@ Rules:
 - list endpoints use a consistent pagination envelope
 - request and response shapes should be validated against shared Zod schemas
 - invalid payloads return `400` with field-level information
-- daemon-backed approval, run-detail, and readiness endpoints must initialize authority sessions from the active workspace's connected repository roots rather than process-wide roots
+- hosted approval queue reads must come from connector-synced control-plane state rather than direct cloud-to-daemon socket access
+- hosted approve/reject mutations must enqueue connector commands that resolve the approval on the local daemon and sync the resulting resolution back into cloud state
+- daemon-backed run-detail and readiness endpoints must initialize authority sessions from the active workspace's connected repository roots rather than process-wide roots
+- Slack webhook secrets must be stored server-side and must never be echoed back through the integrations settings snapshot API
+- `approval_requested` notifications are urgent and should fan out immediately through enabled channels even when digest cadence is set to `daily` or `weekly`
+- authenticated workspace APIs must enforce per-IP and per-workspace rate limits, with stricter budgets for write traffic than for reads
+- connector registration and sync endpoints must enforce per-IP and per-workspace quotas and return `429` responses with retry metadata when limits are exceeded
+- rate-limit storage must prune expired buckets so abuse protection does not create unbounded persistence growth
+- the cloud app must ship explicit browser security headers, including CSP and frame/type/referrer protections, through the platform config rather than relying on hosting defaults alone
+- API routes must answer CORS preflight requests deterministically and only echo allowed origins; same-origin app traffic should continue working without a wildcard CORS policy
+- the platform must expose a public uptime probe endpoint that is safe for external monitors and separate from the admin-only readiness route
+- production readiness must fail until uptime monitoring, request-metrics ownership, and Sentry alerting are explicitly configured and acknowledged
+- connector install guidance must provide a copy-ready bootstrap command, token-copy affordances, expiry context, and immediate feedback while waiting for the first connector heartbeat
+- billing must ship either as a real Stripe-backed subscription flow or as an explicit hosted beta gate; the cloud UI must never present fake card collection or fake invoice history as if it were live billing
+- while Stripe is deferred, the hosted beta gate must enforce the selected plan's seat and repository limits on mutating routes and surface approval-volume overages in the billing UI
 - if a workspace has no persisted repository scope yet, hosted APIs must fail closed for tenant-bound inventory and dashboard data instead of exposing host-wide discovery results
+- onboarding and repository-connect flows must only surface repositories that are either already attached to the active workspace or currently unclaimed by any other workspace
+- workspace-team bootstrap and any other workspace fallback state must default to zero connected repositories rather than seeding visibility from host-wide discovery
+- workspace-scoped repository detail, policy, snapshot, calibration, run, action-detail, and authority-backed queries must require an active workspace id all the way through the backend adapter boundary rather than accepting an optional scope
 
 ### WebSocket
 
@@ -142,6 +166,7 @@ The normative frontend stack is:
 - React Hook Form plus Zod for forms
 - NextAuth.js with GitHub provider
 - PostgreSQL plus Drizzle for cloud-owned state
+- local filesystem persistence may remain available only as a development fallback when `DATABASE_URL` is absent; production readiness requires the PostgreSQL path
 
 ## Component Architecture
 

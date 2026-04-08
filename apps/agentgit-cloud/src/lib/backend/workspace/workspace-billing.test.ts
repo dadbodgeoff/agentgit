@@ -8,7 +8,12 @@ import { vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
-import { resolveWorkspaceBilling, saveWorkspaceBilling } from "@/lib/backend/workspace/workspace-billing";
+import { withControlPlaneState } from "@/lib/backend/control-plane/state";
+import {
+  resolveWorkspaceBilling,
+  saveWorkspaceBilling,
+  WorkspaceBillingLimitError,
+} from "@/lib/backend/workspace/workspace-billing";
 import type { WorkspaceSession } from "@/schemas/cloud";
 
 function buildWorkspaceSession(): WorkspaceSession {
@@ -72,14 +77,14 @@ describe("workspace billing backend", () => {
     }
   });
 
-  it("derives workspace usage metrics from connected repositories and invites", () => {
+  it("derives workspace usage metrics from connected repositories and invites", async () => {
     const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
     tempDirs.push(repoRoot);
     process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -94,21 +99,81 @@ describe("workspace billing backend", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const billing = resolveWorkspaceBilling(buildWorkspaceSession());
+    const billing = await resolveWorkspaceBilling(buildWorkspaceSession());
 
     expect(billing.repositoriesConnected).toBe(0);
     expect(billing.seatsUsed).toBe(3);
     expect(billing.approvalsUsed).toBe(0);
   });
 
-  it("persists billing updates and keeps derived usage fresh", () => {
+  it("counts recent approval requests toward the hosted beta approval budget", async () => {
     const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
     tempDirs.push(repoRoot);
     process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    withControlPlaneState((store) => {
+      store.appendEvent({
+        ingestedAt: "2026-04-07T19:00:00Z",
+        event: {
+          schemaVersion: "cloud-sync.v1",
+          eventId: "evt_approval_01",
+          connectorId: "conn_01",
+          workspaceId: "ws_acme_01",
+          repository: { owner: "acme", name: "platform-ui" },
+          sequence: 1,
+          occurredAt: "2026-04-07T19:00:00Z",
+          type: "approval.requested",
+          payload: {
+            approval: {
+              approval_id: "appr_01",
+              run_id: "run_01",
+              workflow_name: "Release train",
+              action_id: "act_01",
+              action_summary: "Deploy",
+              action_domain: "deploy",
+              side_effect_level: "mutating",
+              status: "pending",
+              requested_at: "2026-04-07T19:00:00Z",
+              resolved_at: null,
+              resolution_note: null,
+              decision_requested: "approve_or_deny",
+              snapshot_required: false,
+              target_locator: "deploy://prod",
+              target_label: "prod",
+              reason_summary: "Ship it",
+            },
+          },
+        },
+      });
+    });
+
+    const billing = await resolveWorkspaceBilling(buildWorkspaceSession());
+
+    expect(billing.approvalsUsed).toBe(1);
+  });
+
+  it("persists billing updates and keeps derived usage fresh", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -120,7 +185,7 @@ describe("workspace billing backend", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const result = saveWorkspaceBilling(buildWorkspaceSession(), {
+    const result = await saveWorkspaceBilling(buildWorkspaceSession(), {
       planTier: "enterprise",
       billingCycle: "monthly",
       billingEmail: "finance@acme.dev",
@@ -132,5 +197,44 @@ describe("workspace billing backend", () => {
     expect(result.billing.monthlyEstimateUsd).toBe(4990);
     expect(result.billing.seatsIncluded).toBe(50);
     expect(result.billing.seatsUsed).toBe(2);
+    expect(result.billing.billingProvider).toBe("beta_gate");
+    expect(result.billing.limitBreaches).toEqual([]);
+    expect(result.billing.invoices).toEqual([]);
+  });
+
+  it("rejects plan saves that would leave the workspace over the selected beta limits", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [
+        { name: "Riley", email: "riley@acme.dev", role: "member" },
+        { name: "Ari", email: "ari@acme.dev", role: "admin" },
+        { name: "Sam", email: "sam@acme.dev", role: "member" },
+        { name: "Noa", email: "noa@acme.dev", role: "member" },
+        { name: "Mika", email: "mika@acme.dev", role: "member" },
+      ],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    await expect(
+      saveWorkspaceBilling(buildWorkspaceSession(), {
+        planTier: "starter",
+        billingCycle: "monthly",
+        billingEmail: "finance@acme.dev",
+        invoiceEmail: "ap@acme.dev",
+        taxId: "",
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceBillingLimitError);
   });
 });

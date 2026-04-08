@@ -38,11 +38,11 @@ describe("workspace access resolution", () => {
     }
   });
 
-  it("resolves persisted workspace membership by email", () => {
+  it("resolves persisted workspace membership by email", async () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-auth-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -54,7 +54,7 @@ describe("workspace access resolution", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const access = resolveWorkspaceAccessForIdentity({ email: "jordan@acme.dev", login: "jordansmith" });
+    const access = await resolveWorkspaceAccessForIdentity({ email: "jordan@acme.dev", login: "jordansmith" });
 
     expect(access).toMatchObject({
       role: "admin",
@@ -66,24 +66,26 @@ describe("workspace access resolution", () => {
     });
   });
 
-  it("does not grant access from shared fallback workspace settings alone", () => {
+  it("does not grant access from shared fallback workspace settings alone", async () => {
     process.env.AUTH_WORKSPACE_ID = "ws_shared";
     process.env.AUTH_WORKSPACE_NAME = "Shared";
     process.env.AUTH_WORKSPACE_SLUG = "shared";
 
-    const access = resolveWorkspaceAccessForIdentity({ email: "unknown@agentgit.dev", login: "unknown" });
+    const access = await resolveWorkspaceAccessForIdentity({ email: "unknown@agentgit.dev", login: "unknown" });
 
     expect(access).toBeNull();
   });
 
-  it("allows an explicitly configured bootstrap identity", () => {
+  it("allows an explicitly configured bootstrap identity", async () => {
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-auth-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
     process.env.AUTH_BOOTSTRAP_USER_EMAIL = "owner@acme.dev";
     process.env.AUTH_BOOTSTRAP_WORKSPACE_ROLE = "owner";
     process.env.AUTH_WORKSPACE_ID = "ws_bootstrap_01";
     process.env.AUTH_WORKSPACE_NAME = "Bootstrap workspace";
     process.env.AUTH_WORKSPACE_SLUG = "bootstrap-workspace";
 
-    const access = resolveWorkspaceAccessForIdentity({ email: "owner@acme.dev", login: "acme-owner" });
+    const access = await resolveWorkspaceAccessForIdentity({ email: "owner@acme.dev", login: "acme-owner" });
 
     expect(access).toMatchObject({
       role: "owner",
@@ -95,11 +97,11 @@ describe("workspace access resolution", () => {
     });
   });
 
-  it("fails closed when the same identity belongs to multiple workspaces", () => {
+  it("fails closed when the same identity belongs to multiple workspaces", async () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-auth-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -110,7 +112,7 @@ describe("workspace access resolution", () => {
       policyPack: "guarded",
       launchedAt: "2026-04-07T15:04:00Z",
     });
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_beta_01",
       workspaceName: "Beta platform",
       workspaceSlug: "beta-platform",
@@ -122,7 +124,7 @@ describe("workspace access resolution", () => {
       launchedAt: "2026-04-07T16:04:00Z",
     });
 
-    const access = resolveWorkspaceAccessForIdentity({ email: "jordan@acme.dev", login: "jordansmith" });
+    const access = await resolveWorkspaceAccessForIdentity({ email: "jordan@acme.dev", login: "jordansmith" });
 
     expect(access).toBeNull();
   });

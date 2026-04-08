@@ -19,13 +19,13 @@ const DEFAULT_WORKSPACE_SETTINGS = {
   "approvalTtlMinutes" | "defaultNotificationChannel" | "freezeDeploysOutsideBusinessHours" | "requireRejectComment"
 >;
 
-export function resolveWorkspaceSettings(workspaceSession: WorkspaceSession): WorkspaceSettings {
-  const persistedSettings = getStoredWorkspaceSettings(workspaceSession.activeWorkspace.id);
+export async function resolveWorkspaceSettings(workspaceSession: WorkspaceSession): Promise<WorkspaceSettings> {
+  const persistedSettings = await getStoredWorkspaceSettings(workspaceSession.activeWorkspace.id);
   if (persistedSettings) {
     return persistedSettings;
   }
 
-  const workspaceState = getWorkspaceConnectionState(workspaceSession.activeWorkspace.id);
+  const workspaceState = await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id);
 
   return {
     workspaceName: workspaceState?.workspaceName ?? workspaceSession.activeWorkspace.name,
@@ -38,15 +38,15 @@ export function resolveWorkspaceSettings(workspaceSession: WorkspaceSession): Wo
   };
 }
 
-export function saveWorkspaceSettings(
+export async function saveWorkspaceSettings(
   workspaceSession: WorkspaceSession,
   settings: WorkspaceSettings,
-): WorkspaceSettingsSaveResponse {
-  const savedSettings = saveStoredWorkspaceSettings(workspaceSession.activeWorkspace.id, settings);
-  const workspaceState = getWorkspaceConnectionState(workspaceSession.activeWorkspace.id);
+): Promise<WorkspaceSettingsSaveResponse> {
+  const savedSettings = await saveStoredWorkspaceSettings(workspaceSession.activeWorkspace.id, settings);
+  const workspaceState = await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id);
 
   if (workspaceState) {
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       ...workspaceState,
       workspaceName: savedSettings.workspaceName,
       workspaceSlug: savedSettings.workspaceSlug,

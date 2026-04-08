@@ -41,7 +41,7 @@ type SnapshotEventContext = {
 };
 
 type RepositorySnapshotRuntime = {
-  repository: NonNullable<ReturnType<typeof findRepositoryRuntimeRecord>>;
+  repository: NonNullable<Awaited<ReturnType<typeof findRepositoryRuntimeRecord>>>;
   snapshots: RepositorySnapshotsResponse;
 };
 
@@ -238,9 +238,9 @@ async function buildSnapshotItem(params: {
 async function resolveRepositorySnapshotRuntime(
   owner: string,
   name: string,
-  workspaceId?: string,
+  workspaceId: string,
 ): Promise<RepositorySnapshotRuntime | null> {
-  const repository = findRepositoryRuntimeRecord(owner, name, workspaceId);
+  const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
     return null;
   }
@@ -420,7 +420,7 @@ async function requireSnapshotRuntime(
   owner: string,
   name: string,
   snapshotId: string,
-  workspaceId?: string,
+  workspaceId: string,
 ): Promise<{
   repository: RepositorySnapshotRuntime["repository"];
   snapshot: RepositorySnapshotListItem;
@@ -458,7 +458,7 @@ async function requireSnapshotRuntime(
 export async function listRepositorySnapshots(
   owner: string,
   name: string,
-  workspaceId?: string,
+  workspaceId: string,
 ): Promise<RepositorySnapshotsResponse | null> {
   const runtime = await resolveRepositorySnapshotRuntime(owner, name, workspaceId);
   return runtime?.snapshots ?? null;
@@ -470,7 +470,7 @@ export async function restoreRepositorySnapshot(
   snapshotId: string,
   intent: Extract<SnapshotRestoreIntent, "plan" | "execute">,
   requestId: string,
-  workspaceId?: string,
+  workspaceId: string,
 ): Promise<SnapshotRestorePreview | SnapshotRestoreQueuedResponse> {
   const runtime = await requireSnapshotRuntime(owner, name, snapshotId, workspaceId);
 
@@ -484,13 +484,6 @@ export async function restoreRepositorySnapshot(
         snapshotId,
         plan: result.recovery_plan,
       });
-    }
-
-    if (!workspaceId) {
-      throw new RepositorySnapshotRestoreError(
-        "Workspace context is required to execute a connector restore.",
-        401,
-      );
     }
 
     const connector = findConnectorForRepository(

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { hasDatabaseUrl } from "@/lib/db/client";
 import { authFeatureFlags, isProductionAuth } from "@/lib/auth/provider-config";
 
 export type ReadinessLevel = "ok" | "warn" | "fail";
@@ -28,6 +29,14 @@ function resolveConfiguredAuthSecret(): string | null {
 function resolveAuthBaseUrl(): string | null {
   const baseUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? null;
   return baseUrl && baseUrl.trim().length > 0 ? baseUrl.trim() : null;
+}
+
+function isEnabled(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
 function resolveAgentGitRoot(): string {
@@ -81,8 +90,30 @@ export function getCloudRuntimeChecks(): RuntimeCheck[] {
     process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT,
   );
   const vercelAnalyticsReady = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_ENV);
+  const uptimeMonitorUrl = process.env.AGENTGIT_UPTIME_MONITOR_URL?.trim() ?? "";
+  const requestMetricsProvider = (process.env.AGENTGIT_REQUEST_METRICS_PROVIDER?.trim().toLowerCase() ?? "") as
+    | ""
+    | "vercel"
+    | "datadog";
+  const datadogMetricsReady = Boolean(process.env.DD_API_KEY ?? process.env.DATADOG_API_KEY);
+  const requestMetricsReady =
+    requestMetricsProvider === "vercel"
+      ? vercelAnalyticsReady
+      : requestMetricsProvider === "datadog"
+        ? datadogMetricsReady
+        : false;
+  const sentryAlertsConfigured = isEnabled(process.env.AGENTGIT_SENTRY_ALERTS_CONFIGURED);
 
   return [
+    {
+      id: "cloud_database_configured",
+      level: hasDatabaseUrl() ? "ok" : isProductionAuth ? "fail" : "warn",
+      message: hasDatabaseUrl()
+        ? "Cloud database connection string is configured."
+        : isProductionAuth
+          ? "DATABASE_URL must be set for production persistence."
+          : "DATABASE_URL is not configured; local filesystem persistence fallback is active.",
+    },
     {
       id: "auth_secret",
       level: authSecret ? "ok" : isProductionAuth ? "fail" : "warn",
@@ -169,6 +200,33 @@ export function getCloudRuntimeChecks(): RuntimeCheck[] {
         : isProductionAuth
           ? "Vercel deployment environment variables are missing for production analytics."
           : "Vercel deployment environment variables are not set in this environment.",
+    },
+    {
+      id: "uptime_monitoring",
+      level: uptimeMonitorUrl ? "ok" : isProductionAuth ? "fail" : "warn",
+      message: uptimeMonitorUrl
+        ? `External uptime monitor is configured: ${uptimeMonitorUrl}.`
+        : isProductionAuth
+          ? "External uptime monitoring is not configured. Point a Checkly or Better Stack monitor at /api/v1/healthz."
+          : "External uptime monitoring is not configured in this environment.",
+    },
+    {
+      id: "request_metrics",
+      level: requestMetricsReady ? "ok" : isProductionAuth ? "fail" : "warn",
+      message: requestMetricsReady
+        ? `Request metrics are configured through ${requestMetricsProvider}.`
+        : isProductionAuth
+          ? "Request metrics are not configured. Set AGENTGIT_REQUEST_METRICS_PROVIDER to vercel or datadog and configure the matching runtime."
+          : "Request metrics are not configured in this environment.",
+    },
+    {
+      id: "sentry_alerts",
+      level: sentryAlertsConfigured ? "ok" : isProductionAuth ? "fail" : "warn",
+      message: sentryAlertsConfigured
+        ? "Sentry alert rules are marked as configured."
+        : isProductionAuth
+          ? "Sentry alert rules have not been acknowledged as configured."
+          : "Sentry alert rules are not marked as configured in this environment.",
     },
   ];
 }

@@ -7,6 +7,18 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RunJournal } from "@agentgit/run-journal";
 
+const authorityHello = vi.fn(async () => ({
+  api_version: "0.1.0",
+}));
+const authorityResolveApproval = vi.fn();
+
+vi.mock("@agentgit/authority-sdk", () => ({
+  AuthorityClient: class {
+    hello = authorityHello;
+    resolveApproval = authorityResolveApproval;
+  },
+}));
+
 import {
   CloudConnectorRuntime,
   CloudConnectorService,
@@ -361,5 +373,90 @@ describe("cloud connector runtime", () => {
       delete process.env.AGENTGIT_GITHUB_TOKEN;
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("resolves approvals through the local daemon command path and reports the execution result", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-connector-"));
+    tempDirs.push(tempDir);
+    const repoRoot = path.join(tempDir, "repo");
+    fs.mkdirSync(repoRoot, { recursive: true });
+    initGitRepo(repoRoot);
+    seedJournal(repoRoot);
+
+    authorityResolveApproval.mockResolvedValue({
+      approval_request: {
+        approval_id: "appr_connector_01",
+        run_id: "run_connector_01",
+        action_id: "act_connector_01",
+        status: "approved",
+        resolved_at: "2026-04-07T19:00:16Z",
+      },
+    });
+
+    await withServer(
+      async ({ baseUrl, acknowledgements }) => {
+        const stateDbPath = path.join(tempDir, "connector.db");
+        const store = new CloudConnectorStateStore(stateDbPath);
+        const service = new CloudConnectorService(store, new CloudSyncClient(baseUrl));
+        const runtime = new CloudConnectorRuntime({
+          stateStore: store,
+          service,
+          workspaceRoot: repoRoot,
+          connectorVersion: "0.1.0",
+          now: () => "2026-04-07T19:00:10Z",
+        });
+
+        try {
+          await runtime.bootstrapRegister({
+            cloudBaseUrl: baseUrl,
+            workspaceId: "ws_acme_01",
+            bootstrapToken: "agcbt_test",
+          });
+
+          const processed = await runtime.processCommands();
+          expect(processed[0]).toMatchObject({
+            commandId: "cmd_resolve_01",
+            status: "completed",
+          });
+          expect(authorityHello).toHaveBeenCalledWith([fs.realpathSync.native(repoRoot)]);
+          expect(authorityResolveApproval).toHaveBeenCalledWith("appr_connector_01", "approved", "Ship it");
+          expect(acknowledgements.map((entry) => entry.status)).toEqual(["acked", "completed"]);
+          expect(acknowledgements[1]?.result).toMatchObject({
+            type: "resolve_approval",
+            approvalId: "appr_connector_01",
+            runId: "run_connector_01",
+            actionId: "act_connector_01",
+            resolution: "approved",
+            resolvedAt: "2026-04-07T19:00:16Z",
+          });
+        } finally {
+          store.close();
+        }
+      },
+      {
+        commandBatches: [
+          [
+            {
+              schemaVersion: "cloud-sync.v1",
+              commandId: "cmd_resolve_01",
+              connectorId: "conn_test_01",
+              workspaceId: "ws_acme_01",
+              repository: {
+                owner: "acme",
+                name: "platform-ui",
+              },
+              issuedAt: "2026-04-07T19:00:12Z",
+              expiresAt: "2026-04-08T19:00:12Z",
+              type: "resolve_approval",
+              payload: {
+                approvalId: "appr_connector_01",
+                resolution: "approved",
+                note: "Ship it",
+              },
+            },
+          ],
+        ],
+      },
+    );
   });
 });

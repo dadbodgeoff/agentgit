@@ -10,7 +10,7 @@ import type { RunSummary } from "@agentgit/schemas";
 
 import { RepositoryListResponseSchema, type AgentStatus, type RepositoryListItem, type RunStatus } from "@/schemas/cloud";
 import { buildLocalProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
-import { getWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { getWorkspaceConnectionState, listWorkspaceConnectionStates } from "@/lib/backend/workspace/cloud-state";
 import { resolveWorkspaceRoots } from "@/lib/backend/workspace/roots";
 
 type GitRepositoryMetadata = {
@@ -29,15 +29,11 @@ export type WorkspaceRepositoryRuntimeRecord = {
   inventory: RepositoryListItem;
 };
 
-function filterRecordsForWorkspace(
+async function filterRecordsForWorkspace(
   records: WorkspaceRepositoryRuntimeRecord[],
-  workspaceId?: string,
-): WorkspaceRepositoryRuntimeRecord[] {
-  if (!workspaceId) {
-    return records;
-  }
-
-  const workspaceState = getWorkspaceConnectionState(workspaceId);
+  workspaceId: string,
+): Promise<WorkspaceRepositoryRuntimeRecord[]> {
+  const workspaceState = await getWorkspaceConnectionState(workspaceId);
   if (!workspaceState) {
     return [];
   }
@@ -302,21 +298,21 @@ function buildRepositoryRuntimeRecord(workspaceRoot: string): WorkspaceRepositor
   };
 }
 
-export function collectWorkspaceRepositoryRuntimeRecords(workspaceId?: string): WorkspaceRepositoryRuntimeRecord[] {
-  const records = resolveWorkspaceRoots()
+export async function collectDiscoveredRepositoryRuntimeRecords(): Promise<WorkspaceRepositoryRuntimeRecord[]> {
+  return resolveWorkspaceRoots()
     .map((workspaceRoot) => buildRepositoryRuntimeRecord(workspaceRoot))
     .filter((repository): repository is WorkspaceRepositoryRuntimeRecord => repository !== null)
     .sort(
       (left, right) =>
         new Date(right.inventory.lastUpdatedAt).getTime() - new Date(left.inventory.lastUpdatedAt).getTime(),
     );
-
-  return filterRecordsForWorkspace(records, workspaceId);
 }
 
-export function listRepositoryInventory(workspaceId?: string) {
-  const repositories = collectWorkspaceRepositoryRuntimeRecords(workspaceId).map((record) => record.inventory);
+export async function collectWorkspaceRepositoryRuntimeRecords(workspaceId: string): Promise<WorkspaceRepositoryRuntimeRecord[]> {
+  return filterRecordsForWorkspace(await collectDiscoveredRepositoryRuntimeRecords(), workspaceId);
+}
 
+function buildRepositoryListResponse(repositories: RepositoryListItem[]) {
   return RepositoryListResponseSchema.parse({
     items: repositories,
     total: repositories.length,
@@ -326,8 +322,32 @@ export function listRepositoryInventory(workspaceId?: string) {
   });
 }
 
-export function listAllRepositoryOptions() {
-  return collectWorkspaceRepositoryRuntimeRecords().map((record) => ({
+export async function listDiscoveredRepositoryInventory() {
+  return buildRepositoryListResponse((await collectDiscoveredRepositoryRuntimeRecords()).map((record) => record.inventory));
+}
+
+export async function listRepositoryInventory(workspaceId: string) {
+  const repositories = (await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).map((record) => record.inventory);
+
+  return buildRepositoryListResponse(repositories);
+}
+
+function buildRepositoryClaims(workspaceStates: Awaited<ReturnType<typeof listWorkspaceConnectionStates>>) {
+  const claims = new Map<string, Set<string>>();
+
+  for (const workspaceState of workspaceStates) {
+    for (const repositoryId of workspaceState.repositoryIds) {
+      const claimants = claims.get(repositoryId) ?? new Set<string>();
+      claimants.add(workspaceState.workspaceId);
+      claims.set(repositoryId, claimants);
+    }
+  }
+
+  return claims;
+}
+
+function mapRepositoryOption(record: WorkspaceRepositoryRuntimeRecord) {
+  return {
     id: record.inventory.id,
     owner: record.inventory.owner,
     name: record.inventory.name,
@@ -337,24 +357,39 @@ export function listAllRepositoryOptions() {
         ? `Latest workflow: ${record.latestRun.workflow_name}.`
         : `Governed repository rooted at ${record.metadata.root}.`,
     requiresOrgApproval: false,
-  }));
+  };
 }
 
-export function findRepositoryRuntimeRecord(
+export async function listWorkspaceRepositoryOptions(workspaceId: string) {
+  const [records, workspaceStates] = await Promise.all([
+    collectDiscoveredRepositoryRuntimeRecords(),
+    listWorkspaceConnectionStates(),
+  ]);
+  const repositoryClaims = buildRepositoryClaims(workspaceStates);
+
+  return records
+    .filter((record) => {
+      const claimants = repositoryClaims.get(record.inventory.id);
+      return !claimants || claimants.size === 0 || claimants.has(workspaceId);
+    })
+    .map(mapRepositoryOption);
+}
+
+export async function findRepositoryRuntimeRecord(
   owner: string,
   name: string,
-  workspaceId?: string,
-): WorkspaceRepositoryRuntimeRecord | null {
+  workspaceId: string,
+): Promise<WorkspaceRepositoryRuntimeRecord | null> {
   return (
-    collectWorkspaceRepositoryRuntimeRecords(workspaceId).find(
+    (await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).find(
       (record) => record.inventory.owner === owner && record.inventory.name === name,
     ) ?? null
   );
 }
 
-export function findRepositoryRuntimeRecordById(
+export async function findRepositoryRuntimeRecordById(
   repoId: string,
-  workspaceId?: string,
-): WorkspaceRepositoryRuntimeRecord | null {
-  return collectWorkspaceRepositoryRuntimeRecords(workspaceId).find((record) => record.inventory.id === repoId) ?? null;
+  workspaceId: string,
+): Promise<WorkspaceRepositoryRuntimeRecord | null> {
+  return (await collectWorkspaceRepositoryRuntimeRecords(workspaceId)).find((record) => record.inventory.id === repoId) ?? null;
 }

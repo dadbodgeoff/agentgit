@@ -6,6 +6,7 @@ import {
   registerConnectorWithBootstrapToken,
 } from "@/lib/backend/control-plane/connectors";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
+import { enforceConnectorRegistrationRateLimits } from "@/lib/security/rate-limit";
 import { ConnectorRegistrationRequestSchema } from "@agentgit/cloud-sync-protocol";
 
 export async function POST(request: Request) {
@@ -22,12 +23,17 @@ export async function POST(request: Request) {
   }
 
   try {
+    const rateLimited = await enforceConnectorRegistrationRateLimits(request, parsed.data.workspaceId);
+    if (rateLimited) {
+      return rateLimited;
+    }
+
     const bootstrapToken = getBearerToken(request);
     const now = new Date().toISOString();
     const registration = bootstrapToken
       ? registerConnectorWithBootstrapToken(parsed.data, bootstrapToken, now)
       : await (async () => {
-          const access = await requireApiRole("admin");
+          const access = await requireApiRole("admin", request);
           if (access.denied) {
             throw access.denied;
           }

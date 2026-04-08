@@ -8,6 +8,8 @@ import { RunJournal } from "@agentgit/run-journal";
 
 vi.mock("server-only", () => ({}));
 
+import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { listDiscoveredRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
 import {
   resolveRepositoryPolicy,
   saveRepositoryPolicy,
@@ -95,7 +97,20 @@ describe("repository policy backend adapter", () => {
     tempDirs.push(process.env.AGENTGIT_ROOT);
     process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = path.join(repoRoot, ".missing-global.toml");
 
-    const policy = await resolveRepositoryPolicy("acme", "platform-ui");
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const policy = await resolveRepositoryPolicy("acme", "platform-ui", "ws_acme_01");
 
     expect(policy).not.toBeNull();
     expect(policy?.hasWorkspaceOverride).toBe(false);
@@ -110,6 +125,19 @@ describe("repository policy backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
     process.env.AGENTGIT_POLICY_GLOBAL_CONFIG_PATH = path.join(repoRoot, ".missing-global.toml");
+
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
 
     const result = await saveRepositoryPolicy(
       "acme",
@@ -126,6 +154,7 @@ describe("repository policy backend adapter", () => {
         null,
         2,
       ),
+      "ws_acme_01",
     );
 
     expect(result).not.toBeNull();
@@ -163,7 +192,20 @@ describe("repository policy backend adapter", () => {
       });
 
     try {
-      const policy = await resolveRepositoryPolicy("acme", "platform-ui");
+      const inventory = await listDiscoveredRepositoryInventory();
+      await saveWorkspaceConnectionState({
+        workspaceId: "ws_acme_01",
+        workspaceName: "Acme platform",
+        workspaceSlug: "acme-platform",
+        repositoryIds: inventory.items.map((item) => item.id),
+        members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+        invites: [],
+        defaultNotificationChannel: "slack",
+        policyPack: "guarded",
+        launchedAt: "2026-04-07T15:04:00Z",
+      });
+
+      const policy = await resolveRepositoryPolicy("acme", "platform-ui", "ws_acme_01");
 
       expect(policy).not.toBeNull();
       expect(policy?.recommendations).toEqual([]);

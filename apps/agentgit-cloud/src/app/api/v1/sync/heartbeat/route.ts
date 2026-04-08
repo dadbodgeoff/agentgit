@@ -6,7 +6,7 @@ import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observa
 
 export async function POST(request: Request) {
   const requestId = createRequestId(request);
-  const connectorSession = requireConnectorSession(request);
+  const connectorSession = await requireConnectorSession(request);
 
   if (connectorSession.denied) {
     return connectorSession.denied;

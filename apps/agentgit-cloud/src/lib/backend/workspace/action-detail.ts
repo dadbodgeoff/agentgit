@@ -297,9 +297,9 @@ export async function getActionDetail(
   name: string,
   runId: string,
   actionId: string,
-  workspaceId?: string,
+  workspaceId: string,
 ) {
-  const repository = findRepositoryRuntimeRecord(owner, name, workspaceId);
+  const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
     return null;
   }
@@ -343,17 +343,15 @@ export async function getActionDetail(
     let stepDetails: QueryHelperResponsePayload | null = null;
     let policyExplanation: QueryHelperResponsePayload | null = null;
     try {
-      if (workspaceId) {
-        timeline = await withWorkspaceAuthorityClient(workspaceId, (client) => client.queryTimeline(runId, "internal"));
-        const step = timeline.steps.find((candidate) => candidate.action_id === actionId);
-        if (step) {
-          stepDetails = await withWorkspaceAuthorityClient(workspaceId, (client) =>
-            client.queryHelper(runId, "step_details", step.step_id, undefined, "internal"),
-          );
-          policyExplanation = await withWorkspaceAuthorityClient(workspaceId, (client) =>
-            client.queryHelper(runId, "explain_policy_decision", step.step_id, undefined, "internal"),
-          );
-        }
+      timeline = await withWorkspaceAuthorityClient(workspaceId, (client) => client.queryTimeline(runId, "internal"));
+      const step = timeline.steps.find((candidate) => candidate.action_id === actionId);
+      if (step) {
+        stepDetails = await withWorkspaceAuthorityClient(workspaceId, (client) =>
+          client.queryHelper(runId, "step_details", step.step_id, undefined, "internal"),
+        );
+        policyExplanation = await withWorkspaceAuthorityClient(workspaceId, (client) =>
+          client.queryHelper(runId, "explain_policy_decision", step.step_id, undefined, "internal"),
+        );
       }
     } catch {
       // Fallback to journal-only detail when the authority daemon is unavailable.

@@ -1,41 +1,41 @@
 import "server-only";
 
 import type {
+  BillingLimitBreach,
   BillingPlanTier,
   BillingUpdate,
   WorkspaceBilling,
   WorkspaceSession,
 } from "@/schemas/cloud";
 
+import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { getStoredWorkspaceBilling, getWorkspaceConnectionState, saveStoredWorkspaceBilling } from "@/lib/backend/workspace/cloud-state";
-import { collectWorkspaceRepositoryRuntimeRecords } from "@/lib/backend/workspace/repository-inventory";
 
-const DEFAULT_PAYMENT_METHOD_LABEL = "Visa ending in 4242";
+const DEFAULT_PAYMENT_METHOD_LABEL = "Beta access granted";
 const DEFAULT_PAYMENT_METHOD_STATUS = "active" as const;
-const DEFAULT_INVOICES = [
-  {
-    id: "inv_2026_03",
-    periodLabel: "Mar 2026",
-    amountUsd: 1490,
-    status: "paid" as const,
-    issuedAt: "2026-03-01T12:00:00Z",
-  },
-  {
-    id: "inv_2026_04",
-    periodLabel: "Apr 2026",
-    amountUsd: 1490,
-    status: "open" as const,
-    issuedAt: "2026-04-01T12:00:00Z",
-    dueAt: "2026-04-15T12:00:00Z",
-  },
-  {
-    id: "inv_2026_02",
-    periodLabel: "Feb 2026",
-    amountUsd: 1490,
-    status: "paid" as const,
-    issuedAt: "2026-02-01T12:00:00Z",
-  },
-];
+const DEFAULT_INVOICES: WorkspaceBilling["invoices"] = [];
+const APPROVAL_USAGE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+type WorkspaceUsageSnapshot = {
+  repositoriesConnected: number;
+  seatsUsed: number;
+  approvalsUsed: number;
+};
+
+type BillingLimitSnapshot = Pick<
+  WorkspaceBilling,
+  "seatsIncluded" | "repositoriesIncluded" | "approvalsIncluded"
+>;
+
+export class WorkspaceBillingLimitError extends Error {
+  constructor(
+    public readonly breaches: BillingLimitBreach[],
+    message: string,
+  ) {
+    super(message);
+    this.name = "WorkspaceBillingLimitError";
+  }
+}
 
 function getPlanLimits(planTier: BillingPlanTier) {
   if (planTier === "starter") {
@@ -65,24 +65,36 @@ function getPlanLimits(planTier: BillingPlanTier) {
 }
 
 function getNextInvoiceDate(): string {
-  return "2026-05-01T12:00:00Z";
+  return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function deriveApprovalsUsed(workspaceId: string): number {
-  return collectWorkspaceRepositoryRuntimeRecords(workspaceId).reduce(
-    (total, record) => total + record.pendingApprovalCount,
-    0,
+  const windowStartMs = Date.now() - APPROVAL_USAGE_WINDOW_MS;
+  return withControlPlaneState((store) =>
+    store
+      .listEvents()
+      .filter(
+        (record) =>
+          record.event.workspaceId === workspaceId &&
+          record.event.type === "approval.requested" &&
+          new Date(record.event.occurredAt).getTime() >= windowStartMs,
+      ).length,
   );
 }
 
-function deriveSeatsUsed(workspaceId: string): number {
-  const workspaceState = getWorkspaceConnectionState(workspaceId);
-  return 1 + (workspaceState?.invites.length ?? 0);
+async function deriveSeatsUsed(workspaceId: string): Promise<number> {
+  const workspaceState = await getWorkspaceConnectionState(workspaceId);
+  if (!workspaceState) {
+    return 1;
+  }
+
+  return Math.max(workspaceState.members.length, 1) + workspaceState.invites.length;
 }
 
-function deriveUsageSnapshot(workspaceId: string) {
-  const repositoriesConnected = collectWorkspaceRepositoryRuntimeRecords(workspaceId).length;
-  const seatsUsed = deriveSeatsUsed(workspaceId);
+async function deriveUsageSnapshot(workspaceId: string) {
+  const workspaceState = await getWorkspaceConnectionState(workspaceId);
+  const repositoriesConnected = workspaceState?.repositoryIds.length ?? 0;
+  const seatsUsed = await deriveSeatsUsed(workspaceId);
   const approvalsUsed = deriveApprovalsUsed(workspaceId);
 
   return {
@@ -92,35 +104,157 @@ function deriveUsageSnapshot(workspaceId: string) {
   };
 }
 
-function mergeDerivedUsage(workspaceId: string, billing: WorkspaceBilling): WorkspaceBilling {
-  const usage = deriveUsageSnapshot(workspaceId);
+function getBillingLimitBreaches(
+  limits: BillingLimitSnapshot,
+  usage: WorkspaceUsageSnapshot,
+): BillingLimitBreach[] {
+  const breaches: BillingLimitBreach[] = [];
+
+  if (usage.seatsUsed > limits.seatsIncluded) {
+    breaches.push("seats");
+  }
+
+  if (usage.repositoriesConnected > limits.repositoriesIncluded) {
+    breaches.push("repositories");
+  }
+
+  if (usage.approvalsUsed > limits.approvalsIncluded) {
+    breaches.push("approvals");
+  }
+
+  return breaches;
+}
+
+function describeLimitBreaches(
+  breaches: BillingLimitBreach[],
+  limits: BillingLimitSnapshot,
+  usage: WorkspaceUsageSnapshot,
+): string {
+  const parts = breaches.map((breach) => {
+    if (breach === "seats") {
+      return `${usage.seatsUsed}/${limits.seatsIncluded} seats`;
+    }
+
+    if (breach === "repositories") {
+      return `${usage.repositoriesConnected}/${limits.repositoriesIncluded} repositories`;
+    }
+
+    return `${usage.approvalsUsed}/${limits.approvalsIncluded} approvals`;
+  });
+
+  return `Workspace usage exceeds the selected beta plan limits for ${parts.join(", ")}. Upgrade the plan or reduce usage.`;
+}
+
+async function mergeDerivedUsage(
+  workspaceId: string,
+  billing: WorkspaceBilling,
+  overrides?: Partial<WorkspaceUsageSnapshot>,
+): Promise<WorkspaceBilling> {
+  const usage = {
+    ...(await deriveUsageSnapshot(workspaceId)),
+    ...overrides,
+  };
+  const limitBreaches = getBillingLimitBreaches(billing, usage);
 
   return {
     ...billing,
+    billingProvider: billing.billingProvider ?? "beta_gate",
+    billingAccessStatus: limitBreaches.length > 0 ? "over_limit" : "active",
+    limitBreaches,
     repositoriesConnected: usage.repositoriesConnected,
     seatsUsed: usage.seatsUsed,
     approvalsUsed: usage.approvalsUsed,
+    paymentMethodLabel:
+      billing.billingProvider === "stripe"
+        ? billing.paymentMethodLabel
+        : DEFAULT_PAYMENT_METHOD_LABEL,
+    paymentMethodStatus:
+      billing.billingProvider === "stripe"
+        ? billing.paymentMethodStatus
+        : limitBreaches.length > 0
+          ? "update_required"
+          : DEFAULT_PAYMENT_METHOD_STATUS,
+    invoices: billing.billingProvider === "stripe" ? billing.invoices : DEFAULT_INVOICES,
   };
 }
 
-export function resolveWorkspaceBilling(workspaceSession: WorkspaceSession): WorkspaceBilling {
-  const storedBilling = getStoredWorkspaceBilling(workspaceSession.activeWorkspace.id);
+async function getWorkspaceUsageSnapshotWithOverrides(
+  workspaceId: string,
+  overrides?: Partial<WorkspaceUsageSnapshot>,
+): Promise<WorkspaceUsageSnapshot> {
+  return {
+    ...(await deriveUsageSnapshot(workspaceId)),
+    ...overrides,
+  };
+}
+
+async function assertUsageFitsPlan(params: {
+  workspaceId: string;
+  planTier: BillingPlanTier;
+  usageOverrides?: Partial<WorkspaceUsageSnapshot>;
+  dimensions?: BillingLimitBreach[];
+}) {
+  const usage = await getWorkspaceUsageSnapshotWithOverrides(params.workspaceId, params.usageOverrides);
+  const limits = getPlanLimits(params.planTier);
+  const breaches = getBillingLimitBreaches(limits, usage).filter((breach) =>
+    params.dimensions ? params.dimensions.includes(breach) : true,
+  );
+
+  if (breaches.length > 0) {
+    throw new WorkspaceBillingLimitError(breaches, describeLimitBreaches(breaches, limits, usage));
+  }
+}
+
+export async function assertWorkspaceUsageWithinBillingLimits(
+  workspaceSession: WorkspaceSession,
+  params?: {
+    usageOverrides?: Partial<WorkspaceUsageSnapshot>;
+    dimensions?: BillingLimitBreach[];
+  },
+): Promise<void> {
+  const billing = await resolveWorkspaceBilling(workspaceSession);
+  await assertUsageFitsPlan({
+    workspaceId: workspaceSession.activeWorkspace.id,
+    planTier: billing.planTier,
+    usageOverrides: params?.usageOverrides,
+    dimensions: params?.dimensions,
+  });
+}
+
+export async function resolveWorkspaceBilling(workspaceSession: WorkspaceSession): Promise<WorkspaceBilling> {
+  const storedBilling = await getStoredWorkspaceBilling(workspaceSession.activeWorkspace.id);
   if (storedBilling) {
-    return mergeDerivedUsage(workspaceSession.activeWorkspace.id, {
+    return await mergeDerivedUsage(workspaceSession.activeWorkspace.id, {
       ...storedBilling,
       workspaceName: workspaceSession.activeWorkspace.name,
+      billingProvider: storedBilling.billingProvider ?? "beta_gate",
+      billingAccessStatus: storedBilling.billingAccessStatus ?? "active",
+      limitBreaches: storedBilling.limitBreaches ?? [],
+      nextInvoiceDate: storedBilling.nextInvoiceDate || getNextInvoiceDate(),
+      paymentMethodLabel:
+        storedBilling.billingProvider === "stripe"
+          ? storedBilling.paymentMethodLabel
+          : DEFAULT_PAYMENT_METHOD_LABEL,
+      paymentMethodStatus:
+        storedBilling.billingProvider === "stripe"
+          ? storedBilling.paymentMethodStatus
+          : DEFAULT_PAYMENT_METHOD_STATUS,
+      invoices: storedBilling.billingProvider === "stripe" ? storedBilling.invoices : DEFAULT_INVOICES,
     });
   }
 
   const planLimits = getPlanLimits("team");
-  return mergeDerivedUsage(workspaceSession.activeWorkspace.id, {
+  return await mergeDerivedUsage(workspaceSession.activeWorkspace.id, {
     workspaceId: workspaceSession.activeWorkspace.id,
     workspaceName: workspaceSession.activeWorkspace.name,
+    billingProvider: "beta_gate",
+    billingAccessStatus: "active",
+    limitBreaches: [],
     planTier: "team",
     billingCycle: "yearly",
-    billingEmail: "finance@acme.dev",
-    invoiceEmail: "ap@acme.dev",
-    taxId: "US-ACME-42",
+    billingEmail: workspaceSession.user.email,
+    invoiceEmail: workspaceSession.user.email,
+    taxId: undefined,
     seatsIncluded: planLimits.seatsIncluded,
     seatsUsed: 1,
     repositoriesIncluded: planLimits.repositoriesIncluded,
@@ -135,14 +269,22 @@ export function resolveWorkspaceBilling(workspaceSession: WorkspaceSession): Wor
   });
 }
 
-export function saveWorkspaceBilling(workspaceSession: WorkspaceSession, update: BillingUpdate) {
-  const currentBilling = resolveWorkspaceBilling(workspaceSession);
+export async function saveWorkspaceBilling(workspaceSession: WorkspaceSession, update: BillingUpdate) {
+  const workspaceId = workspaceSession.activeWorkspace.id;
+  const currentBilling = await resolveWorkspaceBilling(workspaceSession);
   const planLimits = getPlanLimits(update.planTier);
+  await assertUsageFitsPlan({
+    workspaceId,
+    planTier: update.planTier,
+  });
 
-  const savedBilling = saveStoredWorkspaceBilling(workspaceSession.activeWorkspace.id, {
+  const savedBilling = await saveStoredWorkspaceBilling(workspaceId, {
     ...currentBilling,
-    workspaceId: workspaceSession.activeWorkspace.id,
+    workspaceId,
     workspaceName: workspaceSession.activeWorkspace.name,
+    billingProvider: "beta_gate",
+    billingAccessStatus: "active",
+    limitBreaches: [],
     ...update,
     taxId: update.taxId || undefined,
     ...planLimits,
@@ -150,15 +292,15 @@ export function saveWorkspaceBilling(workspaceSession: WorkspaceSession, update:
       update.billingCycle === "yearly"
         ? Math.round(planLimits.monthlyEstimateUsd * 0.85)
         : planLimits.monthlyEstimateUsd,
-    nextInvoiceDate: currentBilling.nextInvoiceDate,
-    paymentMethodLabel: currentBilling.paymentMethodLabel || DEFAULT_PAYMENT_METHOD_LABEL,
-    paymentMethodStatus: currentBilling.paymentMethodStatus || DEFAULT_PAYMENT_METHOD_STATUS,
-    invoices: currentBilling.invoices.length > 0 ? currentBilling.invoices : DEFAULT_INVOICES,
+    nextInvoiceDate: getNextInvoiceDate(),
+    paymentMethodLabel: DEFAULT_PAYMENT_METHOD_LABEL,
+    paymentMethodStatus: DEFAULT_PAYMENT_METHOD_STATUS,
+    invoices: DEFAULT_INVOICES,
   });
 
   return {
-    billing: mergeDerivedUsage(workspaceSession.activeWorkspace.id, savedBilling),
+    billing: await mergeDerivedUsage(workspaceId, savedBilling),
     savedAt: new Date().toISOString(),
-    message: "Billing settings saved.",
+    message: "Billing settings saved. Hosted beta access now enforces the selected plan limits.",
   };
 }

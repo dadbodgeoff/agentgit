@@ -4,7 +4,11 @@ import {
   getWorkspaceConnectionState,
   saveWorkspaceConnectionState,
 } from "@/lib/backend/workspace/cloud-state";
-import { listAllRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
+import { listWorkspaceRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
+import {
+  assertWorkspaceUsageWithinBillingLimits,
+  WorkspaceBillingLimitError,
+} from "@/lib/backend/workspace/workspace-billing";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import {
   RepositoryConnectionBootstrapSchema,
@@ -14,8 +18,8 @@ import {
 } from "@/schemas/cloud";
 
 async function buildRepositoryBootstrap(access: { workspaceSession: WorkspaceSession }) {
-  const availableRepositories = listAllRepositoryOptions();
-  const persistedState = getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
+  const availableRepositories = await listWorkspaceRepositoryOptions(access.workspaceSession.activeWorkspace.id);
+  const persistedState = await getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
   const connectors = await listWorkspaceConnectors(access.workspaceSession.activeWorkspace.id, new Date().toISOString());
   const repositoryIdByKey = new Map(
     availableRepositories.map((repository) => [`${repository.owner}/${repository.name}`, repository.id] as const),
@@ -39,7 +43,7 @@ async function buildRepositoryBootstrap(access: { workspaceSession: WorkspaceSes
 
 export async function GET(request: Request) {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
@@ -57,7 +61,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
@@ -83,13 +87,20 @@ export async function POST(request: Request) {
       );
     }
 
-    const previousState = getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
+    const previousState = await getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
     const savedAt = new Date().toISOString();
     const newlyConnectedRepositoryIds = requestedRepositoryIds.filter(
       (repositoryId) => !(previousState?.repositoryIds ?? []).includes(repositoryId),
     );
 
-    saveWorkspaceConnectionState({
+    await assertWorkspaceUsageWithinBillingLimits(access.workspaceSession, {
+      usageOverrides: {
+        repositoriesConnected: requestedRepositoryIds.length,
+      },
+      dimensions: ["repositories"],
+    });
+
+    await saveWorkspaceConnectionState({
       workspaceId: access.workspaceSession.activeWorkspace.id,
       workspaceName: previousState?.workspaceName ?? access.workspaceSession.activeWorkspace.name,
       workspaceSlug: previousState?.workspaceSlug ?? access.workspaceSession.activeWorkspace.slug,
@@ -130,6 +141,14 @@ export async function POST(request: Request) {
       requestId,
     );
   } catch (error) {
+    if (error instanceof WorkspaceBillingLimitError) {
+      return jsonWithRequestId(
+        { message: error.message, breaches: error.breaches },
+        { status: 409 },
+        requestId,
+      );
+    }
+
     logRouteError("repository_connect_bootstrap_post", requestId, error, {
       workspaceId: access.workspaceSession.activeWorkspace.id,
     });

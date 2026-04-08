@@ -2,7 +2,11 @@ import "server-only";
 
 import type { ActiveWorkspace, WorkspaceRole } from "@/schemas/cloud";
 
-import { listWorkspaceConnectionStates } from "@/lib/backend/workspace/cloud-state";
+import {
+  findWorkspaceAccessMatchesForIdentity,
+  saveWorkspaceConnectionState,
+  upsertCloudUser,
+} from "@/lib/backend/workspace/cloud-state";
 import {
   getBootstrapWorkspaceRole,
   getFallbackActiveWorkspace,
@@ -44,38 +48,63 @@ function buildResolvedWorkspaceAccess(params: {
   };
 }
 
-export function resolveWorkspaceAccessForIdentity(identity: WorkspaceIdentity): ResolvedWorkspaceAccess | null {
+async function provisionBootstrapWorkspaceAccess(identity: WorkspaceIdentity): Promise<ResolvedWorkspaceAccess | null> {
+  if (!identity.email) {
+    return null;
+  }
+
+  const role = getBootstrapWorkspaceRole();
+  const activeWorkspace = getFallbackActiveWorkspace(role);
+  const launchedAt = new Date().toISOString();
+
+  await upsertCloudUser({
+    email: identity.email,
+    githubLogin: identity.login ?? null,
+    name: identity.email.split("@")[0] ?? "Workspace owner",
+  });
+  await saveWorkspaceConnectionState({
+    workspaceId: activeWorkspace.id,
+    workspaceName: activeWorkspace.name,
+    workspaceSlug: activeWorkspace.slug,
+    repositoryIds: [],
+    members: [
+      {
+        name: identity.email.split("@")[0] ?? "Workspace owner",
+        email: identity.email,
+        role,
+      },
+    ],
+    invites: [],
+    defaultNotificationChannel: "in_app",
+    policyPack: "guarded",
+    launchedAt,
+  });
+
+  return {
+    activeWorkspace,
+    role,
+    source: "bootstrap",
+  };
+}
+
+export async function resolveWorkspaceAccessForIdentity(identity: WorkspaceIdentity): Promise<ResolvedWorkspaceAccess | null> {
   const email = normalizeEmail(identity.email);
   const matches: ResolvedWorkspaceAccess[] = [];
 
   if (email) {
-    for (const workspace of listWorkspaceConnectionStates()) {
-      const member = workspace.members.find((entry) => normalizeEmail(entry.email) === email);
-      if (member) {
-        matches.push(
-          buildResolvedWorkspaceAccess({
-            workspaceId: workspace.workspaceId,
-            workspaceName: workspace.workspaceName,
-            workspaceSlug: workspace.workspaceSlug,
-            role: member.role,
-            source: "member",
-          }),
-        );
-        continue;
-      }
-
-      const invite = workspace.invites.find((entry) => normalizeEmail(entry.email) === email);
-      if (invite) {
-        matches.push(
-          buildResolvedWorkspaceAccess({
-            workspaceId: workspace.workspaceId,
-            workspaceName: workspace.workspaceName,
-            workspaceSlug: workspace.workspaceSlug,
-            role: invite.role,
-            source: "invite",
-          }),
-        );
-      }
+    for (const workspace of await findWorkspaceAccessMatchesForIdentity({
+      email,
+      login: identity.login,
+    })) {
+      matches.push(
+        buildResolvedWorkspaceAccess({
+          workspaceId: workspace.workspaceId,
+          workspaceName: workspace.workspaceName,
+          workspaceSlug: workspace.workspaceSlug,
+          role: workspace.role,
+          source: workspace.source,
+        }),
+      );
     }
   }
 
@@ -91,10 +120,5 @@ export function resolveWorkspaceAccessForIdentity(identity: WorkspaceIdentity): 
     return null;
   }
 
-  const role = getBootstrapWorkspaceRole();
-  return {
-    activeWorkspace: getFallbackActiveWorkspace(role),
-    role,
-    source: "bootstrap",
-  };
+  return provisionBootstrapWorkspaceAccess(identity);
 }

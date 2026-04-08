@@ -15,7 +15,7 @@ export async function GET(
   context: { params: Promise<{ repoId: string }> },
 ): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
@@ -39,7 +39,7 @@ export async function GET(
   }
 
   try {
-    const calibration = await getRepositoryCalibrationReport(repoId);
+    const calibration = await getRepositoryCalibrationReport(repoId, access.workspaceSession.activeWorkspace.id);
     if (!calibration) {
       return jsonWithRequestId({ message: "Repository calibration data was not found." }, { status: 404 }, requestId);
     }

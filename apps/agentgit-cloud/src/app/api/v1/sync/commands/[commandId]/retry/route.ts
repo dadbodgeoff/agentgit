@@ -7,7 +7,7 @@ export async function POST(
   context: { params: Promise<{ commandId: string }> },
 ) {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;

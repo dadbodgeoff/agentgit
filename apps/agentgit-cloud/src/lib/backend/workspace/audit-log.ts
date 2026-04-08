@@ -57,10 +57,10 @@ function externalUrlForCommand(command: {
   return typeof command.result?.pullRequestUrl === "string" ? command.result.pullRequestUrl : null;
 }
 
-export function listWorkspaceAuditLog(workspaceId: string) {
+export async function listWorkspaceAuditLog(workspaceId: string) {
   const items: AuditEntry[] = [];
 
-  for (const { repository, approval } of listWorkspaceApprovals(workspaceId)) {
+  for (const { repository, approval } of await listWorkspaceApprovals(workspaceId)) {
     items.push({
       id: approval.approval_id,
       occurredAt: approval.resolved_at ?? approval.requested_at,
@@ -82,7 +82,7 @@ export function listWorkspaceAuditLog(workspaceId: string) {
     });
   }
 
-  for (const context of listWorkspaceRunContexts(workspaceId)) {
+  for (const context of await listWorkspaceRunContexts(workspaceId)) {
     for (const event of context.events) {
       if (event.event_type !== "recovery.executed" && event.event_type !== "execution.failed") {
         continue;

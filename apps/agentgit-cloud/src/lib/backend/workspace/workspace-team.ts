@@ -2,11 +2,8 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 
-import {
-  getWorkspaceConnectionState,
-  saveWorkspaceConnectionState,
-} from "@/lib/backend/workspace/cloud-state";
-import { collectWorkspaceRepositoryRuntimeRecords } from "@/lib/backend/workspace/repository-inventory";
+import { getWorkspaceConnectionState, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { assertWorkspaceUsageWithinBillingLimits } from "@/lib/backend/workspace/workspace-billing";
 import {
   WorkspaceTeamSnapshotSchema,
   type OnboardingTeamInvite,
@@ -25,14 +22,12 @@ function buildMemberId(email: string, status: "active" | "invited"): string {
   return `member_${digest.slice(0, 12)}`;
 }
 
-function buildFallbackWorkspaceState(workspaceSession: WorkspaceSession): WorkspaceConnectionState {
+async function buildFallbackWorkspaceState(workspaceSession: WorkspaceSession): Promise<WorkspaceConnectionState> {
   return {
     workspaceId: workspaceSession.activeWorkspace.id,
     workspaceName: workspaceSession.activeWorkspace.name,
     workspaceSlug: workspaceSession.activeWorkspace.slug,
-    // Before onboarding persists workspace scope, seed visibility from the
-    // discovered local repository inventory instead of an empty workspace filter.
-    repositoryIds: collectWorkspaceRepositoryRuntimeRecords().map((record) => record.inventory.id),
+    repositoryIds: [],
     members: [
       {
         name: workspaceSession.user.name,
@@ -93,9 +88,9 @@ function toWorkspaceTeamSnapshot(
   });
 }
 
-export function resolveWorkspaceTeam(workspaceSession: WorkspaceSession): WorkspaceTeamSnapshot {
+export async function resolveWorkspaceTeam(workspaceSession: WorkspaceSession): Promise<WorkspaceTeamSnapshot> {
   const workspaceState =
-    getWorkspaceConnectionState(workspaceSession.activeWorkspace.id) ?? buildFallbackWorkspaceState(workspaceSession);
+    (await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id)) ?? (await buildFallbackWorkspaceState(workspaceSession));
 
   return toWorkspaceTeamSnapshot(
     ensureWorkspaceMember(workspaceState.members, workspaceSession),
@@ -104,12 +99,12 @@ export function resolveWorkspaceTeam(workspaceSession: WorkspaceSession): Worksp
   );
 }
 
-export function saveWorkspaceTeam(
+export async function saveWorkspaceTeam(
   workspaceSession: WorkspaceSession,
   update: WorkspaceTeamUpdate,
-): WorkspaceTeamSaveResponse {
+): Promise<WorkspaceTeamSaveResponse> {
   const currentState =
-    getWorkspaceConnectionState(workspaceSession.activeWorkspace.id) ?? buildFallbackWorkspaceState(workspaceSession);
+    (await getWorkspaceConnectionState(workspaceSession.activeWorkspace.id)) ?? (await buildFallbackWorkspaceState(workspaceSession));
 
   const persistedState: WorkspaceConnectionState = {
     ...currentState,
@@ -120,7 +115,14 @@ export function saveWorkspaceTeam(
     invites: update.invites,
   };
 
-  const savedState = saveWorkspaceConnectionState(persistedState);
+  await assertWorkspaceUsageWithinBillingLimits(workspaceSession, {
+    usageOverrides: {
+      seatsUsed: persistedState.members.length + persistedState.invites.length,
+    },
+    dimensions: ["seats"],
+  });
+
+  const savedState = await saveWorkspaceConnectionState(persistedState);
   const savedAt = new Date().toISOString();
 
   return {

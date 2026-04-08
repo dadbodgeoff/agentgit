@@ -21,6 +21,11 @@ describe("cloud readiness checks", () => {
   const originalVercel = process.env.VERCEL;
   const originalVercelEnv = process.env.VERCEL_ENV;
   const originalWorkspaceRoots = process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS;
+  const originalUptimeMonitorUrl = process.env.AGENTGIT_UPTIME_MONITOR_URL;
+  const originalRequestMetricsProvider = process.env.AGENTGIT_REQUEST_METRICS_PROVIDER;
+  const originalDdApiKey = process.env.DD_API_KEY;
+  const originalDatadogApiKey = process.env.DATADOG_API_KEY;
+  const originalSentryAlertsConfigured = process.env.AGENTGIT_SENTRY_ALERTS_CONFIGURED;
 
   afterEach(() => {
     if (originalAuthSecret === undefined) {
@@ -89,6 +94,36 @@ describe("cloud readiness checks", () => {
       process.env.VERCEL_ENV = originalVercelEnv;
     }
 
+    if (originalUptimeMonitorUrl === undefined) {
+      delete process.env.AGENTGIT_UPTIME_MONITOR_URL;
+    } else {
+      process.env.AGENTGIT_UPTIME_MONITOR_URL = originalUptimeMonitorUrl;
+    }
+
+    if (originalRequestMetricsProvider === undefined) {
+      delete process.env.AGENTGIT_REQUEST_METRICS_PROVIDER;
+    } else {
+      process.env.AGENTGIT_REQUEST_METRICS_PROVIDER = originalRequestMetricsProvider;
+    }
+
+    if (originalDdApiKey === undefined) {
+      delete process.env.DD_API_KEY;
+    } else {
+      process.env.DD_API_KEY = originalDdApiKey;
+    }
+
+    if (originalDatadogApiKey === undefined) {
+      delete process.env.DATADOG_API_KEY;
+    } else {
+      process.env.DATADOG_API_KEY = originalDatadogApiKey;
+    }
+
+    if (originalSentryAlertsConfigured === undefined) {
+      delete process.env.AGENTGIT_SENTRY_ALERTS_CONFIGURED;
+    } else {
+      process.env.AGENTGIT_SENTRY_ALERTS_CONFIGURED = originalSentryAlertsConfigured;
+    }
+
     for (const tempDir of tempDirs.splice(0, tempDirs.length)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
@@ -106,6 +141,9 @@ describe("cloud readiness checks", () => {
     process.env.VERCEL = "1";
     process.env.VERCEL_ENV = "preview";
     process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = tempDir;
+    process.env.AGENTGIT_UPTIME_MONITOR_URL = "https://betterstack.com/monitors/agentgit-cloud";
+    process.env.AGENTGIT_REQUEST_METRICS_PROVIDER = "vercel";
+    process.env.AGENTGIT_SENTRY_ALERTS_CONFIGURED = "true";
 
     const checks = getCloudReadinessChecks();
 
@@ -115,6 +153,9 @@ describe("cloud readiness checks", () => {
     expect(checks.find((check) => check.id === "workspace_roots_available")?.level).toBe("ok");
     expect(checks.find((check) => check.id === "sentry_dsn")?.level).toBe("ok");
     expect(checks.find((check) => check.id === "vercel_analytics")?.level).toBe("ok");
+    expect(checks.find((check) => check.id === "uptime_monitoring")?.level).toBe("ok");
+    expect(checks.find((check) => check.id === "request_metrics")?.level).toBe("ok");
+    expect(checks.find((check) => check.id === "sentry_alerts")?.level).toBe("ok");
   });
 
   it("summarizes readiness to warn when no failing checks exist but warnings do", () => {

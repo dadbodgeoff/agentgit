@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useMutation } from "@tanstack/react-query";
 
@@ -14,6 +14,7 @@ import { authenticatedRoutes } from "@/lib/navigation/routes";
 import { useRepositoryConnectionBootstrapQuery } from "@/lib/query/hooks";
 import type { ConnectorBootstrapResponse } from "@/schemas/cloud";
 import { RepositoryConnectionDialog } from "@/features/repos/repository-connection-dialog";
+import { ConnectorBootstrapPanel } from "@/features/shared/connector-bootstrap-panel";
 import { ConnectorInstallGuide } from "@/features/shared/connector-install-guide";
 
 type WorkspaceSetupChecklistProps = {
@@ -68,6 +69,18 @@ export function WorkspaceSetupChecklist({
       launched: readinessQuery.data.launchedAt !== null,
     };
   }, [readinessQuery.data]);
+
+  useEffect(() => {
+    if (!bootstrapDetails || !setupSummary || setupSummary.uncoveredCount === 0) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void readinessQuery.refetch();
+    }, 5_000);
+
+    return () => window.clearInterval(interval);
+  }, [bootstrapDetails, readinessQuery, setupSummary]);
 
   if (!isAdmin) {
     return null;
@@ -200,10 +213,11 @@ export function WorkspaceSetupChecklist({
       </div>
 
       {bootstrapDetails ? (
-        <div className="space-y-2 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-page)] px-4 py-3">
-          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Connector bootstrap command</div>
-          <code className="block overflow-x-auto text-sm text-[var(--ag-text-primary)]">{bootstrapDetails.commandHint}</code>
-        </div>
+        <ConnectorBootstrapPanel
+          bootstrapDetails={bootstrapDetails}
+          connected={setupSummary.connectedCount > 0 && setupSummary.uncoveredCount === 0}
+          waitingForConnection={setupSummary.uncoveredCount > 0}
+        />
       ) : null}
 
       {!compact ? <ConnectorInstallGuide compact /> : null}

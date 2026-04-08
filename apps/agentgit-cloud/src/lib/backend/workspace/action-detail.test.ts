@@ -19,7 +19,7 @@ vi.mock("@/lib/backend/authority/client", () => ({
 
 import { getActionDetail } from "@/lib/backend/workspace/action-detail";
 import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
-import { listRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
+import { listDiscoveredRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
 
 function runGit(args: string[], cwd: string): string {
   return execFileSync("git", args, {
@@ -72,8 +72,8 @@ describe("action detail backend adapter", () => {
     process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
-    const inventory = listRepositoryInventory();
-    saveWorkspaceConnectionState({
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -89,10 +89,10 @@ describe("action detail backend adapter", () => {
     const actionId = "act_action_detail";
     const snapshotId = "snap_action_detail";
     const targetPath = path.join(repoRoot, "README.md");
-    const repositoryId = listRepositoryInventory().items[0]?.id;
+    const repositoryId = inventory.items[0]?.id;
     expect(repositoryId).toBeDefined();
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -489,10 +489,10 @@ describe("action detail backend adapter", () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    const repositoryId = listRepositoryInventory().items[0]?.id;
+    const repositoryId = (await listDiscoveredRepositoryInventory()).items[0]?.id;
     expect(repositoryId).toBeDefined();
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",

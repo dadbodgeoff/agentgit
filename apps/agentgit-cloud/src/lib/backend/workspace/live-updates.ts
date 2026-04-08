@@ -19,8 +19,8 @@ function getLatestTimestamp(values: Array<string | null | undefined>): string | 
   }, null);
 }
 
-export function getWorkspaceLiveSignature(workspaceId: string): string {
-  const repositorySignature = collectWorkspaceRepositoryRuntimeRecords(workspaceId)
+export async function getWorkspaceLiveSignature(workspaceId: string): Promise<string> {
+  const repositorySignature = (await collectWorkspaceRepositoryRuntimeRecords(workspaceId))
     .map((record) => ({
       id: record.inventory.id,
       lastUpdatedAt: record.inventory.lastUpdatedAt,

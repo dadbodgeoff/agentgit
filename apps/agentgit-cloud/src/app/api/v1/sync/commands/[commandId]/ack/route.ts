@@ -9,7 +9,7 @@ export async function POST(
   context: { params: Promise<{ commandId: string }> },
 ) {
   const requestId = createRequestId(request);
-  const connectorSession = requireConnectorSession(request);
+  const connectorSession = await requireConnectorSession(request);
 
   if (connectorSession.denied) {
     return connectorSession.denied;

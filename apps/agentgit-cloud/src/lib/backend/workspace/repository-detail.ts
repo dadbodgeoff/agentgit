@@ -131,12 +131,12 @@ function mapRunSummary(run: RunSummary): RepositoryRunListItem {
   };
 }
 
-export function getRepositoryDetail(
+export async function getRepositoryDetail(
   owner: string,
   name: string,
-  workspaceId?: string,
-): RepositoryDetail | null {
-  const repository = findRepositoryRuntimeRecord(owner, name, workspaceId);
+  workspaceId: string,
+): Promise<RepositoryDetail | null> {
+  const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
     return null;
   }
@@ -189,8 +189,8 @@ export function getRepositoryDetail(
   });
 }
 
-export function listRepositoryRuns(owner: string, name: string, workspaceId?: string) {
-  const repository = findRepositoryRuntimeRecord(owner, name, workspaceId);
+export async function listRepositoryRuns(owner: string, name: string, workspaceId: string) {
+  const repository = await findRepositoryRuntimeRecord(owner, name, workspaceId);
   if (!repository) {
     return null;
   }

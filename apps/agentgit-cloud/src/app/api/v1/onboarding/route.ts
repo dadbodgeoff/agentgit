@@ -6,7 +6,7 @@ import {
   getWorkspaceConnectionState,
   saveWorkspaceConnectionState,
 } from "@/lib/backend/workspace/cloud-state";
-import { listAllRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
+import { listWorkspaceRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
 import { getOnboardingBootstrapFixture, launchOnboardingFixture } from "@/mocks/fixtures";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { OnboardingFormValuesSchema, PreviewStateSchema } from "@/schemas/cloud";
@@ -17,7 +17,7 @@ async function sleep(ms: number): Promise<void> {
 
 export async function GET(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("owner");
+  const access = await requireApiRole("owner", request);
 
   if (access.denied) {
     return access.denied;
@@ -39,8 +39,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     return jsonWithRequestId(getOnboardingBootstrapFixture(previewState), undefined, requestId);
   }
 
-  const persistedState = getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
-  const availableRepositories = listAllRepositoryOptions();
+  const persistedState = await getWorkspaceConnectionState(access.workspaceSession.activeWorkspace.id);
+  const availableRepositories = await listWorkspaceRepositoryOptions(access.workspaceSession.activeWorkspace.id);
 
   return jsonWithRequestId({
     suggestedWorkspaceName: persistedState?.workspaceName ?? access.workspaceSession.activeWorkspace.name,
@@ -56,7 +56,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
 export async function POST(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("owner");
+  const access = await requireApiRole("owner", request);
 
   if (access.denied) {
     return access.denied;
@@ -68,7 +68,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return jsonWithRequestId({ message: "Onboarding payload is invalid." }, { status: 400 }, requestId);
   }
 
-  const availableRepositories = listAllRepositoryOptions();
+  const availableRepositories = await listWorkspaceRepositoryOptions(access.workspaceSession.activeWorkspace.id);
   const knownRepositoryIds = new Set(availableRepositories.map((repository) => repository.id));
   const hasUnknownRepository = payload.data.repositoryIds.some((repositoryId) => !knownRepositoryIds.has(repositoryId));
 
@@ -80,13 +80,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const matchingWorkspace = findWorkspaceConnectionStateBySlug(payload.data.workspaceSlug);
+  const matchingWorkspace = await findWorkspaceConnectionStateBySlug(payload.data.workspaceSlug);
   if (matchingWorkspace && matchingWorkspace.workspaceId !== access.workspaceSession.activeWorkspace.id) {
     return jsonWithRequestId({ message: "Workspace slug is already in use." }, { status: 409 }, requestId);
   }
 
   const launchedAt = new Date().toISOString();
-  const savedState = saveWorkspaceConnectionState({
+  const savedState = await saveWorkspaceConnectionState({
     workspaceId: access.workspaceSession.activeWorkspace.id,
     workspaceName: payload.data.workspaceName,
     workspaceSlug: payload.data.workspaceSlug,

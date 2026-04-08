@@ -42,11 +42,11 @@ describe("workspace settings backend", () => {
     }
   });
 
-  it("derives initial settings from the persisted onboarding workspace state", () => {
+  it("derives initial settings from the persisted onboarding workspace state", async () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Launch workspace",
       workspaceSlug: "launch-workspace",
@@ -58,7 +58,7 @@ describe("workspace settings backend", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const settings = resolveWorkspaceSettings(buildWorkspaceSession());
+    const settings = await resolveWorkspaceSettings(buildWorkspaceSession());
 
     expect(settings).toMatchObject({
       workspaceName: "Launch workspace",
@@ -69,11 +69,11 @@ describe("workspace settings backend", () => {
     });
   });
 
-  it("persists settings and syncs overlapping workspace identity fields", () => {
+  it("persists settings and syncs overlapping workspace identity fields", async () => {
     process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
     tempDirs.push(process.env.AGENTGIT_ROOT);
 
-    saveWorkspaceConnectionState({
+    await saveWorkspaceConnectionState({
       workspaceId: "ws_acme_01",
       workspaceName: "Acme platform",
       workspaceSlug: "acme-platform",
@@ -85,7 +85,7 @@ describe("workspace settings backend", () => {
       launchedAt: "2026-04-07T15:04:00Z",
     });
 
-    const response = saveWorkspaceSettings(buildWorkspaceSession(), {
+    const response = await saveWorkspaceSettings(buildWorkspaceSession(), {
       workspaceName: "Platform control",
       workspaceSlug: "platform-control",
       defaultNotificationChannel: "in_app",
@@ -94,8 +94,8 @@ describe("workspace settings backend", () => {
       freezeDeploysOutsideBusinessHours: true,
     });
 
-    const updatedWorkspace = getWorkspaceConnectionState("ws_acme_01");
-    const resolvedSettings = resolveWorkspaceSettings(buildWorkspaceSession());
+    const updatedWorkspace = await getWorkspaceConnectionState("ws_acme_01");
+    const resolvedSettings = await resolveWorkspaceSettings(buildWorkspaceSession());
 
     expect(response.settings.workspaceName).toBe("Platform control");
     expect(updatedWorkspace).toMatchObject({

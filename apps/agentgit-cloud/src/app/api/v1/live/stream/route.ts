@@ -8,7 +8,7 @@ function encodeEvent(event: string, data: Record<string, unknown>) {
 }
 
 export async function GET(request: Request) {
-  const { unauthorized, workspaceSession } = await requireApiSession();
+  const { unauthorized, workspaceSession } = await requireApiSession(request);
   if (unauthorized) {
     return unauthorized;
   }
@@ -17,8 +17,9 @@ export async function GET(request: Request) {
 
   let interval: ReturnType<typeof setInterval> | null = null;
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let lastSignature = getWorkspaceLiveSignature(workspaceId);
+    async start(controller) {
+      let closed = false;
+      let lastSignature = await getWorkspaceLiveSignature(workspaceId);
       controller.enqueue(
         encodeEvent("connected", {
           workspaceId,
@@ -26,8 +27,12 @@ export async function GET(request: Request) {
         }),
       );
 
-      interval = setInterval(() => {
-        const nextSignature = getWorkspaceLiveSignature(workspaceId);
+      const poll = async () => {
+        if (closed) {
+          return;
+        }
+
+        const nextSignature = await getWorkspaceLiveSignature(workspaceId);
         if (nextSignature !== lastSignature) {
           lastSignature = nextSignature;
           controller.enqueue(
@@ -36,12 +41,18 @@ export async function GET(request: Request) {
               topics: ["approvals", "dashboard", "calibration", "activity", "audit", "connectors"],
             }),
           );
-        } else {
-          controller.enqueue(encoder.encode(": keepalive\n\n"));
+          return;
         }
+
+        controller.enqueue(encoder.encode(": keepalive\n\n"));
+      };
+
+      interval = setInterval(() => {
+        void poll();
       }, 5000);
 
       request.signal.addEventListener("abort", () => {
+        closed = true;
         if (interval) {
           clearInterval(interval);
         }

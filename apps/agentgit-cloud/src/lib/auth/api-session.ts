@@ -4,9 +4,10 @@ import type { Session } from "next-auth";
 import { auth } from "@/auth";
 import { resolveWorkspaceSession } from "@/lib/auth/workspace-session";
 import { hasAtLeastRole } from "@/lib/rbac/roles";
+import { enforceApiRateLimits } from "@/lib/security/rate-limit";
 import type { WorkspaceRole, WorkspaceSession } from "@/schemas/cloud";
 
-export async function requireApiSession(): Promise<
+export async function requireApiSession(request?: Request): Promise<
   | { session: Session; workspaceSession: WorkspaceSession; unauthorized: null }
   | { session: null; workspaceSession: null; unauthorized: NextResponse }
 > {
@@ -20,7 +21,7 @@ export async function requireApiSession(): Promise<
     };
   }
 
-  const workspaceSession = resolveWorkspaceSession(session);
+  const workspaceSession = await resolveWorkspaceSession(session);
 
   if (!workspaceSession) {
     return {
@@ -30,6 +31,17 @@ export async function requireApiSession(): Promise<
     };
   }
 
+  if (request) {
+    const rateLimited = await enforceApiRateLimits(request, workspaceSession.activeWorkspace.id);
+    if (rateLimited) {
+      return {
+        session: null,
+        workspaceSession: null,
+        unauthorized: rateLimited,
+      };
+    }
+  }
+
   return {
     session,
     workspaceSession,
@@ -37,11 +49,11 @@ export async function requireApiSession(): Promise<
   };
 }
 
-export async function requireApiRole(requiredRole: WorkspaceRole): Promise<
+export async function requireApiRole(requiredRole: WorkspaceRole, request?: Request): Promise<
   | { session: Session; workspaceSession: WorkspaceSession; denied: null }
   | { session: null; workspaceSession: null; denied: NextResponse }
 > {
-  const access = await requireApiSession();
+  const access = await requireApiSession(request);
 
   if (access.unauthorized || !access.session) {
     return {

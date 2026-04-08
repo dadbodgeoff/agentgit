@@ -7,7 +7,7 @@ import { IntegrationTestRequestSchema } from "@/schemas/cloud";
 
 export async function POST(request: Request): Promise<NextResponse> {
   const requestId = createRequestId(request);
-  const access = await requireApiRole("admin");
+  const access = await requireApiRole("admin", request);
 
   if (access.denied) {
     return access.denied;
@@ -21,7 +21,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     return jsonWithRequestId(
-      sendWorkspaceIntegrationTest(access.workspaceSession, payload.data.channel),
+      await sendWorkspaceIntegrationTest(access.workspaceSession, payload.data.channel),
       undefined,
       requestId,
     );

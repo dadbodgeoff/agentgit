@@ -123,6 +123,7 @@ export function IntegrationsSettingsPage() {
     resolver: zodResolver(WorkspaceIntegrationUpdateSchema),
     defaultValues: {
       slackConnected: false,
+      slackWebhookUrl: "",
       slackWorkspaceName: "",
       slackChannelName: "",
       slackDeliveryMode: "approvals_only",
@@ -149,6 +150,7 @@ export function IntegrationsSettingsPage() {
 
     reset({
       slackConnected: integrationsQuery.data.slackConnected,
+      slackWebhookUrl: "",
       slackWorkspaceName: integrationsQuery.data.slackWorkspaceName ?? "",
       slackChannelName: integrationsQuery.data.slackChannelName ?? "",
       slackDeliveryMode: integrationsQuery.data.slackDeliveryMode,
@@ -187,6 +189,7 @@ export function IntegrationsSettingsPage() {
       queryClient.setQueryData(queryKeys.integrations, result.integrations);
       reset({
         slackConnected: result.integrations.slackConnected,
+        slackWebhookUrl: "",
         slackWorkspaceName: result.integrations.slackWorkspaceName ?? "",
         slackChannelName: result.integrations.slackChannelName ?? "",
         slackDeliveryMode: result.integrations.slackDeliveryMode,
@@ -485,6 +488,20 @@ export function IntegrationsSettingsPage() {
             </label>
 
             <div className="grid gap-4 md:grid-cols-2">
+              <Input
+                disabled={!values.slackConnected}
+                errorText={errors.slackWebhookUrl?.message}
+                helpText={
+                  integrations.slackWebhookConfigured
+                    ? "Webhook secret is already configured. Paste a new URL only if you want to rotate it."
+                    : "Incoming webhook URL used for approval notifications."
+                }
+                id="slack-webhook-url"
+                label="Slack webhook URL"
+                placeholder={integrations.slackWebhookConfigured ? "Configured" : "https://hooks.slack.com/services/..."}
+                type="password"
+                {...register("slackWebhookUrl")}
+              />
               <Input
                 disabled={!values.slackConnected}
                 errorText={errors.slackWorkspaceName?.message}

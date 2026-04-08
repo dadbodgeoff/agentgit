@@ -4,8 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { AuthorityClient } from "@agentgit/authority-sdk";
 import { IntegrationState } from "@agentgit/integration-state";
 import { RunJournal } from "@agentgit/run-journal";
+import { ApprovalInboxItemSchema } from "@agentgit/schemas";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import {
   ConnectorCommandAckRequestSchema,
@@ -23,6 +25,7 @@ import {
   ConnectorRegistrationResponseSchema,
   CreateCommitCommandPayloadSchema,
   OpenPullRequestCommandPayloadSchema,
+  ResolveApprovalCommandPayloadSchema,
   RestoreCommandPayloadSchema,
   PushBranchCommandPayloadSchema,
   type ConnectorCommandEnvelope,
@@ -678,7 +681,47 @@ export class CloudConnectorRuntime {
       }
 
       for (const approval of journal.listApprovals()) {
+        const stored = journal.getStoredApproval(approval.approval_id);
+        const run = journal.getRunSummary(approval.run_id);
+
+        if (!stored || !run) {
+          continue;
+        }
+
+        const firstReason = stored.policy_outcome.reasons[0];
+        const payload = ApprovalInboxItemSchema.parse({
+          approval_id: approval.approval_id,
+          run_id: approval.run_id,
+          workflow_name: run.workflow_name,
+          action_id: approval.action_id,
+          action_summary: approval.action_summary,
+          action_domain: stored.action.operation.domain,
+          side_effect_level: stored.action.risk_hints.side_effect_level,
+          status: approval.status,
+          requested_at: approval.requested_at,
+          resolved_at: approval.resolved_at,
+          resolution_note: approval.resolution_note,
+          decision_requested: approval.decision_requested,
+          snapshot_required: stored.policy_outcome.preconditions.snapshot_required,
+          reason_summary: firstReason?.message ?? null,
+          primary_reason: firstReason
+            ? {
+                code: firstReason.code,
+                message: firstReason.message,
+              }
+            : null,
+          target_locator: stored.action.target.primary.locator,
+          target_label: stored.action.target.primary.label ?? null,
+        });
+
         if (approval.status === "pending" || !approval.resolved_at) {
+          this.emitEvent(
+            repository,
+            "approval.requested",
+            `approval:${approval.approval_id}:pending:${approval.requested_at}`,
+            approval.requested_at,
+            payload,
+          );
           continue;
         }
 
@@ -687,7 +730,7 @@ export class CloudConnectorRuntime {
           "approval.resolution",
           `approval:${approval.approval_id}:${approval.status}:${approval.resolved_at}`,
           approval.resolved_at,
-          approval,
+          payload,
         );
       }
     } finally {
@@ -735,6 +778,7 @@ export class CloudConnectorRuntime {
         "repo_state_sync",
         "run_event_sync",
         "snapshot_manifest_sync",
+        "approval_resolution",
         "git_commit",
         "git_push",
         "pull_request_open",
@@ -1048,6 +1092,42 @@ export class CloudConnectorRuntime {
     };
   }
 
+  private async executeResolveApproval(command: ConnectorCommandEnvelope): Promise<{
+    status: "completed" | "failed";
+    message: string;
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+  }> {
+    const payload = ResolveApprovalCommandPayloadSchema.parse(command.payload);
+    const repoRoot = detectRepositoryRoot(this.workspaceRoot);
+    const client = new AuthorityClient({
+      clientType: "sdk_ts",
+      clientVersion: this.options.connectorVersion,
+      defaultWorkspaceRoots: [repoRoot],
+      socketPath: process.env.AGENTGIT_AUTHORITY_SOCKET_PATH ?? path.join(repoRoot, ".agentgit", "authority.sock"),
+    });
+
+    await client.hello([repoRoot]);
+    const response = await client.resolveApproval(payload.approvalId, payload.resolution, payload.note);
+    const approval = response.approval_request;
+    const resolution = approval.status === "denied" ? "denied" : "approved";
+
+    return {
+      status: "completed",
+      message:
+        resolution === "approved"
+          ? `Approval ${approval.approval_id} resolved locally and the governed run can continue.`
+          : `Approval ${approval.approval_id} was denied locally and the governed run remains blocked.`,
+      result: {
+        type: "resolve_approval",
+        approvalId: approval.approval_id,
+        runId: approval.run_id,
+        actionId: approval.action_id,
+        resolution,
+        resolvedAt: approval.resolved_at ?? this.now(),
+      },
+    };
+  }
+
   private async executeCommand(command: ConnectorCommandEnvelope): Promise<{
     status: "completed" | "failed";
     message: string;
@@ -1086,6 +1166,8 @@ export class CloudConnectorRuntime {
             },
           };
         }
+      case "resolve_approval":
+        return this.executeResolveApproval(command);
       case "create_commit":
         return this.executeCreateCommit(command);
       case "push_branch":
@@ -1113,7 +1195,19 @@ export class CloudConnectorRuntime {
 
     for (const command of commands.commands) {
       await this.options.service.acknowledgeCommand(command.commandId, "acked", this.now(), "Connector received command.");
-      const result = await this.executeCommand(command);
+      let result: {
+        status: "completed" | "failed";
+        message: string;
+        result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+      };
+      try {
+        result = await this.executeCommand(command);
+      } catch (error) {
+        result = {
+          status: "failed",
+          message: error instanceof Error ? error.message : "Connector command execution failed unexpectedly.",
+        };
+      }
       await this.options.service.acknowledgeCommandWithResult(
         command.commandId,
         result.status,
