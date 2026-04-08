@@ -149,6 +149,9 @@ Before launch, also validate abuse controls directly against production or a pro
 - onboarding and repository-connect screens should not show repositories already claimed by another workspace
 - tenant-scoped routes should return empty or `404` responses, not host-wide data, when the active workspace has no persisted repository scope
 - authority-backed workspace routes should warn or fail closed when no workspace-scoped repository roots can be derived instead of silently falling back to process-wide roots
+- pending approvals should expose their TTL-derived expiry and connector availability so operators can see whether the next action is review, reconnect, or retry
+- stale or missing connectors should prevent approval submission in the UI and should return a specific recovery reason from the decision routes
+- failed or expired approval-delivery commands should reappear in the queue with retry context instead of disappearing as if the local daemon had already accepted the decision
 
 ## Connector Bootstrap
 

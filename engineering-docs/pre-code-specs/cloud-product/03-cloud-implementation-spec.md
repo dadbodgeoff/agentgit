@@ -120,6 +120,9 @@ Rules:
 - onboarding and repository-connect flows must only surface repositories that are either already attached to the active workspace or currently unclaimed by any other workspace
 - workspace-team bootstrap and any other workspace fallback state must default to zero connected repositories rather than seeding visibility from host-wide discovery
 - workspace-scoped repository detail, policy, snapshot, calibration, run, action-detail, and authority-backed queries must require an active workspace id all the way through the backend adapter boundary rather than accepting an optional scope
+- approval queue projections must derive expiry from the workspace approval TTL and mark timed-out requests as `expired` without pretending a reviewer decision was delivered
+- approval queue responses must surface connector availability and decision-delivery retry state so operators can distinguish between policy review, connector outage, and failed local delivery
+- when the connector is missing, stale, revoked, or the latest heartbeat reports the local daemon offline, approval UX must warn before submission and mutating routes must return the specific recovery reason instead of a generic failure
 
 ### WebSocket
 
