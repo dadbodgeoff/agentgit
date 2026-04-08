@@ -1,5 +1,13 @@
 import { fetchJson } from "@/lib/api/client";
-import { CalibrationReportSchema, type CalibrationReport, type PreviewState } from "@/schemas/cloud";
+import {
+  CalibrationReplayPreviewSchema,
+  CalibrationReplayRequestSchema,
+  CalibrationReportSchema,
+  type CalibrationReplayPreview,
+  type CalibrationReplayRequest,
+  type CalibrationReport,
+  type PreviewState,
+} from "@/schemas/cloud";
 
 export async function getCalibrationReport(
   repoId: string,
@@ -12,4 +20,16 @@ export async function getCalibrationReport(
 
   const response = await fetchJson<unknown>(url.pathname + url.search);
   return CalibrationReportSchema.parse(response);
+}
+
+export async function replayCalibrationThresholds(
+  repoId: string,
+  values: CalibrationReplayRequest,
+): Promise<CalibrationReplayPreview> {
+  const response = await fetchJson<unknown>(`/api/v1/repos/${encodeURIComponent(repoId)}/calibration/replay`, {
+    method: "POST",
+    body: JSON.stringify(CalibrationReplayRequestSchema.parse(values)),
+  });
+
+  return CalibrationReplayPreviewSchema.parse(response);
 }

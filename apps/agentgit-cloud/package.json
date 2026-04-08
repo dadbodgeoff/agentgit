@@ -39,6 +39,7 @@
     "react-dom": "19.x",
     "react-hook-form": "7.x",
     "server-only": "^0.0.1",
+    "stripe": "^22.0.1",
     "tailwind-merge": "3.x",
     "zod": "^4.3.6"
   },

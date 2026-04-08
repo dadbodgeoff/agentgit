@@ -140,4 +140,81 @@ describe("authority calibration adapter", () => {
     });
     expect(journalClose).toHaveBeenCalled();
   });
+
+  it("maps calibration threshold replay preview into the cloud contract", async () => {
+    findRepositoryRuntimeRecordById.mockReturnValue({
+      metadata: { root: "/tmp/repo" },
+      inventory: { id: "repo_01" },
+    });
+    withScopedAuthorityClient.mockResolvedValue({
+      generated_at: "2026-04-08T12:00:00Z",
+      effective_policy_profile: "guarded",
+      candidate_thresholds: [{ action_family: "shell/exec", ask_below: 0.42 }],
+      filters: {
+        run_id: null,
+        include_changed_samples: false,
+        sample_limit: null,
+      },
+      summary: {
+        replayable_samples: 14,
+        skipped_samples: 2,
+        changed_decisions: 3,
+        unchanged_decisions: 11,
+        current_approvals_requested: 6,
+        candidate_approvals_requested: 4,
+        approvals_reduced: 2,
+        approvals_increased: 0,
+        historically_denied_auto_allowed: 0,
+        historically_approved_auto_allowed: 0,
+        historically_allowed_newly_gated: 1,
+        current_matches_recorded: 14,
+        current_diverges_from_recorded: 0,
+      },
+      action_families: [
+        {
+          action_family: "shell/exec",
+          current_ask_below: 0.3,
+          candidate_ask_below: 0.42,
+          replayable_samples: 14,
+          skipped_samples: 2,
+          changed_decisions: 3,
+          unchanged_decisions: 11,
+          current_approvals_requested: 6,
+          candidate_approvals_requested: 4,
+          approvals_reduced: 2,
+          approvals_increased: 0,
+          historically_denied_auto_allowed: 0,
+          historically_approved_auto_allowed: 0,
+          historically_allowed_newly_gated: 1,
+          current_matches_recorded: 14,
+          current_diverges_from_recorded: 0,
+        },
+      ],
+      samples_truncated: false,
+    });
+
+    const { replayRepositoryCalibrationThresholds } = await import("./calibration");
+    const result = await replayRepositoryCalibrationThresholds("repo_01", "ws_acme_01", [
+      {
+        actionFamily: "shell/exec",
+        askBelow: 0.42,
+      },
+    ]);
+
+    expect(result).toMatchObject({
+      repoId: "repo_01",
+      effectivePolicyProfile: "guarded",
+      candidateThresholds: [{ actionFamily: "shell/exec", askBelow: 0.42 }],
+      summary: {
+        changedDecisions: 3,
+        approvalsReduced: 2,
+      },
+      actionFamilies: [
+        {
+          domain: "shell/exec",
+          candidateAskThreshold: 0.42,
+        },
+      ],
+    });
+  });
 });

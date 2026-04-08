@@ -188,11 +188,15 @@ Before launch, also validate abuse controls directly against production or a pro
 - repositories with an existing workspace override should seed a baseline policy-history entry the first time the hosted page loads after versioning ships, so history is never blank while an override is active
 - run detail should expose a replay preview with replayable/skipped action counts and connector readiness before the replay button is ever enabled
 - replaying a run should queue a real connector command, produce a new run id locally, and sync that new run back into the hosted UI; imported or observed steps may be skipped, but the product must say so explicitly
+- snapshot restore must expose queued, running, completed, failed, or expired connector state in the hosted UI and must link back to the resulting run or action when the connector provides those ids
 - audit export should return CSV or JSON for a requested date range and must match the same workspace-scoped entries shown in the hosted audit table instead of a separate compliance-only pipeline
 - high-volume list routes such as repositories, approvals, runs, snapshots, activity, audit, and connector fleet should return bounded cursor pages in production; the hosted UI must be able to keep loading older pages without full-page reloads or all-results fetches
 - enterprise SSO sign-in should succeed for an invited or existing member of the target workspace and should fail closed for identities outside the workspace membership rules
 - enterprise SSO workspace settings should never echo the configured client secret back to the browser, even after a successful save
 - if enterprise auto-provision is enabled, only identities from the configured allowlist should be admitted automatically, and the created membership should receive the configured default role
+- saving a new or rotated Slack webhook should perform validation before persistence; an invalid replacement must keep the previous secret intact and return a field-level error
+- calibration must not ship with a no-op apply control; production either exposes replay-preview plus apply, or clearly removes the action until that flow is real
+- if Stripe is enabled, checkout, customer-portal access, webhook sync, and invoice sync must all be verified together; if Stripe is not enabled, pricing, docs, and billing must all continue to describe the hosted beta gate honestly
 
 ## Connector Bootstrap
 
@@ -260,6 +264,9 @@ Use this checklist for the first real workspace:
 19. Open one run detail page, review the replay preview, queue a replay, confirm the connector acknowledges a `replay_run` command, and verify a new replay run appears in run history for the same repository.
 20. Leave the connector running, force one transient cloud sync failure, confirm the connector backs off and recovers automatically, then verify queued events still flush after the connection returns.
 21. Export audit history as both CSV and JSON for a bounded date range, confirm the file downloads include the expected workspace events, and verify no out-of-range records leak into the export.
+22. Save a new Slack webhook URL, confirm the save performs validation before persisting it, then verify an invalid replacement leaves the previous webhook active.
+23. If calibration apply is enabled, open one calibration page, review the threshold replay preview, apply the recommendation, and confirm a new policy-history entry and audit record appear.
+24. If live Stripe is enabled, complete one checkout or plan-change flow, verify the webhook updates the workspace billing state, then open the customer portal and confirm invoice history stays in sync.
 
 ## Do Not Ship If
 

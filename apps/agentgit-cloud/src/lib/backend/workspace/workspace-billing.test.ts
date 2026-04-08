@@ -7,7 +7,7 @@ import { vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { saveStoredWorkspaceBilling, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import {
   resolveWorkspaceBilling,
@@ -236,5 +236,66 @@ describe("workspace billing backend", () => {
         taxId: "",
       }),
     ).rejects.toBeInstanceOf(WorkspaceBillingLimitError);
+  });
+
+  it("preserves live Stripe billing metadata when owners update billing contacts", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-billing-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    await saveStoredWorkspaceBilling("ws_acme_01", {
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      billingProvider: "stripe",
+      billingAccessStatus: "active",
+      limitBreaches: [],
+      planTier: "team",
+      billingCycle: "yearly",
+      billingEmail: "finance@acme.dev",
+      invoiceEmail: "ap@acme.dev",
+      taxId: undefined,
+      seatsIncluded: 15,
+      seatsUsed: 1,
+      repositoriesIncluded: 40,
+      repositoriesConnected: 0,
+      approvalsIncluded: 5000,
+      approvalsUsed: 0,
+      monthlyEstimateUsd: 1267,
+      nextInvoiceDate: "2026-05-07T15:04:00Z",
+      paymentMethodLabel: "VISA ending 4242",
+      paymentMethodStatus: "active",
+      invoices: [],
+      stripeCustomerId: "cus_123",
+      stripeSubscriptionId: "sub_123",
+    });
+
+    const result = await saveWorkspaceBilling(buildWorkspaceSession(), {
+      planTier: "team",
+      billingCycle: "yearly",
+      billingEmail: "ops-finance@acme.dev",
+      invoiceEmail: "procurement@acme.dev",
+      taxId: "US-ACME-100",
+    });
+
+    expect(result.billing.billingProvider).toBe("stripe");
+    expect(result.billing.stripeCustomerId).toBe("cus_123");
+    expect(result.billing.stripeSubscriptionId).toBe("sub_123");
+    expect(result.billing.paymentMethodLabel).toBe("VISA ending 4242");
+    expect(result.billing.billingEmail).toBe("ops-finance@acme.dev");
+    expect(result.billing.invoiceEmail).toBe("procurement@acme.dev");
   });
 });

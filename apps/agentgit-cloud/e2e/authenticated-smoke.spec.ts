@@ -314,18 +314,7 @@ async function seedRepositorySnapshot(): Promise<{
       payload: {
         action_id: actionId,
         target_locator: targetPath,
-        action: {
-          operation: {
-            domain: "filesystem",
-            kind: "update_file",
-            display_name: "Update README.md",
-          },
-          target: {
-            primary: {
-              locator: targetPath,
-            },
-          },
-        },
+        action: makeSmokeAction(workspaceRoot, runId, actionId),
       },
     });
 
@@ -466,6 +455,13 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await page.getByRole("button", { name: "Queue open PR" }).click();
   await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
 
+  await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}`);
+  await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
+  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/replay`);
+  await expect(page.locator("main")).toContainText("Replay run", { timeout: 20_000 });
+  await page.getByRole("button", { name: "Queue replay through connector" }).click();
+  await expect(page.locator("main")).toContainText(/queued|Queueing replay/i, { timeout: 20_000 });
+
   await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
   await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
   await expect(page.getByRole("heading", { name: "Snapshots" })).toBeVisible();
@@ -480,26 +476,10 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   const verifiedSnapshotId = verifiedSnapshotText.split("\n")[0]?.trim();
   expect(verifiedSnapshotId).toBeTruthy();
 
-  const restoreResponse = await page.request.post(
-    `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots/${encodeURIComponent(
-      verifiedSnapshotId ?? "",
-    )}/restore`,
-    {
-      data: {
-        intent: "execute",
-      },
-    },
-  );
-  const restoreResponseBody = await restoreResponse.text();
-  expect(restoreResponse.ok(), restoreResponseBody).toBeTruthy();
-  const restorePayload = JSON.parse(restoreResponseBody) as {
-    snapshotId?: string;
-    commandId?: string;
-    restored?: boolean;
-    message?: string;
-  };
-  expect(restorePayload.snapshotId).toBe(verifiedSnapshotId);
-  expect(restorePayload.message).toBeTruthy();
+  await page.getByRole("button", { name: "Preview restore" }).click();
+  await expect(page.locator("main")).toContainText("Admin restore controls", { timeout: 20_000 });
+  await page.getByRole("button", { name: "Execute restore" }).click();
+  await expect(page.locator("main")).toContainText(/Restore queued|Queueing restore/i, { timeout: 20_000 });
 
   await page.reload();
   await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
@@ -515,6 +495,7 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await expect(page.locator("main")).toContainText("create_commit", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("push_branch", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("open_pull_request", { timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("replay_run", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("execute_restore", { timeout: 20_000 });
   await page.getByRole("button", { name: "Revoke connector" }).click();
   await expect(page.getByRole("button", { name: "Connector revoked" })).toBeVisible({ timeout: 20_000 });

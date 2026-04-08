@@ -234,6 +234,15 @@ export function getStoredWorkspaceBillingLocal(workspaceId: string): WorkspaceBi
   }
 }
 
+export function listStoredWorkspaceBillingsLocal(): WorkspaceBilling[] {
+  const store = createCloudStateStore();
+  try {
+    return store.list("workspaceBilling");
+  } finally {
+    store.close();
+  }
+}
+
 export function saveStoredWorkspaceBillingLocal(workspaceId: string, billing: WorkspaceBilling): WorkspaceBilling {
   const store = createCloudStateStore();
   try {

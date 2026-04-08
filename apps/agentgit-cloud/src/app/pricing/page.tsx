@@ -34,7 +34,7 @@ export default function PricingPage() {
       </section>
 
       <MarketingSection
-        description="Hosted beta currently uses a gated access model. You pick the plan envelope now, and the product enforces seat and repository growth without collecting a live card until Stripe ships."
+        description="AgentGit Cloud can run in two truthful billing modes: the hosted beta gate for unconfigured environments, or live Stripe checkout and portal flows when Stripe is enabled."
         eyebrow="Plan envelope"
         title="Three operating bands for teams shipping agent-driven code."
       >
@@ -130,9 +130,9 @@ export default function PricingPage() {
       </MarketingSection>
 
       <MarketingSection
-        description="Until Stripe arrives, hosted beta enforces entitlements without pretending the processor is live."
+        description="The billing surface stays honest in both modes: beta gate when Stripe is not configured, live processor state when it is."
         eyebrow="Billing reality"
-        title="Beta gate now, Stripe next."
+        title="Beta gate fallback, live Stripe when enabled."
       >
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-[28px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-6">
@@ -149,15 +149,15 @@ export default function PricingPage() {
           </div>
           <div className="rounded-[28px] border border-[color:rgb(232_255_89_/_0.2)] bg-[color:rgb(232_255_89_/_0.05)] p-6">
             <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-accent)]">
-              When Stripe lands
+              When Stripe is enabled
             </div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
               <p>
-                Checkout, renewal, customer portal, and invoice history will plug into the same owner-facing billing
-                surface that already exists today.
+                Checkout, renewal, customer portal, and invoice history flow through the same owner-facing billing
+                surface that the hosted beta gate already uses.
               </p>
               <p>
-                The entitlement model stays the same, so today&apos;s beta gate is a real product step, not throwaway
+                The entitlement model stays the same, so the beta gate remains a truthful fallback instead of throwaway
                 UI.
               </p>
             </div>

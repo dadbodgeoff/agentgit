@@ -59,6 +59,7 @@ export function WorkspaceSettingsPage() {
     handleSubmit,
     register,
     reset,
+    setError,
     setValue,
     watch,
   } = form;
@@ -109,6 +110,13 @@ export function WorkspaceSettingsPage() {
     },
     onError: (error) => {
       if (error instanceof ApiClientError) {
+        const field =
+          typeof error.details === "object" &&
+          error.details !== null &&
+          "field" in error.details &&
+          error.details.field === "enterpriseSso.issuerUrl"
+            ? "enterpriseSso.issuerUrl"
+            : null;
         const message =
           typeof error.details === "object" &&
           error.details !== null &&
@@ -116,6 +124,13 @@ export function WorkspaceSettingsPage() {
           typeof error.details.message === "string"
             ? error.details.message
             : "Could not save settings. Try again.";
+
+        if (field) {
+          setError(field, {
+            type: "server",
+            message,
+          });
+        }
 
         setSubmitError(message);
         setErrorToast(message);
