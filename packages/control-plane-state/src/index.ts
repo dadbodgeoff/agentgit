@@ -3,6 +3,7 @@ import {
   ConnectorCommandAckRequestSchema,
   ConnectorCommandEnvelopeSchema,
   ConnectorCommandAckResponseSchema,
+  ConnectorCommandExecutionResultSchema,
   ConnectorCommandStatusSchema,
   ConnectorHeartbeatRequestSchema,
   ConnectorLocalDaemonStatusSchema,
@@ -67,7 +68,9 @@ export const ConnectorCommandRecordSchema = z
     acknowledgedAt: TimestampStringSchema.nullable(),
     leaseExpiresAt: TimestampStringSchema.nullable(),
     attemptCount: z.number().int().nonnegative(),
+    nextAttemptAt: TimestampStringSchema.nullable().default(null),
     lastMessage: z.string().min(1).nullable(),
+    result: ConnectorCommandExecutionResultSchema.nullable().default(null),
   })
   .strict();
 export type ConnectorCommandRecord = z.infer<typeof ConnectorCommandRecordSchema>;
@@ -197,7 +200,10 @@ export class ControlPlaneStateStore {
     acknowledgedAt?: string | null;
     leaseExpiresAt?: string | null;
     attemptCount?: number;
+    nextAttemptAt?: string | null;
     lastMessage?: string | null;
+    result?: z.infer<typeof ConnectorCommandExecutionResultSchema> | null;
+    commandExpiresAt?: string;
   }) {
     const current = this.getCommand(params.commandId);
     if (!current) {
@@ -207,11 +213,20 @@ export class ControlPlaneStateStore {
     return this.putCommand({
       ...current,
       status: params.status,
+      command:
+        params.commandExpiresAt === undefined
+          ? current.command
+          : {
+              ...current.command,
+              expiresAt: params.commandExpiresAt,
+            },
       updatedAt: params.updatedAt,
       acknowledgedAt: params.acknowledgedAt === undefined ? current.acknowledgedAt : params.acknowledgedAt,
       leaseExpiresAt: params.leaseExpiresAt === undefined ? current.leaseExpiresAt : params.leaseExpiresAt,
       attemptCount: params.attemptCount ?? current.attemptCount,
+      nextAttemptAt: params.nextAttemptAt === undefined ? current.nextAttemptAt : params.nextAttemptAt,
       lastMessage: params.lastMessage ?? current.lastMessage,
+      result: params.result === undefined ? current.result : params.result,
     });
   }
 
@@ -242,8 +257,47 @@ export class ControlPlaneStateStore {
     return this.getConnector(connectorId);
   }
 
-  retryCommand(commandId: string, retriedAt: string) {
+  retryCommand(commandId: string, retriedAt: string, expiresAt?: string) {
     const current = this.getCommand(commandId);
+    if (!current) {
+      return null;
+    }
+
+    const leaseExpired =
+      current.leaseExpiresAt !== null && new Date(current.leaseExpiresAt).getTime() <= new Date(retriedAt).getTime();
+    const reclaimableLease = (current.status === "acked" || current.status === "pending") && leaseExpired;
+
+    if (current.status !== "failed" && current.status !== "expired" && !reclaimableLease) {
+      return null;
+    }
+
+    return this.putCommand({
+      ...current,
+      command: expiresAt
+        ? {
+            ...current.command,
+            expiresAt,
+          }
+        : current.command,
+      status: "pending",
+      updatedAt: retriedAt,
+      acknowledgedAt: null,
+      leaseExpiresAt: null,
+      nextAttemptAt: null,
+      lastMessage: reclaimableLease
+        ? `Command lease reclaimed and returned to the pending queue at ${retriedAt}.`
+        : `Command re-queued at ${retriedAt}.`,
+    });
+  }
+
+  scheduleCommandRetry(params: {
+    commandId: string;
+    scheduledAt: string;
+    nextAttemptAt: string;
+    message: string;
+    expiresAt?: string;
+  }) {
+    const current = this.getCommand(params.commandId);
     if (!current) {
       return null;
     }
@@ -254,11 +308,16 @@ export class ControlPlaneStateStore {
 
     return this.putCommand({
       ...current,
-      status: "pending",
-      updatedAt: retriedAt,
-      acknowledgedAt: null,
+      command: params.expiresAt
+        ? {
+            ...current.command,
+            expiresAt: params.expiresAt,
+          }
+        : current.command,
+      updatedAt: params.scheduledAt,
       leaseExpiresAt: null,
-      lastMessage: `Command re-queued at ${retriedAt}.`,
+      nextAttemptAt: params.nextAttemptAt,
+      lastMessage: params.message,
     });
   }
 
@@ -285,7 +344,19 @@ export class ControlPlaneStateStore {
         continue;
       }
 
-      if (row.status === "completed" || row.status === "failed" || row.status === "expired") {
+      if (
+        (row.status === "failed" || row.status === "expired") &&
+        row.nextAttemptAt !== null &&
+        new Date(row.nextAttemptAt).getTime() > new Date(params.claimedAt).getTime()
+      ) {
+        continue;
+      }
+
+      if (row.status === "completed") {
+        continue;
+      }
+
+      if ((row.status === "failed" || row.status === "expired") && row.nextAttemptAt === null) {
         continue;
       }
 
@@ -300,17 +371,19 @@ export class ControlPlaneStateStore {
         continue;
       }
 
-      const nextStatus = row.status === "acked" ? "pending" : row.status;
       const reclaimedMessage =
         row.status === "acked"
           ? "Connector lease expired after acknowledgement; command returned to pending."
+          : row.status === "failed" || row.status === "expired"
+            ? "Automatic retry window reached; command returned to pending."
           : row.lastMessage;
       const claimed = this.updateCommandStatus({
         commandId: row.command.commandId,
-        status: nextStatus,
+        status: "pending",
         updatedAt: params.claimedAt,
         leaseExpiresAt: params.leaseExpiresAt,
         attemptCount: row.attemptCount + 1,
+        nextAttemptAt: null,
         lastMessage: reclaimedMessage,
       });
       if (claimed) {

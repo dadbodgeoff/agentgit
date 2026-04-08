@@ -26,6 +26,9 @@ This folder defines the hosted cloud product and frontend surface that sits on t
 - `02-product-design-system-spec.md`
 - `03-cloud-implementation-spec.md`
 - `04-build-decision-process.md`
+- `05-foundation-loop-backlog.md`
+- `06-cloud-sync-control-plane-plan.md`
+- `07-production-readiness-runbook.md`
 
 ## Detailed Reference Folders
 

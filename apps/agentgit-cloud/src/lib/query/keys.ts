@@ -6,6 +6,7 @@ export const queryKeys = {
   integrations: ["integrations"] as const,
   onboarding: ["onboarding"] as const,
   repositories: ["repositories"] as const,
+  repositoryConnection: ["repository-connection"] as const,
   repository: (owner: string, name: string) => ["repository", owner, name] as const,
   repositoryPolicy: (owner: string, name: string) => ["repository-policy", owner, name] as const,
   repositorySnapshots: (owner: string, name: string) => ["repository-snapshots", owner, name] as const,

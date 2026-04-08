@@ -1,11 +1,60 @@
 import "server-only";
 
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
+import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { AuditLogResponseSchema, type AuditEntry } from "@/schemas/cloud";
 import { listWorkspaceApprovals, listWorkspaceRunContexts } from "@/lib/backend/workspace/workspace-runtime";
 
 function repoLabel(owner: string, name: string) {
   return `${owner}/${name}`;
+}
+
+function describeConnectorAuditDetails(command: {
+  command: { type: string };
+  status: string;
+  lastMessage: string | null;
+  nextAttemptAt: string | null;
+  result?: Record<string, unknown> | null;
+}) {
+  if (command.result && command.command.type === "open_pull_request" && typeof command.result.pullRequestUrl === "string") {
+    return `Provider PR opened at ${command.result.pullRequestUrl}.`;
+  }
+
+  if (command.result && command.command.type === "execute_restore" && typeof command.result.snapshotId === "string") {
+    return command.status === "completed"
+      ? `Snapshot ${command.result.snapshotId} restored on the local connector.`
+      : `Snapshot ${command.result.snapshotId} restore failed or needs manual follow-up.`;
+  }
+
+  if (command.nextAttemptAt) {
+    return `${command.lastMessage ?? `${command.command.type} is ${command.status}.`} Retry scheduled for ${command.nextAttemptAt}.`;
+  }
+
+  return command.lastMessage ?? `${command.command.type} is ${command.status}.`;
+}
+
+function detailPathForCommand(command: {
+  command: { repository: { owner: string; name: string } };
+  result?: Record<string, unknown> | null;
+}) {
+  const owner = command.command.repository.owner;
+  const name = command.command.repository.name;
+
+  if (typeof command.result?.runId === "string" && typeof command.result?.actionId === "string") {
+    return actionDetailRoute(owner, name, command.result.runId, command.result.actionId);
+  }
+
+  if (typeof command.result?.runId === "string") {
+    return runDetailRoute(owner, name, command.result.runId);
+  }
+
+  return repositoryRoute(owner, name);
+}
+
+function externalUrlForCommand(command: {
+  result?: Record<string, unknown> | null;
+}) {
+  return typeof command.result?.pullRequestUrl === "string" ? command.result.pullRequestUrl : null;
 }
 
 export function listWorkspaceAuditLog(workspaceId: string) {
@@ -81,7 +130,9 @@ export function listWorkspaceAuditLog(workspaceId: string) {
         repo: `${command.command.repository.owner}/${command.command.repository.name}`,
         runId: null,
         actionId: null,
-        details: command.lastMessage ?? `${command.command.type} is ${command.status}.`,
+        detailPath: detailPathForCommand(command),
+        externalUrl: externalUrlForCommand(command),
+        details: describeConnectorAuditDetails(command),
       });
     }
 

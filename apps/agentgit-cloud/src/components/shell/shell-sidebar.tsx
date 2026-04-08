@@ -15,6 +15,7 @@ const navItems = [
   { href: authenticatedRoutes.activity, label: "Activity", minRole: "member" as const },
   { href: authenticatedRoutes.audit, label: "Audit log", minRole: "member" as const },
   { href: authenticatedRoutes.calibration, label: "Calibration", minRole: "admin" as const },
+  { href: authenticatedRoutes.connectors, label: "Connectors", minRole: "admin" as const },
   { href: authenticatedRoutes.settings, label: "Settings", minRole: "admin" as const },
 ];
 

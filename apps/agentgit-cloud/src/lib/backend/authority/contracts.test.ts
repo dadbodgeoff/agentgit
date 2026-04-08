@@ -39,10 +39,23 @@ describe("authority contract adapters", () => {
       },
     });
 
-    const mapped = mapApprovalInboxToCloud(payload);
+    const mapped = mapApprovalInboxToCloud(
+      payload,
+      new Map([
+        [
+          "run_123",
+          {
+            repositoryOwner: "acme",
+            repositoryName: "api-gateway",
+          },
+        ],
+      ]),
+    );
 
     expect(mapped.items[0]).toMatchObject({
       id: "apr_123",
+      repositoryOwner: "acme",
+      repositoryName: "api-gateway",
       workflowName: "fix-auth",
       status: "rejected",
       snapshotRequired: true,

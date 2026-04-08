@@ -1,8 +1,23 @@
 import "server-only";
 
+import path from "node:path";
+
 import { AuthorityClient } from "@agentgit/authority-sdk";
 import { collectWorkspaceRepositoryRuntimeRecords } from "@/lib/backend/workspace/repository-inventory";
 import { resolveWorkspaceRoots } from "@/lib/backend/workspace/roots";
+
+export function resolveAuthoritySocketPath(workspaceRoots: string[]): string | undefined {
+  if (process.env.AGENTGIT_SOCKET_PATH) {
+    return process.env.AGENTGIT_SOCKET_PATH;
+  }
+
+  const [primaryRoot] = workspaceRoots.filter((root) => root.trim().length > 0);
+  if (!primaryRoot) {
+    return undefined;
+  }
+
+  return path.resolve(primaryRoot, ".agentgit", "authority.sock");
+}
 
 export async function withScopedAuthorityClient<T>(
   workspaceRoots: string[],
@@ -12,6 +27,7 @@ export async function withScopedAuthorityClient<T>(
     clientType: "ui",
     clientVersion: "0.1.0",
     defaultWorkspaceRoots: workspaceRoots,
+    socketPath: resolveAuthoritySocketPath(workspaceRoots),
   });
 
   await client.hello(workspaceRoots);
@@ -23,7 +39,8 @@ export async function withAuthorityClient<T>(run: (client: AuthorityClient) => P
 }
 
 export function resolveAuthorityWorkspaceRoots(workspaceId: string): string[] {
-  return [...new Set(collectWorkspaceRepositoryRuntimeRecords(workspaceId).map((record) => record.metadata.root))];
+  const runtimeRoots = [...new Set(collectWorkspaceRepositoryRuntimeRecords(workspaceId).map((record) => record.metadata.root))];
+  return runtimeRoots.length > 0 ? runtimeRoots : resolveWorkspaceRoots();
 }
 
 export async function withWorkspaceAuthorityClient<T>(

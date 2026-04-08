@@ -1,5 +1,8 @@
 import { fetchJson } from "@/lib/api/client";
 import {
+  RepositoryConnectionBootstrapSchema,
+  RepositoryConnectionSaveResponseSchema,
+  RepositoryConnectionUpdateSchema,
   RepositoryDetailSchema,
   RepositoryListResponseSchema,
   RepositoryPolicySaveResponseSchema,
@@ -10,6 +13,9 @@ import {
   SnapshotRestoreExecutionResultSchema,
   SnapshotRestorePreviewSchema,
   type PreviewState,
+  type RepositoryConnectionBootstrap,
+  type RepositoryConnectionSaveResponse,
+  type RepositoryConnectionUpdate,
   type RepositoryDetail,
   type RepositoryListResponse,
   type RepositoryPolicySaveResponse,
@@ -29,6 +35,22 @@ export async function getRepositories(previewState: PreviewState = "ready"): Pro
 
   const response = await fetchJson<unknown>(url.pathname + url.search);
   return RepositoryListResponseSchema.parse(response);
+}
+
+export async function getRepositoryConnectionBootstrap(): Promise<RepositoryConnectionBootstrap> {
+  const response = await fetchJson<unknown>("/api/v1/repos/connect");
+  return RepositoryConnectionBootstrapSchema.parse(response);
+}
+
+export async function updateWorkspaceRepositories(
+  values: RepositoryConnectionUpdate,
+): Promise<RepositoryConnectionSaveResponse> {
+  const response = await fetchJson<unknown>("/api/v1/repos/connect", {
+    method: "POST",
+    body: JSON.stringify(RepositoryConnectionUpdateSchema.parse(values)),
+  });
+
+  return RepositoryConnectionSaveResponseSchema.parse(response);
 }
 
 export async function getRepositoryDetail(

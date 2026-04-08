@@ -4,8 +4,8 @@ import Link from "next/link";
 
 import { Card, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow } from "@/components/primitives";
 import { PageStatePanel } from "@/components/feedback";
-import { Button } from "@/components/primitives";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
+import { RepositoryConnectionDialog } from "@/features/repos/repository-connection-dialog";
 import { getApiErrorMessage } from "@/lib/api/client";
 import { repositoryRoute } from "@/lib/navigation/routes";
 import { useRepositoriesQuery } from "@/lib/query/hooks";
@@ -17,7 +17,7 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
 
   if (repositoriesQuery.isPending) {
     return (
-      <ScaffoldPage actions={<Button>Connect repository</Button>} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
+      <ScaffoldPage actions={<RepositoryConnectionDialog />} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
         <PageStatePanel state="loading" />
       </ScaffoldPage>
     );
@@ -27,7 +27,7 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
     const errorMessage = getApiErrorMessage(repositoriesQuery.error, "Could not load repositories. Retry.");
 
     return (
-      <ScaffoldPage actions={<Button>Connect repository</Button>} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
+      <ScaffoldPage actions={<RepositoryConnectionDialog />} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
         <PageStatePanel errorMessage={errorMessage} state="error" />
       </ScaffoldPage>
     );
@@ -37,7 +37,7 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
 
   if (repositories.items.length === 0) {
     return (
-      <ScaffoldPage actions={<Button>Connect repository</Button>} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
+      <ScaffoldPage actions={<RepositoryConnectionDialog />} description="Searchable repository inventory with status, last run, and agent posture." sections={[]} title="Repositories">
         <PageStatePanel
           emptyActionLabel="Connect repository"
           emptyDescription="Connect a GitHub, GitLab, or Bitbucket repository."
@@ -50,7 +50,7 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
 
   return (
     <ScaffoldPage
-      actions={<Button>Connect repository</Button>}
+      actions={<RepositoryConnectionDialog />}
       description="Searchable repository inventory with status, last run, and agent posture."
       metrics={[
         { label: "Connected repositories", value: String(repositories.total), trend: "workspace inventory" },
@@ -79,6 +79,7 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
             <TableRow>
               <TableHeaderCell>Repository</TableHeaderCell>
               <TableHeaderCell>Default branch</TableHeaderCell>
+              <TableHeaderCell>Provider</TableHeaderCell>
               <TableHeaderCell>Last run</TableHeaderCell>
               <TableHeaderCell>Agent</TableHeaderCell>
               <TableHeaderCell>Updated</TableHeaderCell>
@@ -96,6 +97,9 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
                   </Link>
                 </TableCell>
                 <TableCell>{repo.defaultBranch}</TableCell>
+                <TableCell className="capitalize">
+                  {repo.provider} / {repo.providerIdentityStatus}
+                </TableCell>
                 <TableCell className="capitalize">{repo.lastRunStatus}</TableCell>
                 <TableCell className="capitalize">{repo.agentStatus}</TableCell>
                 <TableCell className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(repo.lastUpdatedAt)}</TableCell>

@@ -7,7 +7,9 @@ export const isProductionAuth = process.env.NODE_ENV === "production";
 
 export const authFeatureFlags = {
   hasGitHubProvider: Boolean(process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET),
-  enableDevelopmentCredentials: !isProductionAuth && process.env.AUTH_ENABLE_DEV_CREDENTIALS !== "false",
+  enableDevelopmentCredentials:
+    (process.env.AUTH_ENABLE_DEV_CREDENTIALS !== "false" && !isProductionAuth) ||
+    process.env.AUTH_ALLOW_DEV_CREDENTIALS_IN_PRODUCTION === "true",
 } as const;
 
 export function getDefaultWorkspaceRole(): WorkspaceRole {

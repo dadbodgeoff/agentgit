@@ -55,6 +55,28 @@ export const RepositoryStateSnapshotSchema = z
   .strict();
 export type RepositoryStateSnapshot = z.infer<typeof RepositoryStateSnapshotSchema>;
 
+export const ProviderVisibilitySchema = z.enum(["public", "private", "internal", "unknown"]);
+export type ProviderVisibility = z.infer<typeof ProviderVisibilitySchema>;
+
+export const ProviderIdentityStatusSchema = z.enum(["verified", "local_only", "drifted", "unreachable"]);
+export type ProviderIdentityStatus = z.infer<typeof ProviderIdentityStatusSchema>;
+
+export const ProviderRepositoryIdentitySchema = z
+  .object({
+    provider: CloudProviderSchema,
+    status: ProviderIdentityStatusSchema,
+    owner: z.string().min(1),
+    name: z.string().min(1),
+    defaultBranch: z.string().min(1),
+    repositoryUrl: z.string().url().nullable(),
+    visibility: ProviderVisibilitySchema,
+    externalId: z.string().min(1).nullable(),
+    verifiedAt: TimestampStringSchema.nullable(),
+    statusReason: z.string().min(1).nullable(),
+  })
+  .strict();
+export type ProviderRepositoryIdentity = z.infer<typeof ProviderRepositoryIdentitySchema>;
+
 export const ConnectorRecordSchema = z
   .object({
     id: z.string().min(1),
@@ -235,6 +257,61 @@ export const OpenPullRequestCommandPayloadSchema = z
   .strict();
 export type OpenPullRequestCommandPayload = z.infer<typeof OpenPullRequestCommandPayloadSchema>;
 
+export const ConnectorCommandExecutionResultSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("refresh_repo_state"),
+      publishedEventCount: z.number().int().nonnegative().optional(),
+      includesSnapshots: z.boolean().optional(),
+      syncedAt: TimestampStringSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("sync_run_history"),
+      publishedEventCount: z.number().int().nonnegative().optional(),
+      includesSnapshots: z.boolean().optional(),
+      syncedAt: TimestampStringSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("create_commit"),
+      commitSha: z.string().min(7).optional(),
+      branch: z.string().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("push_branch"),
+      branch: z.string().min(1).optional(),
+      remoteName: z.string().min(1).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("execute_restore"),
+      snapshotId: z.string().min(1),
+      restored: z.boolean().optional(),
+      outcome: z.enum(["restored", "compensated"]).optional(),
+      runId: z.string().min(1).nullable().optional(),
+      actionId: z.string().min(1).nullable().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("open_pull_request"),
+      provider: CloudProviderSchema.optional(),
+      pullRequestUrl: z.string().url().optional(),
+      pullRequestNumber: z.number().int().positive().optional(),
+      baseBranch: z.string().min(1),
+      headBranch: z.string().min(1),
+      draft: z.boolean(),
+    })
+    .strict(),
+]);
+export type ConnectorCommandExecutionResult = z.infer<typeof ConnectorCommandExecutionResultSchema>;
+
 export const ConnectorCommandEnvelopeSchema = z
   .object({
     schemaVersion: SyncSchemaVersionSchema,
@@ -275,6 +352,7 @@ export const ConnectorCommandAckRequestSchema = z
     acknowledgedAt: TimestampStringSchema,
     status: z.enum(["acked", "completed", "failed"]),
     message: z.string().min(1).optional(),
+    result: ConnectorCommandExecutionResultSchema.optional(),
   })
   .strict();
 export type ConnectorCommandAckRequest = z.infer<typeof ConnectorCommandAckRequestSchema>;

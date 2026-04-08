@@ -9,6 +9,7 @@ import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 
 import { withScopedAuthorityClient } from "@/lib/backend/authority/client";
 import { findConnectorForRepository, queueConnectorCommand } from "@/lib/backend/control-plane/connectors";
+import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { findRepositoryRuntimeRecord } from "@/lib/backend/workspace/repository-inventory";
 import {
   RepositorySnapshotsResponseSchema,
@@ -189,6 +190,16 @@ async function buildSnapshotItem(params: {
   actionContext: ActionContext | null;
   event: SnapshotEventContext;
   latestRecovery: RepositorySnapshotRecovery | undefined;
+  latestRestoreCommand:
+    | {
+        commandId: string;
+        status: "pending" | "acked" | "completed" | "failed" | "expired";
+        updatedAt: string;
+        message: string | null;
+        runId: string | null;
+        actionId: string | null;
+      }
+    | null;
   repoRoot: string;
 }): Promise<RepositorySnapshotListItem> {
   const engine = createSnapshotEngine(params.repoRoot);
@@ -215,6 +226,12 @@ async function buildSnapshotItem(params: {
     storageBytes: null,
     createdAt: params.event.createdAt,
     latestRecovery: params.latestRecovery,
+    latestRestoreCommandId: params.latestRestoreCommand?.commandId ?? null,
+    latestRestoreCommandStatus: params.latestRestoreCommand?.status ?? null,
+    latestRestoreCommandUpdatedAt: params.latestRestoreCommand?.updatedAt ?? null,
+    latestRestoreCommandMessage: params.latestRestoreCommand?.message ?? null,
+    latestRestoreRunId: params.latestRestoreCommand?.runId ?? null,
+    latestRestoreActionId: params.latestRestoreCommand?.actionId ?? null,
   };
 }
 
@@ -258,6 +275,52 @@ async function resolveRepositorySnapshotRuntime(
 
     const actionContexts = new Map<string, ActionContext>();
     const latestRecoveryBySnapshot = new Map<string, RepositorySnapshotRecovery>();
+    const latestRestoreCommandBySnapshot = withControlPlaneState((store) => {
+      const commands = store
+        .listCommands()
+        .filter(
+          (command) =>
+            command.command.type === "execute_restore" &&
+            command.command.repository.owner === repository.inventory.owner &&
+            command.command.repository.name === repository.inventory.name,
+        )
+        .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+
+      const bySnapshot = new Map<
+        string,
+        {
+          commandId: string;
+          status: "pending" | "acked" | "completed" | "failed" | "expired";
+          updatedAt: string;
+          message: string | null;
+          runId: string | null;
+          actionId: string | null;
+        }
+      >();
+      for (const command of commands) {
+        const snapshotId =
+          typeof command.command.payload.snapshotId === "string" ? command.command.payload.snapshotId : null;
+        if (!snapshotId || bySnapshot.has(snapshotId)) {
+          continue;
+        }
+
+        bySnapshot.set(snapshotId, {
+          commandId: command.command.commandId,
+          status: command.status,
+          updatedAt: command.updatedAt,
+          message: command.lastMessage,
+          runId:
+            command.result?.type === "execute_restore" && typeof command.result.runId === "string"
+              ? command.result.runId
+              : null,
+          actionId:
+            command.result?.type === "execute_restore" && typeof command.result.actionId === "string"
+              ? command.result.actionId
+              : null,
+        });
+      }
+      return bySnapshot;
+    });
     const snapshotEvents: SnapshotEventContext[] = [];
 
     for (const run of runs) {
@@ -328,6 +391,7 @@ async function resolveRepositorySnapshotRuntime(
           repoRoot: repository.metadata.root,
           actionContext: actionContexts.get(makeActionKey(event.runId, event.actionId)) ?? null,
           latestRecovery: latestRecoveryBySnapshot.get(event.snapshotId),
+          latestRestoreCommand: latestRestoreCommandBySnapshot.get(event.snapshotId) ?? null,
         }),
       ),
     );
@@ -429,7 +493,12 @@ export async function restoreRepositorySnapshot(
       );
     }
 
-    const connector = findConnectorForRepository(workspaceId, owner, name);
+    const connector = findConnectorForRepository(
+      workspaceId,
+      owner,
+      name,
+      runtime.repository.metadata.root,
+    );
     if (!connector) {
       throw new RepositorySnapshotRestoreError(
         "No registered connector is available for this repository, so restore execution cannot be queued.",

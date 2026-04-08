@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -5,7 +9,9 @@ vi.mock("server-only", () => ({}));
 import { getCloudReadinessChecks, summarizeReadiness } from "@/lib/release/readiness";
 
 describe("cloud readiness checks", () => {
+  const tempDirs: string[] = [];
   const originalAuthSecret = process.env.AUTH_SECRET;
+  const originalAuthUrl = process.env.AUTH_URL;
   const originalNextAuthSecret = process.env.NEXTAUTH_SECRET;
   const originalSentryDsn = process.env.SENTRY_DSN;
   const originalNextPublicSentryDsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
@@ -21,6 +27,12 @@ describe("cloud readiness checks", () => {
       delete process.env.AUTH_SECRET;
     } else {
       process.env.AUTH_SECRET = originalAuthSecret;
+    }
+
+    if (originalAuthUrl === undefined) {
+      delete process.env.AUTH_URL;
+    } else {
+      process.env.AUTH_URL = originalAuthUrl;
     }
 
     if (originalNextAuthSecret === undefined) {
@@ -76,30 +88,39 @@ describe("cloud readiness checks", () => {
     } else {
       process.env.VERCEL_ENV = originalVercelEnv;
     }
+
+    for (const tempDir of tempDirs.splice(0, tempDirs.length)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("reports ok when auth, telemetry, and workspace roots are configured", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-readiness-"));
+    tempDirs.push(tempDir);
     process.env.AUTH_SECRET = "secret";
+    process.env.AUTH_URL = "https://cloud.agentgit.dev";
     process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/1";
     process.env.SENTRY_AUTH_TOKEN = "token";
     process.env.SENTRY_ORG = "agentgit";
     process.env.SENTRY_PROJECT = "agentgit-cloud";
     process.env.VERCEL = "1";
     process.env.VERCEL_ENV = "preview";
-    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = "/tmp/workspace";
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = tempDir;
 
     const checks = getCloudReadinessChecks();
 
     expect(checks.find((check) => check.id === "auth_secret")?.level).toBe("ok");
-    expect(checks.find((check) => check.id === "workspace_roots")?.level).toBe("ok");
+    expect(checks.find((check) => check.id === "auth_base_url")?.level).toBe("ok");
+    expect(checks.find((check) => check.id === "workspace_roots_configured")?.level).toBe("ok");
+    expect(checks.find((check) => check.id === "workspace_roots_available")?.level).toBe("ok");
     expect(checks.find((check) => check.id === "sentry_dsn")?.level).toBe("ok");
     expect(checks.find((check) => check.id === "vercel_analytics")?.level).toBe("ok");
   });
 
   it("summarizes readiness to warn when no failing checks exist but warnings do", () => {
     const level = summarizeReadiness([
-      { id: "a", level: "ok", message: "ok" },
-      { id: "b", level: "warn", message: "warn" },
+      { level: "ok" },
+      { level: "warn" },
     ]);
 
     expect(level).toBe("warn");

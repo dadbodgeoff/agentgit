@@ -1,5 +1,9 @@
 import "server-only";
 
+import fs from "node:fs";
+import path from "node:path";
+
+import { RunJournal } from "@agentgit/run-journal";
 import type {
   GetPolicyCalibrationReportResponsePayload,
   PolicyThresholdRecommendation,
@@ -47,31 +51,21 @@ function mapRecommendation(recommendation: PolicyThresholdRecommendation): Calib
   };
 }
 
-export async function getRepositoryCalibrationReport(repoId: string) {
-  const repository = findRepositoryRuntimeRecordById(repoId);
-  if (!repository) {
-    return null;
-  }
+function getJournalPath(repoRoot: string): string {
+  return path.join(repoRoot, ".agentgit", "state", "authority.db");
+}
 
-  const [calibrationReport, thresholdRecommendations] = await Promise.all([
-    withScopedAuthorityClient([repository.metadata.root], (client) =>
-      client.getPolicyCalibrationReport({
-        include_samples: false,
-      }),
-    ),
-    withScopedAuthorityClient([repository.metadata.root], (client) =>
-      client.getPolicyThresholdRecommendations({
-        min_samples: 5,
-      }),
-    ),
-  ]);
-
-  const totals = calibrationReport.report.totals;
+function mapCalibrationReport(params: {
+  calibrationReport: GetPolicyCalibrationReportResponsePayload["report"];
+  recommendations: PolicyThresholdRecommendation[];
+  repoId: string;
+}) {
+  const totals = params.calibrationReport.totals;
   const quality = totals.calibration;
 
   return CalibrationReportSchema.parse({
-    repoId: repository.inventory.id,
-    period: calibrationReport.report.filters.run_id ? `Run ${calibrationReport.report.filters.run_id}` : "workspace history",
+    repoId: params.repoId,
+    period: params.calibrationReport.filters.run_id ? `Run ${params.calibrationReport.filters.run_id}` : "workspace history",
     totalActions: totals.sample_count,
     brierScore: clampMetric(quality.brier_score),
     ece: clampMetric(quality.expected_calibration_error),
@@ -80,8 +74,87 @@ export async function getRepositoryCalibrationReport(repoId: string) {
       guarded: buildBand(quality.bins, (floor) => floor >= 0.65 && floor < 0.85, 0.65),
       low: buildBand(quality.bins, (floor) => floor < 0.65, 0),
     },
-    recommendations: thresholdRecommendations.recommendations
+    recommendations: params.recommendations
       .map(mapRecommendation)
       .filter((recommendation): recommendation is CalibrationRecommendation => recommendation !== null),
   });
+}
+
+function buildLocalFallbackCalibrationReport(repoId: string, repoRoot: string) {
+  const journalPath = getJournalPath(repoRoot);
+  if (!fs.existsSync(journalPath)) {
+    return CalibrationReportSchema.parse({
+      repoId,
+      period: "workspace history",
+      totalActions: 0,
+      brierScore: 0,
+      ece: 0,
+      bands: {
+        high: { min: 0.85, count: 0, accuracy: 0 },
+        guarded: { min: 0.65, count: 0, accuracy: 0 },
+        low: { min: 0, count: 0, accuracy: 0 },
+      },
+      recommendations: [],
+    });
+  }
+
+  const journal = new RunJournal({ dbPath: journalPath });
+  try {
+    const report = journal.getPolicyCalibrationReport({
+      include_samples: false,
+      sample_limit: null,
+    });
+
+    return mapCalibrationReport({
+      calibrationReport: report.report,
+      recommendations: [],
+      repoId,
+    });
+  } catch {
+    return CalibrationReportSchema.parse({
+      repoId,
+      period: "workspace history",
+      totalActions: 0,
+      brierScore: 0,
+      ece: 0,
+      bands: {
+        high: { min: 0.85, count: 0, accuracy: 0 },
+        guarded: { min: 0.65, count: 0, accuracy: 0 },
+        low: { min: 0, count: 0, accuracy: 0 },
+      },
+      recommendations: [],
+    });
+  } finally {
+    journal.close();
+  }
+}
+
+export async function getRepositoryCalibrationReport(repoId: string) {
+  const repository = findRepositoryRuntimeRecordById(repoId);
+  if (!repository) {
+    return null;
+  }
+
+  try {
+    const [calibrationReport, thresholdRecommendations] = await Promise.all([
+      withScopedAuthorityClient([repository.metadata.root], (client) =>
+        client.getPolicyCalibrationReport({
+          include_samples: false,
+        }),
+      ),
+      withScopedAuthorityClient([repository.metadata.root], (client) =>
+        client.getPolicyThresholdRecommendations({
+          min_samples: 5,
+        }),
+      ),
+    ]);
+
+    return mapCalibrationReport({
+      calibrationReport: calibrationReport.report,
+      recommendations: thresholdRecommendations.recommendations,
+      repoId: repository.inventory.id,
+    });
+  } catch {
+    return buildLocalFallbackCalibrationReport(repository.inventory.id, repository.metadata.root);
+  }
 }

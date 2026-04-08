@@ -6,7 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { MetricCard, PageHeader } from "@/components/composites";
-import { LoadingSkeleton, PageStatePanel } from "@/components/feedback";
+import { LoadingSkeleton, PageStatePanel, StaleIndicator } from "@/components/feedback";
+import { useLiveUpdateStatus } from "@/components/providers/live-update-context";
 import {
   Badge,
   Button,
@@ -23,7 +24,7 @@ import {
 import { getApiErrorMessage } from "@/lib/api/client";
 import { executeSnapshotRestore, previewSnapshotRestore } from "@/lib/api/endpoints/repositories";
 import { useWorkspace } from "@/lib/auth/workspace-context";
-import { repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
+import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { useRepositorySnapshotsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
 import { hasAtLeastRole } from "@/lib/rbac/roles";
@@ -70,6 +71,22 @@ function restoreTone(snapshot: RepositorySnapshotListItem): "accent" | "warning"
   return snapshot.latestRecovery ? "accent" : "neutral";
 }
 
+function restoreCommandDisplayState(snapshot: RepositorySnapshotListItem): string | null {
+  if (!snapshot.latestRestoreCommandStatus) {
+    return null;
+  }
+
+  if (snapshot.latestRestoreCommandStatus === "acked") {
+    return "running";
+  }
+
+  if (snapshot.latestRestoreCommandStatus === "pending") {
+    return "queued";
+  }
+
+  return snapshot.latestRestoreCommandStatus;
+}
+
 export function RepositorySnapshotsPage({
   owner,
   name,
@@ -81,12 +98,21 @@ export function RepositorySnapshotsPage({
 }) {
   const queryClient = useQueryClient();
   const { activeWorkspace } = useWorkspace();
+  const liveUpdateStatus = useLiveUpdateStatus();
   const snapshotsQuery = useRepositorySnapshotsQuery(owner, name, previewState);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [restorePreview, setRestorePreview] = useState<SnapshotRestorePreview | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [toast, setToast] = useState<SnapshotToast | null>(null);
   const canRestore = hasAtLeastRole(activeWorkspace.role, "admin");
+  const liveLabel =
+    liveUpdateStatus.lastInvalidatedAt && liveUpdateStatus.invalidationCount > 0
+      ? `live ${formatRelativeTimestamp(liveUpdateStatus.lastInvalidatedAt)}`
+      : liveUpdateStatus.state === "connected"
+        ? "live updates active"
+        : liveUpdateStatus.state === "degraded"
+          ? "updates delayed"
+          : "connecting live updates";
   const snapshots = snapshotsQuery.data;
   const items = snapshots?.items ?? [];
   const selectedSnapshot =
@@ -176,6 +202,7 @@ export function RepositorySnapshotsPage({
     return (
       <>
         <PageHeader
+          actions={<StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />}
           description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
           title="Snapshots"
         />
@@ -193,6 +220,7 @@ export function RepositorySnapshotsPage({
     return (
       <>
         <PageHeader
+          actions={<StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />}
           description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
           title="Snapshots"
         />
@@ -208,7 +236,12 @@ export function RepositorySnapshotsPage({
     return (
       <>
         <PageHeader
-          actions={<Badge tone={snapshots?.authorityReachable ? "accent" : "warning"}>{snapshots?.authorityReachable ? "Authority reachable" : "Authority offline"}</Badge>}
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />
+              <Badge tone={snapshots?.authorityReachable ? "accent" : "warning"}>{snapshots?.authorityReachable ? "Authority reachable" : "Authority offline"}</Badge>
+            </div>
+          }
           description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
           title="Snapshots"
         />
@@ -229,7 +262,12 @@ export function RepositorySnapshotsPage({
   return (
     <>
       <PageHeader
-        actions={<Badge tone={snapshots.authorityReachable ? "accent" : "warning"}>{snapshots.authorityReachable ? "Authority reachable" : "Authority offline"}</Badge>}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />
+            <Badge tone={snapshots.authorityReachable ? "accent" : "warning"}>{snapshots.authorityReachable ? "Authority reachable" : "Authority offline"}</Badge>
+          </div>
+        }
         description={`Restore boundaries and recovery history for governed activity in ${owner}/${name}.`}
         title="Snapshots"
       />
@@ -298,9 +336,14 @@ export function RepositorySnapshotsPage({
                     </TableCell>
                     <TableCell className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(snapshot.createdAt)}</TableCell>
                     <TableCell>
-                      <Badge tone={restoreTone(snapshot)}>
-                        {snapshot.latestRecovery ? `${snapshot.latestRecovery.outcome} ${formatRelativeTimestamp(snapshot.latestRecovery.executedAt)}` : "Not restored"}
-                      </Badge>
+                      <div className="space-y-1">
+                        <Badge tone={restoreTone(snapshot)}>
+                          {snapshot.latestRecovery ? `${snapshot.latestRecovery.outcome} ${formatRelativeTimestamp(snapshot.latestRecovery.executedAt)}` : "Not restored"}
+                        </Badge>
+                        {restoreCommandDisplayState(snapshot) ? (
+                          <div className="text-xs text-[var(--ag-text-secondary)]">{restoreCommandDisplayState(snapshot)}</div>
+                        ) : null}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -365,6 +408,46 @@ export function RepositorySnapshotsPage({
                   </div>
                   <div className="mt-1 text-xs text-[var(--ag-text-tertiary)]">
                     {formatAbsoluteDate(selectedSnapshot.latestRecovery.executedAt)} · {selectedSnapshot.latestRecovery.recoveryClass}
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedSnapshot.latestRestoreCommandId ? (
+                <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
+                  <div className="text-sm font-medium text-[var(--ag-text-primary)]">Latest restore command</div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Badge tone={selectedSnapshot.latestRestoreCommandStatus === "completed" ? "success" : selectedSnapshot.latestRestoreCommandStatus === "failed" || selectedSnapshot.latestRestoreCommandStatus === "expired" ? "warning" : "accent"}>
+                      {restoreCommandDisplayState(selectedSnapshot) ?? "unknown"}
+                    </Badge>
+                    <span className="font-mono text-xs text-[var(--ag-text-secondary)]">{selectedSnapshot.latestRestoreCommandId}</span>
+                  </div>
+                  {selectedSnapshot.latestRestoreCommandUpdatedAt ? (
+                    <div className="mt-1 text-xs text-[var(--ag-text-tertiary)]">
+                      {formatAbsoluteDate(selectedSnapshot.latestRestoreCommandUpdatedAt)} · {formatRelativeTimestamp(selectedSnapshot.latestRestoreCommandUpdatedAt)}
+                    </div>
+                  ) : null}
+                  {selectedSnapshot.latestRestoreCommandMessage ? (
+                    <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
+                      {selectedSnapshot.latestRestoreCommandMessage}
+                    </div>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedSnapshot.latestRestoreRunId ? (
+                      <Link
+                        className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+                        href={runDetailRoute(owner, name, selectedSnapshot.latestRestoreRunId)}
+                      >
+                        Open restored run
+                      </Link>
+                    ) : null}
+                    {selectedSnapshot.latestRestoreRunId && selectedSnapshot.latestRestoreActionId ? (
+                      <Link
+                        className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+                        href={actionDetailRoute(owner, name, selectedSnapshot.latestRestoreRunId, selectedSnapshot.latestRestoreActionId)}
+                      >
+                        Open restored action
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
               ) : null}

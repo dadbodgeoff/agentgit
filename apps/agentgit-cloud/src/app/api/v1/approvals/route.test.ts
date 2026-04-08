@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const requireApiSession = vi.fn();
 const withWorkspaceAuthorityClient = vi.fn();
 const mapApprovalInboxToCloud = vi.fn();
+const listWorkspaceRunContexts = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
@@ -16,6 +17,10 @@ vi.mock("@/lib/backend/authority/client", () => ({
 
 vi.mock("@/lib/backend/authority/contracts", () => ({
   mapApprovalInboxToCloud,
+}));
+
+vi.mock("@/lib/backend/workspace/workspace-runtime", () => ({
+  listWorkspaceRunContexts,
 }));
 
 describe("approvals route", () => {
@@ -42,6 +47,12 @@ describe("approvals route", () => {
       per_page: 25,
       has_more: false,
     });
+    listWorkspaceRunContexts.mockReturnValue([
+      {
+        run: { run_id: "run_1" },
+        repository: { inventory: { owner: "acme", name: "api-gateway" } },
+      },
+    ]);
 
     const { GET } = await import("./route");
     const response = await GET(new Request("http://localhost/api/v1/approvals"));
@@ -49,6 +60,7 @@ describe("approvals route", () => {
 
     expect(response.status).toBe(200);
     expect(withWorkspaceAuthorityClient).toHaveBeenCalledWith("ws_acme_01", expect.any(Function));
+    expect(mapApprovalInboxToCloud).toHaveBeenCalledWith(expect.anything(), expect.any(Map));
     expect(body.items).toEqual([]);
   });
 });

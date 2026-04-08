@@ -14,6 +14,7 @@ import {
   type RepositoryRunListItem,
   type RunStatus,
 } from "@/schemas/cloud";
+import { buildLocalProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
 import { findRepositoryRuntimeRecord } from "@/lib/backend/workspace/repository-inventory";
 
 function normalizePathForComparison(input: string): string {
@@ -167,6 +168,12 @@ export function getRepositoryDetail(
     id: repository.inventory.id,
     owner: repository.inventory.owner,
     name: repository.inventory.name,
+    providerIdentity: buildLocalProviderRepositoryIdentity({
+      provider: repository.metadata.provider,
+      owner: repository.inventory.owner,
+      name: repository.inventory.name,
+      defaultBranch: repository.inventory.defaultBranch,
+    }),
     defaultBranch: repository.inventory.defaultBranch,
     rootPath: repository.metadata.root,
     repositoryStatus: repository.inventory.repositoryStatus,

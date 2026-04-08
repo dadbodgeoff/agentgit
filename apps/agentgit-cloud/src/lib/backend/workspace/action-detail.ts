@@ -5,6 +5,7 @@ import {
   type ActionRecord,
   type QueryHelperResponsePayload,
   type QueryTimelineResponsePayload,
+  type RunSummary,
 } from "@agentgit/schemas";
 
 import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
@@ -17,8 +18,122 @@ function repoLabel(owner: string, name: string) {
   return `${owner}/${name}`;
 }
 
+function mapRunStatus(run: RunSummary): "queued" | "running" | "completed" | "failed" {
+  const eventType = run.latest_event?.event_type;
+  switch (eventType) {
+    case undefined:
+    case null:
+      return "queued";
+    case "execution.failed":
+    case "execution.outcome_unknown":
+      return "failed";
+    case "approval.requested":
+    case "approval.resolved":
+    case "action.normalized":
+    case "policy.evaluated":
+    case "execution.started":
+    case "run.created":
+    case "run.started":
+    case "snapshot.created":
+    case "checkpoint.created":
+    case "recovery.planned":
+      return "running";
+    case "execution.completed":
+    case "recovery.executed":
+      return "completed";
+    default:
+      return "running";
+  }
+}
+
 function eventActionId(payload: Record<string, unknown> | undefined): string | null {
   return typeof payload?.action_id === "string" ? payload.action_id : null;
+}
+
+function normalizePolicyReasons(reasons: unknown, decision: string | null) {
+  if (!Array.isArray(reasons)) {
+    return [];
+  }
+
+  return reasons.flatMap((reason) => {
+    if (typeof reason === "string") {
+      return [
+        {
+          code: reason,
+          severity: decision === "deny" ? "high" : "moderate",
+          message: reason,
+        },
+      ];
+    }
+
+    if (!reason || typeof reason !== "object") {
+      return [];
+    }
+
+    const candidate = reason as { code?: unknown; severity?: unknown; message?: unknown };
+    if (typeof candidate.code !== "string" || typeof candidate.message !== "string") {
+      return [];
+    }
+
+    return [
+      {
+        code: candidate.code,
+        severity: typeof candidate.severity === "string" && candidate.severity.length > 0 ? candidate.severity : decision === "deny" ? "high" : "moderate",
+        message: candidate.message,
+      },
+    ];
+  });
+}
+
+function normalizeExternalEffectValue(effect: unknown): "none" | "network" | "communication" | "financial" | "unknown" {
+  if (
+    effect === "none" ||
+    effect === "network" ||
+    effect === "communication" ||
+    effect === "financial" ||
+    effect === "unknown"
+  ) {
+    return effect;
+  }
+
+  if (Array.isArray(effect)) {
+    for (const item of effect) {
+      if (
+        item === "none" ||
+        item === "network" ||
+        item === "communication" ||
+        item === "financial" ||
+        item === "unknown"
+      ) {
+        return item;
+      }
+    }
+  }
+
+  return "unknown";
+}
+
+function normalizeExternalEffects(effect: unknown): string[] {
+  if (Array.isArray(effect)) {
+    return effect.filter((candidate): candidate is string => typeof candidate === "string" && candidate.length > 0);
+  }
+
+  if (typeof effect === "string" && effect.length > 0 && effect !== "none") {
+    return [effect];
+  }
+
+  return [];
+}
+
+function normalizeRiskHints(candidate: unknown) {
+  const payload = candidate && typeof candidate === "object" ? (candidate as Record<string, unknown>) : {};
+  return {
+    side_effect_level: typeof payload.side_effect_level === "string" ? payload.side_effect_level : "unknown",
+    external_effects: normalizeExternalEffectValue(payload.external_effects),
+    reversibility_hint: typeof payload.reversibility_hint === "string" ? payload.reversibility_hint : "reversible",
+    sensitivity_hint: typeof payload.sensitivity_hint === "string" ? payload.sensitivity_hint : "unknown",
+    batch: typeof payload.batch === "boolean" ? payload.batch : false,
+  };
 }
 
 function extractActionRecord(payload: Record<string, unknown>, runId: string, actionId: string): ActionRecord | null {
@@ -38,7 +153,7 @@ function extractActionRecord(payload: Record<string, unknown>, runId: string, ac
       normalized_at: typeof payload.occurred_at === "string" ? payload.occurred_at : new Date().toISOString(),
     },
     provenance: {
-      mode: payload.provenance_mode ?? "pre_execution",
+      mode: payload.provenance_mode ?? "governed",
       source: payload.provenance_source ?? "governed_runtime",
       confidence: payload.provenance_confidence ?? 1,
     },
@@ -80,13 +195,7 @@ function extractActionRecord(payload: Record<string, unknown>, runId: string, ac
       schema_ref: null,
       contains_sensitive_data: false,
     },
-    risk_hints: payload.risk_hints ?? {
-      side_effect_level: "unknown",
-      external_effects: [],
-      reversibility_hint: "reversible",
-      sensitivity_hint: "normal",
-      batch: false,
-    },
+    risk_hints: normalizeRiskHints(payload.risk_hints),
     facets: {},
     normalization: payload.normalization ?? {
       mapper: "fallback",
@@ -113,7 +222,7 @@ function extractActionRecord(payload: Record<string, unknown>, runId: string, ac
           normalized_at: typeof payload.occurred_at === "string" ? payload.occurred_at : new Date().toISOString(),
         },
         provenance: {
-          mode: payload.provenance_mode ?? "pre_execution",
+          mode: payload.provenance_mode ?? "governed",
           source: payload.provenance_source ?? "governed_runtime",
           confidence: payload.provenance_confidence ?? 1,
         },
@@ -164,13 +273,7 @@ function extractActionRecord(payload: Record<string, unknown>, runId: string, ac
           schema_ref: null,
           contains_sensitive_data: false,
         },
-        risk_hints: payload.risk_hints ?? {
-          side_effect_level: "unknown",
-          external_effects: [],
-          reversibility_hint: "reversible",
-          sensitivity_hint: "normal",
-          batch: false,
-        },
+        risk_hints: normalizeRiskHints(payload.risk_hints),
         facets: {},
         normalization: payload.normalization ?? {
           mapper: "fallback",
@@ -229,6 +332,7 @@ export async function getActionDetail(
         ) ?? null;
     const snapshotEvent =
       events.find((event) => event.event_type === "snapshot.created" && eventActionId(event.payload) === actionId) ?? null;
+    const approval = journal.listApprovals({ run_id: runId }).find((candidate) => candidate.action_id === actionId) ?? null;
 
     const action = extractActionRecord(normalizedEvent.payload ?? {}, runId, actionId);
     if (!action) {
@@ -278,14 +382,14 @@ export async function getActionDetail(
         confidenceBand: action.confidence_assessment.band,
         sideEffectLevel: action.risk_hints.side_effect_level,
         reversibilityHint: action.risk_hints.reversibility_hint,
-        externalEffects: action.risk_hints.external_effects,
+        externalEffects: normalizeExternalEffects(action.risk_hints.external_effects),
         warnings: action.normalization.warnings,
         rawInput: action.input.raw,
         redactedInput: action.input.redacted,
       },
       policyOutcome: {
         decision: typeof policyPayload.decision === "string" ? policyPayload.decision : timelineStep?.decision ?? null,
-        reasons: Array.isArray(policyPayload.reasons) ? policyPayload.reasons : [],
+        reasons: normalizePolicyReasons(policyPayload.reasons, typeof policyPayload.decision === "string" ? policyPayload.decision : timelineStep?.decision ?? null),
         snapshotRequired: policyPayload.snapshot_required === true,
         approvalRequired: policyPayload.approval_required === true,
         budgetCheck:
@@ -301,6 +405,28 @@ export async function getActionDetail(
           ? policyPayload.matched_rules.filter((value): value is string => typeof value === "string")
           : [],
       },
+      runContext: {
+        sessionId: run.session_id,
+        workflowName: run.workflow_name,
+        agentName: run.agent_name,
+        agentFramework: run.agent_framework,
+        status: mapRunStatus(run),
+        startedAt: run.started_at,
+        latestEventAt: run.latest_event?.occurred_at ?? run.started_at,
+        eventCount: run.event_count,
+      },
+      approvalContext: approval
+        ? {
+            approvalId: approval.approval_id,
+            status: approval.status,
+            decisionRequested: approval.decision_requested,
+            requestedAt: approval.requested_at,
+            resolvedAt: approval.resolved_at,
+            resolutionNote: approval.resolution_note ?? null,
+            actionSummary: approval.action_summary,
+            primaryReason: approval.primary_reason ?? null,
+          }
+        : null,
       execution: {
         stepId: timelineStep?.step_id ?? null,
         status:

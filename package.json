@@ -44,19 +44,21 @@
     "release:publish": "pnpm changeset publish --access public"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
     "@changesets/cli": "^2.29.7",
+    "@eslint/js": "^9.39.1",
+    "@next/eslint-plugin-next": "15.5.14",
     "@types/node": "^24.6.0",
     "@vitest/coverage-v8": "^4.0.8",
     "esbuild": "^0.25.11",
     "eslint": "^9.39.1",
+    "eslint-config-next": "15.5.14",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^16.5.0",
     "prettier": "^3.6.2",
     "tsx": "^4.20.6",
     "turbo": "^2.8.21",
-    "typescript-eslint": "^8.46.3",
     "typescript": "^6.0.2",
+    "typescript-eslint": "^8.46.3",
     "vitest": "^4.1.2"
   }
 }

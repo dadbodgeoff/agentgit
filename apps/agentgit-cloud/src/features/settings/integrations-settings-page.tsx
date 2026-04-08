@@ -62,6 +62,52 @@ type IntegrationToast = {
   tone: "success" | "warning" | "error";
 };
 
+function formatCommandResultSummary(command: {
+  type: string;
+  result: Record<string, unknown> | null;
+}) {
+  if (!command.result) {
+    return null;
+  }
+
+  if (command.type === "create_commit" && typeof command.result.commitSha === "string") {
+    return `Commit ${command.result.commitSha.slice(0, 12)} created.`;
+  }
+
+  if (command.type === "push_branch" && typeof command.result.branch === "string") {
+    return `Branch ${command.result.branch} pushed to ${typeof command.result.remoteName === "string" ? command.result.remoteName : "origin"}.`;
+  }
+
+  if (command.type === "open_pull_request" && typeof command.result.pullRequestUrl === "string") {
+    return `PR opened: ${command.result.pullRequestUrl}`;
+  }
+
+  if (command.type === "execute_restore" && typeof command.result.snapshotId === "string") {
+    return `Snapshot ${command.result.snapshotId} processed${command.result.outcome ? ` (${command.result.outcome})` : ""}.`;
+  }
+
+  return null;
+}
+
+function formatCommandDisplayState(command: {
+  status: string;
+  nextAttemptAt?: string | null;
+}) {
+  if (command.nextAttemptAt) {
+    return "retry scheduled";
+  }
+
+  if (command.status === "acked") {
+    return "running";
+  }
+
+  if (command.status === "pending") {
+    return "queued";
+  }
+
+  return command.status;
+}
+
 export function IntegrationsSettingsPage() {
   const queryClient = useQueryClient();
   const integrationsQuery = useWorkspaceIntegrationsQuery();
@@ -711,7 +757,13 @@ export function IntegrationsSettingsPage() {
                       </Badge>
                     </div>
 
-                    <div className="grid gap-2 text-xs text-[var(--ag-text-secondary)]">
+                      <div className="grid gap-2 text-xs text-[var(--ag-text-secondary)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Provider identity</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">
+                          {selectedConnector.providerIdentity.provider} / {selectedConnector.providerIdentity.status}
+                        </span>
+                      </div>
                       <div className="flex items-center justify-between gap-3">
                         <span>Head SHA</span>
                         <span className="font-mono text-[var(--ag-text-primary)]">{selectedConnector.headSha.slice(0, 12)}</span>
@@ -729,6 +781,10 @@ export function IntegrationsSettingsPage() {
                         <span className="font-mono text-[var(--ag-text-primary)]">{formatNumber(selectedConnector.retryableCommandCount)}</span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
+                        <span>Auto retries scheduled</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">{formatNumber(selectedConnector.automaticRetryCount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
                         <span>Synced events</span>
                         <span className="font-mono text-[var(--ag-text-primary)]">{formatNumber(selectedConnector.eventCount)}</span>
                       </div>
@@ -740,6 +796,30 @@ export function IntegrationsSettingsPage() {
                             : "none"}
                         </span>
                       </div>
+                    </div>
+
+                    <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-2 text-xs text-[var(--ag-text-secondary)]">
+                      <div className="flex items-center justify-between gap-3">
+                        <span>Canonical repo</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">
+                          {selectedConnector.providerIdentity.owner}/{selectedConnector.providerIdentity.name}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-3">
+                        <span>Default branch</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">
+                          {selectedConnector.providerIdentity.defaultBranch}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center justify-between gap-3">
+                        <span>Visibility</span>
+                        <span className="font-mono text-[var(--ag-text-primary)]">
+                          {selectedConnector.providerIdentity.visibility}
+                        </span>
+                      </div>
+                      {selectedConnector.providerIdentity.statusReason ? (
+                        <div className="mt-2">{selectedConnector.providerIdentity.statusReason}</div>
+                      ) : null}
                     </div>
 
                     <Input
@@ -810,14 +890,10 @@ export function IntegrationsSettingsPage() {
                       <Button
                         disabled={
                           retryMutation.isPending ||
-                          !selectedConnector.recentCommands.some(
-                            (command) => command.status === "failed" || command.status === "expired",
-                          )
+                          !selectedConnector.recentCommands.some((command) => command.replayable)
                         }
                         onClick={() => {
-                          const retryable = selectedConnector.recentCommands.find(
-                            (command) => command.status === "failed" || command.status === "expired",
-                          );
+                          const retryable = selectedConnector.recentCommands.find((command) => command.replayable);
                           if (retryable) {
                             retryMutation.mutate(retryable.commandId);
                           }
@@ -847,7 +923,7 @@ export function IntegrationsSettingsPage() {
                             <div className="rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] px-3 py-2" key={command.commandId}>
                               <div className="flex items-center justify-between gap-3 text-xs">
                                 <span className="font-medium text-[var(--ag-text-primary)]">
-                                  {command.type} / {command.status}
+                                  {command.type} / {formatCommandDisplayState(command)}
                                 </span>
                                 <span className="font-mono text-[var(--ag-text-secondary)]">
                                   attempt {formatNumber(command.attemptCount)}
@@ -856,10 +932,33 @@ export function IntegrationsSettingsPage() {
                               <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
                                 Updated {formatRelativeTimestamp(command.updatedAt)}
                                 {command.leaseExpiresAt ? ` · lease expires ${formatAbsoluteDate(command.leaseExpiresAt)}` : ""}
+                                {command.nextAttemptAt ? ` · retry at ${formatAbsoluteDate(command.nextAttemptAt)}` : ""}
                               </div>
                               {command.message ? (
                                 <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">{command.message}</div>
                               ) : null}
+                              {formatCommandResultSummary(command) ? (
+                                <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
+                                  {formatCommandResultSummary(command)}
+                                </div>
+                              ) : null}
+                              <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                                {command.detailPath ? (
+                                  <a className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline" href={command.detailPath}>
+                                    Open context
+                                  </a>
+                                ) : null}
+                                {command.externalUrl ? (
+                                  <a
+                                    className="font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                                    href={command.externalUrl}
+                                    rel="noreferrer"
+                                    target="_blank"
+                                  >
+                                    Open provider
+                                  </a>
+                                ) : null}
+                              </div>
                             </div>
                           ))
                         )}

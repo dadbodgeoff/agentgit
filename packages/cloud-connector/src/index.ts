@@ -522,6 +522,16 @@ export class CloudConnectorService {
   }
 
   async acknowledgeCommand(commandId: string, status: "acked" | "completed" | "failed", acknowledgedAt: string, message?: string) {
+    return this.acknowledgeCommandWithResult(commandId, status, acknowledgedAt, message);
+  }
+
+  async acknowledgeCommandWithResult(
+    commandId: string,
+    status: "acked" | "completed" | "failed",
+    acknowledgedAt: string,
+    message?: string,
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"],
+  ) {
     const registration = this.stateStore.getRegistration();
     if (!registration) {
       throw new Error("Cloud connector is not registered.");
@@ -535,6 +545,7 @@ export class CloudConnectorService {
         acknowledgedAt,
         status,
         message,
+        result,
       },
       registration.response.accessToken,
     );
@@ -773,10 +784,18 @@ export class CloudConnectorRuntime {
     this.collectRepositorySnapshotEvent(repository);
     this.collectPolicyEvents(repository);
     this.collectRunHistoryEvents(repository, options.includeSnapshots ?? true);
-    return this.options.service.flushOutbox(this.now());
+    const published = await this.options.service.flushOutbox(this.now());
+    return {
+      repository,
+      published,
+    };
   }
 
-  private executeCreateCommit(command: ConnectorCommandEnvelope): { status: "completed" | "failed"; message: string } {
+  private executeCreateCommit(command: ConnectorCommandEnvelope): {
+    status: "completed" | "failed";
+    message: string;
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+  } {
     const payload = CreateCommitCommandPayloadSchema.parse(command.payload);
     const repoRoot = detectRepositoryRoot(this.workspaceRoot);
     const status = tryExecGit(["status", "--porcelain"], repoRoot);
@@ -784,6 +803,9 @@ export class CloudConnectorRuntime {
       return {
         status: "failed",
         message: "No local changes were available to commit.",
+        result: {
+          type: "create_commit",
+        },
       };
     }
 
@@ -795,18 +817,31 @@ export class CloudConnectorRuntime {
       return {
         status: "failed",
         message: "Create-commit command requires stageAll=true or a non-empty paths list.",
+        result: {
+          type: "create_commit",
+        },
       };
     }
 
     execFileSync("git", ["commit", "-m", payload.message], { cwd: repoRoot, stdio: "ignore" });
     const headSha = tryExecGit(["rev-parse", "HEAD"], repoRoot) ?? "unknown";
+    const branch = tryExecGit(["branch", "--show-current"], repoRoot) ?? "current branch";
     return {
       status: "completed",
-      message: `Created commit ${headSha.slice(0, 12)} on ${tryExecGit(["branch", "--show-current"], repoRoot) ?? "current branch"}.`,
+      message: `Created commit ${headSha.slice(0, 12)} on ${branch}.`,
+      result: {
+        type: "create_commit",
+        commitSha: headSha,
+        branch,
+      },
     };
   }
 
-  private executePushBranch(command: ConnectorCommandEnvelope): { status: "completed" | "failed"; message: string } {
+  private executePushBranch(command: ConnectorCommandEnvelope): {
+    status: "completed" | "failed";
+    message: string;
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+  } {
     const payload = PushBranchCommandPayloadSchema.parse(command.payload);
     const repoRoot = detectRepositoryRoot(this.workspaceRoot);
     const branch = payload.branch ?? (tryExecGit(["branch", "--show-current"], repoRoot) ?? null);
@@ -814,6 +849,10 @@ export class CloudConnectorRuntime {
       return {
         status: "failed",
         message: "Could not determine a branch to push.",
+        result: {
+          type: "push_branch",
+          remoteName: "origin",
+        },
       };
     }
 
@@ -828,18 +867,34 @@ export class CloudConnectorRuntime {
     return {
       status: "completed",
       message: `Pushed ${branch} to origin.`,
+      result: {
+        type: "push_branch",
+        branch,
+        remoteName: "origin",
+      },
     };
   }
 
   private async executeOpenPullRequest(
     command: ConnectorCommandEnvelope,
-  ): Promise<{ status: "completed" | "failed"; message: string }> {
+  ): Promise<{
+    status: "completed" | "failed";
+    message: string;
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+  }> {
     const payload = OpenPullRequestCommandPayloadSchema.parse(command.payload);
     const repoState = detectRepositoryState(this.workspaceRoot);
     if (repoState.provider !== "github") {
       return {
         status: "failed",
         message: `Pull request creation is only implemented for GitHub-backed repositories. Current provider: ${repoState.provider}.`,
+        result: {
+          type: "open_pull_request",
+          provider: repoState.provider,
+          baseBranch: payload.baseBranch ?? repoState.defaultBranch,
+          headBranch: payload.headBranch ?? repoState.currentBranch,
+          draft: payload.draft ?? false,
+        },
       };
     }
 
@@ -848,6 +903,13 @@ export class CloudConnectorRuntime {
       return {
         status: "failed",
         message: "GitHub pull request creation requires AGENTGIT_GITHUB_TOKEN or GITHUB_TOKEN in the connector environment.",
+        result: {
+          type: "open_pull_request",
+          provider: "github",
+          baseBranch: payload.baseBranch ?? repoState.defaultBranch,
+          headBranch: payload.headBranch ?? repoState.currentBranch,
+          draft: payload.draft ?? false,
+        },
       };
     }
 
@@ -857,6 +919,13 @@ export class CloudConnectorRuntime {
       return {
         status: "failed",
         message: "Pull request head and base branches must differ.",
+        result: {
+          type: "open_pull_request",
+          provider: "github",
+          baseBranch: base,
+          headBranch: head,
+          draft: payload.draft ?? false,
+        },
       };
     }
 
@@ -889,6 +958,13 @@ export class CloudConnectorRuntime {
       return {
         status: "failed",
         message: `GitHub pull request creation failed with ${response.status}.${details}`.trim(),
+        result: {
+          type: "open_pull_request",
+          provider: "github",
+          baseBranch: base,
+          headBranch: head,
+          draft: payload.draft ?? false,
+        },
       };
     }
 
@@ -899,10 +975,23 @@ export class CloudConnectorRuntime {
       message: parsed.html_url
         ? `Opened GitHub PR ${descriptor}: ${parsed.html_url}`
         : `Opened GitHub PR ${descriptor}.`,
+      result: {
+        type: "open_pull_request",
+        provider: "github",
+        pullRequestUrl: parsed.html_url,
+        pullRequestNumber: parsed.number,
+        baseBranch: base,
+        headBranch: head,
+        draft: payload.draft ?? false,
+      },
     };
   }
 
-  private async executeRestore(command: ConnectorCommandEnvelope): Promise<{ status: "completed" | "failed"; message: string }> {
+  private async executeRestore(command: ConnectorCommandEnvelope): Promise<{
+    status: "completed" | "failed";
+    message: string;
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+  }> {
     const payload = RestoreCommandPayloadSchema.parse(command.payload);
     const repoRoot = detectRepositoryRoot(this.workspaceRoot);
     const engine = new LocalSnapshotEngine({
@@ -914,6 +1003,10 @@ export class CloudConnectorRuntime {
       return {
         status: "failed",
         message: `Snapshot ${payload.snapshotId} was not found in local connector storage.`,
+        result: {
+          type: "execute_restore",
+          snapshotId: payload.snapshotId,
+        },
       };
     }
 
@@ -944,26 +1037,55 @@ export class CloudConnectorRuntime {
       message: restored
         ? `Restored snapshot ${payload.snapshotId} through the local connector.`
         : `Snapshot ${payload.snapshotId} did not report a successful local restore.`,
+      result: {
+        type: "execute_restore",
+        snapshotId: payload.snapshotId,
+        restored,
+        outcome: restored ? "restored" : "compensated",
+        runId: manifest.run_id,
+        actionId: manifest.action_id,
+      },
     };
   }
 
-  private async executeCommand(command: ConnectorCommandEnvelope): Promise<{ status: "completed" | "failed"; message: string }> {
+  private async executeCommand(command: ConnectorCommandEnvelope): Promise<{
+    status: "completed" | "failed";
+    message: string;
+    result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+  }> {
     switch (command.type) {
       case "refresh_repo_state":
-        await this.publishLocalState({ includeSnapshots: true });
-        return {
-          status: "completed",
-          message: "Repository state refreshed and published.",
-        };
+        {
+          const published = await this.publishLocalState({ includeSnapshots: true });
+          return {
+            status: "completed",
+            message: "Repository state refreshed and published.",
+            result: {
+              type: "refresh_repo_state",
+              publishedEventCount: published.published?.acceptedCount ?? 0,
+              includesSnapshots: true,
+              syncedAt: this.now(),
+            },
+          };
+        }
       case "sync_run_history":
-        await this.publishLocalState({
-          includeSnapshots:
-            typeof command.payload.includeSnapshots === "boolean" ? command.payload.includeSnapshots : true,
-        });
-        return {
-          status: "completed",
-          message: "Run history synchronized.",
-        };
+        {
+          const includeSnapshots =
+            typeof command.payload.includeSnapshots === "boolean" ? command.payload.includeSnapshots : true;
+          const published = await this.publishLocalState({
+            includeSnapshots,
+          });
+          return {
+            status: "completed",
+            message: "Run history synchronized.",
+            result: {
+              type: "sync_run_history",
+              publishedEventCount: published.published?.acceptedCount ?? 0,
+              includesSnapshots: includeSnapshots,
+              syncedAt: this.now(),
+            },
+          };
+        }
       case "create_commit":
         return this.executeCreateCommit(command);
       case "push_branch":
@@ -982,12 +1104,23 @@ export class CloudConnectorRuntime {
 
   async processCommands() {
     const commands = await this.options.service.pullCommands(this.now());
-    const processed: Array<{ commandId: string; status: "completed" | "failed"; message: string }> = [];
+    const processed: Array<{
+      commandId: string;
+      status: "completed" | "failed";
+      message: string;
+      result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
+    }> = [];
 
     for (const command of commands.commands) {
       await this.options.service.acknowledgeCommand(command.commandId, "acked", this.now(), "Connector received command.");
       const result = await this.executeCommand(command);
-      await this.options.service.acknowledgeCommand(command.commandId, result.status, this.now(), result.message);
+      await this.options.service.acknowledgeCommandWithResult(
+        command.commandId,
+        result.status,
+        this.now(),
+        result.message,
+        result.result,
+      );
       if (result.status === "completed") {
         await this.publishLocalState({ includeSnapshots: true });
       }

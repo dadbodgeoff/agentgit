@@ -1,16 +1,19 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { ApprovalCard } from "@/components/composites";
-import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
+import { EmptyState, LoadingSkeleton, PageStatePanel, StaleIndicator } from "@/components/feedback";
 import { MetricCard, PageHeader } from "@/components/composites";
 import { Badge, Button, Card, CodeBlock, Input, ToastCard, ToastViewport } from "@/components/primitives";
 import { ApiClientError, getApiErrorMessage } from "@/lib/api/client";
 import { approveApproval, rejectApproval } from "@/lib/api/endpoints/approvals";
 import { useWorkspace } from "@/lib/auth/workspace-context";
+import { useLiveUpdateStatus } from "@/components/providers/live-update-context";
+import { actionDetailRoute, repositoryRoute, repositorySnapshotsRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { useApprovalsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
 import type { PreviewState } from "@/schemas/cloud";
@@ -76,6 +79,7 @@ function ApprovalQueueSkeleton() {
 export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: PreviewState }) {
   const queryClient = useQueryClient();
   const { user } = useWorkspace();
+  const liveUpdateStatus = useLiveUpdateStatus();
   const approvalsQuery = useApprovalsQuery(previewState);
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
@@ -90,9 +94,37 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
   const oldestPendingApproval = getOldestApproval(pendingApprovals);
   const snapshotRequiredCount = pendingApprovals.filter((item) => item.snapshotRequired).length;
   const destructiveCount = pendingApprovals.filter((item) => item.sideEffectLevel === "destructive").length;
-
   const selectedApproval =
     approvalItems.find((item) => item.id === selectedApprovalId) ?? pendingApprovals[0] ?? resolvedApprovals[0] ?? null;
+  const selectedRepositoryHref =
+    selectedApproval?.repositoryOwner && selectedApproval.repositoryName
+      ? repositoryRoute(selectedApproval.repositoryOwner, selectedApproval.repositoryName)
+      : null;
+  const selectedRunHref =
+    selectedApproval?.repositoryOwner && selectedApproval.repositoryName
+      ? runDetailRoute(selectedApproval.repositoryOwner, selectedApproval.repositoryName, selectedApproval.runId)
+      : null;
+  const selectedActionHref =
+    selectedApproval?.repositoryOwner && selectedApproval.repositoryName
+      ? actionDetailRoute(
+          selectedApproval.repositoryOwner,
+          selectedApproval.repositoryName,
+          selectedApproval.runId,
+          selectedApproval.actionId,
+        )
+      : null;
+  const selectedSnapshotsHref =
+    selectedApproval?.repositoryOwner && selectedApproval.repositoryName
+      ? repositorySnapshotsRoute(selectedApproval.repositoryOwner, selectedApproval.repositoryName)
+      : null;
+  const liveLabel =
+    liveUpdateStatus.lastInvalidatedAt && liveUpdateStatus.invalidationCount > 0
+      ? `live ${formatRelativeTimestamp(liveUpdateStatus.lastInvalidatedAt)}`
+      : liveUpdateStatus.state === "connected"
+        ? "live updates active"
+      : liveUpdateStatus.state === "degraded"
+          ? "updates delayed"
+          : "connecting live updates";
 
   useEffect(() => {
     if (!selectedApprovalId && selectedApproval) {
@@ -256,9 +288,12 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
     <>
       <PageHeader
         actions={
-          <Badge tone={pendingApprovals.length > 0 ? "warning" : "success"}>
-            {pendingApprovals.length > 0 ? `${pendingApprovals.length} pending` : "Queue clear"}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <StaleIndicator label={liveLabel} tone={liveUpdateStatus.state === "degraded" ? "warning" : "success"} />
+            <Badge tone={pendingApprovals.length > 0 ? "warning" : "success"}>
+              {pendingApprovals.length > 0 ? `${pendingApprovals.length} pending` : "Queue clear"}
+            </Badge>
+          </div>
         }
         description="Agent actions that crossed policy thresholds and require a human decision."
         title="Approval queue"
@@ -378,6 +413,14 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                     <div className="mt-1 font-medium">{selectedApproval.workflowName}</div>
                   </div>
                   <div>
+                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Repository</div>
+                    <div className="mt-1 font-medium">
+                      {selectedApproval.repositoryOwner && selectedApproval.repositoryName
+                        ? `${selectedApproval.repositoryOwner}/${selectedApproval.repositoryName}`
+                        : "Awaiting repository context"}
+                    </div>
+                  </div>
+                  <div>
                     <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Target</div>
                     <div className="mt-1 font-medium">{selectedApproval.targetLabel ?? selectedApproval.targetLocator}</div>
                   </div>
@@ -389,6 +432,41 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                     <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Run</div>
                     <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">{selectedApproval.runId}</div>
                   </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {selectedRepositoryHref ? (
+                    <Link
+                      className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+                      href={selectedRepositoryHref}
+                    >
+                      Open repository
+                    </Link>
+                  ) : null}
+                  {selectedRunHref ? (
+                    <Link
+                      className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+                      href={selectedRunHref}
+                    >
+                      Open run
+                    </Link>
+                  ) : null}
+                  {selectedActionHref ? (
+                    <Link
+                      className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+                      href={selectedActionHref}
+                    >
+                      Open action detail
+                    </Link>
+                  ) : null}
+                  {selectedSnapshotsHref ? (
+                    <Link
+                      className="ag-focus-ring inline-flex h-8 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-[13px] font-medium text-[var(--ag-text-primary)] transition-colors duration-[var(--ag-duration-fast)] hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+                      href={selectedSnapshotsHref}
+                    >
+                      Open snapshots
+                    </Link>
+                  ) : null}
                 </div>
 
                 <div className="space-y-3">

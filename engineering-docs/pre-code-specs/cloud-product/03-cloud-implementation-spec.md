@@ -209,3 +209,19 @@ Phased delivery baseline:
 - phase 4: polish
 
 Implementation work should map tickets and milestones back to these phases unless there is an explicit planning change.
+
+## Operational Readiness And Deployment
+
+The cloud product is not production-ready until the deployment and first-run path is validated end to end:
+
+- production auth is configured with a real `AUTH_SECRET` or `NEXTAUTH_SECRET` and GitHub OAuth credentials
+- development credentials are disabled in production
+- `AGENTGIT_ROOT` and `AGENTGIT_CLOUD_WORKSPACE_ROOTS` point at the workspace roots the control plane should own
+- the health endpoint reports `ok` for auth, provider, workspace roots, Sentry, source maps, Vercel analytics, and authority daemon readiness
+- at least one admin or owner can sign in and generate a connector bootstrap token
+- the connector CLI can bootstrap against the cloud endpoint and register the first workspace connector
+- smoke coverage passes for sign-in, approvals, settings, fleet, snapshots, restore, and writeback flows
+
+The authoritative deployment and first-run checklist lives in:
+
+- `/Users/geoffreyfernald/Documents/agentgit/engineering-docs/pre-code-specs/cloud-product/07-production-readiness-runbook.md`

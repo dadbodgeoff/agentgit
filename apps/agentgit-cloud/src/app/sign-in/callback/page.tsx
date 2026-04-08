@@ -5,6 +5,8 @@ import { Card } from "@/components/primitives";
 import { normalizeCallbackUrl } from "@/lib/auth/redirect";
 import { authenticatedRoutes } from "@/lib/navigation/routes";
 
+export const dynamic = "force-dynamic";
+
 export default async function SignInCallbackPage({
   searchParams,
 }: {

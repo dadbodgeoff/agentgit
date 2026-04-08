@@ -9,11 +9,13 @@ import { RunJournal } from "@agentgit/run-journal";
 import type { RunSummary } from "@agentgit/schemas";
 
 import { RepositoryListResponseSchema, type AgentStatus, type RepositoryListItem, type RunStatus } from "@/schemas/cloud";
+import { buildLocalProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
 import { getWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
 import { resolveWorkspaceRoots } from "@/lib/backend/workspace/roots";
 
 type GitRepositoryMetadata = {
   root: string;
+  provider: "github" | "gitlab" | "bitbucket" | "local";
   owner: string;
   name: string;
   defaultBranch: string;
@@ -71,10 +73,15 @@ function isSameOrNestedPath(candidate: string, base: string): boolean {
   return normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(`${normalizedBase}${path.sep}`);
 }
 
-function parseGitRemote(remoteUrl: string | null, repoRoot: string): { owner: string; name: string } {
+function parseGitRemote(remoteUrl: string | null, repoRoot: string): {
+  owner: string;
+  name: string;
+  provider: GitRepositoryMetadata["provider"];
+} {
   const fallback = {
     owner: path.basename(path.dirname(repoRoot)) || "local",
     name: path.basename(repoRoot) || "workspace",
+    provider: "local" as const,
   };
 
   if (!remoteUrl) {
@@ -82,6 +89,13 @@ function parseGitRemote(remoteUrl: string | null, repoRoot: string): { owner: st
   }
 
   const trimmed = remoteUrl.trim();
+  const provider = trimmed.includes("github.com")
+    ? "github"
+    : trimmed.includes("gitlab")
+      ? "gitlab"
+      : trimmed.includes("bitbucket")
+        ? "bitbucket"
+        : "local";
   const sshMatch = trimmed.match(/^[^@]+@[^:]+:(.+)$/);
   const target = sshMatch ? sshMatch[1] : trimmed;
 
@@ -97,6 +111,7 @@ function parseGitRemote(remoteUrl: string | null, repoRoot: string): { owner: st
       return {
         owner: segments[segments.length - 2],
         name: segments[segments.length - 1],
+        provider,
       };
     }
   } catch {
@@ -132,6 +147,7 @@ function getGitMetadata(workspaceRoot: string): GitRepositoryMetadata | null {
 
   return {
     root: repoRoot,
+    provider: identity.provider,
     owner: identity.owner,
     name: identity.name,
     defaultBranch: resolveDefaultBranch(repoRoot),
@@ -261,6 +277,17 @@ function buildRepositoryRuntimeRecord(workspaceRoot: string): WorkspaceRepositor
       }),
       owner: metadata.owner,
       name: metadata.name,
+      provider: metadata.provider,
+      providerIdentityStatus: "local_only",
+      providerRepositoryUrl: null,
+      providerVisibility: "unknown",
+      providerVerifiedAt: null,
+      providerStatusReason: buildLocalProviderRepositoryIdentity({
+        provider: metadata.provider,
+        owner: metadata.owner,
+        name: metadata.name,
+        defaultBranch: metadata.defaultBranch,
+      }).statusReason,
       defaultBranch: metadata.defaultBranch,
       repositoryStatus: "active",
       lastRunStatus,

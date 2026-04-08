@@ -5,6 +5,20 @@ import { createHash } from "node:crypto";
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { collectWorkspaceRepositoryRuntimeRecords } from "@/lib/backend/workspace/repository-inventory";
 
+function getLatestTimestamp(values: Array<string | null | undefined>): string | null {
+  return values.reduce<string | null>((latest, value) => {
+    if (!value) {
+      return latest;
+    }
+
+    if (!latest) {
+      return value;
+    }
+
+    return new Date(value).getTime() > new Date(latest).getTime() ? value : latest;
+  }, null);
+}
+
 export function getWorkspaceLiveSignature(workspaceId: string): string {
   const repositorySignature = collectWorkspaceRepositoryRuntimeRecords(workspaceId)
     .map((record) => ({
@@ -27,8 +41,8 @@ export function getWorkspaceLiveSignature(workspaceId: string): string {
           id: connector.id,
           status: connector.status,
           lastSeenAt: connector.lastSeenAt,
-          commandVersion: commands[0]?.updatedAt ?? null,
-          eventVersion: events[0]?.ingestedAt ?? null,
+          commandVersion: getLatestTimestamp(commands.map((command) => command.updatedAt)),
+          eventVersion: getLatestTimestamp(events.map((event) => event.ingestedAt)),
         };
       })
       .sort((left, right) => left.id.localeCompare(right.id)),

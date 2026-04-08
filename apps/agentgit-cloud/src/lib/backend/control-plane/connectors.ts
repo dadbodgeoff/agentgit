@@ -1,8 +1,10 @@
 import "server-only";
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
-import type { ConnectorTokenRecord } from "@agentgit/control-plane-state";
+import type { ConnectorTokenRecord, ControlPlaneStateStore } from "@agentgit/control-plane-state";
 import { createCommandAckResponse, createHeartbeatRecord } from "@agentgit/control-plane-state";
 import {
   CreateCommitCommandPayloadSchema,
@@ -25,6 +27,13 @@ import {
 } from "@agentgit/cloud-sync-protocol";
 
 import { withControlPlaneState } from "@/lib/backend/control-plane/state";
+import { resolveProviderRepositoryIdentity } from "@/lib/backend/providers/repository-identity";
+import {
+  actionDetailRoute,
+  repositoryRoute,
+  repositorySnapshotsRoute,
+  runDetailRoute,
+} from "@/lib/navigation/routes";
 import {
   ConnectorBootstrapResponseSchema,
   ConnectorCommandRetryResponseSchema,
@@ -71,6 +80,21 @@ function futureMinutesTimestamp(minutes: number): string {
 
 const COMMAND_LEASE_MINUTES = 5;
 const CONNECTOR_STALE_MINUTES = 10;
+const AUTOMATIC_RETRY_DELAYS_MINUTES = [1, 5, 15] as const;
+const AUTOMATIC_RETRY_COMMAND_TYPES = new Set<ConnectorCommandType>(["refresh_repo_state", "sync_run_history"]);
+
+function normalizeWorkspacePath(candidate: string): string {
+  const resolved = path.resolve(candidate);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function sameWorkspaceRoot(left: string, right: string): boolean {
+  return normalizeWorkspacePath(left) === normalizeWorkspacePath(right);
+}
 
 function normalizeCommandPayload(request: ConnectorCommandDispatchRequest): Record<string, unknown> {
   switch (request.type) {
@@ -131,6 +155,166 @@ function getConnectorStatusDetails(lastSeenAt: string, revoked: boolean, referen
     status: "active" as const,
     reason: null,
   };
+}
+
+function getLatestConnectorToken(
+  store: ControlPlaneStateStore,
+  connectorId: string,
+) {
+  return (
+    store
+      .listConnectorTokens(connectorId)
+      .sort((left, right) => new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime())[0] ?? null
+  );
+}
+
+function getLatestTimestamp(values: Array<string | null | undefined>): string | null {
+  return values.reduce<string | null>((latest, value) => {
+    if (!value) {
+      return latest;
+    }
+
+    if (!latest) {
+      return value;
+    }
+
+    return new Date(value).getTime() > new Date(latest).getTime() ? value : latest;
+  }, null);
+}
+
+function getConnectorDispatchHealth(
+  store: ControlPlaneStateStore,
+  connector: ConnectorRecord,
+  referenceAt: string,
+) {
+  const latestToken = getLatestConnectorToken(store, connector.id);
+  const statusDetails = getConnectorStatusDetails(
+    connector.lastSeenAt,
+    connector.status === "revoked" || Boolean(latestToken?.revokedAt),
+    referenceAt,
+  );
+
+  return {
+    latestToken,
+    status: statusDetails.status,
+    reason:
+      statusDetails.reason ??
+      (latestToken === null ? "Connector has no active access token and cannot receive commands." : null),
+    dispatchable: statusDetails.status === "active" && latestToken !== null,
+  };
+}
+
+function getLatestConnectorActivityAt(
+  store: ControlPlaneStateStore,
+  connectorId: string,
+  fallback: string,
+) {
+  const latestCommandAt = getLatestTimestamp(store.listCommands(connectorId).map((command) => command.updatedAt));
+  const latestEventAt = getLatestTimestamp(store.listEvents(connectorId).map((event) => event.ingestedAt));
+  return getLatestTimestamp([latestCommandAt, latestEventAt, fallback]) ?? fallback;
+}
+
+function getAutomaticRetryDelayMinutes(attemptCount: number): number | null {
+  return AUTOMATIC_RETRY_DELAYS_MINUTES[attemptCount - 1] ?? null;
+}
+
+function supportsAutomaticRetry(commandType: ConnectorCommandType): boolean {
+  return AUTOMATIC_RETRY_COMMAND_TYPES.has(commandType);
+}
+
+function getCommandReplayStatus(command: {
+  status: "pending" | "acked" | "completed" | "failed" | "expired";
+  nextAttemptAt: string | null;
+  leaseExpiresAt: string | null;
+  referenceAt: string;
+}) {
+  const leaseExpired =
+    command.leaseExpiresAt !== null && new Date(command.leaseExpiresAt).getTime() <= new Date(command.referenceAt).getTime();
+
+  if (command.status === "failed" || command.status === "expired") {
+    return {
+      replayable: true,
+      replayStatus: command.nextAttemptAt ? "scheduled" : "available",
+      replayReason:
+        command.status === "failed"
+          ? "Replay is safe because the command failed before a durable result was recorded."
+          : "Replay is safe because the command expired before execution finished.",
+    } as const;
+  }
+
+  if (command.status === "acked") {
+    if (leaseExpired) {
+      return {
+        replayable: true,
+        replayStatus: "available",
+        replayReason: "Connector lease expired before completion. The command can be reclaimed safely.",
+      } as const;
+    }
+
+    return {
+      replayable: false,
+      replayStatus: "leased",
+      replayReason: "Command is still leased to a connector.",
+    } as const;
+  }
+
+  if (command.status === "pending") {
+    if (leaseExpired) {
+      return {
+        replayable: true,
+        replayStatus: "available",
+        replayReason: "Pending command lease expired before completion. The command can be reclaimed safely.",
+      } as const;
+    }
+
+    return {
+      replayable: false,
+      replayStatus: "queued",
+      replayReason: "Command is still waiting in the pending queue.",
+    } as const;
+  }
+
+  return {
+    replayable: false,
+    replayStatus: "settled",
+    replayReason: "Command already completed successfully and does not need replay.",
+  } as const;
+}
+
+function getCommandDetailPath(command: {
+  command: {
+    repository: { owner: string; name: string };
+    type: ConnectorCommandType;
+  };
+  result: Record<string, unknown> | null;
+}) {
+  const owner = command.command.repository.owner;
+  const name = command.command.repository.name;
+
+  if (command.command.type === "execute_restore") {
+    if (typeof command.result?.runId === "string" && typeof command.result?.actionId === "string") {
+      return actionDetailRoute(owner, name, command.result.runId, command.result.actionId);
+    }
+
+    if (typeof command.result?.runId === "string") {
+      return runDetailRoute(owner, name, command.result.runId);
+    }
+
+    return repositorySnapshotsRoute(owner, name);
+  }
+
+  return repositoryRoute(owner, name);
+}
+
+function getCommandExternalUrl(command: {
+  command: { type: ConnectorCommandType };
+  result: Record<string, unknown> | null;
+}) {
+  if (command.command.type === "open_pull_request" && typeof command.result?.pullRequestUrl === "string") {
+    return command.result.pullRequestUrl;
+  }
+
+  return null;
 }
 
 export function issueConnectorBootstrapToken(
@@ -425,14 +609,34 @@ export function acknowledgeConnectorCommand(
       throw new ConnectorAccessError("Connector command is outside the connector workspace scope.", 403);
     }
 
-    store.updateCommandStatus({
+    const updatedCommand = store.updateCommandStatus({
       commandId: request.commandId,
       status: request.status,
       updatedAt: acceptedAt,
       acknowledgedAt: request.status === "acked" || request.status === "completed" ? request.acknowledgedAt : null,
       leaseExpiresAt: request.status === "acked" ? futureMinutesTimestamp(COMMAND_LEASE_MINUTES) : null,
+      nextAttemptAt: null,
       lastMessage: request.message ?? null,
+      result: request.result ?? null,
     });
+    if (!updatedCommand) {
+      throw new ConnectorAccessError("Connector command was not found.", 404);
+    }
+
+    if (request.status === "failed" && supportsAutomaticRetry(updatedCommand.command.type)) {
+      const retryDelayMinutes = getAutomaticRetryDelayMinutes(updatedCommand.attemptCount);
+      if (retryDelayMinutes !== null) {
+        const nextAttemptAt = futureMinutesTimestamp(retryDelayMinutes);
+        store.scheduleCommandRetry({
+          commandId: request.commandId,
+          scheduledAt: acceptedAt,
+          nextAttemptAt,
+          expiresAt: futureTimestamp(1),
+          message: `${request.message ?? `${updatedCommand.command.type} failed.`} Automatic retry scheduled for ${nextAttemptAt}.`,
+        });
+      }
+    }
+
     store.putConnector({
       ...access.connector,
       lastSeenAt: acceptedAt,
@@ -448,11 +652,9 @@ export function acknowledgeConnectorCommand(
   });
 }
 
-export function listWorkspaceConnectors(workspaceId: string, generatedAt: string) {
-  return withControlPlaneState((store) => {
-    const items = store
-      .listConnectors(workspaceId)
-      .map((connector) => {
+export async function listWorkspaceConnectors(workspaceId: string, generatedAt: string) {
+  const connectorRecords = withControlPlaneState((store) =>
+    store.listConnectors(workspaceId).map((connector) => {
         const token = store.listConnectorTokens(connector.id).sort((left, right) =>
           new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime(),
         )[0] ?? null;
@@ -479,9 +681,11 @@ export function listWorkspaceConnectors(workspaceId: string, generatedAt: string
         const retryableCommandCount = commands.filter(
           (command) => command.status === "failed" || command.status === "expired",
         ).length;
+        const automaticRetryCount = commands.filter((command) => command.nextAttemptAt !== null).length;
         const statusDetails = getConnectorStatusDetails(connector.lastSeenAt, Boolean(token?.revokedAt), generatedAt);
 
         return {
+          connector,
           id: connector.id,
           connectorName: connector.connectorName,
           machineName: connector.machineName,
@@ -503,6 +707,7 @@ export function listWorkspaceConnectors(workspaceId: string, generatedAt: string
           pendingCommandCount,
           leasedCommandCount,
           retryableCommandCount,
+          automaticRetryCount,
           eventCount: events.length,
           lastEvent: lastEvent
             ? {
@@ -523,34 +728,64 @@ export function listWorkspaceConnectors(workspaceId: string, generatedAt: string
                 acknowledgedAt: lastCommand.acknowledgedAt,
                 leaseExpiresAt: lastCommand.leaseExpiresAt,
                 attemptCount: lastCommand.attemptCount,
+                nextAttemptAt: lastCommand.nextAttemptAt,
                 message: lastCommand.lastMessage,
+                result: lastCommand.result,
               }
             : null,
-          recentCommands: commands.slice(0, 5).map((command) => ({
-            commandId: command.command.commandId,
-            type: command.command.type,
-            status: command.status,
-            issuedAt: command.command.issuedAt,
-            updatedAt: command.updatedAt,
-            acknowledgedAt: command.acknowledgedAt,
-            leaseExpiresAt: command.leaseExpiresAt,
-            attemptCount: command.attemptCount,
-            message: command.lastMessage,
-          })),
+          recentCommands: commands.slice(0, 8).map((command) => {
+            const replay = getCommandReplayStatus({
+              status: command.status,
+              nextAttemptAt: command.nextAttemptAt,
+              leaseExpiresAt: command.leaseExpiresAt,
+              referenceAt: generatedAt,
+            });
+
+            return {
+              commandId: command.command.commandId,
+              type: command.command.type,
+              status: command.status,
+              issuedAt: command.command.issuedAt,
+              updatedAt: command.updatedAt,
+              acknowledgedAt: command.acknowledgedAt,
+              leaseExpiresAt: command.leaseExpiresAt,
+              attemptCount: command.attemptCount,
+              nextAttemptAt: command.nextAttemptAt,
+              message: command.lastMessage,
+              result: command.result,
+              detailPath: getCommandDetailPath(command),
+              externalUrl: getCommandExternalUrl(command),
+              replayable: replay.replayable,
+              replayStatus: replay.replayStatus,
+              replayReason: replay.replayReason,
+            };
+          }),
           recentEvents: events.slice(0, 5).map((event) => ({
             eventId: event.event.eventId,
             type: event.event.type,
             occurredAt: event.event.occurredAt,
           })),
         };
-      })
-      .sort((left, right) => new Date(right.lastSeenAt).getTime() - new Date(left.lastSeenAt).getTime());
+    }),
+  );
 
-    return WorkspaceConnectorInventorySchema.parse({
-      items,
-      total: items.length,
-      generatedAt,
-    });
+  const items = await Promise.all(
+    connectorRecords.map(async ({ connector, ...record }) => ({
+      ...record,
+      providerIdentity: await resolveProviderRepositoryIdentity({
+        provider: connector.repository.provider,
+        owner: connector.repository.repo.owner,
+        name: connector.repository.repo.name,
+        defaultBranch: connector.repository.defaultBranch,
+      }),
+    })),
+  );
+
+  const sortedItems = items.sort((left, right) => new Date(right.lastSeenAt).getTime() - new Date(left.lastSeenAt).getTime());
+  return WorkspaceConnectorInventorySchema.parse({
+    items: sortedItems,
+    total: sortedItems.length,
+    generatedAt,
   });
 }
 
@@ -578,7 +813,15 @@ export function retryConnectorCommand(workspaceId: string, commandId: string, re
       throw new ConnectorAccessError("Connector command was not found for the active workspace.", 404);
     }
 
-    const retried = store.retryCommand(commandId, retriedAt);
+    const leaseExpired =
+      command.leaseExpiresAt !== null && new Date(command.leaseExpiresAt).getTime() <= new Date(retriedAt).getTime();
+    const reclaimableLease = (command.status === "acked" || command.status === "pending") && leaseExpired;
+
+    if (command.status !== "failed" && command.status !== "expired" && !reclaimableLease) {
+      throw new ConnectorAccessError("Only failed, expired, or lease-expired commands can be replayed.", 409);
+    }
+
+    const retried = store.retryCommand(commandId, retriedAt, futureTimestamp(1));
     if (!retried) {
       throw new ConnectorAccessError("Connector command was not found for the active workspace.", 404);
     }
@@ -588,10 +831,11 @@ export function retryConnectorCommand(workspaceId: string, commandId: string, re
       connectorId: retried.command.connectorId,
       status: retried.status,
       queuedAt: retried.updatedAt,
-      message:
-        retried.status === "pending"
-          ? `${retried.command.type} returned to the pending queue.`
-          : `Command ${retried.command.type} is not retryable from its current state.`,
+      message: retried.status === "pending"
+        ? reclaimableLease
+          ? `${retried.command.type} lease expired and the command was reclaimed into the pending queue.`
+          : `${retried.command.type} returned to the pending queue.`
+        : `Command ${retried.command.type} is not retryable from its current state.`,
     });
   });
 }
@@ -606,6 +850,14 @@ export function queueConnectorCommand(
     const connector = store.getConnector(connectorId);
     if (!connector || connector.workspaceId !== workspaceSession.activeWorkspace.id) {
       throw new ConnectorAccessError("Connector was not found for the active workspace.", 404);
+    }
+
+    const health = getConnectorDispatchHealth(store, connector, queuedAt);
+    if (!health.dispatchable) {
+      throw new ConnectorAccessError(
+        health.reason ?? `Connector ${connector.machineName} is not available for command dispatch.`,
+        409,
+      );
     }
 
     const commandId = `cmd_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
@@ -626,7 +878,9 @@ export function queueConnectorCommand(
       acknowledgedAt: null,
       leaseExpiresAt: null,
       attemptCount: 0,
+      nextAttemptAt: null,
       lastMessage: null,
+      result: null,
     });
 
     return {
@@ -639,25 +893,50 @@ export function queueConnectorCommand(
   });
 }
 
-export function findConnectorForRepository(workspaceId: string, owner: string, name: string) {
+export function findConnectorForRepository(
+  workspaceId: string,
+  owner: string,
+  name: string,
+  workspaceRoot?: string,
+  referenceAt = new Date().toISOString(),
+) {
   return withControlPlaneState((store) => {
-    const commandsByConnector = new Map(
-      store
-        .listCommands()
-        .map((command) => [command.command.connectorId, command]),
-    );
-
     return (
       store
         .listConnectors(workspaceId)
         .filter(
           (connector) => connector.repository.repo.owner === owner && connector.repository.repo.name === name,
         )
+        .filter((connector) =>
+          workspaceRoot ? sameWorkspaceRoot(connector.repository.workspaceRoot, workspaceRoot) : true,
+        )
+        .map((connector) => ({
+          connector,
+          health: getConnectorDispatchHealth(store, connector, referenceAt),
+          latestActivityAt: getLatestConnectorActivityAt(store, connector.id, connector.lastSeenAt),
+        }))
+        .filter((candidate) => candidate.health.dispatchable)
         .sort((left, right) => {
-          const rightCommandTime = commandsByConnector.get(right.id)?.updatedAt ?? right.lastSeenAt;
-          const leftCommandTime = commandsByConnector.get(left.id)?.updatedAt ?? left.lastSeenAt;
-          return new Date(rightCommandTime).getTime() - new Date(leftCommandTime).getTime();
-        })[0] ?? null
+          const activityDelta =
+            new Date(right.latestActivityAt).getTime() - new Date(left.latestActivityAt).getTime();
+          if (activityDelta !== 0) {
+            return activityDelta;
+          }
+
+          const seenDelta =
+            new Date(right.connector.lastSeenAt).getTime() - new Date(left.connector.lastSeenAt).getTime();
+          if (seenDelta !== 0) {
+            return seenDelta;
+          }
+
+          const registeredDelta =
+            new Date(right.connector.registeredAt).getTime() - new Date(left.connector.registeredAt).getTime();
+          if (registeredDelta !== 0) {
+            return registeredDelta;
+          }
+
+          return right.connector.id.localeCompare(left.connector.id);
+        })[0]?.connector ?? null
     );
   });
 }

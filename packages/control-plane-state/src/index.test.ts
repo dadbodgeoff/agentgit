@@ -142,7 +142,9 @@ describe("control plane state store", () => {
         acknowledgedAt: null,
         leaseExpiresAt: null,
         attemptCount: 0,
+        nextAttemptAt: null,
         lastMessage: null,
+        result: null,
       });
 
       const updated = store.updateCommandStatus({
@@ -189,7 +191,9 @@ describe("control plane state store", () => {
         acknowledgedAt: "2026-04-07T18:02:00Z",
         leaseExpiresAt: "2026-04-07T18:03:00Z",
         attemptCount: 1,
+        nextAttemptAt: null,
         lastMessage: "Connector received command.",
+        result: null,
       });
 
       const claimed = store.claimDispatchableCommands({
@@ -276,7 +280,9 @@ describe("control plane state store", () => {
         acknowledgedAt: "2026-04-07T18:02:00Z",
         leaseExpiresAt: null,
         attemptCount: 1,
+        nextAttemptAt: null,
         lastMessage: "Push failed.",
+        result: null,
       });
 
       const revoked = store.revokeConnector("conn_02", "2026-04-07T18:05:00Z");
@@ -287,6 +293,111 @@ describe("control plane state store", () => {
       expect(retried?.status).toBe("pending");
       expect(retried?.leaseExpiresAt).toBeNull();
       expect(retried?.lastMessage).toContain("re-queued");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("holds scheduled retries until the backoff window opens", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-control-plane-state-"));
+    tempDirs.push(tempDir);
+    const store = new ControlPlaneStateStore(path.join(tempDir, "control-plane.db"));
+
+    try {
+      store.putCommand({
+        command: {
+          schemaVersion: "cloud-sync.v1",
+          commandId: "cmd_retry_window_01",
+          connectorId: "conn_03",
+          workspaceId: "ws_acme_01",
+          repository: {
+            owner: "acme",
+            name: "platform-ui",
+          },
+          issuedAt: "2026-04-07T18:01:00Z",
+          expiresAt: "2099-04-07T18:31:00Z",
+          type: "refresh_repo_state",
+          payload: {},
+        },
+        status: "failed",
+        updatedAt: "2026-04-07T18:02:00Z",
+        acknowledgedAt: "2026-04-07T18:02:00Z",
+        leaseExpiresAt: null,
+        attemptCount: 1,
+        nextAttemptAt: null,
+        lastMessage: "Refresh failed.",
+        result: null,
+      });
+
+      store.scheduleCommandRetry({
+        commandId: "cmd_retry_window_01",
+        scheduledAt: "2026-04-07T18:03:00Z",
+        nextAttemptAt: "2026-04-07T18:05:00Z",
+        message: "Refresh failed. Automatic retry scheduled for 2026-04-07T18:05:00Z.",
+      });
+
+      expect(
+        store.claimDispatchableCommands({
+          connectorId: "conn_03",
+          claimedAt: "2026-04-07T18:04:00Z",
+          leaseExpiresAt: "2026-04-07T18:09:00Z",
+        }),
+      ).toHaveLength(0);
+
+      const claimed = store.claimDispatchableCommands({
+        connectorId: "conn_03",
+        claimedAt: "2026-04-07T18:05:00Z",
+        leaseExpiresAt: "2026-04-07T18:10:00Z",
+      });
+
+      expect(claimed).toHaveLength(1);
+      expect(claimed[0]?.status).toBe("pending");
+      expect(claimed[0]?.attemptCount).toBe(2);
+      expect(claimed[0]?.nextAttemptAt).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it("allows operators to reclaim commands after the connector lease expires", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-control-plane-state-"));
+    tempDirs.push(tempDir);
+    const store = new ControlPlaneStateStore(path.join(tempDir, "control-plane.db"));
+
+    try {
+      store.putCommand({
+        command: {
+          schemaVersion: "cloud-sync.v1",
+          commandId: "cmd_lease_reclaim_01",
+          connectorId: "conn_04",
+          workspaceId: "ws_acme_01",
+          repository: {
+            owner: "acme",
+            name: "platform-ui",
+          },
+          issuedAt: "2026-04-07T18:01:00Z",
+          expiresAt: "2099-04-07T18:31:00Z",
+          type: "open_pull_request",
+          payload: {
+            title: "feat: open PR",
+          },
+        },
+        status: "acked",
+        updatedAt: "2026-04-07T18:02:00Z",
+        acknowledgedAt: "2026-04-07T18:02:00Z",
+        leaseExpiresAt: "2026-04-07T18:03:00Z",
+        attemptCount: 1,
+        nextAttemptAt: null,
+        lastMessage: "Connector received command.",
+        result: null,
+      });
+
+      const reclaimed = store.retryCommand("cmd_lease_reclaim_01", "2026-04-07T18:05:00Z");
+
+      expect(reclaimed?.status).toBe("pending");
+      expect(reclaimed?.acknowledgedAt).toBeNull();
+      expect(reclaimed?.leaseExpiresAt).toBeNull();
+      expect(reclaimed?.lastMessage).toContain("lease reclaimed");
     } finally {
       store.close();
     }

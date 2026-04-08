@@ -10,9 +10,14 @@ import {
 } from "@agentgit/schemas";
 import {
   ConnectorCapabilitySchema,
+  ConnectorCommandExecutionResultSchema,
   ConnectorCommandStatusSchema,
   ConnectorCommandTypeSchema,
   ConnectorStatusSchema,
+  CloudProviderSchema,
+  ProviderIdentityStatusSchema,
+  ProviderRepositoryIdentitySchema,
+  ProviderVisibilitySchema,
 } from "@agentgit/cloud-sync-protocol";
 import { z } from "zod";
 
@@ -49,6 +54,8 @@ export const ApprovalListItemSchema = z
     id: z.string().min(1),
     runId: z.string().min(1),
     actionId: z.string().min(1),
+    repositoryOwner: z.string().min(1).optional(),
+    repositoryName: z.string().min(1).optional(),
     workflowName: z.string().min(1),
     domain: ApprovalDomainSchema,
     sideEffectLevel: SideEffectLevelSchema,
@@ -434,6 +441,12 @@ export const RepositoryListItemSchema = z
     id: z.string().min(1),
     owner: z.string().min(1),
     name: z.string().min(1),
+    provider: CloudProviderSchema,
+    providerIdentityStatus: ProviderIdentityStatusSchema,
+    providerRepositoryUrl: z.string().url().nullable(),
+    providerVisibility: ProviderVisibilitySchema,
+    providerVerifiedAt: TimestampStringSchema.nullable(),
+    providerStatusReason: z.string().min(1).nullable(),
     defaultBranch: z.string().min(1),
     repositoryStatus: RepositoryStatusSchema,
     lastRunStatus: RunStatusSchema,
@@ -445,6 +458,39 @@ export type RepositoryListItem = z.infer<typeof RepositoryListItemSchema>;
 
 export const RepositoryListResponseSchema = PaginatedEnvelopeSchema(RepositoryListItemSchema);
 export type RepositoryListResponse = z.infer<typeof RepositoryListResponseSchema>;
+
+export const RepositoryConnectionBootstrapSchema = z
+  .object({
+    availableRepositories: z.array(OnboardingRepositoryOptionSchema),
+    connectedRepositoryIds: z.array(z.string().min(1)),
+    activeConnectorCount: z.number().int().nonnegative(),
+    totalConnectorCount: z.number().int().nonnegative(),
+    staleConnectorCount: z.number().int().nonnegative(),
+    revokedConnectorCount: z.number().int().nonnegative(),
+    activeConnectorRepositoryIds: z.array(z.string().min(1)),
+    launchedAt: TimestampStringSchema.nullable(),
+  })
+  .strict();
+export type RepositoryConnectionBootstrap = z.infer<typeof RepositoryConnectionBootstrapSchema>;
+
+export const RepositoryConnectionUpdateSchema = z
+  .object({
+    repositoryIds: z.array(z.string().min(1)),
+  })
+  .strict();
+export type RepositoryConnectionUpdate = z.infer<typeof RepositoryConnectionUpdateSchema>;
+
+export const RepositoryConnectionSaveResponseSchema = z
+  .object({
+    connectedRepositoryIds: z.array(z.string().min(1)),
+    connectedRepositoryCount: z.number().int().nonnegative(),
+    newlyConnectedRepositoryIds: z.array(z.string().min(1)),
+    connectorBootstrapSuggested: z.boolean(),
+    savedAt: TimestampStringSchema,
+    message: z.string().min(1),
+  })
+  .strict();
+export type RepositoryConnectionSaveResponse = z.infer<typeof RepositoryConnectionSaveResponseSchema>;
 
 export const RepositoryRunListItemSchema = z
   .object({
@@ -468,6 +514,7 @@ export const RepositoryDetailSchema = z
     id: z.string().min(1),
     owner: z.string().min(1),
     name: z.string().min(1),
+    providerIdentity: ProviderRepositoryIdentitySchema,
     defaultBranch: z.string().min(1),
     rootPath: z.string().min(1),
     repositoryStatus: RepositoryStatusSchema,
@@ -515,6 +562,12 @@ export const RepositorySnapshotListItemSchema = z
     storageBytes: z.number().int().nonnegative().nullable(),
     createdAt: TimestampStringSchema,
     latestRecovery: RepositorySnapshotRecoverySchema.optional(),
+    latestRestoreCommandId: z.string().min(1).nullable().optional(),
+    latestRestoreCommandStatus: ConnectorCommandStatusSchema.nullable().optional(),
+    latestRestoreCommandUpdatedAt: TimestampStringSchema.nullable().optional(),
+    latestRestoreCommandMessage: z.string().min(1).nullable().optional(),
+    latestRestoreRunId: z.string().min(1).nullable().optional(),
+    latestRestoreActionId: z.string().min(1).nullable().optional(),
   })
   .strict();
 export type RepositorySnapshotListItem = z.infer<typeof RepositorySnapshotListItemSchema>;
@@ -568,6 +621,7 @@ export const ActivityEventSchema = z
     runId: z.string().min(1).optional(),
     actionId: z.string().min(1).optional(),
     detailPath: z.string().min(1).optional(),
+    externalUrl: z.string().url().optional(),
     createdAt: TimestampStringSchema,
     tone: z.enum(["neutral", "warning", "error", "accent"]).default("neutral"),
   })
@@ -605,6 +659,8 @@ export const AuditEntrySchema = z
     repo: z.string().min(1).nullable(),
     runId: z.string().min(1).nullable(),
     actionId: z.string().min(1).nullable(),
+    detailPath: z.string().min(1).nullable().optional(),
+    externalUrl: z.string().url().nullable().optional(),
     details: z.string().min(1),
   })
   .strict();
@@ -742,6 +798,36 @@ export const ActionDetailSchema = z
         matchedRules: z.array(z.string().min(1)),
       })
       .strict(),
+    runContext: z
+      .object({
+        sessionId: z.string().min(1),
+        workflowName: z.string().min(1),
+        agentName: z.string().min(1),
+        agentFramework: z.string().min(1),
+        status: RunStatusSchema,
+        startedAt: TimestampStringSchema,
+        latestEventAt: TimestampStringSchema,
+        eventCount: z.number().int().nonnegative(),
+      })
+      .strict(),
+    approvalContext: z
+      .object({
+        approvalId: z.string().min(1),
+        status: ApprovalStatusSchema,
+        decisionRequested: z.enum(["approve_or_deny"]),
+        requestedAt: TimestampStringSchema,
+        resolvedAt: TimestampStringSchema.nullable(),
+        resolutionNote: z.string().min(1).nullable(),
+        actionSummary: z.string().min(1),
+        primaryReason: z
+          .object({
+            code: z.string().min(1),
+            message: z.string().min(1),
+          })
+          .strict()
+          .nullable(),
+      })
+      .nullable(),
     execution: z
       .object({
         stepId: z.string().min(1).nullable(),
@@ -903,7 +989,14 @@ export const WorkspaceConnectorCommandSummarySchema = z
     acknowledgedAt: TimestampStringSchema.nullable(),
     leaseExpiresAt: TimestampStringSchema.nullable(),
     attemptCount: z.number().int().nonnegative(),
+    nextAttemptAt: TimestampStringSchema.nullable(),
     message: z.string().min(1).nullable(),
+    result: ConnectorCommandExecutionResultSchema.nullable(),
+    detailPath: z.string().min(1).nullable().optional(),
+    externalUrl: z.string().url().nullable().optional(),
+    replayable: z.boolean().optional(),
+    replayStatus: z.enum(["available", "scheduled", "queued", "leased", "settled"]).optional(),
+    replayReason: z.string().min(1).nullable().optional(),
   })
   .strict();
 export type WorkspaceConnectorCommandSummary = z.infer<typeof WorkspaceConnectorCommandSummarySchema>;
@@ -928,6 +1021,7 @@ export const WorkspaceConnectorSummarySchema = z
     lastSeenAt: TimestampStringSchema,
     workspaceSlug: z.string().min(1),
     capabilities: z.array(ConnectorCapabilitySchema),
+    providerIdentity: ProviderRepositoryIdentitySchema,
     repositoryOwner: z.string().min(1),
     repositoryName: z.string().min(1),
     currentBranch: z.string().min(1),
@@ -940,6 +1034,7 @@ export const WorkspaceConnectorSummarySchema = z
     pendingCommandCount: z.number().int().nonnegative(),
     leasedCommandCount: z.number().int().nonnegative(),
     retryableCommandCount: z.number().int().nonnegative(),
+    automaticRetryCount: z.number().int().nonnegative(),
     eventCount: z.number().int().nonnegative(),
     lastEvent: WorkspaceConnectorEventSummarySchema.nullable(),
     statusReason: z.string().min(1).nullable(),

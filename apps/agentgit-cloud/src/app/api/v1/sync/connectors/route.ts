@@ -12,7 +12,7 @@ export async function GET(request: Request) {
 
   try {
     return jsonWithRequestId(
-      listWorkspaceConnectors(access.workspaceSession.activeWorkspace.id, new Date().toISOString()),
+      await listWorkspaceConnectors(access.workspaceSession.activeWorkspace.id, new Date().toISOString()),
       undefined,
       requestId,
     );

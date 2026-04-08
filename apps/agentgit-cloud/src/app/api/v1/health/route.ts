@@ -2,6 +2,7 @@ import { requireApiRole } from "@/lib/auth/api-session";
 import { withWorkspaceAuthorityClient } from "@/lib/backend/authority/client";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { getCloudReadinessChecks, summarizeReadiness } from "@/lib/release/readiness";
+import { getCloudRuntimeSummary } from "@/lib/release/runtime-config";
 
 export async function GET(request: Request): Promise<Response> {
   const requestId = createRequestId(request);
@@ -11,6 +12,7 @@ export async function GET(request: Request): Promise<Response> {
     return access.denied;
   }
 
+  const runtime = getCloudRuntimeSummary();
   const checks = getCloudReadinessChecks();
   const authority = await withWorkspaceAuthorityClient(access.workspaceSession.activeWorkspace.id, async () => ({
     level: "ok" as const,
@@ -37,6 +39,12 @@ export async function GET(request: Request): Promise<Response> {
       status: summarizeReadiness(allChecks),
       checkedAt: new Date().toISOString(),
       workspaceId: access.workspaceSession.activeWorkspace.id,
+      runtime: {
+        mode: runtime.mode,
+        authBaseUrl: runtime.authBaseUrl,
+        agentgitRoot: runtime.agentgitRoot,
+        workspaceRoots: runtime.workspaceRoots,
+      },
       checks: allChecks,
     },
     undefined,

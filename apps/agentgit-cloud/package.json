@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "next build",
+    "build": "rm -rf .next && next build",
     "dev": "next dev",
+    "readiness": "tsx src/lib/release/cli.ts",
     "start": "next start",
     "test": "vitest run",
-    "test:smoke": "playwright test --config=playwright.config.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:smoke": "sh -c \"pkill -f 'next start --hostname localhost --port 3112' >/dev/null 2>&1 || true; pkill -f '@agentgit/authority-daemon start' >/dev/null 2>&1 || true; pnpm build && playwright test --config=playwright.config.ts\"",
+    "typecheck": "next typegen && tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf .next coverage tsconfig.tsbuildinfo"
   },
   "dependencies": {

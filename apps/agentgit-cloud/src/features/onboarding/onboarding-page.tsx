@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
 import { MetricCard, PageHeader } from "@/components/composites";
 import { Badge, Button, Card, Input, ToastCard, ToastViewport } from "@/components/primitives";
+import { WorkspaceSetupChecklist } from "@/features/shared/workspace-setup-checklist";
 import { ApiClientError } from "@/lib/api/client";
 import { launchOnboarding } from "@/lib/api/endpoints/onboarding";
 import { useWorkspace } from "@/lib/auth/workspace-context";
@@ -592,6 +593,8 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
         </form>
 
         <div className="space-y-6">
+          <WorkspaceSetupChecklist />
+
           <Card className="space-y-4">
             <h2 className="text-lg font-semibold">Stepper proof points</h2>
               <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">

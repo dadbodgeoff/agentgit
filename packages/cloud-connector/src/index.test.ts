@@ -320,6 +320,14 @@ describe("cloud connector runtime", () => {
             expect(processed[0]?.status).toBe("completed");
             expect(processed[0]?.message).toContain("https://github.com/acme/platform-ui/pull/42");
             expect(acknowledgements.map((entry) => entry.status)).toEqual(["acked", "completed"]);
+            expect(acknowledgements[1]?.result).toMatchObject({
+              type: "open_pull_request",
+              pullRequestUrl: "https://github.com/acme/platform-ui/pull/42",
+              pullRequestNumber: 42,
+              baseBranch: "main",
+              headBranch: "feature/live",
+              draft: true,
+            });
           } finally {
             store.close();
           }

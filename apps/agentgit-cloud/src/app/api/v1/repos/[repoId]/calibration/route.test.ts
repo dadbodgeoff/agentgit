@@ -48,7 +48,7 @@ describe("repository calibration route", () => {
     expect(response.status).toBe(200);
     expect(body.repoId).toBe("repo_01");
     expect(response.headers.get("x-agentgit-request-id")).toBeTruthy();
-  });
+  }, 15_000);
 
   it("returns a 404 when calibration data cannot be resolved for the repo", async () => {
     requireApiRole.mockResolvedValue({

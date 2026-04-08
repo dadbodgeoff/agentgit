@@ -7,6 +7,7 @@ export * from "@/lib/query/hooks/use-workspace-connectors-query";
 export * from "@/lib/query/hooks/use-dashboard-query";
 export * from "@/lib/query/hooks/use-onboarding-bootstrap-query";
 export * from "@/lib/query/hooks/use-repositories-query";
+export * from "@/lib/query/hooks/use-repository-connection-bootstrap-query";
 export * from "@/lib/query/hooks/use-repository-detail-query";
 export * from "@/lib/query/hooks/use-repository-policy-query";
 export * from "@/lib/query/hooks/use-repository-snapshots-query";

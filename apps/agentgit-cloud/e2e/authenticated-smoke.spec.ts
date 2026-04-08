@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
+import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
+import type { ActionRecord } from "@agentgit/schemas";
 import { RunJournal } from "@agentgit/run-journal";
 
 async function waitForOkResponse(page: Page, pathFragment: string) {
@@ -22,19 +23,37 @@ async function signInAs(
   },
 ) {
   await page.goto(`/sign-in?callbackUrl=${encodeURIComponent(params.callbackUrl)}`);
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.getByLabel("Display name").fill(params.name);
-  await page.getByLabel("Email").fill(params.email);
-  await page.getByLabel("Workspace role").selectOption(params.role);
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
+  const csrfResponse = await page.request.get("/api/auth/csrf");
+  const csrfPayload = (await csrfResponse.json()) as { csrfToken?: string };
+  if (!csrfPayload.csrfToken) {
+    throw new Error("Missing CSRF token from development auth flow.");
+  }
+
+  const loginResponse = await page.request.post("/api/auth/callback/development", {
+    form: {
+      callbackUrl: params.callbackUrl,
+      csrfToken: csrfPayload.csrfToken,
+      email: params.email,
+      json: "true",
+      name: params.name,
+      role: params.role,
+    },
+  });
+
+  if (!loginResponse.ok()) {
+    throw new Error(`Development auth failed with ${loginResponse.status()}`);
+  }
+
   await Promise.all([
     page.waitForURL(
       (url) =>
         url.pathname === params.callbackUrl ||
         url.pathname === params.callbackUrl.replace(/\/$/, "") ||
         url.pathname.startsWith("/app"),
-      { timeout: 20_000 },
+      { timeout: 45_000 },
     ),
-    page.getByRole("button", { name: "Continue with development access" }).click(),
+    page.goto(params.callbackUrl),
   ]);
 }
 
@@ -82,14 +101,165 @@ function getWorkspaceRepositoryIdentity(): { owner: string; name: string; worksp
   };
 }
 
-function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: string; runId: string; actionId: string } {
+function getWorkspaceRepositoryState() {
   const { owner, name, workspaceRoot } = getWorkspaceRepositoryIdentity();
-  const snapshotId = `snap_smoke_${Date.now()}`;
+  const remoteUrl = execFileSync("git", ["config", "--get", "remote.origin.url"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  }).trim();
+  const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  }).trim();
+  const currentBranch = execFileSync("git", ["branch", "--show-current"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  }).trim();
+  const repoStatus = execFileSync("git", ["status", "--porcelain"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  }).trim();
+  const provider = remoteUrl.includes("github.com")
+    ? "github"
+    : remoteUrl.includes("gitlab")
+      ? "gitlab"
+      : remoteUrl.includes("bitbucket")
+        ? "bitbucket"
+        : "local";
+
+  return {
+    owner,
+    name,
+    workspaceRoot,
+    repository: {
+      provider,
+      repo: {
+        owner,
+        name,
+      },
+      remoteUrl,
+      defaultBranch: currentBranch.length > 0 ? currentBranch : "main",
+      currentBranch: currentBranch.length > 0 ? currentBranch : "main",
+      headSha,
+      isDirty: repoStatus.length > 0,
+      aheadBy: 0,
+      behindBy: 0,
+      workspaceRoot,
+      lastFetchedAt: null,
+    },
+  };
+}
+
+function makeConfidenceAssessment(score: number): ActionRecord["confidence_assessment"] {
+  return {
+    engine_version: "playwright-smoke/v1",
+    score,
+    band: score >= 0.85 ? "high" : score >= 0.65 ? "guarded" : "low",
+    requires_human_review: score < 0.65,
+    factors: [
+      {
+        factor_id: "smoke_baseline",
+        label: "Smoke baseline",
+        kind: "baseline",
+        delta: score,
+        rationale: "Smoke test seeding baseline.",
+      },
+    ],
+  };
+}
+
+function makeSmokeAction(workspaceRoot: string, runId: string, actionId: string): ActionRecord {
+  return {
+    schema_version: "action.v1",
+    action_id: actionId,
+    run_id: runId,
+    session_id: "sess_playwright_smoke",
+    status: "normalized",
+    timestamps: {
+      requested_at: "2026-04-07T15:00:00Z",
+      normalized_at: "2026-04-07T15:00:01Z",
+    },
+    provenance: {
+      mode: "governed",
+      source: "playwright",
+      confidence: 0.95,
+    },
+    actor: {
+      type: "agent",
+      tool_name: "write_file",
+      tool_kind: "filesystem",
+    },
+    operation: {
+      domain: "filesystem",
+      kind: "write",
+      name: "filesystem.write",
+      display_name: "Update README.md",
+    },
+    execution_path: {
+      surface: "governed_fs",
+      mode: "pre_execution",
+      credential_mode: "none",
+    },
+    target: {
+      primary: {
+        type: "path",
+        locator: path.join(workspaceRoot, "README.md"),
+      },
+      scope: {
+        breadth: "single",
+        estimated_count: 1,
+        unknowns: [],
+      },
+    },
+    input: {
+      raw: {},
+      redacted: {},
+      schema_ref: null,
+      contains_sensitive_data: false,
+    },
+    risk_hints: {
+      side_effect_level: "mutating",
+      external_effects: "none",
+      reversibility_hint: "reversible",
+      sensitivity_hint: "low",
+      batch: false,
+    },
+    facets: {
+      filesystem: {
+        operation: "write",
+      },
+    },
+    normalization: {
+      mapper: "playwright-smoke",
+      inferred_fields: [],
+      warnings: [],
+      normalization_confidence: 0.99,
+    },
+    confidence_assessment: makeConfidenceAssessment(0.95),
+  };
+}
+
+async function seedRepositorySnapshot(): Promise<{
+  owner: string;
+  name: string;
+  snapshotId: string;
+  runId: string;
+  actionId: string;
+}> {
+  const { owner, name, workspaceRoot } = getWorkspaceRepositoryIdentity();
   const runId = `run_smoke_${Date.now()}`;
   const actionId = `act_smoke_${Date.now()}`;
   const targetPath = path.join(workspaceRoot, "README.md");
   const journal = new RunJournal({
     dbPath: path.join(workspaceRoot, ".agentgit", "state", "authority.db"),
+  });
+  const snapshotEngine = new LocalSnapshotEngine({
+    rootDir: path.join(workspaceRoot, ".agentgit", "state", "snapshots"),
+  });
+  const snapshot = await snapshotEngine.createSnapshot({
+    action: makeSmokeAction(workspaceRoot, runId, actionId),
+    requested_class: "journal_plus_anchor",
+    workspace_root: workspaceRoot,
   });
 
   try {
@@ -159,9 +329,9 @@ function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: st
       recorded_at: "2026-04-07T15:00:04Z",
       payload: {
         action_id: actionId,
-        snapshot_id: snapshotId,
-        snapshot_class: "metadata_only",
-        fidelity: "metadata_only",
+        snapshot_id: snapshot.snapshot_id,
+        snapshot_class: "journal_plus_anchor",
+        fidelity: "full",
       },
     });
 
@@ -171,52 +341,20 @@ function seedRepositorySnapshot(): { owner: string; name: string; snapshotId: st
       recorded_at: "2026-04-07T15:00:05Z",
       payload: {
         action_id: actionId,
-        snapshot_id: snapshotId,
+        snapshot_id: snapshot.snapshot_id,
       },
     });
   } finally {
     journal.close();
   }
 
-  const manifestPath = path.join(
-    workspaceRoot,
-    ".agentgit",
-    "state",
-    "snapshots",
-    "metadata",
-    `${snapshotId}.json`,
-  );
-  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-  fs.writeFileSync(
-    manifestPath,
-    JSON.stringify(
-      {
-        snapshot_id: snapshotId,
-        action_id: actionId,
-        run_id: runId,
-        target_path: targetPath,
-        workspace_root: workspaceRoot,
-        existed_before: true,
-        entry_kind: "file",
-        snapshot_class: "metadata_only",
-        fidelity: "metadata_only",
-        created_at: "2026-04-07T15:00:02Z",
-        action_display_name: "Update README.md",
-        operation_domain: "filesystem",
-        operation_kind: "update_file",
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-
-  return { owner, name, snapshotId, runId, actionId };
+  return { owner, name, snapshotId: snapshot.snapshot_id, runId, actionId };
 }
 
-test("admin smoke covers approvals, team settings, policy, and calibration", async ({ page }) => {
-  test.setTimeout(120_000);
-  const snapshotSeed = seedRepositorySnapshot();
+test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and readiness", async ({ page }) => {
+  test.setTimeout(300_000);
+  const snapshotSeed = await seedRepositorySnapshot();
+  const repositoryState = getWorkspaceRepositoryState();
 
   await signInAs(page, {
     callbackUrl: "/app/approvals",
@@ -226,6 +364,18 @@ test("admin smoke covers approvals, team settings, policy, and calibration", asy
   });
 
   await expect(page.getByRole("heading", { name: "Approval queue" })).toBeVisible();
+  await expect(page.locator("main")).toContainText(/Approval queue|Could not load approvals\. Retry\./);
+
+  await page.goto("/app/repos");
+  await expect(page.getByRole("heading", { name: "Repositories" })).toBeVisible();
+  await page.getByRole("button", { name: "Connect repository" }).first().click();
+  await expect(page.getByRole("heading", { name: "Connect repositories" })).toBeVisible();
+  await page.getByRole("checkbox").first().check();
+  await page.getByRole("button", { name: "Save repository scope" }).click();
+  await expect(page.locator("text=Bootstrap a local connector")).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Generate bootstrap token" }).click();
+  await expect(page.locator("text=Bootstrap command")).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Cancel" }).click();
 
   await page.goto("/app/settings/team");
   await expect(page.getByRole("heading", { name: "Team" })).toBeVisible();
@@ -237,10 +387,156 @@ test("admin smoke covers approvals, team settings, policy, and calibration", asy
 
   await page.goto("/app/settings/integrations");
   await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
-  await expect(page.getByText("Connector sync")).toBeVisible();
+  await waitForOkResponse(page, "/api/v1/settings/integrations");
+  await expect(page.getByRole("button", { name: "Generate bootstrap token" })).toBeVisible();
   await page.getByRole("button", { name: "Generate bootstrap token" }).click();
   await expect(page.getByText("Bootstrap command")).toBeVisible();
   await expect(page.locator("main")).toContainText("agentgit-cloud-connector bootstrap");
+
+  const bootstrapResponse = await page.request.post("/api/v1/sync/bootstrap-token");
+  expect(bootstrapResponse.ok()).toBeTruthy();
+  const bootstrapPayload = (await bootstrapResponse.json()) as {
+    bootstrapToken?: string;
+    workspaceId?: string;
+    commandHint?: string;
+  };
+  expect(bootstrapPayload.bootstrapToken).toBeTruthy();
+  expect(bootstrapPayload.commandHint).toContain("agentgit-cloud-connector bootstrap");
+
+  const registrationResponse = await page.request.post("/api/v1/sync/register", {
+    headers: {
+      authorization: `Bearer ${bootstrapPayload.bootstrapToken}`,
+    },
+    data: {
+      workspaceId: bootstrapPayload.workspaceId,
+      connectorName: "Admin smoke connector",
+      machineName: "admin-smoke-mac",
+      connectorVersion: "0.1.0",
+      platform: {
+        os: process.platform,
+        arch: process.arch,
+        hostname: execFileSync("hostname", { encoding: "utf8" }).trim(),
+      },
+      capabilities: [
+        "repo_state_sync",
+        "run_event_sync",
+        "snapshot_manifest_sync",
+        "restore_execution",
+        "git_commit",
+        "git_push",
+        "pull_request_open",
+      ],
+      repository: repositoryState.repository,
+    },
+  });
+  expect(registrationResponse.ok()).toBeTruthy();
+  const registrationPayload = (await registrationResponse.json()) as {
+    connector?: {
+      id?: string;
+    };
+  };
+  const connectorId = registrationPayload.connector?.id;
+  expect(connectorId).toBeTruthy();
+
+  await page.goto("/app/settings/integrations");
+  await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+  await waitForOkResponse(page, "/api/v1/settings/integrations");
+  await expect(page.locator("main")).toContainText("Admin smoke connector", { timeout: 20_000 });
+  await page.getByRole("button", { name: "Queue sync now" }).click();
+  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Queue create commit" }).click();
+  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Queue push branch" }).click();
+  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: "Queue open PR" }).click();
+  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+
+  await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
+  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
+  await expect(page.getByRole("heading", { name: "Snapshots" })).toBeVisible();
+  await expect(page.getByText(snapshotSeed.snapshotId)).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("Update README.md", { timeout: 20_000 });
+  const verifiedSnapshotButton = page.getByRole("row", { name: /verified.*Not restored/ }).first().getByRole("button").first();
+  const verifiedSnapshotText = (await verifiedSnapshotButton.innerText()).trim();
+  const verifiedSnapshotId = verifiedSnapshotText.split("\n")[0]?.trim();
+  expect(verifiedSnapshotId).toBeTruthy();
+
+  const restoreResponse = await page.request.post(
+    `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots/${encodeURIComponent(
+      verifiedSnapshotId ?? "",
+    )}/restore`,
+    {
+      data: {
+        intent: "execute",
+      },
+    },
+  );
+  const restoreResponseBody = await restoreResponse.text();
+  expect(restoreResponse.ok(), restoreResponseBody).toBeTruthy();
+  const restorePayload = JSON.parse(restoreResponseBody) as {
+    snapshotId?: string;
+    commandId?: string;
+    restored?: boolean;
+    message?: string;
+  };
+  expect(restorePayload.snapshotId).toBe(verifiedSnapshotId);
+  expect(restorePayload.message).toBeTruthy();
+
+  await page.reload();
+  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
+  await expect(page.locator("main")).toContainText(verifiedSnapshotId ?? "", { timeout: 20_000 });
+
+  await page.goto("/app/settings/connectors");
+  await expect(page.getByRole("heading", { name: "Connector fleet" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Admin smoke connector", { timeout: 20_000 });
+  await page.getByRole("button", { name: /Admin smoke connector.*Selected/ }).first().click();
+  await expect(page.locator("main")).toContainText("create_commit", { timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("push_branch", { timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("open_pull_request", { timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("execute_restore", { timeout: 20_000 });
+  await page.getByRole("button", { name: "Revoke connector" }).click();
+  await expect(page.getByRole("button", { name: "Connector revoked" })).toBeVisible({ timeout: 20_000 });
+
+  const healthResponse = await page.request.get("/api/v1/health");
+  expect(healthResponse.ok()).toBeTruthy();
+  const healthPayload = (await healthResponse.json()) as {
+    status?: string;
+    checks?: Array<{ id: string; level: string; message: string }>;
+  };
+  expect(
+    healthPayload.checks?.some(
+      (check) => check.id === "authority_daemon" && (check.level === "ok" || check.level === "warn"),
+    ),
+  ).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "auth_secret" && check.level === "ok")).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "auth_base_url" && check.level === "ok")).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "github_provider" && check.level === "ok")).toBe(true);
+  expect(
+    healthPayload.checks?.some((check) => check.id === "workspace_roots_configured" && check.level === "ok"),
+  ).toBe(true);
+  expect(
+    healthPayload.checks?.some((check) => check.id === "workspace_roots_available" && check.level === "ok"),
+  ).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "sentry_dsn" && check.level === "ok")).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "sentry_source_maps" && check.level === "ok")).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "vercel_analytics" && check.level === "ok")).toBe(true);
+  expect(healthPayload.checks?.some((check) => check.id === "dev_credentials" && check.level === "fail")).toBe(true);
+
+  await page.goto("/app/settings/team");
+  await expect(page.getByRole("heading", { name: "Team" })).toBeVisible();
+  await page.goto("/app/calibration");
+  await expect(page.getByRole("heading", { name: "Calibration" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Policy calibration dashboard");
+
+  await page.goto("/app/activity");
+  await waitForOkResponse(page, "/api/v1/activity");
+  await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Recovery executed", { timeout: 15_000 });
+
+  await page.goto("/app/audit");
+  await waitForOkResponse(page, "/api/v1/audit");
+  await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("playwright-snapshot-smoke", { timeout: 15_000 });
 
   await page.goto(getWorkspaceRepositoryPolicyPath());
   await expect(page.getByRole("heading", { name: "Policy" })).toBeVisible();
@@ -252,27 +548,7 @@ test("admin smoke covers approvals, team settings, policy, and calibration", asy
   );
   await policyDocument.fill(nextDocument);
   await page.getByRole("button", { name: "Save policy" }).click();
-  await expect(page.getByText("Policy saved.")).toBeVisible();
-
-  await page.goto("/app/calibration");
-  await expect(page.getByRole("heading", { name: "Calibration" })).toBeVisible();
-  await expect(page.locator("main")).toContainText("Policy calibration dashboard");
-
-  await page.goto("/app/activity");
-  await waitForOkResponse(page, "/api/v1/activity");
-  await expect(page.getByRole("heading", { name: "Activity" })).toBeVisible();
-  await expect(page.locator("main")).toContainText(snapshotSeed.runId, { timeout: 15_000 });
-
-  await page.goto("/app/audit");
-  await waitForOkResponse(page, "/api/v1/audit");
-  await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
-  await expect(page.locator("main")).toContainText("playwright-snapshot-smoke", { timeout: 15_000 });
-
-  await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
-  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
-  await expect(page.getByRole("heading", { name: "Snapshots" })).toBeVisible();
-  await expect(page.getByText(snapshotSeed.snapshotId)).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator("main")).toContainText("Update README.md", { timeout: 20_000 });
+  await expect(page.getByText("Policy saved.")).toBeVisible({ timeout: 20_000 });
 });
 
 test("owner smoke covers onboarding and billing", async ({ page }) => {

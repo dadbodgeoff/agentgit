@@ -1,6 +1,8 @@
+import Link from "next/link";
 import type { KeyboardEvent } from "react";
 
 import { Badge, Button, Card } from "@/components/primitives";
+import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { cn } from "@/lib/utils/cn";
 import type { ApprovalListItem } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
@@ -35,6 +37,15 @@ export function ApprovalCard({
   onReject?: () => void;
   onSelect?: () => void;
 }) {
+  const repositoryHref =
+    item.repositoryOwner && item.repositoryName ? repositoryRoute(item.repositoryOwner, item.repositoryName) : null;
+  const runHref =
+    item.repositoryOwner && item.repositoryName ? runDetailRoute(item.repositoryOwner, item.repositoryName, item.runId) : null;
+  const actionHref =
+    item.repositoryOwner && item.repositoryName
+      ? actionDetailRoute(item.repositoryOwner, item.repositoryName, item.runId, item.actionId)
+      : null;
+
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -65,6 +76,11 @@ export function ApprovalCard({
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--ag-text-secondary)]">
           <span>{formatRelativeTimestamp(item.requestedAt)}</span>
+          {item.repositoryOwner && item.repositoryName ? (
+            <span>
+              {item.repositoryOwner}/{item.repositoryName}
+            </span>
+          ) : null}
           <span className="font-mono">{item.runId}</span>
           <span>{item.snapshotRequired ? "snapshot required" : "no snapshot required"}</span>
         </div>
@@ -108,6 +124,33 @@ export function ApprovalCard({
           >
             Review details
           </Button>
+          {repositoryHref ? (
+            <Link
+              className="ag-focus-ring rounded-[var(--ag-radius-md)] px-2 py-1 text-xs font-medium text-[var(--ag-text-secondary)] underline-offset-4 hover:text-[var(--ag-color-brand)] hover:underline"
+              href={repositoryHref}
+              onClick={(event) => event.stopPropagation()}
+            >
+              Open repo
+            </Link>
+          ) : null}
+          {runHref ? (
+            <Link
+              className="ag-focus-ring rounded-[var(--ag-radius-md)] px-2 py-1 text-xs font-medium text-[var(--ag-text-secondary)] underline-offset-4 hover:text-[var(--ag-color-brand)] hover:underline"
+              href={runHref}
+              onClick={(event) => event.stopPropagation()}
+            >
+              Open run
+            </Link>
+          ) : null}
+          {actionHref ? (
+            <Link
+              className="ag-focus-ring rounded-[var(--ag-radius-md)] px-2 py-1 text-xs font-medium text-[var(--ag-text-secondary)] underline-offset-4 hover:text-[var(--ag-color-brand)] hover:underline"
+              href={actionHref}
+              onClick={(event) => event.stopPropagation()}
+            >
+              Action detail
+            </Link>
+          ) : null}
         </div>
         {errorMessage ? (
           <div className="rounded-[var(--ag-radius-md)] border border-[color:rgb(239_68_68_/_0.25)] bg-[var(--ag-bg-error)] px-3 py-2 text-sm text-[var(--ag-color-error)]">

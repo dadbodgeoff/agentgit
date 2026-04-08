@@ -7,6 +7,8 @@ import { AppShell } from "@/components/shell/app-shell";
 import { resolveWorkspaceSession } from "@/lib/auth/workspace-session";
 import { authenticatedRoutes, publicRoutes } from "@/lib/navigation/routes";
 
+export const dynamic = "force-dynamic";
+
 export default async function AuthenticatedLayout({ children }: { children: ReactNode }) {
   const session = await auth();
 

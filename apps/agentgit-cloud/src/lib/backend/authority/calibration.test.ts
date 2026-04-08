@@ -1,4 +1,7 @@
+import fs from "node:fs";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { RunJournal } from "@agentgit/run-journal";
 
 vi.mock("server-only", () => ({}));
 
@@ -84,5 +87,57 @@ describe("authority calibration adapter", () => {
       currentAskThreshold: 0.3,
       recommended: 0.42,
     });
+  });
+
+  it("falls back to local journal calibration data when the authority daemon call fails", async () => {
+    findRepositoryRuntimeRecordById.mockReturnValue({
+      metadata: { root: "/tmp/repo" },
+      inventory: { id: "repo_01" },
+    });
+    withScopedAuthorityClient.mockRejectedValue(new Error("daemon unavailable"));
+
+    vi.spyOn(fs, "existsSync").mockReturnValue(true);
+    const journalClose = vi.fn();
+    vi.spyOn(RunJournal.prototype, "getPolicyCalibrationReport").mockReturnValue({
+      report: {
+        filters: {
+          run_id: null,
+        },
+        totals: {
+          sample_count: 7,
+          calibration: {
+            brier_score: 0.18,
+            expected_calibration_error: 0.09,
+            bins: [
+              {
+                confidence_floor: 0,
+                sample_count: 2,
+                resolved_sample_count: 2,
+                approved_count: 0,
+              },
+              {
+                confidence_floor: 0.8,
+                sample_count: 5,
+                resolved_sample_count: 5,
+                approved_count: 4,
+              },
+            ],
+          },
+        },
+      },
+    } as never);
+    vi.spyOn(RunJournal.prototype, "close").mockImplementation(journalClose);
+
+    const { getRepositoryCalibrationReport } = await import("./calibration");
+    const result = await getRepositoryCalibrationReport("repo_01");
+
+    expect(result).toMatchObject({
+      repoId: "repo_01",
+      totalActions: 7,
+      brierScore: 0.18,
+      ece: 0.09,
+      recommendations: [],
+    });
+    expect(journalClose).toHaveBeenCalled();
   });
 });

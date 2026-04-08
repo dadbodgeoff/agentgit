@@ -9,6 +9,11 @@ import {
   type RunStatus,
 } from "@/schemas/cloud";
 
+type ApprovalRepositoryContext = {
+  repositoryName: string;
+  repositoryOwner: string;
+};
+
 function mapApprovalStatus(status: "pending" | "approved" | "denied"): ApprovalListItem["status"] {
   return status === "denied" ? "rejected" : status;
 }
@@ -66,12 +71,17 @@ function buildRunSummaryText(params: {
   return `${parts.join(", ")}.`;
 }
 
-export function mapApprovalInboxToCloud(payload: QueryApprovalInboxResponsePayload) {
+export function mapApprovalInboxToCloud(
+  payload: QueryApprovalInboxResponsePayload,
+  repositoryByRunId: Map<string, ApprovalRepositoryContext> = new Map(),
+) {
   return ApprovalListResponseSchema.parse({
     items: payload.items.map((item) => ({
       id: item.approval_id,
       runId: item.run_id,
       actionId: item.action_id,
+      repositoryOwner: repositoryByRunId.get(item.run_id)?.repositoryOwner,
+      repositoryName: repositoryByRunId.get(item.run_id)?.repositoryName,
       workflowName: item.workflow_name,
       domain: mapApprovalDomain(item.action_domain),
       sideEffectLevel: item.side_effect_level,

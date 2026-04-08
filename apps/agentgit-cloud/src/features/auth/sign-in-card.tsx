@@ -49,7 +49,7 @@ export function SignInCard({
   async function handleGitHubSignIn() {
     setIsSubmitting(true);
     try {
-      await signIn("github", { redirectTo: callbackUrl });
+      await signIn("github", { callbackUrl, redirectTo: callbackUrl });
     } finally {
       setIsSubmitting(false);
     }
@@ -60,6 +60,7 @@ export function SignInCard({
     try {
       await signIn(DEVELOPMENT_PROVIDER_ID, {
         email,
+        callbackUrl,
         name,
         redirectTo: callbackUrl,
         role,

@@ -45,6 +45,8 @@ Implementation should create and maintain:
 - route-level features that map cleanly to the route map
 - tests for the five priority journeys
 - visual regression coverage for key screens
+- deployment and readiness runbooks for the cloud app and connector bootstrap flow
+- first-run smoke coverage for connector bootstrap, approvals, restore, and writeback
 
 ## When To Update Which Spec
 

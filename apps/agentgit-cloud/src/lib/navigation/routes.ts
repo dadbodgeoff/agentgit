@@ -16,6 +16,7 @@ export const authenticatedRoutes = {
   team: "/app/settings/team",
   billing: "/app/settings/billing",
   integrations: "/app/settings/integrations",
+  connectors: "/app/settings/connectors",
   onboarding: "/app/onboarding",
   calibration: "/app/calibration",
 } as const;
