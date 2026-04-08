@@ -115,4 +115,41 @@ describe("approval decision routes", () => {
     );
     expect(body.status).toBe("rejected");
   });
+
+  it("returns an expired conflict when the approval TTL has already elapsed", async () => {
+    getWorkspaceApprovalProjection.mockReturnValue({
+      id: "appr_01",
+      runId: "run_01",
+      actionId: "act_01",
+      repositoryOwner: "acme",
+      repositoryName: "platform-ui",
+      workflowName: "Ship fix",
+      domain: "deploy",
+      sideEffectLevel: "mutating",
+      status: "expired",
+      requestedAt: "2026-04-07T19:00:00Z",
+      resolvedAt: "2026-04-07T19:30:00Z",
+      resolutionNote: "Approval timed out before the connector could deliver a reviewer decision.",
+      actionSummary: "Deploy preview",
+      reasonSummary: "Needs review",
+      targetLocator: "deploy://preview",
+      snapshotRequired: false,
+      decisionCommandStatus: "failed",
+    });
+
+    const { POST } = await import("./[id]/approve/route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/approvals/appr_01/approve", {
+        body: JSON.stringify({ comment: "Too late" }),
+        method: "POST",
+      }),
+      { params: Promise.resolve({ id: "appr_01" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.status).toBe("expired");
+    expect(body.message).toContain("timed out");
+    expect(queueConnectorCommand).not.toHaveBeenCalled();
+  });
 });

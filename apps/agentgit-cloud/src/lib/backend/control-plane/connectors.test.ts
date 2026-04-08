@@ -10,6 +10,7 @@ import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import {
   ConnectorAccessError,
   findConnectorForRepository,
+  getRepositoryConnectorAvailability,
   listWorkspaceConnectors,
   retryConnectorCommand,
   queueConnectorCommand,
@@ -126,6 +127,33 @@ describe("connector routing and dispatch safety", () => {
     );
 
     expect(connector?.id).toBe("conn_matching_healthy");
+  });
+
+  it("reports stale connector availability when delivery health has degraded", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-connectors-"));
+    tempDirs.push(tempDir);
+    process.env.AGENTGIT_ROOT = tempDir;
+
+    putConnectorFixture({
+      id: "conn_stale",
+      workspaceRoot: "/tmp/workspaces/platform-ui",
+      lastSeenAt: "2026-04-07T17:30:00Z",
+    });
+
+    const availability = getRepositoryConnectorAvailability(
+      "ws_acme_01",
+      "acme",
+      "platform-ui",
+      "/tmp/workspaces/platform-ui",
+      "2026-04-07T18:12:00Z",
+    );
+
+    expect(availability).toMatchObject({
+      status: "stale",
+      connectorId: "conn_stale",
+      machineName: "conn_stale-machine",
+    });
+    expect(availability.reason).toContain("No heartbeat seen");
   });
 
   it("refuses to queue commands onto stale or revoked connectors", () => {
