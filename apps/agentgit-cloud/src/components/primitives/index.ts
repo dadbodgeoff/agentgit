@@ -4,6 +4,7 @@ export * from "@/components/primitives/card";
 export * from "@/components/primitives/code-block";
 export * from "@/components/primitives/input";
 export * from "@/components/primitives/modal";
+export * from "@/components/primitives/select";
 export * from "@/components/primitives/table";
 export * from "@/components/primitives/tabs";
 export * from "@/components/primitives/toast";
