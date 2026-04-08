@@ -45,8 +45,10 @@
   --ag-radius-lg: 12px;
   --ag-radius-xl: 16px;
   --ag-radius-full: 9999px;
+  --ag-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.24);
   --ag-shadow-sm: 0 2px 4px rgb(0 0 0 / 0.28);
   --ag-shadow-md: 0 4px 12px rgb(0 0 0 / 0.36);
+  --ag-shadow-lg: 0 8px 24px rgb(0 0 0 / 0.48);
   --ag-shadow-xl: 0 16px 48px rgb(0 0 0 / 0.56);
   --ag-z-dropdown: 100;
   --ag-z-sticky: 200;
@@ -55,10 +57,15 @@
   --ag-z-popover: 500;
   --ag-z-toast: 600;
   --ag-z-tooltip: 700;
+  --ag-duration-instant: 80ms;
   --ag-duration-fast: 120ms;
   --ag-duration-normal: 200ms;
   --ag-duration-slow: 350ms;
+  --ag-duration-deliberate: 500ms;
   --ag-ease-default: cubic-bezier(0.16, 1, 0.3, 1);
+  --ag-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ag-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ag-ease-linear: linear;
 }
 
 [data-theme="light"] {
