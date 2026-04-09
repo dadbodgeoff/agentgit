@@ -88,7 +88,7 @@ function detailPathForCommand(command: {
   return repositoryRoute(owner, name);
 }
 
-function externalUrlForCommand(command: { result?: Record<string, unknown> | null }) {
+function externalUrlForCommand(_command: { result?: Record<string, unknown> | null }) {
   return null;
 }
 

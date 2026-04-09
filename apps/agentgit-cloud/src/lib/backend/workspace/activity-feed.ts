@@ -4,6 +4,7 @@ import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { ActivityFeedResponseSchema, type ActivityEvent } from "@/schemas/cloud";
 import { listWorkspaceRunContexts } from "@/lib/backend/workspace/workspace-runtime";
+import { listWorkspaceSyncedActivityEvents } from "@/lib/backend/workspace/synced-control-plane";
 import { paginateItems } from "@/lib/pagination/cursor";
 
 function buildRepoLabel(owner: string, name: string) {
@@ -140,7 +141,7 @@ function detailPathForConnectorCommand(command: {
   return repositoryRoute(owner, name);
 }
 
-function externalUrlForConnectorCommand(command: { result?: Record<string, unknown> | null }) {
+function externalUrlForConnectorCommand(_command: { result?: Record<string, unknown> | null }) {
   return undefined;
 }
 
@@ -252,8 +253,10 @@ export async function listWorkspaceActivity(
   params: { cursor?: string | null; limit: number } = { limit: 25 },
 ) {
   const items: ActivityEvent[] = [];
+  const localRepoLabels = new Set<string>();
 
   for (const context of await listWorkspaceRunContexts(workspaceId)) {
+    localRepoLabels.add(buildRepoLabel(context.repository.inventory.owner, context.repository.inventory.name));
     for (const event of context.events) {
       const mapped = mapRunEventToActivity({
         owner: context.repository.inventory.owner,
@@ -265,6 +268,13 @@ export async function listWorkspaceActivity(
         items.push(mapped);
       }
     }
+  }
+
+  for (const event of await listWorkspaceSyncedActivityEvents(workspaceId)) {
+    if (localRepoLabels.has(event.repo)) {
+      continue;
+    }
+    items.push(event);
   }
 
   withControlPlaneState((store) => {

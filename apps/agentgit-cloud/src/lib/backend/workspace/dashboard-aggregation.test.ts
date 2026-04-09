@@ -9,6 +9,7 @@ import { RunJournal } from "@agentgit/run-journal";
 vi.mock("server-only", () => ({}));
 
 import { saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { withControlPlaneState } from "@/lib/backend/control-plane/state";
 import { getDashboardSummaryFromWorkspace } from "@/lib/backend/workspace/dashboard-aggregation";
 import { listDiscoveredRepositoryInventory } from "@/lib/backend/workspace/repository-inventory";
 
@@ -174,5 +175,95 @@ describe("dashboard workspace aggregation", () => {
     expect(dashboard.metrics.find((metric) => metric.id === "connected_repos")?.value).toBe("0");
     expect(dashboard.recentRuns).toHaveLength(0);
     expect(dashboard.recentActivity).toHaveLength(0);
+  });
+
+  it("projects connector-synced repositories and activity without shared journal access", async () => {
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = "";
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: [],
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    withControlPlaneState((store) => {
+      store.putConnector({
+        id: "conn_01",
+        workspaceId: "ws_acme_01",
+        workspaceSlug: "acme-platform",
+        connectorName: "primary",
+        machineName: "geoffrey-mbp",
+        connectorVersion: "0.1.0",
+        platform: {
+          os: "darwin",
+          arch: "arm64",
+          hostname: "geoffrey-mbp",
+        },
+        capabilities: ["repo_state_sync", "run_event_sync"],
+        repository: {
+          provider: "github",
+          repo: {
+            owner: "acme",
+            name: "platform-ui",
+          },
+          remoteUrl: "git@github.com:acme/platform-ui.git",
+          defaultBranch: "main",
+          currentBranch: "main",
+          headSha: "abcdef1234567",
+          isDirty: false,
+          aheadBy: 0,
+          behindBy: 0,
+          workspaceRoot: "/Users/test/platform-ui",
+          lastFetchedAt: null,
+        },
+        status: "active",
+        registeredAt: "2026-04-07T18:00:00Z",
+        lastSeenAt: "2026-04-07T18:05:00Z",
+      });
+      store.appendEvent({
+        event: {
+          schemaVersion: "cloud-sync.v1",
+          eventId: "evt_run_failed_01",
+          connectorId: "conn_01",
+          workspaceId: "ws_acme_01",
+          repository: {
+            owner: "acme",
+            name: "platform-ui",
+          },
+          sequence: 1,
+          occurredAt: "2026-04-07T18:06:00Z",
+          type: "run.event",
+          payload: {
+            runId: "run_01",
+            event: {
+              event_type: "execution.failed",
+              occurred_at: "2026-04-07T18:06:00Z",
+              payload: {
+                action_id: "act_01",
+              },
+            },
+          },
+        },
+        ingestedAt: "2026-04-07T18:06:05Z",
+      });
+    });
+
+    const dashboard = await getDashboardSummaryFromWorkspace("ws_acme_01");
+
+    expect(dashboard.metrics.find((metric) => metric.id === "connected_repos")?.value).toBe("1");
+    expect(dashboard.recentRuns).toHaveLength(0);
+    expect(dashboard.recentActivity[0]).toMatchObject({
+      repo: "acme/platform-ui",
+      kind: "run_failed",
+      tone: "error",
+    });
   });
 });

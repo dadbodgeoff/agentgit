@@ -19,7 +19,6 @@ import {
 import { sendIntegrationTest, updateWorkspaceIntegrations } from "@/lib/api/endpoints/integrations";
 import { useRepositoriesQuery, useWorkspaceConnectorsQuery, useWorkspaceIntegrationsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
-import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import { formatAbsoluteDate, formatNumber, formatRelativeTimestamp } from "@/lib/utils/format";
 import {
   type ConnectorBootstrapResponse,

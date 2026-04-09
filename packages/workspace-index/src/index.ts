@@ -183,31 +183,43 @@ async function removeInternalPathIfSafe(targetPath: string, details?: Record<str
 }
 
 async function copyRegularFileNoFollow(sourcePath: string, destinationPath: string, details?: Record<string, unknown>) {
-  const sourceStats = await fs.lstat(sourcePath);
-  if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
-    throw new InternalError("Workspace index refused to copy a non-regular file.", {
-      source_path: sourcePath,
-      destination_path: destinationPath,
-      ...details,
-    });
-  }
+  try {
+    const sourceStats = await fs.lstat(sourcePath);
+    if (sourceStats.isSymbolicLink() || !sourceStats.isFile()) {
+      throw new InternalError("Workspace index refused to copy a non-regular file.", {
+        source_path: sourcePath,
+        destination_path: destinationPath,
+        ...details,
+      });
+    }
 
-  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-  await fs.cp(sourcePath, destinationPath, {
-    force: true,
-    recursive: false,
-    dereference: false,
-    verbatimSymlinks: true,
-  });
-
-  const destinationStats = await fs.lstat(destinationPath);
-  if (destinationStats.isSymbolicLink() || !destinationStats.isFile()) {
-    await fs.rm(destinationPath, { force: true }).catch(() => undefined);
-    throw new InternalError("Workspace index detected a symlink while copying a regular file.", {
-      source_path: sourcePath,
-      destination_path: destinationPath,
-      ...details,
+    await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+    await fs.cp(sourcePath, destinationPath, {
+      force: true,
+      recursive: false,
+      dereference: false,
+      verbatimSymlinks: true,
     });
+
+    const destinationStats = await fs.lstat(destinationPath);
+    if (destinationStats.isSymbolicLink() || !destinationStats.isFile()) {
+      await fs.rm(destinationPath, { force: true }).catch(() => undefined);
+      throw new InternalError("Workspace index detected a symlink while copying a regular file.", {
+        source_path: sourcePath,
+        destination_path: destinationPath,
+        ...details,
+      });
+    }
+  } catch (error) {
+    if (isLowDiskPressureError(error)) {
+      throw storageUnavailableError("Workspace index could not copy a snapshot file because storage was unavailable.", error, {
+        source_path: sourcePath,
+        destination_path: destinationPath,
+        ...details,
+      });
+    }
+
+    throw error;
   }
 }
 

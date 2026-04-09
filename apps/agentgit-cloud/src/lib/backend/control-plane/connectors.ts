@@ -366,7 +366,7 @@ function getCommandDetailPath(command: {
   return repositoryRoute(owner, name);
 }
 
-function getCommandExternalUrl(command: {
+function getCommandExternalUrl(_command: {
   command: { type: ConnectorCommandType };
   result: Record<string, unknown> | null;
 }) {
