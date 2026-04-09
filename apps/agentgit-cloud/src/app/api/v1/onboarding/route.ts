@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
-import {
-  findWorkspaceConnectionStateBySlug,
-  getWorkspaceConnectionState,
-  saveWorkspaceConnectionState,
-} from "@/lib/backend/workspace/cloud-state";
+import { getWorkspaceConnectionState, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
+import { isWorkspaceSlugOwnedByAnotherWorkspace } from "@/lib/backend/workspace/workspace-scope";
 import { loadPreviewFixture, resolvePreviewState } from "@/lib/dev/preview-fixtures";
 import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { listWorkspaceRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
@@ -86,6 +83,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     return jsonWithRequestId({ message: "Onboarding payload is invalid." }, { status: 400 }, requestId);
   }
 
+  if (access.workspaceSession.activeWorkspace.role !== "owner") {
+    return jsonWithRequestId({ message: "Only workspace owners can launch onboarding." }, { status: 403 }, requestId);
+  }
+
   const availableRepositories = await listWorkspaceRepositoryOptions(access.workspaceSession.activeWorkspace.id);
   const knownRepositoryIds = new Set(availableRepositories.map((repository) => repository.id));
   const hasUnknownRepository = payload.data.repositoryIds.some((repositoryId) => !knownRepositoryIds.has(repositoryId));
@@ -98,8 +99,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const matchingWorkspace = await findWorkspaceConnectionStateBySlug(payload.data.workspaceSlug);
-  if (matchingWorkspace && matchingWorkspace.workspaceId !== access.workspaceSession.activeWorkspace.id) {
+  const currentUserEmail = access.workspaceSession.user.email.trim().toLowerCase();
+  if (payload.data.invites.some((invite) => invite.email.trim().toLowerCase() === currentUserEmail)) {
+    return jsonWithRequestId(
+      { message: "Workspace owner cannot be added again through onboarding invites." },
+      { status: 400 },
+      requestId,
+    );
+  }
+
+  if (await isWorkspaceSlugOwnedByAnotherWorkspace(payload.data.workspaceSlug, access.workspaceSession.activeWorkspace.id)) {
     return jsonWithRequestId({ message: "Workspace slug is already in use." }, { status: 409 }, requestId);
   }
 
@@ -113,7 +122,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         name: access.workspaceSession.user.name,
         email: access.workspaceSession.user.email,
-        role: access.workspaceSession.activeWorkspace.role,
+        role: "owner",
       },
     ],
     invites: payload.data.invites,

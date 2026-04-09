@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiRole = vi.fn();
+const hasRepositoryRouteAccess = vi.fn();
 const restoreRepositorySnapshot = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/auth/api-session", () => ({
   requireApiRole,
+}));
+
+vi.mock("@/lib/backend/workspace/repository-route-access", () => ({
+  hasRepositoryRouteAccess,
 }));
 
 vi.mock("@/lib/backend/workspace/repository-snapshots", () => ({
@@ -24,6 +29,7 @@ vi.mock("@/lib/backend/workspace/repository-snapshots", () => ({
 describe("repository snapshot restore route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    hasRepositoryRouteAccess.mockResolvedValue(true);
   });
 
   it("plans a snapshot restore for an authorized admin", async () => {
@@ -120,5 +126,31 @@ describe("repository snapshot restore route", () => {
       "ws_acme_01",
     );
     expect(body.commandId).toBe("cmd_restore_01");
+  });
+
+  it("fails closed when the repository is outside the active workspace", async () => {
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+    hasRepositoryRouteAccess.mockResolvedValue(false);
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/repositories/acme/platform-ui/snapshots/snap_01/restore", {
+        method: "POST",
+        body: JSON.stringify({ intent: "plan" }),
+      }),
+      {
+        params: Promise.resolve({ owner: "acme", name: "platform-ui", snapshotId: "snap_01" }),
+      },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.message).toContain("not found");
+    expect(restoreRepositorySnapshot).not.toHaveBeenCalled();
   });
 });

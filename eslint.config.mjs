@@ -59,6 +59,18 @@ export default [
     },
   },
   {
+    files: ["apps/agentgit-cloud/src/app/api/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='request'][callee.property.name='json']",
+          message: "Use readJsonBody(request) in API routes instead of calling request.json() directly.",
+        },
+      ],
+    },
+  },
+  {
     files: ["**/*.test.{ts,tsx,js,mjs,cjs}", "**/*.integration.test.ts"],
     languageOptions: {
       globals: {

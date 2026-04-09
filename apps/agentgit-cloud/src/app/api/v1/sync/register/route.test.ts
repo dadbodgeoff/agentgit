@@ -63,6 +63,7 @@ describe("sync register route", () => {
       new Request("http://localhost/api/v1/sync/register", {
         method: "POST",
         body: JSON.stringify({
+          schemaVersion: "cloud-sync.v1",
           workspaceId: "ws_acme_01",
           connectorName: "MacBook connector",
           machineName: "geoffrey-mbp",
@@ -120,6 +121,7 @@ describe("sync register route", () => {
       new Request("http://localhost/api/v1/sync/register", {
         method: "POST",
         body: JSON.stringify({
+          schemaVersion: "cloud-sync.v1",
           workspaceId: "ws_acme_01",
           connectorName: "MacBook connector",
           machineName: "geoffrey-mbp",
@@ -155,5 +157,48 @@ describe("sync register route", () => {
     expect(requireApiRole).not.toHaveBeenCalled();
     expect(registerConnector).not.toHaveBeenCalled();
     expect(body.message).toContain("Too many connector registration attempts");
+  });
+
+  it("rejects a connector registration request with a mismatched schema version", async () => {
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/sync/register", {
+        method: "POST",
+        body: JSON.stringify({
+          schemaVersion: "cloud-sync.v0",
+          workspaceId: "ws_acme_01",
+          connectorName: "MacBook connector",
+          machineName: "geoffrey-mbp",
+          connectorVersion: "0.1.0",
+          platform: {
+            os: "darwin",
+            arch: "arm64",
+            hostname: "geoffrey-mbp",
+          },
+          capabilities: ["repo_state_sync"],
+          repository: {
+            provider: "github",
+            repo: {
+              owner: "acme",
+              name: "platform-ui",
+            },
+            remoteUrl: "git@github.com:acme/platform-ui.git",
+            defaultBranch: "main",
+            currentBranch: "main",
+            headSha: "abcdef1234567",
+            isDirty: false,
+            aheadBy: 0,
+            behindBy: 0,
+            workspaceRoot: "/Users/me/code/platform-ui",
+            lastFetchedAt: null,
+          },
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.message).toContain("schemaVersion");
+    expect(registerConnector).not.toHaveBeenCalled();
   });
 });

@@ -995,7 +995,20 @@ function createSandboxedStdioLaunch(
   assertAllowedContainerRegistry(server);
   ensureBuiltOciImage(server, runtime, cwd);
   assertPinnedImageLocallyVerified(server, runtime);
-  assertContainerSignatureVerified(server, cwd);
+  try {
+    assertContainerSignatureVerified(server, cwd);
+  } catch (error) {
+    if (error instanceof PreconditionError) {
+      throw error;
+    }
+
+    throw new PreconditionError("Governed stdio MCP OCI signature verification failed before execution.", {
+      server_id: server.server_id,
+      transport: server.transport,
+      image: server.sandbox.image,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  }
   const workspaceAccess = resolveStdioWorkspaceAccess(server);
   const workspaceMountPath = server.sandbox.workspace_mount_path ?? "/workspace";
   const workdir = server.sandbox.workdir ?? (workspaceAccess === "none" ? "/tmp" : workspaceMountPath);

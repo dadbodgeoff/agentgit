@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
+import { hasRepositoryRouteAccess } from "@/lib/backend/workspace/repository-route-access";
 import {
   RepositorySnapshotRestoreError,
   restoreRepositorySnapshot,
@@ -40,6 +41,9 @@ export async function POST(
   }
 
   const { owner, name, snapshotId } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: access.workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Snapshot restore target was not found." }, { status: 404 }, requestId);
+  }
 
   try {
     const result = await restoreRepositorySnapshot(

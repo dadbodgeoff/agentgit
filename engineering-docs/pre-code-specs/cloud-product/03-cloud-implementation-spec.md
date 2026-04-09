@@ -109,6 +109,7 @@ Rules:
 - request and response shapes should be validated against shared Zod schemas
 - invalid payloads return `400` with field-level information
 - hosted approval queue reads must come from connector-synced control-plane state rather than direct cloud-to-daemon socket access
+- hosted dashboard summary and activity feed must retain baseline visibility from connector-synced control-plane state even when the cloud app does not share filesystem access with the daemon workspace roots; direct journal inspection may enrich co-located installs but must not be required for connected-repository counts or recent synced activity
 - hosted approve/reject mutations must enqueue connector commands that resolve the approval on the local daemon and sync the resulting resolution back into cloud state
 - daemon-backed run-detail and readiness endpoints must initialize authority sessions from the active workspace's connected repository roots rather than process-wide roots
 - Slack webhook secrets must be stored server-side and must never be echoed back through the integrations settings snapshot API

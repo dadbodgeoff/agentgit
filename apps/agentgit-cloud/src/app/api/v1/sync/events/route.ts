@@ -2,6 +2,8 @@ import { ConnectorEventBatchRequestSchema } from "@agentgit/cloud-sync-protocol"
 
 import { requireConnectorSession } from "@/lib/auth/connector-session";
 import { ConnectorAccessError, ingestConnectorEvents } from "@/lib/backend/control-plane/connectors";
+import { buildCloudSyncSchemaVersionErrorMessage, hasExpectedCloudSyncSchemaVersion } from "@/lib/http/cloud-sync-version";
+import { readJsonBody, JsonBodyParseError, JsonBodyTooLargeError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
 const MAX_EVENT_BATCH_BODY_BYTES = 1_000_000;
@@ -14,32 +16,26 @@ export async function POST(request: Request) {
     return connectorSession.denied;
   }
 
-  const contentLength = Number.parseInt(request.headers.get("content-length") ?? "", 10);
-  if (Number.isFinite(contentLength) && contentLength > MAX_EVENT_BATCH_BODY_BYTES) {
-    return jsonWithRequestId(
-      { message: "Connector event batch payload is too large." },
-      { status: 413 },
-      requestId,
-    );
-  }
-
-  const rawBody = await request.text().catch(() => "");
-  if (Buffer.byteLength(rawBody, "utf8") > MAX_EVENT_BATCH_BODY_BYTES) {
-    return jsonWithRequestId(
-      { message: "Connector event batch payload is too large." },
-      { status: 413 },
-      requestId,
-    );
-  }
-
-  const body = (() => {
-    try {
-      return rawBody.length > 0 ? JSON.parse(rawBody) : null;
-    } catch {
-      return null;
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonBody(request, { maxBytes: MAX_EVENT_BATCH_BODY_BYTES });
+  } catch (error) {
+    if (error instanceof JsonBodyTooLargeError) {
+      return jsonWithRequestId({ message: "Connector event batch payload is too large." }, { status: 413 }, requestId);
     }
-  })();
-  const parsed = ConnectorEventBatchRequestSchema.safeParse(body);
+
+    if (error instanceof JsonBodyParseError) {
+      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    }
+
+    throw error;
+  }
+
+  if (!hasExpectedCloudSyncSchemaVersion(rawBody)) {
+    return jsonWithRequestId({ message: buildCloudSyncSchemaVersionErrorMessage() }, { status: 400 }, requestId);
+  }
+
+  const parsed = ConnectorEventBatchRequestSchema.safeParse(rawBody);
 
   if (!parsed.success) {
     return jsonWithRequestId(

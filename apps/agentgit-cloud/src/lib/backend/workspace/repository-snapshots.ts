@@ -202,10 +202,17 @@ async function buildSnapshotItem(params: {
   repoRoot: string;
 }): Promise<RepositorySnapshotListItem> {
   const engine = createSnapshotEngine(params.repoRoot);
-  const manifest = await engine.getSnapshotManifest(params.event.snapshotId);
-  const integrityStatus: SnapshotIntegrityStatus = (await engine.verifyIntegrity(params.event.snapshotId))
-    ? "verified"
-    : "missing";
+  let manifest: Awaited<ReturnType<typeof engine.getSnapshotManifest>> = null;
+  let integrityStatus: SnapshotIntegrityStatus = "missing";
+
+  try {
+    manifest = await engine.getSnapshotManifest(params.event.snapshotId);
+    integrityStatus = (await engine.verifyIntegrity(params.event.snapshotId)) ? "verified" : "missing";
+  } catch {
+    manifest = null;
+    integrityStatus = "missing";
+  }
+
   const targetLocator = manifest?.target_path ?? params.actionContext?.targetLocator ?? "workspace";
 
   return {

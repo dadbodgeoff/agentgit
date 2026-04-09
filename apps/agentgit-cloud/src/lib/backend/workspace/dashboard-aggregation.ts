@@ -5,6 +5,11 @@ import {
   collectWorkspaceRepositoryRuntimeRecords,
   type WorkspaceRepositoryRuntimeRecord,
 } from "@/lib/backend/workspace/repository-inventory";
+import { listWorkspaceApprovalProjections } from "@/lib/backend/workspace/workspace-approvals";
+import {
+  listWorkspaceSyncedActivityEvents,
+  listWorkspaceSyncedRepositories,
+} from "@/lib/backend/workspace/synced-control-plane";
 
 function formatDuration(startedAt: string, endedAt: string): string {
   const deltaMs = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
@@ -101,20 +106,47 @@ function countPendingApprovals(records: WorkspaceRepositoryRuntimeRecord[]): num
 
 export async function getDashboardSummaryFromWorkspace(workspaceId: string): Promise<DashboardSummary> {
   const repositories = await collectWorkspaceRepositoryRuntimeRecords(workspaceId);
+  const syncedRepositories = await listWorkspaceSyncedRepositories(workspaceId);
+  const syncedActivity = await listWorkspaceSyncedActivityEvents(workspaceId);
+  const approvalProjections = await listWorkspaceApprovalProjections(workspaceId);
   const recentRuns = mapRecentRuns(repositories);
-  const recentActivity = mapRecentActivity(repositories);
-  const pendingApprovals = countPendingApprovals(repositories);
-  const failedRuns24h = countFailedRuns24h(recentRuns);
+  const localRepoLabels = new Set(repositories.map((record) => `${record.metadata.owner}/${record.metadata.name}`));
+  const recentActivity = [...mapRecentActivity(repositories), ...syncedActivity.filter((event) => !localRepoLabels.has(event.repo))]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, 8);
+  const pendingApprovals = Math.max(
+    countPendingApprovals(repositories),
+    approvalProjections.filter((approval) => approval.status === "pending").length,
+  );
+  const failedRuns24h =
+    countFailedRuns24h(recentRuns) +
+    syncedActivity.filter(
+      (event) =>
+        event.kind === "run_failed" &&
+        !localRepoLabels.has(event.repo) &&
+        new Date(event.createdAt).getTime() >= Date.now() - 24 * 60 * 60 * 1000,
+    ).length;
+  const connectedRepositoryCount = new Set([
+    ...localRepoLabels,
+    ...syncedRepositories.map((repository) => repository.repo),
+  ]).size;
+  const healthySyncedRepositories = syncedRepositories.filter(
+    (repository) => repository.connectorStatus === "active" && !localRepoLabels.has(repository.repo),
+  ).length;
   const lastUpdatedAt =
-    recentRuns[0]?.timestamp ?? recentActivity[0]?.createdAt ?? repositories[0]?.inventory.lastUpdatedAt ?? undefined;
+    recentRuns[0]?.timestamp ??
+    recentActivity[0]?.createdAt ??
+    syncedRepositories[0]?.lastUpdatedAt ??
+    repositories[0]?.inventory.lastUpdatedAt ??
+    undefined;
 
   return DashboardSummarySchema.parse({
     metrics: [
       {
         id: "connected_repos",
         label: "Connected repositories",
-        value: String(repositories.length),
-        trend: `${repositories.filter((record) => record.inventory.agentStatus === "healthy").length} healthy`,
+        value: String(connectedRepositoryCount),
+        trend: `${repositories.filter((record) => record.inventory.agentStatus === "healthy").length + healthySyncedRepositories} healthy`,
       },
       {
         id: "pending_approvals",

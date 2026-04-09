@@ -2,6 +2,7 @@ import { ConnectorCommandPullRequestSchema } from "@agentgit/cloud-sync-protocol
 
 import { requireConnectorSession } from "@/lib/auth/connector-session";
 import { ConnectorAccessError, pullPendingConnectorCommands } from "@/lib/backend/control-plane/connectors";
+import { buildCloudSyncSchemaVersionErrorMessage, hasExpectedCloudSyncSchemaVersion } from "@/lib/http/cloud-sync-version";
 import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
@@ -21,6 +22,9 @@ export async function POST(request: Request) {
       return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
     }
     throw error;
+  }
+  if (!hasExpectedCloudSyncSchemaVersion(rawBody)) {
+    return jsonWithRequestId({ message: buildCloudSyncSchemaVersionErrorMessage() }, { status: 400 }, requestId);
   }
   const parsed = ConnectorCommandPullRequestSchema.safeParse(rawBody);
 

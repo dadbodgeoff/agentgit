@@ -15,6 +15,7 @@ import {
 } from "@agentgit/schemas";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import {
+  CLOUD_SYNC_SCHEMA_VERSION,
   ConnectorCommandAckRequestSchema,
   ConnectorCommandAckResponseSchema,
   ConnectorCommandPullRequestSchema,
@@ -38,8 +39,6 @@ import {
   type RepositoryStateSnapshot,
 } from "@agentgit/cloud-sync-protocol";
 import { z } from "zod";
-
-const CLOUD_SYNC_SCHEMA_VERSION = "cloud-sync.v1" as const;
 
 export const CloudConnectorRegistrationStateSchema = z
   .object({
@@ -546,7 +545,7 @@ export class CloudSyncClient {
   }
 
   async registerConnector(
-    input: z.infer<typeof ConnectorRegistrationRequestSchema>,
+    input: Omit<z.infer<typeof ConnectorRegistrationRequestSchema>, "schemaVersion">,
     options: RegisterConnectorOptions = {},
   ) {
     const headers: Record<string, string> = {};
@@ -559,7 +558,12 @@ export class CloudSyncClient {
 
     const response = await fetch(new URL("/api/v1/sync/register", this.baseUrl), {
       method: "POST",
-      body: JSON.stringify(ConnectorRegistrationRequestSchema.parse(input)),
+      body: JSON.stringify(
+        ConnectorRegistrationRequestSchema.parse({
+          schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
+          ...input,
+        }),
+      ),
       headers: {
         "content-type": "application/json",
         ...headers,
@@ -589,13 +593,17 @@ export class CloudSyncClient {
     });
   }
 
-  async sendHeartbeat(input: Omit<z.infer<typeof ConnectorHeartbeatRequestSchema>, "requestId">, accessToken: string) {
+  async sendHeartbeat(
+    input: Omit<z.infer<typeof ConnectorHeartbeatRequestSchema>, "requestId" | "schemaVersion">,
+    accessToken: string,
+  ) {
     return this.request(
       "/api/v1/sync/heartbeat",
       {
         method: "POST",
         body: JSON.stringify(
           ConnectorHeartbeatRequestSchema.parse({
+            schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
             requestId: randomUUID(),
             ...input,
           }),
@@ -609,7 +617,7 @@ export class CloudSyncClient {
   }
 
   async publishEvents(
-    input: Omit<z.infer<typeof ConnectorEventBatchRequestSchema>, "requestId">,
+    input: Omit<z.infer<typeof ConnectorEventBatchRequestSchema>, "requestId" | "schemaVersion">,
     accessToken: string,
   ) {
     return this.request(
@@ -618,6 +626,7 @@ export class CloudSyncClient {
         method: "POST",
         body: JSON.stringify(
           ConnectorEventBatchRequestSchema.parse({
+            schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
             requestId: randomUUID(),
             ...input,
           }),
@@ -631,7 +640,7 @@ export class CloudSyncClient {
   }
 
   async pullCommands(
-    input: Omit<z.infer<typeof ConnectorCommandPullRequestSchema>, "requestId">,
+    input: Omit<z.infer<typeof ConnectorCommandPullRequestSchema>, "requestId" | "schemaVersion">,
     accessToken: string,
   ) {
     return this.request(
@@ -640,6 +649,7 @@ export class CloudSyncClient {
         method: "POST",
         body: JSON.stringify(
           ConnectorCommandPullRequestSchema.parse({
+            schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
             requestId: randomUUID(),
             ...input,
           }),
@@ -654,7 +664,7 @@ export class CloudSyncClient {
 
   async ackCommand(
     commandId: string,
-    input: Omit<z.infer<typeof ConnectorCommandAckRequestSchema>, "requestId">,
+    input: Omit<z.infer<typeof ConnectorCommandAckRequestSchema>, "requestId" | "schemaVersion">,
     accessToken: string,
   ) {
     return this.request(
@@ -663,6 +673,7 @@ export class CloudSyncClient {
         method: "POST",
         body: JSON.stringify(
           ConnectorCommandAckRequestSchema.parse({
+            schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
             requestId: randomUUID(),
             ...input,
           }),
@@ -1009,6 +1020,7 @@ export class CloudConnectorRuntime {
     const repository = detectRepositoryState(this.workspaceRoot);
 
     return ConnectorRegistrationRequestSchema.parse({
+      schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
       workspaceId: params.workspaceId,
       connectorName: params.connectorName ?? `${os.hostname()} connector`,
       machineName: params.machineName ?? os.hostname(),

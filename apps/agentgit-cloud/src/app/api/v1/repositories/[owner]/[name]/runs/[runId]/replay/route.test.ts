@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiRole = vi.fn();
+const hasRepositoryRouteAccess = vi.fn();
 const getRunReplayPreview = vi.fn();
 const queueRunReplay = vi.fn();
 
@@ -8,6 +9,10 @@ vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/auth/api-session", () => ({
   requireApiRole,
+}));
+
+vi.mock("@/lib/backend/workspace/repository-route-access", () => ({
+  hasRepositoryRouteAccess,
 }));
 
 vi.mock("@/lib/backend/workspace/run-replay", () => ({
@@ -26,6 +31,7 @@ vi.mock("@/lib/backend/workspace/run-replay", () => ({
 describe("repository run replay route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    hasRepositoryRouteAccess.mockResolvedValue(true);
   });
 
   it("returns a replay preview for an authorized admin", async () => {
@@ -96,5 +102,29 @@ describe("repository run replay route", () => {
     expect(response.status).toBe(200);
     expect(queueRunReplay).toHaveBeenCalled();
     expect(body.commandId).toBe("cmd_01");
+  });
+
+  it("fails closed when the repository is outside the active workspace", async () => {
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        user: { id: "usr_01", name: "Jordan Smith", email: "jordan@acme.dev" },
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+    hasRepositoryRouteAccess.mockResolvedValue(false);
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/repositories/acme/platform-ui/runs/run_01/replay", { method: "POST" }),
+      {
+        params: Promise.resolve({ owner: "acme", name: "platform-ui", runId: "run_01" }),
+      },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.message).toContain("not found");
+    expect(queueRunReplay).not.toHaveBeenCalled();
   });
 });

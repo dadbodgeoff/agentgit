@@ -5,14 +5,14 @@ import { isWorkspaceRole } from "@/lib/rbac/roles";
 export const DEVELOPMENT_PROVIDER_ID = "development";
 export const ENTERPRISE_PROVIDER_PREFIX = "enterprise-";
 export const isProductionAuth = process.env.NODE_ENV === "production";
-
-if (isProductionAuth && process.env.AUTH_ALLOW_DEV_CREDENTIALS_IN_PRODUCTION === "true") {
-  throw new Error("AUTH_ALLOW_DEV_CREDENTIALS_IN_PRODUCTION may not be enabled in production.");
-}
+export const allowDevelopmentCredentialsInProduction =
+  isProductionAuth && process.env.AUTH_ALLOW_DEV_CREDENTIALS_IN_PRODUCTION === "true";
 
 export const authFeatureFlags = {
   hasGitHubProvider: Boolean(process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET),
-  enableDevelopmentCredentials: process.env.AUTH_ENABLE_DEV_CREDENTIALS !== "false" && !isProductionAuth,
+  enableDevelopmentCredentials:
+    process.env.AUTH_ENABLE_DEV_CREDENTIALS !== "false" &&
+    (!isProductionAuth || allowDevelopmentCredentialsInProduction),
 } as const;
 
 export function getDefaultWorkspaceRole(): WorkspaceRole {

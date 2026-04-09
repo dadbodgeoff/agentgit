@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiSession = vi.fn();
 const hasRepositoryRouteAccess = vi.fn();
-const listRepositorySnapshots = vi.fn();
+const listRepositoryRuns = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
@@ -14,59 +14,44 @@ vi.mock("@/lib/backend/workspace/repository-route-access", () => ({
   hasRepositoryRouteAccess,
 }));
 
-vi.mock("@/lib/backend/workspace/repository-snapshots", () => ({
-  listRepositorySnapshots,
+vi.mock("@/lib/backend/workspace/repository-detail", () => ({
+  listRepositoryRuns,
 }));
 
-describe("repository snapshots route", () => {
+describe("repository runs route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hasRepositoryRouteAccess.mockResolvedValue(true);
   });
 
-  it("returns a repository snapshot inventory for an authenticated member", async () => {
+  it("returns runs for a workspace-scoped repository", async () => {
     requireApiSession.mockResolvedValue({
       unauthorized: null,
       workspaceSession: {
         activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "member" },
       },
     });
-    listRepositorySnapshots.mockResolvedValue({
-      items: [
-        {
-          snapshotId: "snap_01",
-          runId: "run_01",
-          actionId: "act_01",
-          workflowName: "snapshot-smoke",
-          actionSummary: "Delete restore-me.txt",
-          targetLocator: "/tmp/repo/restore-me.txt",
-          snapshotClass: "metadata_only",
-          fidelity: "metadata_only",
-          scopePaths: ["restore-me.txt"],
-          integrityStatus: "verified",
-          storageBytes: null,
-          createdAt: "2026-04-07T15:00:02Z",
-        },
-      ],
+    listRepositoryRuns.mockResolvedValue({
+      items: [{ runId: "run_01" }],
       total: 1,
-      page_size: 1,
+      page_size: 25,
       next_cursor: null,
       has_more: false,
-      authorityReachable: false,
-      restorableCount: 1,
-      restoredCount: 0,
     });
 
     const { GET } = await import("./route");
-    const response = await GET(new Request("http://localhost/api/v1/repositories/acme/platform-ui/snapshots"), {
+    const response = await GET(new Request("http://localhost/api/v1/repositories/acme/platform-ui/runs"), {
       params: Promise.resolve({ owner: "acme", name: "platform-ui" }),
     });
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(hasRepositoryRouteAccess).toHaveBeenCalledWith({
+      owner: "acme",
+      name: "platform-ui",
+      workspaceId: "ws_acme_01",
+    });
     expect(body.total).toBe(1);
-    expect(body.items[0].snapshotId).toBe("snap_01");
-    expect(response.headers.get("x-agentgit-request-id")).toBeTruthy();
   });
 
   it("fails closed when the repository is outside the active workspace", async () => {
@@ -79,13 +64,13 @@ describe("repository snapshots route", () => {
     hasRepositoryRouteAccess.mockResolvedValue(false);
 
     const { GET } = await import("./route");
-    const response = await GET(new Request("http://localhost/api/v1/repositories/acme/platform-ui/snapshots"), {
+    const response = await GET(new Request("http://localhost/api/v1/repositories/acme/platform-ui/runs"), {
       params: Promise.resolve({ owner: "acme", name: "platform-ui" }),
     });
     const body = await response.json();
 
     expect(response.status).toBe(404);
     expect(body.message).toContain("active workspace");
-    expect(listRepositorySnapshots).not.toHaveBeenCalled();
+    expect(listRepositoryRuns).not.toHaveBeenCalled();
   });
 });

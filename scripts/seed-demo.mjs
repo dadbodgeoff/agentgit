@@ -1551,15 +1551,28 @@ async function cleanupExistingDemoControlPlaneState(dbPath) {
 }
 
 async function seedConnectors(client, workspaceId, seededState, controlPlaneDbPath) {
+  const connectorBootstrapTokenHeader = "x-agentgit-connector-bootstrap-token";
   const connectors = [];
 
   for (const connectorSeed of seededState.connectors) {
     const bootstrap = await client.request("/api/v1/sync/bootstrap-token", {
       method: "POST",
-      schema: ConnectorBootstrapResponseSchema,
+      transform(payload, response) {
+        const parsed = ConnectorBootstrapResponseSchema.omit({ bootstrapToken: true }).parse(payload);
+        const bootstrapToken = response.headers.get(connectorBootstrapTokenHeader)?.trim();
+        if (!bootstrapToken) {
+          throw new Error("Bootstrap token response did not include the connector bootstrap token header.");
+        }
+
+        return ConnectorBootstrapResponseSchema.parse({
+          ...parsed,
+          bootstrapToken,
+        });
+      },
     });
 
     const registrationPayload = ConnectorRegistrationRequestSchema.parse({
+      schemaVersion: "cloud-sync.v1",
       workspaceId,
       connectorName: connectorSeed.connectorName,
       machineName: connectorSeed.machineName,
@@ -1596,6 +1609,7 @@ async function seedConnectors(client, workspaceId, seededState, controlPlaneDbPa
 
   for (const connector of connectors.filter((item) => item.status === "active")) {
     const heartbeatPayload = ConnectorHeartbeatRequestSchema.parse({
+      schemaVersion: "cloud-sync.v1",
       connectorId: connector.connectorId,
       sentAt: new Date().toISOString(),
       repository: connector.repositoryState,
@@ -1680,6 +1694,7 @@ async function seedConnectors(client, workspaceId, seededState, controlPlaneDbPa
     }
 
     const batch = ConnectorEventBatchRequestSchema.parse({
+      schemaVersion: "cloud-sync.v1",
       connectorId: connector.connectorId,
       sentAt: new Date().toISOString(),
       events: sortedEvents,
@@ -1909,7 +1924,7 @@ class SessionClient {
 
     const payload = JSON.parse(text);
     if (options.transform) {
-      return options.transform(payload);
+      return options.transform(payload, response);
     }
 
     return options.schema ? options.schema.parse(payload) : payload;

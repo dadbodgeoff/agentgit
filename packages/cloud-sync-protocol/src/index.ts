@@ -3,6 +3,7 @@ import { z } from "zod";
 
 export const SyncSchemaVersionSchema = z.literal("cloud-sync.v1");
 export type SyncSchemaVersion = z.infer<typeof SyncSchemaVersionSchema>;
+export const CLOUD_SYNC_SCHEMA_VERSION: SyncSchemaVersion = "cloud-sync.v1";
 
 export const ConnectorStatusSchema = z.enum(["active", "stale", "revoked"]);
 export type ConnectorStatus = z.infer<typeof ConnectorStatusSchema>;
@@ -98,6 +99,7 @@ export type ConnectorRecord = z.infer<typeof ConnectorRecordSchema>;
 
 export const ConnectorRegistrationRequestSchema = z
   .object({
+    schemaVersion: SyncSchemaVersionSchema,
     workspaceId: z.string().min(1),
     connectorName: z.string().trim().min(1).max(64),
     machineName: z.string().trim().min(1).max(128),
@@ -122,6 +124,7 @@ export type ConnectorRegistrationResponse = z.infer<typeof ConnectorRegistration
 
 export const ConnectorHeartbeatRequestSchema = z
   .object({
+    schemaVersion: SyncSchemaVersionSchema,
     requestId: z.string().trim().min(1).max(128),
     connectorId: z.string().min(1),
     sentAt: TimestampStringSchema,
@@ -185,6 +188,7 @@ export type ConnectorEventEnvelope = z.infer<typeof ConnectorEventEnvelopeSchema
 
 export const ConnectorEventBatchRequestSchema = z
   .object({
+    schemaVersion: SyncSchemaVersionSchema,
     requestId: z.string().trim().min(1).max(128),
     connectorId: z.string().min(1),
     sentAt: TimestampStringSchema,
@@ -378,6 +382,7 @@ export type ConnectorCommandEnvelope = z.infer<typeof ConnectorCommandEnvelopeSc
 
 export const ConnectorCommandPullRequestSchema = z
   .object({
+    schemaVersion: SyncSchemaVersionSchema,
     requestId: z.string().trim().min(1).max(128),
     connectorId: z.string().min(1),
     sentAt: TimestampStringSchema,
@@ -397,6 +402,7 @@ export type ConnectorCommandPullResponse = z.infer<typeof ConnectorCommandPullRe
 
 export const ConnectorCommandAckRequestSchema = z
   .object({
+    schemaVersion: SyncSchemaVersionSchema,
     requestId: z.string().trim().min(1).max(128),
     idempotencyKey: z.string().trim().min(1).max(128).optional(),
     connectorId: z.string().min(1),

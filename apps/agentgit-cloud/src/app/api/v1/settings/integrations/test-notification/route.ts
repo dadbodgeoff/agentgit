@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
+import { hasPersistedWorkspaceScope } from "@/lib/backend/workspace/workspace-scope";
 import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { sendWorkspaceIntegrationTest } from "@/lib/backend/workspace/workspace-integrations";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
@@ -29,6 +30,14 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (!payload.success) {
     return jsonWithRequestId({ message: "Test notification payload is invalid." }, { status: 400 }, requestId);
+  }
+
+  if (!(await hasPersistedWorkspaceScope(access.workspaceSession))) {
+    return jsonWithRequestId(
+      { message: "Active workspace is not configured in persisted cloud state." },
+      { status: 404 },
+      requestId,
+    );
   }
 
   try {

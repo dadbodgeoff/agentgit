@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireApiRole } from "@/lib/auth/api-session";
+import { hasRepositoryRouteAccess } from "@/lib/backend/workspace/repository-route-access";
 import {
   RepositoryPolicyInputError,
   RepositoryPolicyVersionNotFoundError,
@@ -43,6 +44,9 @@ export async function GET(
   }
 
   const { owner, name } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: access.workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Repository policy was not found." }, { status: 404 }, requestId);
+  }
 
   try {
     const policy = await resolveRepositoryPolicy(owner, name, access.workspaceSession.activeWorkspace.id);
@@ -59,7 +63,7 @@ export async function GET(
 
 export async function POST(
   request: Request,
-  _context: { params: Promise<{ owner: string; name: string }> },
+  context: { params: Promise<{ owner: string; name: string }> },
 ): Promise<NextResponse> {
   const requestId = createRequestId(request);
   const access = await requireApiRole("admin", request);
@@ -85,6 +89,11 @@ export async function POST(
       { status: 400 },
       requestId,
     );
+  }
+
+  const { owner, name } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: access.workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Repository policy was not found." }, { status: 404 }, requestId);
   }
 
   return jsonWithRequestId(validateRepositoryPolicyDocument(parsed.data.document), undefined, requestId);
@@ -121,6 +130,9 @@ export async function PUT(
   }
 
   const { owner, name } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: access.workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Repository policy was not found." }, { status: 404 }, requestId);
+  }
 
   try {
     const result = await saveRepositoryPolicy(
@@ -179,6 +191,9 @@ export async function PATCH(
   }
 
   const { owner, name } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: access.workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Repository policy was not found." }, { status: 404 }, requestId);
+  }
 
   try {
     const result = await rollbackRepositoryPolicyVersion(

@@ -30,6 +30,7 @@ const connectorCli = path.join(repoRoot, "packages", "cloud-connector", "dist", 
 const DEFAULT_TIMEOUT_MS = 90_000;
 const DOCKER = resolveCommandPath("docker");
 const PNPM = resolveCommandPath("pnpm");
+const CONNECTOR_BOOTSTRAP_TOKEN_HEADER = "x-agentgit-connector-bootstrap-token";
 
 const parsedArgs = parseArgs(process.argv.slice(2));
 if (parsedArgs.help) {
@@ -181,7 +182,18 @@ async function main() {
     logStep("Creating a bootstrap token through the sync API");
     const bootstrap = await client.request("/api/v1/sync/bootstrap-token", {
       method: "POST",
-      schema: ConnectorBootstrapResponseSchema,
+      transform(payload, response) {
+        const parsed = ConnectorBootstrapResponseSchema.omit({ bootstrapToken: true }).parse(payload);
+        const bootstrapToken = response.headers.get(CONNECTOR_BOOTSTRAP_TOKEN_HEADER)?.trim();
+        if (!bootstrapToken) {
+          throw new Error("Bootstrap token response did not include the connector bootstrap token header.");
+        }
+
+        return ConnectorBootstrapResponseSchema.parse({
+          ...parsed,
+          bootstrapToken,
+        });
+      },
     });
     if (bootstrap.workspaceId !== workspaceId) {
       throw new Error(`Bootstrap token targeted ${bootstrap.workspaceId}, expected ${workspaceId}.`);
@@ -760,7 +772,7 @@ class SessionClient {
 
     const payload = JSON.parse(text);
     if (options.transform) {
-      return options.transform(payload);
+      return options.transform(payload, response);
     }
 
     return options.schema ? options.schema.parse(payload) : payload;

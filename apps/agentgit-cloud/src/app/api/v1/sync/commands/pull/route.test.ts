@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireConnectorSession = vi.fn();
-const acknowledgeConnectorCommand = vi.fn();
+const pullPendingConnectorCommands = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
@@ -18,15 +18,15 @@ vi.mock("@/lib/backend/control-plane/connectors", () => ({
       super(message);
     }
   },
-  acknowledgeConnectorCommand,
+  pullPendingConnectorCommands,
 }));
 
-describe("sync connector command ack route", () => {
+describe("sync connector command pull route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("acknowledges a connector command", async () => {
+  it("pulls pending connector commands", async () => {
     requireConnectorSession.mockReturnValue({
       denied: null,
       access: {
@@ -35,50 +35,33 @@ describe("sync connector command ack route", () => {
         },
       },
     });
-    acknowledgeConnectorCommand.mockReturnValue({
+    pullPendingConnectorCommands.mockReturnValue({
       schemaVersion: "cloud-sync.v1",
       connectorId: "conn_01",
-      commandId: "cmd_01",
-      acceptedAt: "2026-04-07T19:00:00Z",
-      status: "completed",
+      acceptedAt: "2026-04-07T19:00:12Z",
+      commands: [],
     });
 
     const { POST } = await import("./route");
     const response = await POST(
-      new Request("http://localhost/api/v1/sync/commands/cmd_01/ack", {
+      new Request("http://localhost/api/v1/sync/commands/pull", {
         method: "POST",
         body: JSON.stringify({
           schemaVersion: "cloud-sync.v1",
-          requestId: "req_ack_01",
+          requestId: "req_pull_01",
           connectorId: "conn_01",
-          commandId: "cmd_01",
-          acknowledgedAt: "2026-04-07T19:00:00Z",
-          status: "completed",
-          message: "Created commit abc1234.",
+          sentAt: "2026-04-07T19:00:12Z",
         }),
       }),
-      {
-        params: Promise.resolve({ commandId: "cmd_01" }),
-      },
     );
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(acknowledgeConnectorCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        connector: expect.objectContaining({ id: "conn_01" }),
-      }),
-      expect.objectContaining({
-        connectorId: "conn_01",
-        commandId: "cmd_01",
-        status: "completed",
-      }),
-      expect.any(String),
-    );
-    expect(body.status).toBe("completed");
+    expect(pullPendingConnectorCommands).toHaveBeenCalled();
+    expect(body.connectorId).toBe("conn_01");
   });
 
-  it("rejects a command acknowledgement with a mismatched schema version", async () => {
+  it("rejects a command pull payload with a mismatched schema version", async () => {
     requireConnectorSession.mockReturnValue({
       denied: null,
       access: {
@@ -90,25 +73,20 @@ describe("sync connector command ack route", () => {
 
     const { POST } = await import("./route");
     const response = await POST(
-      new Request("http://localhost/api/v1/sync/commands/cmd_01/ack", {
+      new Request("http://localhost/api/v1/sync/commands/pull", {
         method: "POST",
         body: JSON.stringify({
           schemaVersion: "cloud-sync.v0",
-          requestId: "req_ack_01",
+          requestId: "req_pull_01",
           connectorId: "conn_01",
-          commandId: "cmd_01",
-          acknowledgedAt: "2026-04-07T19:00:00Z",
-          status: "completed",
+          sentAt: "2026-04-07T19:00:12Z",
         }),
       }),
-      {
-        params: Promise.resolve({ commandId: "cmd_01" }),
-      },
     );
     const body = await response.json();
 
     expect(response.status).toBe(400);
     expect(body.message).toContain("schemaVersion");
-    expect(acknowledgeConnectorCommand).not.toHaveBeenCalled();
+    expect(pullPendingConnectorCommands).not.toHaveBeenCalled();
   });
 });

@@ -641,7 +641,7 @@ describe("LocalSnapshotEngine", () => {
     const engine = new LocalSnapshotEngine({
       rootDir: path.join(tempDir, "snapshots"),
     });
-    const copySpy = vi.spyOn(fsPromises, "copyFile").mockRejectedValueOnce(
+    const copySpy = vi.spyOn(fsPromises, "cp").mockRejectedValueOnce(
       Object.assign(new Error("no space left on device"), {
         code: "ENOSPC",
       }),

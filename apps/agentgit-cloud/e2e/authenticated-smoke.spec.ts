@@ -6,6 +6,12 @@ import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import type { ActionRecord } from "@agentgit/schemas";
 import { RunJournal } from "@agentgit/run-journal";
 
+const CONNECTOR_BOOTSTRAP_TOKEN_HEADER = "x-agentgit-connector-bootstrap-token";
+
+function escapeForRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function waitForOkResponse(page: Page, pathFragment: string) {
   await page.waitForResponse((response) => response.url().includes(pathFragment) && response.ok(), { timeout: 45_000 });
 }
@@ -26,6 +32,17 @@ async function loadMoreUntilVisible(page: Page, locator: Locator, maxPages = 6) 
   }
 
   await expect(locator.first()).toBeVisible({ timeout: 20_000 });
+}
+
+async function expectConnectorCommandState(page: Page, commandType: string, pendingCount: string) {
+  await expect(page.locator("main")).toContainText(new RegExp(`Pending commands\\s*${escapeForRegex(pendingCount)}`), {
+    timeout: 20_000,
+  });
+  await expect(
+    page.locator("main"),
+  ).toContainText(new RegExp(`Last command\\s*${escapeForRegex(commandType)}\\s*/\\s*pending`), {
+    timeout: 20_000,
+  });
 }
 
 async function signInAs(
@@ -400,18 +417,19 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   const bootstrapResponse = await page.request.post("/api/v1/sync/bootstrap-token");
   expect(bootstrapResponse.ok()).toBeTruthy();
   const bootstrapPayload = (await bootstrapResponse.json()) as {
-    bootstrapToken?: string;
     workspaceId?: string;
     commandHint?: string;
   };
-  expect(bootstrapPayload.bootstrapToken).toBeTruthy();
+  const bootstrapToken = bootstrapResponse.headers()[CONNECTOR_BOOTSTRAP_TOKEN_HEADER];
+  expect(bootstrapToken).toBeTruthy();
   expect(bootstrapPayload.commandHint).toContain("agentgit-cloud-connector bootstrap");
 
   const registrationResponse = await page.request.post("/api/v1/sync/register", {
     headers: {
-      authorization: `Bearer ${bootstrapPayload.bootstrapToken}`,
+      authorization: `Bearer ${bootstrapToken}`,
     },
     data: {
+      schemaVersion: "cloud-sync.v1",
       workspaceId: bootstrapPayload.workspaceId,
       connectorName: "Admin smoke connector",
       machineName: "admin-smoke-mac",
@@ -447,13 +465,13 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await waitForOkResponse(page, "/api/v1/settings/integrations");
   await expect(page.locator("main")).toContainText("Admin smoke connector", { timeout: 20_000 });
   await page.getByRole("button", { name: "Queue sync now" }).click();
-  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+  await expectConnectorCommandState(page, "refresh_repo_state", "1");
   await page.getByRole("button", { name: "Queue create commit" }).click();
-  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+  await expectConnectorCommandState(page, "create_commit", "2");
   await page.getByRole("button", { name: "Queue push branch" }).click();
-  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+  await expectConnectorCommandState(page, "push_branch", "3");
   await page.getByRole("button", { name: "Queue open PR" }).click();
-  await expect(page.getByText("Connector command queued")).toBeVisible({ timeout: 20_000 });
+  await expectConnectorCommandState(page, "open_pull_request", "4");
 
   await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}`);
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
