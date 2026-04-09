@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiRole = vi.fn();
+const hasPersistedWorkspaceScope = vi.fn();
 const sendWorkspaceIntegrationTest = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/auth/api-session", () => ({
   requireApiRole,
+}));
+
+vi.mock("@/lib/backend/workspace/workspace-scope", () => ({
+  hasPersistedWorkspaceScope,
 }));
 
 vi.mock("@/lib/backend/workspace/workspace-integrations", () => ({
@@ -16,6 +21,7 @@ vi.mock("@/lib/backend/workspace/workspace-integrations", () => ({
 describe("integration test-notification route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    hasPersistedWorkspaceScope.mockResolvedValue(true);
   });
 
   it("returns delivery details for a valid enabled channel", async () => {
@@ -66,5 +72,28 @@ describe("integration test-notification route", () => {
 
     expect(response.status).toBe(409);
     expect(body.message).toContain("not configured");
+  });
+
+  it("fails closed when the active workspace has no persisted scope", async () => {
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+    hasPersistedWorkspaceScope.mockResolvedValue(false);
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/settings/integrations/test-notification", {
+        method: "POST",
+        body: JSON.stringify({ channel: "email" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.message).toContain("persisted cloud state");
+    expect(sendWorkspaceIntegrationTest).not.toHaveBeenCalled();
   });
 });

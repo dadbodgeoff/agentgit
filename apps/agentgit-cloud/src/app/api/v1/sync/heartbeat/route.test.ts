@@ -51,6 +51,7 @@ describe("sync heartbeat route", () => {
           authorization: "Bearer agcs_test",
         },
         body: JSON.stringify({
+          schemaVersion: "cloud-sync.v1",
           requestId: "req_heartbeat_01",
           connectorId: "conn_01",
           sentAt: "2026-04-07T18:05:00Z",
@@ -84,5 +85,56 @@ describe("sync heartbeat route", () => {
     expect(response.status).toBe(200);
     expect(recordConnectorHeartbeat).toHaveBeenCalled();
     expect(body.connectorId).toBe("conn_01");
+  });
+
+  it("rejects a heartbeat payload with a mismatched schema version", async () => {
+    requireConnectorSession.mockReturnValue({
+      denied: null,
+      access: {
+        connector: {
+          id: "conn_01",
+        },
+      },
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(
+      new Request("http://localhost/api/v1/sync/heartbeat", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer agcs_test",
+        },
+        body: JSON.stringify({
+          schemaVersion: "cloud-sync.v0",
+          requestId: "req_heartbeat_01",
+          connectorId: "conn_01",
+          sentAt: "2026-04-07T18:05:00Z",
+          repository: {
+            provider: "github",
+            repo: {
+              owner: "acme",
+              name: "platform-ui",
+            },
+            remoteUrl: "git@github.com:acme/platform-ui.git",
+            defaultBranch: "main",
+            currentBranch: "main",
+            headSha: "abcdef1234567",
+            isDirty: false,
+            aheadBy: 0,
+            behindBy: 0,
+            workspaceRoot: "/Users/me/code/platform-ui",
+            lastFetchedAt: null,
+          },
+          localDaemon: {
+            reachable: true,
+          },
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.message).toContain("schemaVersion");
+    expect(recordConnectorHeartbeat).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import { requireApiRole } from "@/lib/auth/api-session";
+import { hasRepositoryRouteAccess } from "@/lib/backend/workspace/repository-route-access";
 import { getRunReplayPreview, queueRunReplay, RunReplayAccessError } from "@/lib/backend/workspace/run-replay";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
@@ -14,6 +15,9 @@ export async function GET(
   }
 
   const { owner, name, runId } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: access.workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Run replay preview was not found." }, { status: 404 }, requestId);
+  }
 
   try {
     const preview = await getRunReplayPreview(owner, name, access.workspaceSession.activeWorkspace.id, runId);
@@ -45,6 +49,9 @@ export async function POST(
   }
 
   const { owner, name, runId } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: access.workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Run replay preview was not found." }, { status: 404 }, requestId);
+  }
 
   try {
     const queued = await queueRunReplay(access.workspaceSession, owner, name, runId);

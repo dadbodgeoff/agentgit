@@ -240,4 +240,47 @@ describe("repository snapshots backend adapter", () => {
     expect(snapshots?.items).toHaveLength(0);
     expect(snapshots?.total).toBe(0);
   });
+
+  it("degrades missing snapshot manifests to a missing integrity status instead of throwing", async () => {
+    const repoRoot = createRepo("git@github.com:acme/platform-ui.git");
+    tempDirs.push(repoRoot);
+    process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS = repoRoot;
+    process.env.AGENTGIT_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-state-"));
+    tempDirs.push(process.env.AGENTGIT_ROOT);
+
+    seedSnapshotRecord({
+      repoRoot,
+      runId: "run_snapshot_02",
+      workflowName: "snapshot-smoke",
+      actionId: "act_snapshot_02",
+      snapshotId: "snap_snapshot_02",
+    });
+
+    fs.rmSync(path.join(repoRoot, ".agentgit", "state", "snapshots", "metadata", "snap_snapshot_02.json"), {
+      force: true,
+    });
+
+    const inventory = await listDiscoveredRepositoryInventory();
+    await saveWorkspaceConnectionState({
+      workspaceId: "ws_acme_01",
+      workspaceName: "Acme platform",
+      workspaceSlug: "acme-platform",
+      repositoryIds: inventory.items.map((item) => item.id),
+      members: [{ name: "Jordan Smith", email: "jordan@acme.dev", role: "owner" }],
+      invites: [],
+      defaultNotificationChannel: "slack",
+      policyPack: "guarded",
+      launchedAt: "2026-04-07T15:04:00Z",
+    });
+
+    const snapshots = await listRepositorySnapshots("acme", "platform-ui", "ws_acme_01");
+
+    expect(snapshots).not.toBeNull();
+    expect(snapshots?.items).toHaveLength(1);
+    expect(snapshots?.items[0]).toMatchObject({
+      snapshotId: "snap_snapshot_02",
+      integrityStatus: "missing",
+    });
+    expect(snapshots?.restorableCount).toBe(0);
+  });
 });

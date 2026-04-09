@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { requireApiSession } from "@/lib/auth/api-session";
+import { hasRepositoryRouteAccess } from "@/lib/backend/workspace/repository-route-access";
 import { getRepositoryDetail } from "@/lib/backend/workspace/repository-detail";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { PreviewStateSchema } from "@/schemas/cloud";
@@ -33,6 +34,9 @@ export async function GET(
   }
 
   const { owner, name } = await context.params;
+  if (!(await hasRepositoryRouteAccess({ owner, name, workspaceId: workspaceSession.activeWorkspace.id }))) {
+    return jsonWithRequestId({ message: "Repository not found in the active workspace." }, { status: 404 }, requestId);
+  }
   const detail = await getRepositoryDetail(owner, name, workspaceSession.activeWorkspace.id);
 
   if (!detail) {

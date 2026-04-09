@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireApiRole = vi.fn();
+const hasRepositoryRouteAccess = vi.fn();
 const rollbackRepositoryPolicyVersion = vi.fn();
 const resolveRepositoryPolicy = vi.fn();
 const saveRepositoryPolicy = vi.fn();
@@ -10,6 +11,10 @@ vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/auth/api-session", () => ({
   requireApiRole,
+}));
+
+vi.mock("@/lib/backend/workspace/repository-route-access", () => ({
+  hasRepositoryRouteAccess,
 }));
 
 vi.mock("@/lib/backend/workspace/repository-policy", () => ({
@@ -35,6 +40,7 @@ vi.mock("@/lib/backend/workspace/repository-policy", () => ({
 describe("repository policy route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    hasRepositoryRouteAccess.mockResolvedValue(true);
   });
 
   it("returns a repository policy snapshot for an authorized admin", async () => {
@@ -278,5 +284,26 @@ describe("repository policy route", () => {
       email: "jordan@acme.dev",
     });
     expect(body.message).toBe("Policy rolled back.");
+  });
+
+  it("fails closed when the repository is outside the active workspace", async () => {
+    requireApiRole.mockResolvedValue({
+      denied: null,
+      workspaceSession: {
+        user: { id: "usr_01", name: "Jordan Smith", email: "jordan@acme.dev" },
+        activeWorkspace: { id: "ws_acme_01", name: "Acme", slug: "acme", role: "admin" },
+      },
+    });
+    hasRepositoryRouteAccess.mockResolvedValue(false);
+
+    const { GET } = await import("./route");
+    const response = await GET(new Request("http://localhost/api/v1/repositories/acme/platform-ui/policy"), {
+      params: Promise.resolve({ owner: "acme", name: "platform-ui" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.message).toContain("not found");
+    expect(resolveRepositoryPolicy).not.toHaveBeenCalled();
   });
 });

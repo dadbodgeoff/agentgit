@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { ConnectorRegistrationRequestSchema, ConnectorEventEnvelopeSchema } from "./index.js";
+import { CLOUD_SYNC_SCHEMA_VERSION, ConnectorRegistrationRequestSchema, ConnectorEventEnvelopeSchema } from "./index.js";
 
 describe("cloud sync protocol schemas", () => {
   it("parses a connector registration request", () => {
     const parsed = ConnectorRegistrationRequestSchema.parse({
+      schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
       workspaceId: "ws_acme_01",
       connectorName: "Geoffrey MacBook connector",
       machineName: "geoffrey-mbp",
@@ -38,7 +39,7 @@ describe("cloud sync protocol schemas", () => {
 
   it("parses a connector event envelope", () => {
     const parsed = ConnectorEventEnvelopeSchema.parse({
-      schemaVersion: "cloud-sync.v1",
+      schemaVersion: CLOUD_SYNC_SCHEMA_VERSION,
       eventId: "evt_01",
       connectorId: "conn_01",
       workspaceId: "ws_acme_01",
