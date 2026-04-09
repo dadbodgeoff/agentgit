@@ -300,7 +300,7 @@ export class AuthorityClient {
     }
 
     const payload: ValidatePolicyConfigRequestPayload = {
-      config,
+      config: config as ValidatePolicyConfigRequestPayload["config"],
     };
     return this.sendRequest<ValidatePolicyConfigRequestPayload, ValidatePolicyConfigResponsePayload>(
       "validate_policy_config",

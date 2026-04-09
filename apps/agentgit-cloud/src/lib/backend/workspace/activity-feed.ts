@@ -140,7 +140,7 @@ function detailPathForConnectorCommand(command: {
   return repositoryRoute(owner, name);
 }
 
-function externalUrlForConnectorCommand(command: { result?: Record<string, unknown> | null }) {
+function externalUrlForConnectorCommand(_command: { result?: Record<string, unknown> | null }) {
   return undefined;
 }
 
