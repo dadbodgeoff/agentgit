@@ -369,6 +369,21 @@ table,
   }
 }
 
+@keyframes ag-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.ag-cursor-blink {
+  animation: ag-blink 1s step-end infinite;
+}
+
+
 @media (prefers-reduced-motion: reduce) {
   html:focus-within {
     scroll-behavior: auto;
@@ -385,7 +400,17 @@ table,
 
   .ag-signal-panel::before,
   .ag-scanline::after,
-  .ag-reveal {
+  .ag-reveal,
+  .ag-cursor-blink {
     animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
