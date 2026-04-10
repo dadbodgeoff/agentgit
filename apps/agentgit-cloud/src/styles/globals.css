@@ -355,6 +355,25 @@ table,
   }
 }
 
+/*
+ * Modal entrance — Product Design System §1.7 / §13.7:
+ * default modal "Fade+scale 350ms". Pairs with the modal primitive's
+ * `motion-safe:animate-[ag-modal-enter_var(--ag-duration-slow)_...]`
+ * class. The matching reduce-motion block below disables it under
+ * prefers-reduced-motion.
+ */
+@keyframes ag-modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .ag-signal-panel::before {
     animation: ag-signal-drift 18s var(--ag-ease-linear) infinite;

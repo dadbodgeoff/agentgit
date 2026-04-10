@@ -19,7 +19,7 @@
       }
     ],
     "baseUrl": ".",
-    "types": ["node", "react", "react-dom", "vitest/globals"],
+    "types": ["node", "react", "react-dom", "vitest/globals", "@testing-library/jest-dom"],
     "paths": {
       "@/*": ["./src/*"]
     },
