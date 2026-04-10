@@ -1,7 +1,5 @@
 # @agentgit/workspace-index
 
-> **Internal package** — used by the agentgit daemon. Not published to npm.
-
 Persisted workspace snapshot metadata. Tracks files and directories within workspace roots so the snapshot engine can efficiently detect changes, anchor snapshots, and support layered restore operations.
 
 ---

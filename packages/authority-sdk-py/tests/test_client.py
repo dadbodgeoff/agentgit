@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from typing import Callable
+from typing import Callable, get_args
 
 from agentgit_authority import (
     API_VERSION,
@@ -52,6 +52,7 @@ from agentgit_authority import (
     build_register_run_payload,
 )
 from agentgit_authority.client import AuthorityClientOptions
+from agentgit_authority.types import MethodName
 
 
 Handler = Callable[[dict[str, object]], bytes]
@@ -126,6 +127,185 @@ class FakeDaemon:
                         response = self.handler(request)
                         connection.sendall(response)
                         break
+
+
+def make_valid_result(method: str, payload: object) -> dict[str, object]:
+    base: dict[str, object]
+
+    if method == "list_approvals":
+        base = {"approvals": []}
+    elif method == "resolve_approval":
+        base = {"approval_request": {}, "execution_result": None, "snapshot_record": None}
+    elif method == "query_helper":
+        visibility_scope = (
+            payload.get("visibility_scope") if isinstance(payload, dict) and "visibility_scope" in payload else "internal"
+        )
+        base = {
+            "answer": "Likely cause summary",
+            "confidence": 0.72,
+            "visibility_scope": visibility_scope,
+            "redactions_applied": 0,
+            "preview_budget": {},
+            "evidence": [],
+            "uncertainty": [],
+        }
+    elif method == "query_timeline":
+        visibility_scope = (
+            payload.get("visibility_scope") if isinstance(payload, dict) and "visibility_scope" in payload else "internal"
+        )
+        base = {
+            "run_summary": {},
+            "steps": [],
+            "projection_status": "fresh",
+            "visibility_scope": visibility_scope,
+            "redactions_applied": 0,
+            "preview_budget": {},
+        }
+    elif method == "query_artifact":
+        visibility_scope = (
+            payload.get("visibility_scope") if isinstance(payload, dict) and "visibility_scope" in payload else "internal"
+        )
+        base = {
+            "artifact": {},
+            "artifact_status": "available",
+            "visibility_scope": visibility_scope,
+            "content_available": True,
+            "content": "",
+            "content_truncated": False,
+            "returned_chars": 0,
+            "max_inline_chars": 4096,
+        }
+    elif method == "get_capabilities":
+        base = {
+            "capabilities": [],
+            "detection_timestamps": {},
+            "degraded_mode_warnings": [],
+        }
+    elif method == "get_effective_policy":
+        base = {
+            "policy": {},
+            "summary": {},
+        }
+    elif method == "get_policy_calibration_report":
+        base = {"report": {}}
+    elif method == "explain_policy_action":
+        base = {
+            "action": {},
+            "policy_outcome": {},
+            "action_family": "filesystem/write",
+            "effective_policy_profile": "default",
+            "low_confidence_threshold": None,
+            "confidence_score": 0.72,
+            "confidence_triggered": False,
+            "snapshot_selection": None,
+        }
+    elif method == "get_policy_threshold_recommendations":
+        base = {
+            "generated_at": "2026-04-01T12:00:00.000Z",
+            "filters": {},
+            "effective_policy_profile": "default",
+            "recommendations": [],
+        }
+    elif method == "replay_policy_thresholds":
+        base = {
+            "generated_at": "2026-04-01T12:00:00.000Z",
+            "filters": {},
+            "effective_policy_profile": "default",
+            "candidate_thresholds": [],
+            "summary": {},
+            "action_families": [],
+            "samples_truncated": False,
+        }
+    elif method == "validate_policy_config":
+        base = {
+            "valid": True,
+            "issues": [],
+            "normalized_config": None,
+            "compiled_profile_name": None,
+            "compiled_rule_count": None,
+        }
+    elif method == "list_mcp_servers":
+        base = {"servers": []}
+    elif method == "list_mcp_server_candidates":
+        base = {"candidates": []}
+    elif method == "submit_mcp_server_candidate":
+        base = {"candidate": {}}
+    elif method == "list_mcp_server_profiles":
+        base = {"profiles": []}
+    elif method == "resolve_mcp_server_candidate":
+        base = {
+            "candidate": {},
+            "profile": {},
+            "created_profile": True,
+            "drift_detected": False,
+        }
+    elif method == "list_mcp_server_trust_decisions":
+        base = {"trust_decisions": []}
+    elif method == "list_mcp_server_credential_bindings":
+        base = {"credential_bindings": []}
+    elif method == "bind_mcp_server_credentials":
+        base = {"profile": {}, "credential_binding": {}, "created": True}
+    elif method == "approve_mcp_server_profile":
+        base = {"profile": {}, "trust_decision": {}, "created": True}
+    elif method == "activate_mcp_server_profile":
+        base = {"profile": {}}
+    elif method == "quarantine_mcp_server_profile":
+        base = {"profile": {}}
+    elif method == "revoke_mcp_server_credentials":
+        base = {"profile": None, "credential_binding": {}}
+    elif method == "revoke_mcp_server_profile":
+        base = {"profile": {}}
+    elif method == "upsert_mcp_server":
+        base = {"server": {}, "created": True}
+    elif method == "remove_mcp_server":
+        base = {"removed": True, "removed_server": None}
+    elif method == "list_mcp_secrets":
+        base = {"secrets": []}
+    elif method == "upsert_mcp_secret":
+        base = {"secret": {}, "created": True, "rotated": False}
+    elif method == "remove_mcp_secret":
+        base = {"removed": True, "removed_secret": None}
+    elif method == "list_mcp_host_policies":
+        base = {"policies": []}
+    elif method == "upsert_mcp_host_policy":
+        base = {"policy": {}, "created": True}
+    elif method == "remove_mcp_host_policy":
+        base = {"removed": True, "removed_policy": None}
+    elif method == "diagnostics":
+        base = {
+            "daemon_health": None,
+            "journal_health": None,
+            "maintenance_backlog": None,
+            "projection_lag": None,
+            "storage_summary": None,
+            "capability_summary": None,
+            "policy_summary": None,
+            "security_posture": None,
+            "hosted_worker": None,
+            "hosted_queue": None,
+        }
+    elif method == "run_maintenance":
+        base = {
+            "accepted_priority": "administrative",
+            "scope": payload.get("scope") if isinstance(payload, dict) else None,
+            "jobs": [],
+            "stream_id": None,
+        }
+    elif method == "plan_recovery":
+        base = {"recovery_plan": {}}
+    elif method == "execute_recovery":
+        base = {
+            "recovery_plan": {},
+            "restored": True,
+            "outcome": "restored",
+            "executed_at": "2026-04-01T12:00:00.000Z",
+        }
+    else:
+        raise AssertionError(f"No valid response fixture defined for method: {method}")
+
+    base["echo_method"] = method
+    base["echo_payload"] = payload
+    return base
 
 
 class AuthorityClientTest(unittest.TestCase):
@@ -457,6 +637,212 @@ class AuthorityClientTest(unittest.TestCase):
             client.hello()
 
         self.assertEqual(error.exception.code, "INVALID_RESPONSE")
+
+    def test_schema_drift_in_success_payload_raises_transport_error(self) -> None:
+        def handler(request: dict[str, object]) -> bytes:
+            method = request["method"]
+            if method == "hello":
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_contract",
+                    "ok": True,
+                    "result": {
+                        "session_id": "sess_contract",
+                        "accepted_api_version": API_VERSION,
+                        "runtime_version": "0.1.0",
+                        "schema_pack_version": "v1",
+                        "capabilities": {
+                            "local_only": True,
+                            "methods": ["hello", "get_run_summary"],
+                        },
+                    },
+                    "error": None,
+                }
+                return f"{json.dumps(payload)}\n".encode("utf-8")
+
+            payload = {
+                "api_version": API_VERSION,
+                "request_id": request["request_id"],
+                "session_id": "sess_contract",
+                "ok": True,
+                "result": {},
+                "error": None,
+            }
+            return f"{json.dumps(payload)}\n".encode("utf-8")
+
+        daemon = FakeDaemon(self.socket_path, handler)
+        daemon.start()
+        self.addCleanup(daemon.stop)
+
+        client = self.make_client()
+        with self.assertRaises(AuthorityClientTransportError) as error:
+            client.get_run_summary("run_contract")
+
+        self.assertEqual(error.exception.code, "INVALID_RESPONSE")
+        self.assertIn("shared SDK contract", str(error.exception))
+
+    def test_shared_response_contract_covers_every_supported_method(self) -> None:
+        from agentgit_authority.client import _load_response_contract
+
+        manifest = _load_response_contract()
+        methods = manifest.get("methods")
+        self.assertIsInstance(methods, dict)
+
+        supported_methods = set(get_args(MethodName))
+        self.assertEqual(set(methods.keys()), supported_methods)
+
+    def test_python_sdk_exposes_the_full_hosted_and_checkpoint_surface(self) -> None:
+        observed_methods: list[str] = []
+
+        def handler(request: dict[str, object]) -> bytes:
+            method = request["method"]
+            observed_methods.append(str(method))
+            if method == "hello":
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_surface",
+                    "ok": True,
+                    "result": {
+                        "session_id": "sess_surface",
+                        "accepted_api_version": API_VERSION,
+                        "runtime_version": "0.1.0",
+                        "schema_pack_version": "v1",
+                        "capabilities": {
+                            "local_only": True,
+                            "methods": [
+                                "hello",
+                                "create_run_checkpoint",
+                                "get_mcp_server_review",
+                                "get_hosted_mcp_job",
+                                "list_hosted_mcp_jobs",
+                                "requeue_hosted_mcp_job",
+                                "cancel_hosted_mcp_job",
+                            ],
+                        },
+                    },
+                    "error": None,
+                }
+            elif method == "create_run_checkpoint":
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_surface",
+                    "ok": True,
+                    "result": {
+                        "run_checkpoint": "chk_01",
+                        "branch_point": {},
+                        "checkpoint_kind": "hard_checkpoint",
+                        "snapshot_record": {},
+                        "snapshot_selection": {},
+                    },
+                    "error": None,
+                }
+            elif method == "get_mcp_server_review":
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_surface",
+                    "ok": True,
+                    "result": {
+                        "candidate": None,
+                        "profile": None,
+                        "active_trust_decision": None,
+                        "active_credential_binding": None,
+                        "review": {},
+                    },
+                    "error": None,
+                }
+            elif method == "get_hosted_mcp_job":
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_surface",
+                    "ok": True,
+                    "result": {
+                        "job": {},
+                        "lifecycle": {},
+                        "leases": [],
+                        "attestations": [],
+                        "recent_events": [],
+                    },
+                    "error": None,
+                }
+            elif method == "list_hosted_mcp_jobs":
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_surface",
+                    "ok": True,
+                    "result": {
+                        "jobs": [],
+                        "summary": {},
+                    },
+                    "error": None,
+                }
+            elif method == "requeue_hosted_mcp_job":
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_surface",
+                    "ok": True,
+                    "result": {
+                        "job": {},
+                        "requeued": True,
+                        "previous_status": "queued",
+                        "attempt_count_reset": True,
+                        "max_attempts_updated": False,
+                    },
+                    "error": None,
+                }
+            else:
+                payload = {
+                    "api_version": API_VERSION,
+                    "request_id": request["request_id"],
+                    "session_id": "sess_surface",
+                    "ok": True,
+                    "result": {
+                        "job": {},
+                        "cancellation_requested": True,
+                        "previous_status": "queued",
+                        "terminal": False,
+                    },
+                    "error": None,
+                }
+
+            return f"{json.dumps(payload)}\n".encode("utf-8")
+
+        daemon = FakeDaemon(self.socket_path, handler)
+        daemon.start()
+        self.addCleanup(daemon.stop)
+
+        client = self.make_client()
+        checkpoint = client.create_run_checkpoint({"run_id": "run_surface", "kind": "hard_checkpoint"})
+        review = client.get_mcp_server_review({"server_profile_id": "prof_surface"})
+        job = client.get_hosted_mcp_job("job_surface")
+        jobs = client.list_hosted_mcp_jobs({"status": "queued"})
+        requeued = client.requeue_hosted_mcp_job("job_surface", {"max_attempts": 3})
+        cancelled = client.cancel_hosted_mcp_job("job_surface", {"reason": "operator_cancel"})
+
+        self.assertEqual(checkpoint["run_checkpoint"], "chk_01")
+        self.assertIn("review", review)
+        self.assertIn("job", job)
+        self.assertEqual(jobs["jobs"], [])
+        self.assertTrue(requeued["requeued"])
+        self.assertTrue(cancelled["cancellation_requested"])
+        self.assertEqual(
+            observed_methods,
+            [
+                "hello",
+                "create_run_checkpoint",
+                "get_mcp_server_review",
+                "get_hosted_mcp_job",
+                "list_hosted_mcp_jobs",
+                "requeue_hosted_mcp_job",
+                "cancel_hosted_mcp_job",
+            ],
+        )
 
     def test_submit_filesystem_write_builds_expected_attempt_shape(self) -> None:
         def handler(request: dict[str, object]) -> bytes:
@@ -1416,7 +1802,7 @@ class AuthorityClientTest(unittest.TestCase):
                 "request_id": request["request_id"],
                 "session_id": "sess_recovery",
                 "ok": True,
-                "result": {"echo_method": method, "echo_payload": request["payload"]},
+                "result": make_valid_result(str(method), request["payload"]),
                 "error": None,
             }
             return f"{json.dumps(payload)}\n".encode("utf-8")
@@ -1468,7 +1854,7 @@ class AuthorityClientTest(unittest.TestCase):
                 "request_id": request["request_id"],
                 "session_id": "sess_recovery",
                 "ok": True,
-                "result": {"echo_method": method, "echo_payload": request["payload"]},
+                "result": make_valid_result(str(method), request["payload"]),
                 "error": None,
             }
             return f"{json.dumps(payload)}\n".encode("utf-8")
@@ -1514,7 +1900,7 @@ class AuthorityClientTest(unittest.TestCase):
                 "request_id": request["request_id"],
                 "session_id": "sess_recovery",
                 "ok": True,
-                "result": {"echo_method": method, "echo_payload": request["payload"]},
+                "result": make_valid_result(str(method), request["payload"]),
                 "error": None,
             }
             return f"{json.dumps(payload)}\n".encode("utf-8")
@@ -1560,7 +1946,7 @@ class AuthorityClientTest(unittest.TestCase):
                 "request_id": request["request_id"],
                 "session_id": "sess_recovery",
                 "ok": True,
-                "result": {"echo_method": method, "echo_payload": request["payload"]},
+                "result": make_valid_result(str(method), request["payload"]),
                 "error": None,
             }
             return f"{json.dumps(payload)}\n".encode("utf-8")
@@ -1608,7 +1994,7 @@ class AuthorityClientTest(unittest.TestCase):
                 "request_id": request["request_id"],
                 "session_id": "sess_recovery",
                 "ok": True,
-                "result": {"echo_method": method, "echo_payload": request["payload"]},
+                "result": make_valid_result(str(method), request["payload"]),
                 "error": None,
             }
             return f"{json.dumps(payload)}\n".encode("utf-8")
@@ -2353,7 +2739,7 @@ class AuthorityClientTest(unittest.TestCase):
                 "request_id": request["request_id"],
                 "session_id": "sess_wrappers",
                 "ok": True,
-                "result": {"echo_method": method, "echo_payload": request["payload"]},
+                "result": make_valid_result(str(method), request["payload"]),
                 "error": None,
             }
             return f"{json.dumps(payload)}\n".encode("utf-8")

@@ -98,6 +98,7 @@ function sha256Hex(content: string): string {
 function buildGovernedRunnerSource(): string {
   return `#!${process.execPath}
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import net from "node:net";
 
 const MAX_RESPONSE_BYTES = 1_000_000;
@@ -109,6 +110,14 @@ async function readStdin() {
     buffer += chunk;
   }
   return buffer.trim();
+}
+
+function readFileIfExists(filePath) {
+  try {
+    return fs.readFileSync(filePath, "utf8").trim();
+  } catch {
+    return "";
+  }
 }
 
 function makeRequest(method, payload, sessionId) {
@@ -126,6 +135,9 @@ async function sendRequest(socketPath, request) {
     const socket = net.createConnection(socketPath);
     let buffer = "";
     let settled = false;
+    const authToken =
+      (typeof process.env.AGENTGIT_SOCKET_AUTH_TOKEN === "string" ? process.env.AGENTGIT_SOCKET_AUTH_TOKEN.trim() : "") ||
+      readFileIfExists(socketPath + ".token");
     const requestBody = JSON.stringify(request) + "\\n";
 
     function settle(callback) {
@@ -139,7 +151,7 @@ async function sendRequest(socketPath, request) {
     socket.setEncoding("utf8");
     socket.setTimeout(SOCKET_TIMEOUT_MS);
     socket.once("connect", () => {
-      socket.write(requestBody);
+      socket.write((authToken ? authToken + "\\n" : "") + requestBody);
     });
     socket.once("timeout", () => {
       settle(() => {
@@ -281,6 +293,7 @@ async function main() {
   const socketPath = request.socket_path || process.env.AGENTGIT_SOCKET_PATH;
   const workspaceRoot = request.workspace_root || process.env.AGENTGIT_ROOT;
   const runId = request.run_id || process.env.AGENTGIT_RUN_ID;
+  const providedSessionId = request.session_id || process.env.AGENTGIT_SESSION_ID || null;
   if (!socketPath || !workspaceRoot || !runId) {
     failResult("AgentGit runtime context is missing. Launch the runtime through agentgit run.", {
       socket_path: Boolean(socketPath),
@@ -292,18 +305,22 @@ async function main() {
   }
 
   try {
-    const hello = await sendRequest(socketPath, makeRequest("hello", {
-      client_type: "cli",
-      client_version: "0.1.0",
-      requested_api_version: "authority.v1",
-      workspace_roots: [workspaceRoot],
-    }));
-    if (!hello.ok || !hello.result || !hello.result.session_id) {
-      failResult(hello.error?.message || "AgentGit helper could not open a daemon session.", {
-        code: hello.error?.code || "HELLO_FAILED",
-      });
-      process.exitCode = 1;
-      return;
+    let sessionId = typeof providedSessionId === "string" && providedSessionId.trim().length > 0 ? providedSessionId.trim() : null;
+    if (!sessionId) {
+      const hello = await sendRequest(socketPath, makeRequest("hello", {
+        client_type: "cli",
+        client_version: "0.1.0",
+        requested_api_version: "authority.v1",
+        workspace_roots: [workspaceRoot],
+      }));
+      if (!hello.ok || !hello.result || !hello.result.session_id) {
+        failResult(hello.error?.message || "AgentGit helper could not open a daemon session.", {
+          code: hello.error?.code || "HELLO_FAILED",
+        });
+        process.exitCode = 1;
+        return;
+      }
+      sessionId = hello.result.session_id;
     }
 
     const response = await sendRequest(
@@ -317,7 +334,7 @@ async function main() {
             run_id: runId,
           }),
         },
-        hello.result.session_id,
+        sessionId,
       ),
     );
 

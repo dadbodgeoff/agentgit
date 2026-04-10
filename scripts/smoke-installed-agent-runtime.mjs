@@ -12,6 +12,30 @@ import { resolveCommandPath } from "./command-paths.mjs";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOCKER = resolveCommandPath("docker");
 const NPM = resolveCommandPath("npm");
+const parsedArgs = parseArgs(process.argv.slice(2));
+
+function parseArgs(argv) {
+  const parsed = {
+    artifactsDir: null,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const current = argv[index];
+    if (current === "--artifacts-dir") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--artifacts-dir expects a path.");
+      }
+      parsed.artifactsDir = path.resolve(value);
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`Unknown argument: ${current}`);
+  }
+
+  return parsed;
+}
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -84,6 +108,20 @@ function requireIncludes(output, needle, context) {
   }
 }
 
+async function loadPackedArtifacts(tarballDir) {
+  if (parsedArgs.artifactsDir) {
+    const manifestPath = path.join(parsedArgs.artifactsDir, "manifest.json");
+    return JSON.parse(await fsp.readFile(manifestPath, "utf8"));
+  }
+
+  const packed = await runCommand(
+    process.execPath,
+    [path.join(repoRoot, "scripts", "pack-release-artifacts.mjs"), "--out-dir", tarballDir],
+    { cwd: repoRoot },
+  );
+  return JSON.parse(packed.stdout);
+}
+
 async function main() {
   const tempBase = process.platform === "win32" ? os.tmpdir() : "/tmp";
   const tempRoot = await fsp.mkdtemp(path.join(tempBase, "agentgit-install-smoke-"));
@@ -105,12 +143,7 @@ async function main() {
   await fsp.mkdir(containedRoot, { recursive: true });
 
   try {
-    const packed = await runCommand(
-      process.execPath,
-      [path.join(repoRoot, "scripts", "pack-release-artifacts.mjs"), "--out-dir", tarballDir],
-      { cwd: repoRoot },
-    );
-    const packManifest = JSON.parse(packed.stdout);
+    const packManifest = await loadPackedArtifacts(tarballDir);
     const tarballs = packManifest.packages.map((pkg) => pkg.tarball_path);
 
     await runCommand(NPM, ["init", "-y"], { cwd: installRoot, env: sharedEnv });

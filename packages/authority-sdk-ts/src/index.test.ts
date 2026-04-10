@@ -76,6 +76,102 @@ async function startJsonServer(
   });
 }
 
+function makeValidResult(method: string, payload: unknown): Record<string, unknown> {
+  if (method === "plan_recovery") {
+    return {
+      recovery_plan: {},
+    };
+  }
+
+  if (method === "execute_recovery") {
+    return {
+      recovery_plan: {},
+      restored: true,
+      outcome: "restored",
+      executed_at: "2026-04-01T12:00:00.000Z",
+    };
+  }
+
+  if (method === "query_timeline") {
+    return {
+      run_summary: {},
+      steps: [],
+      projection_status: "fresh",
+      visibility_scope:
+        typeof payload === "object" && payload !== null && "visibility_scope" in payload
+          ? payload.visibility_scope
+          : "internal",
+      redactions_applied: 0,
+      preview_budget: {},
+    };
+  }
+
+  if (method === "query_helper") {
+    return {
+      answer: "ok",
+      confidence: 0.5,
+      visibility_scope:
+        typeof payload === "object" && payload !== null && "visibility_scope" in payload
+          ? payload.visibility_scope
+          : "internal",
+      redactions_applied: 0,
+      preview_budget: {},
+      evidence: [],
+      uncertainty: [],
+    };
+  }
+
+  if (method === "query_artifact") {
+    return {
+      artifact: {},
+      artifact_status: "available",
+      visibility_scope:
+        typeof payload === "object" && payload !== null && "visibility_scope" in payload
+          ? payload.visibility_scope
+          : "internal",
+      content_available: true,
+      content: "",
+      content_truncated: false,
+      returned_chars: 0,
+      max_inline_chars: 4096,
+    };
+  }
+
+  if (method === "get_capabilities") {
+    return {
+      capabilities: [],
+      detection_timestamps: {},
+      degraded_mode_warnings: [],
+    };
+  }
+
+  if (method === "diagnostics") {
+    return {
+      daemon_health: null,
+      journal_health: null,
+      maintenance_backlog: null,
+      projection_lag: null,
+      storage_summary: null,
+      capability_summary: null,
+      policy_summary: null,
+      security_posture: null,
+      hosted_worker: null,
+      hosted_queue: null,
+    };
+  }
+
+  if (method === "run_maintenance") {
+    return {
+      accepted_priority: "administrative",
+      scope: typeof payload === "object" && payload !== null && "scope" in payload ? payload.scope : null,
+      jobs: [],
+      stream_id: null,
+    };
+  }
+
+  throw new Error(`No valid response fixture defined for method: ${method}`);
+}
+
 afterEach(async () => {
   while (harnesses.length > 0) {
     const harness = harnesses.pop()!;
@@ -143,7 +239,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello"],
@@ -167,7 +263,7 @@ describe("AuthorityClient transport", () => {
         `${JSON.stringify({
           api_version: API_VERSION,
           request_id: request.request_id,
-          session_id: request.session_id ?? null,
+          session_id: request.session_id,
           ok: false,
           result: null,
           error: {
@@ -199,6 +295,50 @@ describe("AuthorityClient transport", () => {
     });
   });
 
+  it("fails loudly when a successful daemon payload drifts from the shared schema", async () => {
+    const harness = createHarness();
+    await startJsonServer(harness, (request, socket) => {
+      const result =
+        request.method === "hello"
+          ? {
+              session_id: "sess_contract",
+              accepted_api_version: API_VERSION,
+              runtime_version: "0.1.0",
+              schema_pack_version: "v1",
+              capabilities: {
+                local_only: true,
+                methods: ["hello", "get_run_summary"],
+              },
+            }
+          : {};
+
+      socket.write(
+        `${JSON.stringify({
+          api_version: API_VERSION,
+          request_id: request.request_id,
+          session_id: "sess_contract",
+          ok: true,
+          result,
+          error: null,
+        })}\n`,
+      );
+      socket.end();
+    });
+
+    const client = new AuthorityClient({
+      socketPath: harness.socketPath,
+      connectTimeoutMs: 50,
+      responseTimeoutMs: 50,
+      maxConnectRetries: 0,
+    });
+
+    await expect(client.getRunSummary("run_contract")).rejects.toMatchObject({
+      name: "AuthorityClientTransportError",
+      code: "INVALID_RESPONSE",
+      retryable: false,
+    });
+  });
+
   it("uses default workspace roots when bootstrapping a session for runtime reads", async () => {
     const harness = createHarness();
     const seenRequests: Array<Record<string, unknown>> = [];
@@ -211,7 +351,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_workspace_default",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "get_run_summary"],
@@ -299,7 +439,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "register_run", "run_maintenance", "execute_recovery"],
@@ -399,7 +539,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: [
@@ -846,7 +986,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "list_mcp_servers", "upsert_mcp_server", "remove_mcp_server"],
@@ -941,7 +1081,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "get_hosted_mcp_job", "list_hosted_mcp_jobs", "requeue_hosted_mcp_job"],
@@ -1166,7 +1306,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: [
@@ -1730,7 +1870,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: [
@@ -1891,7 +2031,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "plan_recovery"],
@@ -1965,15 +2105,13 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "execute_recovery"],
               },
             }
-          : {
-              recovered: true,
-            };
+          : makeValidResult(String(method), request.payload);
 
       socket.write(
         `${JSON.stringify({
@@ -2022,15 +2160,13 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "plan_recovery"],
               },
             }
-          : {
-              planned: true,
-            };
+          : makeValidResult(String(method), request.payload);
 
       socket.write(
         `${JSON.stringify({
@@ -2079,15 +2215,13 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "execute_recovery"],
               },
             }
-          : {
-              executed: true,
-            };
+          : makeValidResult(String(method), request.payload);
 
       socket.write(
         `${JSON.stringify({
@@ -2138,15 +2272,13 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_test",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: ["hello", "plan_recovery"],
               },
             }
-          : {
-              planned: true,
-            };
+          : makeValidResult(String(method), request.payload);
 
       socket.write(
         `${JSON.stringify({
@@ -2197,7 +2329,7 @@ describe("AuthorityClient transport", () => {
               session_id: "sess_visibility",
               accepted_api_version: API_VERSION,
               runtime_version: "0.1.0",
-              schema_pack_version: "schema-pack.v1",
+              schema_pack_version: "v1",
               capabilities: {
                 local_only: true,
                 methods: [
@@ -2211,57 +2343,7 @@ describe("AuthorityClient transport", () => {
                 ],
               },
             }
-          : {
-              answer: "ok",
-              confidence: 0.5,
-              visibility_scope: "user",
-              redactions_applied: 0,
-              preview_budget: {
-                max_inline_preview_chars: 160,
-                max_total_inline_preview_chars: 1200,
-                preview_chars_used: 0,
-                truncated_previews: 0,
-                omitted_previews: 0,
-              },
-              evidence: [],
-              uncertainty: [],
-              steps: [],
-              run_summary: {
-                run_id: "run_vis",
-                session_id: "sess_visibility",
-                workflow_name: "visibility",
-                agent_framework: "cli",
-                agent_name: "agentgit-cli",
-                workspace_roots: [],
-                event_count: 0,
-                latest_event: null,
-                budget_config: {
-                  max_mutating_actions: null,
-                  max_destructive_actions: null,
-                },
-                budget_usage: {
-                  mutating_actions: 0,
-                  destructive_actions: 0,
-                },
-                maintenance_status: {
-                  projection_status: "fresh",
-                  projection_lag_events: 0,
-                  degraded_artifact_capture_actions: 0,
-                  low_disk_pressure_signals: 0,
-                  artifact_health: {
-                    total: 0,
-                    available: 0,
-                    missing: 0,
-                    expired: 0,
-                    corrupted: 0,
-                    tampered: 0,
-                  },
-                },
-                created_at: "2026-03-31T00:00:00.000Z",
-                started_at: "2026-03-31T00:00:00.000Z",
-              },
-              projection_status: "fresh",
-            };
+          : makeValidResult(String(method), request.payload);
 
       socket.write(
         `${JSON.stringify({

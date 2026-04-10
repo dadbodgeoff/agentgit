@@ -23,7 +23,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
         <main className="mx-auto flex min-h-screen max-w-3xl items-center px-6 py-12">
           <Card className="w-full space-y-4">
             <div className="space-y-2">
-              <p className="font-mono text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+              <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                 Global error
               </p>
               <h1 className="text-3xl font-semibold">The application hit a fatal rendering error.</h1>

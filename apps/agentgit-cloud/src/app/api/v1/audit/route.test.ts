@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const requireApiSession = vi.fn();
+const requireApiRole = vi.fn();
 const listWorkspaceAuditLog = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/auth/api-session", () => ({
-  requireApiSession,
+  requireApiRole,
 }));
 
 vi.mock("@/lib/backend/workspace/audit-log", () => ({
@@ -19,10 +19,10 @@ describe("audit route", () => {
   });
 
   it("returns workspace audit entries for the active session", async () => {
-    requireApiSession.mockResolvedValue({
-      unauthorized: null,
+    requireApiRole.mockResolvedValue({
+      denied: null,
       workspaceSession: {
-        activeWorkspace: { id: "ws_acme_01", slug: "acme", role: "member" },
+        activeWorkspace: { id: "ws_acme_01", slug: "acme", role: "admin" },
       },
     });
     listWorkspaceAuditLog.mockReturnValue({

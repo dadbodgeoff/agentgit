@@ -3195,6 +3195,57 @@ function requestEnvelopeWithPayload<TMethod extends DaemonMethod, TPayloadSchema
   });
 }
 
+export const DaemonRequestPayloadSchemaByMethod = {
+  hello: HelloRequestPayloadSchema,
+  register_run: RegisterRunRequestPayloadSchema,
+  get_run_summary: GetRunSummaryRequestPayloadSchema,
+  get_capabilities: GetCapabilitiesRequestPayloadSchema,
+  get_effective_policy: GetEffectivePolicyRequestPayloadSchema,
+  validate_policy_config: ValidatePolicyConfigRequestPayloadSchema,
+  get_policy_calibration_report: GetPolicyCalibrationReportRequestPayloadSchema,
+  explain_policy_action: ExplainPolicyActionRequestPayloadSchema,
+  get_policy_threshold_recommendations: GetPolicyThresholdRecommendationsRequestPayloadSchema,
+  replay_policy_thresholds: GetPolicyThresholdReplayRequestPayloadSchema,
+  list_mcp_servers: ListMcpServersRequestPayloadSchema,
+  list_mcp_server_candidates: ListMcpServerCandidatesRequestPayloadSchema,
+  submit_mcp_server_candidate: SubmitMcpServerCandidateRequestPayloadSchema,
+  list_mcp_server_profiles: ListMcpServerProfilesRequestPayloadSchema,
+  resolve_mcp_server_candidate: ResolveMcpServerCandidateRequestPayloadSchema,
+  list_mcp_server_trust_decisions: ListMcpServerTrustDecisionsRequestPayloadSchema,
+  approve_mcp_server_profile: ApproveMcpServerProfileRequestPayloadSchema,
+  list_mcp_server_credential_bindings: ListMcpServerCredentialBindingsRequestPayloadSchema,
+  bind_mcp_server_credentials: BindMcpServerCredentialsRequestPayloadSchema,
+  revoke_mcp_server_credentials: RevokeMcpServerCredentialsRequestPayloadSchema,
+  activate_mcp_server_profile: ActivateMcpServerProfileRequestPayloadSchema,
+  quarantine_mcp_server_profile: QuarantineMcpServerProfileRequestPayloadSchema,
+  revoke_mcp_server_profile: RevokeMcpServerProfileRequestPayloadSchema,
+  upsert_mcp_server: UpsertMcpServerRequestPayloadSchema,
+  remove_mcp_server: RemoveMcpServerRequestPayloadSchema,
+  list_mcp_secrets: ListMcpSecretsRequestPayloadSchema,
+  upsert_mcp_secret: UpsertMcpSecretRequestPayloadSchema,
+  remove_mcp_secret: RemoveMcpSecretRequestPayloadSchema,
+  list_mcp_host_policies: ListMcpHostPoliciesRequestPayloadSchema,
+  upsert_mcp_host_policy: UpsertMcpHostPolicyRequestPayloadSchema,
+  remove_mcp_host_policy: RemoveMcpHostPolicyRequestPayloadSchema,
+  get_hosted_mcp_job: GetHostedMcpJobRequestPayloadSchema,
+  list_hosted_mcp_jobs: ListHostedMcpJobsRequestPayloadSchema,
+  requeue_hosted_mcp_job: RequeueHostedMcpJobRequestPayloadSchema,
+  cancel_hosted_mcp_job: CancelHostedMcpJobRequestPayloadSchema,
+  get_mcp_server_review: GetMcpServerReviewRequestPayloadSchema,
+  diagnostics: DiagnosticsRequestPayloadSchema,
+  run_maintenance: RunMaintenanceRequestPayloadSchema,
+  submit_action_attempt: SubmitActionAttemptRequestPayloadSchema,
+  create_run_checkpoint: CreateRunCheckpointRequestPayloadSchema,
+  list_approvals: ListApprovalsRequestPayloadSchema,
+  query_approval_inbox: QueryApprovalInboxRequestPayloadSchema,
+  resolve_approval: ResolveApprovalRequestPayloadSchema,
+  query_timeline: QueryTimelineRequestPayloadSchema,
+  query_helper: QueryHelperRequestPayloadSchema,
+  query_artifact: QueryArtifactRequestPayloadSchema,
+  plan_recovery: PlanRecoveryRequestPayloadSchema,
+  execute_recovery: ExecuteRecoveryRequestPayloadSchema,
+} as const satisfies Record<DaemonMethod, z.ZodTypeAny>;
+
 const RequestEnvelopeMethodSchemas = [
   requestEnvelopeWithPayload("hello", HelloRequestPayloadSchema),
   requestEnvelopeWithPayload("register_run", RegisterRunRequestPayloadSchema),
@@ -3275,6 +3326,208 @@ export const QueryHelperResponsePayloadSchema = z
   })
   .strict();
 export type QueryHelperResponsePayload = z.infer<typeof QueryHelperResponsePayloadSchema>;
+
+export const DaemonResponsePayloadSchemaByMethod = {
+  hello: HelloResponsePayloadSchema,
+  register_run: RegisterRunResponsePayloadSchema,
+  get_run_summary: GetRunSummaryResponsePayloadSchema,
+  get_capabilities: GetCapabilitiesResponsePayloadSchema,
+  get_effective_policy: GetEffectivePolicyResponsePayloadSchema,
+  validate_policy_config: ValidatePolicyConfigResponsePayloadSchema,
+  get_policy_calibration_report: GetPolicyCalibrationReportResponsePayloadSchema,
+  explain_policy_action: ExplainPolicyActionResponsePayloadSchema,
+  get_policy_threshold_recommendations: GetPolicyThresholdRecommendationsResponsePayloadSchema,
+  replay_policy_thresholds: GetPolicyThresholdReplayResponsePayloadSchema,
+  list_mcp_servers: ListMcpServersResponsePayloadSchema,
+  list_mcp_server_candidates: ListMcpServerCandidatesResponsePayloadSchema,
+  submit_mcp_server_candidate: SubmitMcpServerCandidateResponsePayloadSchema,
+  list_mcp_server_profiles: ListMcpServerProfilesResponsePayloadSchema,
+  resolve_mcp_server_candidate: ResolveMcpServerCandidateResponsePayloadSchema,
+  list_mcp_server_trust_decisions: ListMcpServerTrustDecisionsResponsePayloadSchema,
+  approve_mcp_server_profile: ApproveMcpServerProfileResponsePayloadSchema,
+  list_mcp_server_credential_bindings: ListMcpServerCredentialBindingsResponsePayloadSchema,
+  bind_mcp_server_credentials: BindMcpServerCredentialsResponsePayloadSchema,
+  revoke_mcp_server_credentials: RevokeMcpServerCredentialsResponsePayloadSchema,
+  activate_mcp_server_profile: ActivateMcpServerProfileResponsePayloadSchema,
+  quarantine_mcp_server_profile: QuarantineMcpServerProfileResponsePayloadSchema,
+  revoke_mcp_server_profile: RevokeMcpServerProfileResponsePayloadSchema,
+  upsert_mcp_server: UpsertMcpServerResponsePayloadSchema,
+  remove_mcp_server: RemoveMcpServerResponsePayloadSchema,
+  list_mcp_secrets: ListMcpSecretsResponsePayloadSchema,
+  upsert_mcp_secret: UpsertMcpSecretResponsePayloadSchema,
+  remove_mcp_secret: RemoveMcpSecretResponsePayloadSchema,
+  list_mcp_host_policies: ListMcpHostPoliciesResponsePayloadSchema,
+  upsert_mcp_host_policy: UpsertMcpHostPolicyResponsePayloadSchema,
+  remove_mcp_host_policy: RemoveMcpHostPolicyResponsePayloadSchema,
+  get_hosted_mcp_job: GetHostedMcpJobResponsePayloadSchema,
+  list_hosted_mcp_jobs: ListHostedMcpJobsResponsePayloadSchema,
+  requeue_hosted_mcp_job: RequeueHostedMcpJobResponsePayloadSchema,
+  cancel_hosted_mcp_job: CancelHostedMcpJobResponsePayloadSchema,
+  get_mcp_server_review: GetMcpServerReviewResponsePayloadSchema,
+  diagnostics: DiagnosticsResponsePayloadSchema,
+  run_maintenance: RunMaintenanceResponsePayloadSchema,
+  submit_action_attempt: SubmitActionAttemptResponsePayloadSchema,
+  create_run_checkpoint: CreateRunCheckpointResponsePayloadSchema,
+  list_approvals: ListApprovalsResponsePayloadSchema,
+  query_approval_inbox: QueryApprovalInboxResponsePayloadSchema,
+  resolve_approval: ResolveApprovalResponsePayloadSchema,
+  query_timeline: QueryTimelineResponsePayloadSchema,
+  query_helper: QueryHelperResponsePayloadSchema,
+  query_artifact: QueryArtifactResponsePayloadSchema,
+  plan_recovery: PlanRecoveryResponsePayloadSchema,
+  execute_recovery: ExecuteRecoveryResponsePayloadSchema,
+} as const satisfies Record<DaemonMethod, z.ZodTypeAny>;
+
+type TopLevelContractKind =
+  | "anyOf"
+  | "array"
+  | "boolean"
+  | "const"
+  | "enum"
+  | "integer"
+  | "multi"
+  | "number"
+  | "object"
+  | "oneOf"
+  | "string"
+  | "unknown";
+
+export interface DaemonTopLevelResponseContract {
+  required: string[];
+  field_kinds: Record<string, TopLevelContractKind>;
+}
+
+function toTopLevelContractKind(node: unknown): TopLevelContractKind {
+  if (!node || typeof node !== "object" || Array.isArray(node)) {
+    return "unknown";
+  }
+
+  if ("const" in node) {
+    return "const";
+  }
+
+  if ("enum" in node && Array.isArray(node.enum)) {
+    return "enum";
+  }
+
+  if ("anyOf" in node && Array.isArray(node.anyOf)) {
+    return "anyOf";
+  }
+
+  if ("oneOf" in node && Array.isArray(node.oneOf)) {
+    return "oneOf";
+  }
+
+  if ("type" in node) {
+    if (Array.isArray(node.type)) {
+      return "multi";
+    }
+
+    if (typeof node.type === "string") {
+      return node.type as TopLevelContractKind;
+    }
+  }
+
+  return "unknown";
+}
+
+export const DaemonResponseContractByMethod = Object.fromEntries(
+  Object.entries(DaemonResponsePayloadSchemaByMethod).map(([method, schema]) => {
+    const jsonSchema = z.toJSONSchema(schema);
+    return [
+      method,
+      {
+        required: Array.isArray(jsonSchema.required) ? jsonSchema.required : [],
+        field_kinds: Object.fromEntries(
+          Object.entries(jsonSchema.properties ?? {}).map(([key, value]) => [key, toTopLevelContractKind(value)]),
+        ),
+      } satisfies DaemonTopLevelResponseContract,
+    ];
+  }),
+) as Record<DaemonMethod, DaemonTopLevelResponseContract>;
+
+function matchesTopLevelContractKind(kind: TopLevelContractKind, value: unknown): boolean {
+  switch (kind) {
+    case "string":
+      return typeof value === "string";
+    case "number":
+    case "integer":
+      return typeof value === "number";
+    case "boolean":
+      return typeof value === "boolean";
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return value !== null && typeof value === "object" && !Array.isArray(value);
+    case "const":
+    case "enum":
+      return value !== undefined && value !== null;
+    case "anyOf":
+    case "oneOf":
+    case "multi":
+    case "unknown":
+      return true;
+  }
+}
+
+function validateDaemonResponsePayloadTopLevel(method: DaemonMethod, value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ValidationError("Response payload validation failed.", {
+      method,
+      message: "Expected an object payload.",
+    });
+  }
+
+  const payload = value as Record<string, unknown>;
+  const contract = DaemonResponseContractByMethod[method];
+  const missing_fields = contract.required.filter((field) => !(field in payload));
+  const invalid_fields = Object.entries(contract.field_kinds)
+    .filter(([field, kind]) => field in payload && !matchesTopLevelContractKind(kind, payload[field]))
+    .map(([field, kind]) => ({
+      field,
+      expected_kind: kind,
+      actual_type: payload[field] === null ? "null" : Array.isArray(payload[field]) ? "array" : typeof payload[field],
+    }));
+
+  if (missing_fields.length > 0 || invalid_fields.length > 0) {
+    throw new ValidationError("Response payload validation failed.", {
+      method,
+      missing_fields,
+      invalid_fields,
+    });
+  }
+
+  return value;
+}
+
+export function validateDaemonRequestEnvelope<TMethod extends DaemonMethod>(
+  method: TMethod,
+  value: unknown,
+): RequestEnvelope<unknown> {
+  const payloadSchema = DaemonRequestPayloadSchemaByMethod[method];
+  return validate(requestEnvelopeWithPayload(method, payloadSchema), value);
+}
+
+export function parseDaemonResponseEnvelope<TMethod extends DaemonMethod>(
+  method: TMethod,
+  value: unknown,
+): ResponseEnvelope<unknown> {
+  const envelope = validate(ResponseEnvelopeBaseSchema, value);
+
+  if (envelope.ok) {
+    return {
+      ...envelope,
+      error: null,
+      result: validateDaemonResponsePayloadTopLevel(method, envelope.result),
+    };
+  }
+
+  return {
+    ...envelope,
+    result: null,
+    error: validate(ErrorEnvelopeSchema, envelope.error),
+  };
+}
 
 export class AgentGitError extends Error {
   constructor(

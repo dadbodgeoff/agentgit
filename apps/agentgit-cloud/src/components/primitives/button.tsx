@@ -1,4 +1,6 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
+
+import { LoaderCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils/cn";
 
@@ -8,12 +10,15 @@ type ButtonSize = "sm" | "md" | "lg";
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  loading?: boolean;
+  loadingLabel?: string;
+  children?: ReactNode;
 }
 
 const sizeClasses: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-[13px]",
-  md: "h-9 px-4 text-[14px]",
-  lg: "h-10 px-5 text-[14px]",
+  sm: "min-h-11 px-3 ag-text-body-sm",
+  md: "min-h-11 px-4 ag-text-body",
+  lg: "min-h-12 px-5 ag-text-body",
 };
 
 const variantClasses: Record<ButtonVariant, string> = {
@@ -28,16 +33,28 @@ const variantClasses: Record<ButtonVariant, string> = {
 };
 
 export function Button({ className, size = "md", type = "button", variant = "primary", ...props }: ButtonProps) {
+  const { children, disabled, loading = false, loadingLabel, ...buttonProps } = props;
+
   return (
     <button
+      aria-busy={loading || undefined}
       className={cn(
-        "ag-focus-ring inline-flex items-center justify-center gap-2 rounded-[var(--ag-radius-md)] border font-medium transition-colors duration-[var(--ag-duration-fast)] ease-[var(--ag-ease-default)] disabled:cursor-not-allowed disabled:opacity-60",
+        "ag-focus-ring relative inline-flex items-center justify-center gap-2 rounded-[var(--ag-radius-md)] border font-medium transition-colors duration-[var(--ag-duration-fast)] ease-[var(--ag-ease-default)] disabled:cursor-not-allowed disabled:opacity-60",
         sizeClasses[size],
         variantClasses[variant],
         className,
       )}
+      disabled={disabled || loading}
       type={type}
-      {...props}
-    />
+      {...buttonProps}
+    >
+      <span className={cn("inline-flex items-center gap-2", loading && "opacity-0")}>{children}</span>
+      {loading ? (
+        <span className="pointer-events-none absolute inset-0 inline-flex items-center justify-center gap-2">
+          <LoaderCircle aria-hidden="true" className="size-4 animate-spin" strokeWidth={1.75} />
+          {loadingLabel ? <span>{loadingLabel}</span> : null}
+        </span>
+      ) : null}
+    </button>
   );
 }

@@ -45,8 +45,6 @@ type RunSummary = ReturnType<typeof RunSummarySchema.parse>;
 type PolicyCalibrationQuality = GetPolicyCalibrationReportResponsePayload["report"]["totals"]["calibration"];
 type PolicyCalibrationBin = PolicyCalibrationQuality["bins"][number];
 
-const IDEMPOTENT_MUTATION_PENDING_TTL_MS = 5 * 60 * 1000;
-
 export interface PolicyReplayRecord {
   run_id: string;
   action_id: string;
@@ -166,6 +164,16 @@ export interface StoredIdempotentMutationRecord {
   stored_at: string;
 }
 
+export interface UncertainIdempotentMutationRecord {
+  session_id: string;
+  idempotency_key: string;
+  method: RequestEnvelope<unknown>["method"];
+  payload_digest: string;
+  stored_at: string;
+  uncertainty_recorded_at: string;
+  uncertainty_reason: string;
+}
+
 export type ClaimIdempotentMutationResult =
   | { status: "claimed"; payload_digest: string }
   | { status: "replay"; record: StoredIdempotentMutationRecord }
@@ -182,6 +190,10 @@ export type ClaimIdempotentMutationResult =
       method: RequestEnvelope<unknown>["method"];
       payload_digest: string;
       stored_at: string;
+    }
+  | {
+      status: "outcome_unknown";
+      record: UncertainIdempotentMutationRecord;
     };
 
 const ARTIFACT_INTEGRITY_SCHEMA_VERSION = "artifact-integrity.v1" as const;
@@ -284,6 +296,45 @@ function storageUnavailableError(message: string, error: unknown, details?: Reco
     },
     lowDiskPressure || busy,
   );
+}
+
+function fsyncDirectorySync(directoryPath: string): void {
+  const handle = fs.openSync(directoryPath, "r");
+  try {
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
+function writeTextFileAtomicallySync(targetPath: string, content: string, mode = 0o600): void {
+  const directoryPath = path.dirname(targetPath);
+  fs.mkdirSync(directoryPath, { recursive: true });
+  const tempPath = path.join(directoryPath, `${path.basename(targetPath)}.${crypto.randomUUID()}.tmp`);
+  const handle = fs.openSync(tempPath, "w", mode);
+
+  try {
+    fs.writeFileSync(handle, content, "utf8");
+    fs.fsyncSync(handle);
+  } catch (error) {
+    try {
+      fs.closeSync(handle);
+    } catch {
+      // Best-effort cleanup during interrupted durable writes.
+    }
+    fs.rmSync(tempPath, { force: true });
+    throw error;
+  }
+
+  fs.closeSync(handle);
+
+  try {
+    fs.renameSync(tempPath, targetPath);
+    fsyncDirectorySync(directoryPath);
+  } catch (error) {
+    fs.rmSync(tempPath, { force: true });
+    throw error;
+  }
 }
 
 function resolveSqliteJournalMode(): SqliteJournalMode {
@@ -745,6 +796,8 @@ export class RunJournal {
         response_json TEXT,
         stored_at TEXT NOT NULL,
         completed_at TEXT,
+        uncertainty_recorded_at TEXT,
+        uncertainty_reason TEXT,
         PRIMARY KEY (session_id, idempotency_key)
       );
     `);
@@ -758,6 +811,8 @@ export class RunJournal {
     this.ensureColumn("artifacts", "expired_at", "TEXT");
     this.ensureColumn("capability_snapshots", "workspace_root", "TEXT");
     this.ensureColumn("capability_snapshots", "refreshed_at", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("idempotent_mutations", "uncertainty_recorded_at", "TEXT");
+    this.ensureColumn("idempotent_mutations", "uncertainty_reason", "TEXT");
   }
 
   private ensureColumn(tableName: string, columnName: string, columnDefinition: string): void {
@@ -1283,7 +1338,9 @@ export class RunJournal {
                 payload_digest,
                 state,
                 response_json,
-                stored_at
+                stored_at,
+                uncertainty_recorded_at,
+                uncertainty_reason
               FROM idempotent_mutations
               WHERE session_id = ? AND idempotency_key = ?
             `,
@@ -1294,9 +1351,11 @@ export class RunJournal {
               idempotency_key: string;
               method: RequestEnvelope<unknown>["method"];
               payload_digest: string;
-              state: "pending" | "completed";
+              state: "pending" | "completed" | "outcome_unknown";
               response_json: string | null;
               stored_at: string;
+              uncertainty_recorded_at: string | null;
+              uncertainty_reason: string | null;
             }
           | undefined;
 
@@ -1312,8 +1371,10 @@ export class RunJournal {
                   state,
                   response_json,
                   stored_at,
-                  completed_at
-                ) VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL)
+                  completed_at,
+                  uncertainty_recorded_at,
+                  uncertainty_reason
+                ) VALUES (?, ?, ?, ?, 'pending', NULL, ?, NULL, NULL, NULL)
               `,
             )
             .run(input.session_id, input.idempotency_key, input.method, payloadDigest, input.stored_at);
@@ -1356,30 +1417,18 @@ export class RunJournal {
           } satisfies ClaimIdempotentMutationResult;
         }
 
-        const storedAtMs = Date.parse(existing.stored_at);
-        if (
-          existing.state === "pending" &&
-          Number.isFinite(storedAtMs) &&
-          Date.now() - storedAtMs >= IDEMPOTENT_MUTATION_PENDING_TTL_MS
-        ) {
-          this.db
-            .prepare(
-              `
-                UPDATE idempotent_mutations
-                SET method = ?,
-                    payload_digest = ?,
-                    state = 'pending',
-                    response_json = NULL,
-                    stored_at = ?,
-                    completed_at = NULL
-                WHERE session_id = ? AND idempotency_key = ?
-              `,
-            )
-            .run(input.method, payloadDigest, input.stored_at, input.session_id, input.idempotency_key);
-
+        if (existing.state === "outcome_unknown") {
           return {
-            status: "claimed",
-            payload_digest: payloadDigest,
+            status: "outcome_unknown",
+            record: {
+              session_id: existing.session_id,
+              idempotency_key: existing.idempotency_key,
+              method: existing.method,
+              payload_digest: existing.payload_digest,
+              stored_at: existing.stored_at,
+              uncertainty_recorded_at: existing.uncertainty_recorded_at ?? existing.stored_at,
+              uncertainty_reason: existing.uncertainty_reason ?? "previous_attempt_interrupted",
+            },
           } satisfies ClaimIdempotentMutationResult;
         }
 
@@ -1429,7 +1478,9 @@ export class RunJournal {
             UPDATE idempotent_mutations
             SET state = 'completed',
                 response_json = ?,
-                completed_at = ?
+                completed_at = ?,
+                uncertainty_recorded_at = NULL,
+                uncertainty_reason = NULL
             WHERE session_id = ? AND idempotency_key = ?
           `,
         )
@@ -1472,6 +1523,73 @@ export class RunJournal {
         cause: error instanceof Error ? error.message : String(error),
         session_id: sessionId,
         idempotency_key: idempotencyKey,
+      });
+    }
+  }
+
+  markIdempotentMutationOutcomeUnknown(input: {
+    session_id: string;
+    idempotency_key: string;
+    uncertainty_recorded_at: string;
+    uncertainty_reason: string;
+  }): void {
+    try {
+      this.db
+        .prepare(
+          `
+            UPDATE idempotent_mutations
+            SET state = 'outcome_unknown',
+                response_json = NULL,
+                completed_at = NULL,
+                uncertainty_recorded_at = ?,
+                uncertainty_reason = ?
+            WHERE session_id = ? AND idempotency_key = ? AND state != 'completed'
+          `,
+        )
+        .run(
+          input.uncertainty_recorded_at,
+          input.uncertainty_reason,
+          input.session_id,
+          input.idempotency_key,
+        );
+    } catch (error) {
+      if (isLowDiskPressureError(error)) {
+        throw storageUnavailableError("Failed to record uncertain idempotent mutation state.", error, {
+          session_id: input.session_id,
+          idempotency_key: input.idempotency_key,
+        });
+      }
+
+      throw new InternalError("Failed to record uncertain idempotent mutation state.", {
+        cause: error instanceof Error ? error.message : String(error),
+        session_id: input.session_id,
+        idempotency_key: input.idempotency_key,
+      });
+    }
+  }
+
+  reconcilePendingIdempotentMutations(reconciledAt = new Date().toISOString()): number {
+    try {
+      const result = this.db
+        .prepare(
+          `
+            UPDATE idempotent_mutations
+            SET state = 'outcome_unknown',
+                uncertainty_recorded_at = ?,
+                uncertainty_reason = 'daemon_restarted_before_completion'
+            WHERE state = 'pending'
+          `,
+        )
+        .run(reconciledAt) as { changes?: number };
+
+      return result.changes ?? 0;
+    } catch (error) {
+      if (isLowDiskPressureError(error)) {
+        throw storageUnavailableError("Failed to reconcile interrupted idempotent mutations.", error);
+      }
+
+      throw new InternalError("Failed to reconcile interrupted idempotent mutations.", {
+        cause: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -1547,9 +1665,8 @@ export class RunJournal {
         digest_algorithm: ARTIFACT_INTEGRITY_DIGEST_ALGORITHM,
         digest: contentDigest,
       };
-      fs.mkdirSync(path.dirname(storagePath), { recursive: true });
-      const tempPath = `${storagePath}.${crypto.randomUUID()}.tmp`;
-      fs.writeFileSync(tempPath, input.content, "utf8");
+      const existingMode = fs.existsSync(storagePath) ? fs.statSync(storagePath).mode & 0o777 : 0o600;
+      writeTextFileAtomicallySync(storagePath, input.content, existingMode);
 
       this.db.transaction(() => {
         this.db
@@ -1595,17 +1712,6 @@ export class RunJournal {
           );
         this.clearHelperFactCache(input.run_id);
       })();
-
-      try {
-        fs.renameSync(tempPath, storagePath);
-      } catch (error) {
-        try {
-          this.db.prepare("DELETE FROM artifacts WHERE artifact_id = ?").run(input.artifact_id);
-        } catch {
-          // Best effort cleanup after a failed post-commit file move.
-        }
-        throw error;
-      }
 
       this.enforceArtifactRetention(input.created_at);
       return integrity;

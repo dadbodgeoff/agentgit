@@ -27,8 +27,25 @@
   --ag-color-info: #3b82f6;
   --ag-bg-info: #0f1a2e;
   --ag-color-focus: #0acdcf;
+  --ag-surface-base: var(--ag-bg-base);
+  --ag-surface-raised: var(--ag-bg-elevated);
+  --ag-surface-overlay: var(--ag-bg-card);
+  --ag-surface-hover: var(--ag-bg-hover);
+  --ag-surface-active: var(--ag-bg-active);
+  --ag-surface-selected: var(--ag-bg-selected);
   --ag-font-sans: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
   --ag-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  --ag-text-display: 700 48px/1.1 var(--ag-font-sans);
+  --ag-text-h1: 600 32px/1.25 var(--ag-font-sans);
+  --ag-text-h2: 600 24px/1.3 var(--ag-font-sans);
+  --ag-text-h3: 600 18px/1.4 var(--ag-font-sans);
+  --ag-text-body-lg: 400 15px/1.6 var(--ag-font-sans);
+  --ag-text-body: 400 14px/1.6 var(--ag-font-sans);
+  --ag-text-body-sm: 400 13px/1.5 var(--ag-font-sans);
+  --ag-text-caption: 400 12px/1.4 var(--ag-font-sans);
+  --ag-text-overline: 600 11px/1.4 var(--ag-font-sans);
+  --ag-text-code: 400 13px/1.6 var(--ag-font-mono);
+  --ag-text-data: 500 14px/1.4 var(--ag-font-mono);
   --ag-space-0: 0;
   --ag-space-1: 4px;
   --ag-space-2: 8px;
@@ -45,8 +62,10 @@
   --ag-radius-lg: 12px;
   --ag-radius-xl: 16px;
   --ag-radius-full: 9999px;
+  --ag-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.24);
   --ag-shadow-sm: 0 2px 4px rgb(0 0 0 / 0.28);
   --ag-shadow-md: 0 4px 12px rgb(0 0 0 / 0.36);
+  --ag-shadow-lg: 0 8px 24px rgb(0 0 0 / 0.48);
   --ag-shadow-xl: 0 16px 48px rgb(0 0 0 / 0.56);
   --ag-z-dropdown: 100;
   --ag-z-sticky: 200;
@@ -55,10 +74,19 @@
   --ag-z-popover: 500;
   --ag-z-toast: 600;
   --ag-z-tooltip: 700;
+  --ag-duration-instant: 80ms;
   --ag-duration-fast: 120ms;
   --ag-duration-normal: 200ms;
   --ag-duration-slow: 350ms;
+  --ag-duration-deliberate: 500ms;
   --ag-ease-default: cubic-bezier(0.16, 1, 0.3, 1);
+  --ag-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ag-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ag-ease-linear: linear;
+  --ag-bp-mobile: 640px;
+  --ag-bp-tablet: 1024px;
+  --ag-bp-desktop: 1440px;
+  --ag-bp-wide: 1600px;
 }
 
 [data-theme="light"] {
@@ -80,4 +108,16 @@
   --ag-bg-warning: #fffbeb;
   --ag-bg-success: #ecfdf5;
   --ag-bg-info: #eff6ff;
+  /* Semantic text — light-mode tuned for AA contrast on the matching bg
+     tokens above. The dark-mode values in :root keep their default hex. */
+  --ag-color-error: #b91c1c;
+  --ag-color-warning: #b45309;
+  --ag-color-success: #047857;
+  --ag-color-info: #1d4ed8;
+  --ag-surface-base: var(--ag-bg-base);
+  --ag-surface-raised: var(--ag-bg-elevated);
+  --ag-surface-overlay: var(--ag-bg-card);
+  --ag-surface-hover: var(--ag-bg-hover);
+  --ag-surface-active: var(--ag-bg-active);
+  --ag-surface-selected: var(--ag-bg-selected);
 }

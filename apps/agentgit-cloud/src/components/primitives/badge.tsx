@@ -2,7 +2,7 @@ import type { HTMLAttributes } from "react";
 
 import { cn } from "@/lib/utils/cn";
 
-type BadgeTone = "neutral" | "success" | "warning" | "error" | "accent";
+type BadgeTone = "neutral" | "success" | "warning" | "error" | "accent" | "brand" | "info";
 
 const toneClasses: Record<BadgeTone, string> = {
   neutral: "border-[var(--ag-border-default)] bg-[var(--ag-bg-hover)] text-[var(--ag-text-secondary)]",
@@ -10,6 +10,8 @@ const toneClasses: Record<BadgeTone, string> = {
   warning: "border-transparent bg-[var(--ag-bg-warning)] text-[var(--ag-color-warning)]",
   error: "border-transparent bg-[var(--ag-bg-error)] text-[var(--ag-color-error)]",
   accent: "border-transparent bg-[color:rgb(232_255_89_/_0.18)] text-[var(--ag-color-accent)]",
+  brand: "border-transparent bg-[color:rgb(10_205_207_/_0.18)] text-[var(--ag-color-brand)]",
+  info: "border-transparent bg-[var(--ag-bg-info)] text-[var(--ag-color-info)]",
 };
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
@@ -20,7 +22,7 @@ export function Badge({ className, tone = "neutral", ...props }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex min-h-[22px] items-center rounded-full border px-2 py-0.5 font-mono text-[12px] font-medium",
+        "inline-flex min-h-[22px] items-center rounded-full border px-2 py-0.5 ag-text-caption font-medium",
         toneClasses[tone],
         className,
       )}

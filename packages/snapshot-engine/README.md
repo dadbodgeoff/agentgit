@@ -1,7 +1,5 @@
 # @agentgit/snapshot-engine
 
-> **Internal package** — used by the agentgit daemon. Not published to npm.
-
 Creates recovery boundaries before risky, recoverable agent actions. When the policy engine returns `allow_with_snapshot`, the snapshot engine selects the minimum capture class that satisfies the recovery promise and writes a `SnapshotManifest` to the workspace index.
 
 ---

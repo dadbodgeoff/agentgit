@@ -452,6 +452,43 @@ describe("RunJournal", () => {
     }
   });
 
+  it("reconciles interrupted pending idempotent mutations into an explicit unknown-outcome lock", () => {
+    const journal = makeJournal();
+
+    const claimed = journal.claimIdempotentMutation({
+      session_id: "sess_idem",
+      idempotency_key: "idem_pending",
+      method: "submit_action_attempt",
+      payload: {
+        attempt: {
+          run_id: "run_test",
+        },
+      },
+      stored_at: "2026-03-31T12:00:00.000Z",
+    });
+    expect(claimed.status).toBe("claimed");
+
+    expect(journal.reconcilePendingIdempotentMutations("2026-03-31T12:05:00.000Z")).toBe(1);
+
+    const replay = journal.claimIdempotentMutation({
+      session_id: "sess_idem",
+      idempotency_key: "idem_pending",
+      method: "submit_action_attempt",
+      payload: {
+        attempt: {
+          run_id: "run_test",
+        },
+      },
+      stored_at: "2026-03-31T12:06:00.000Z",
+    });
+
+    expect(replay.status).toBe("outcome_unknown");
+    if (replay.status === "outcome_unknown") {
+      expect(replay.record.uncertainty_recorded_at).toBe("2026-03-31T12:05:00.000Z");
+      expect(replay.record.uncertainty_reason).toBe("daemon_restarted_before_completion");
+    }
+  });
+
   it("throws a not found error when appending to a missing run", () => {
     const journal = makeJournal();
 
@@ -661,6 +698,57 @@ describe("RunJournal", () => {
       retentionSpy.mockRestore();
       writeSpy.mockRestore();
     }
+  });
+
+  it("does not commit artifact metadata when durable metadata persistence fails after the blob write", () => {
+    const journal = makeJournal();
+    journal.registerRunLifecycle({
+      run_id: "run_artifact_db_fail",
+      session_id: "sess_artifact_db_fail",
+      workflow_name: "workflow",
+      agent_framework: "cli",
+      agent_name: "agentgit-cli",
+      workspace_roots: ["/workspace/project"],
+      client_metadata: {},
+      budget_config: {
+        max_mutating_actions: null,
+        max_destructive_actions: null,
+      },
+      created_at: "2026-03-29T12:00:00.000Z",
+    });
+
+    const db = (journal as unknown as { db: { prepare: (sql: string) => unknown } }).db;
+    const originalPrepare = db.prepare.bind(db);
+    const prepareSpy = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (sql.includes("INSERT OR REPLACE INTO artifacts")) {
+        throw new Error("sqlite insert failed");
+      }
+
+      return originalPrepare(sql);
+    });
+
+    try {
+      expect(() =>
+        journal.storeArtifact({
+          artifact_id: "artifact_db_fail",
+          run_id: "run_artifact_db_fail",
+          action_id: "act_artifact_db_fail",
+          execution_id: "exec_artifact_db_fail",
+          type: "stdout",
+          content_ref: "inline://exec_artifact_db_fail/stdout",
+          byte_size: 12,
+          visibility: "internal",
+          expires_at: null,
+          expired_at: null,
+          created_at: "2026-03-29T12:00:01.000Z",
+          content: "hello world\n",
+        }),
+      ).toThrow("Failed to store execution artifact.");
+    } finally {
+      prepareSpy.mockRestore();
+    }
+
+    expect(() => journal.getArtifact("artifact_db_fail")).toThrow(NotFoundError);
   });
 
   it("removes unreferenced artifact blobs without sweeping referenced degraded evidence", () => {

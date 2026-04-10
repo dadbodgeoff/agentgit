@@ -2,12 +2,7 @@
 
 ## Scope
 
-This document describes the release/install path for the public TypeScript package surface:
-
-- `@agentgit/authority-daemon`
-- `@agentgit/schemas`
-- `@agentgit/authority-sdk`
-- `@agentgit/authority-cli`
+This document describes the release/install path for the public npm package surface. The authoritative package list is discovered from non-private package manifests in `packages/*/package.json` and is used by artifact packing, artifact verification, and package smoke.
 
 ## Release Model
 
@@ -29,13 +24,20 @@ The GitHub release workflow in [.github/workflows/release.yml](/Users/geoffreyfe
 
 - `pnpm lint`
 - `pnpm format:check`
+- `pnpm typecheck`
 - `pnpm release:verify:claims`
 - `pnpm release:verify:coverage-ratchet`
 - `pnpm security:audit`
 - `pnpm test:coverage`
 - `pnpm py:test`
+- `pnpm py:build`
+- `pnpm release:pack`
+- `pnpm release:verify:artifacts`
+- `pnpm smoke:public-packages`
 - `pnpm smoke:cli-install`
+- `pnpm smoke:agent-runtime-install`
 - `pnpm smoke:cli-compat`
+- `pnpm smoke:cloud-hosted`
 
 `release.yml` adds post-verify hard gates:
 
@@ -57,15 +59,19 @@ Release publish should remain blocked until both secrets are configured.
 
 ## Installed-Binary Smoke Intent
 
+`pnpm smoke:public-packages` verifies that every packed public tarball installs cleanly from the release artifact manifest, exposes its declared entrypoints, and exposes expected binaries before any publish can proceed.
+
 `pnpm smoke:cli-install` verifies a real install path by:
 
-- packing publishable tarballs
+- reusing the packed publishable tarballs from `.release-artifacts/packed`
 - installing tarballs into a clean temp directory outside the monorepo
 - running `agentgit-authority setup`
 - starting the packaged authority daemon through the installed CLI
 - running installed `agentgit-authority` binary operations against that daemon
 
-`pnpm smoke:cli-compat` extends this with compatibility, upgrade, rollback, and audit-bundle behavior checks.
+`pnpm smoke:agent-runtime-install` verifies the packaged `agentgit` product CLI install path.
+
+`pnpm smoke:cli-compat` extends the authority CLI path with compatibility, upgrade, rollback, and audit-bundle behavior checks while reusing the packed current-release artifacts.
 
 ## Local Operator Commands
 

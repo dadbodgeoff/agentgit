@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { requireApiSession } from "@/lib/auth/api-session";
+import { requireApiRole } from "@/lib/auth/api-session";
 import { exportWorkspaceAuditLog } from "@/lib/backend/workspace/audit-log";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { AuditExportQuerySchema } from "@/schemas/cloud";
@@ -20,10 +20,10 @@ function parseExportQuery(request: Request) {
 
 export async function GET(request: Request) {
   const requestId = createRequestId(request);
-  const { unauthorized, workspaceSession } = await requireApiSession(request);
+  const { denied, workspaceSession } = await requireApiRole("admin", request);
 
-  if (unauthorized) {
-    return unauthorized;
+  if (denied) {
+    return denied;
   }
 
   try {

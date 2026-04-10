@@ -341,15 +341,111 @@ function inspectHostedMcpJob(
       event_type: event.event_type,
       occurred_at: event.occurred_at,
       recorded_at: event.recorded_at,
-      payload: event.payload ?? null,
+      payload: event.payload ? summarizeHostedJobEventPayload(event.payload) : null,
     }));
 
   return {
-    job,
+    job: summarizeHostedExecutionJobForInspection(job),
     lifecycle: hostedExecutionQueue.lifecycle(job),
     leases,
     attestations,
     recent_events: recentEvents,
+  };
+}
+
+const HOSTED_JOB_EVENT_OMITTED_KEYS = new Set([
+  "action",
+  "execution_result",
+  "output",
+  "artifacts",
+  "artifact_manifest",
+  "structuredContent",
+  "content",
+  "stdout",
+  "stderr",
+]);
+const HOSTED_JOB_EVENT_MAX_STRING_LENGTH = 256;
+const HOSTED_JOB_EVENT_MAX_ARRAY_ITEMS = 8;
+const HOSTED_JOB_EVENT_MAX_OBJECT_KEYS = 16;
+
+function summarizeHostedJobEventValue(value: unknown, depth = 0): unknown {
+  if (value === null || typeof value === "boolean" || typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value.length > HOSTED_JOB_EVENT_MAX_STRING_LENGTH
+      ? `${value.slice(0, HOSTED_JOB_EVENT_MAX_STRING_LENGTH)}...`
+      : value;
+  }
+
+  if (Array.isArray(value)) {
+    const items = value.slice(0, HOSTED_JOB_EVENT_MAX_ARRAY_ITEMS).map((entry) => summarizeHostedJobEventValue(entry, depth + 1));
+    if (value.length <= HOSTED_JOB_EVENT_MAX_ARRAY_ITEMS) {
+      return items;
+    }
+
+    return [...items, { truncated: true, omitted_items: value.length - HOSTED_JOB_EVENT_MAX_ARRAY_ITEMS }];
+  }
+
+  if (!value || typeof value !== "object") {
+    return String(value);
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const limitedEntries = entries.slice(0, HOSTED_JOB_EVENT_MAX_OBJECT_KEYS);
+  const summarized = Object.fromEntries(
+    limitedEntries.map(([key, entryValue]) => {
+      if (HOSTED_JOB_EVENT_OMITTED_KEYS.has(key)) {
+        return [
+          key,
+          {
+            omitted: true,
+            reason: "compact_job_inspection",
+          },
+        ];
+      }
+
+      if (depth >= 2 && entryValue && typeof entryValue === "object") {
+        return [
+          key,
+          {
+            summarized: true,
+            kind: Array.isArray(entryValue) ? "array" : "object",
+          },
+        ];
+      }
+
+      return [key, summarizeHostedJobEventValue(entryValue, depth + 1)];
+    }),
+  );
+
+  if (entries.length > HOSTED_JOB_EVENT_MAX_OBJECT_KEYS) {
+    summarized._truncated = true;
+    summarized._omitted_keys = entries.length - HOSTED_JOB_EVENT_MAX_OBJECT_KEYS;
+  }
+
+  return summarized;
+}
+
+function summarizeHostedJobEventPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const summarized = summarizeHostedJobEventValue(payload);
+  return summarized && typeof summarized === "object" && !Array.isArray(summarized)
+    ? (summarized as Record<string, unknown>)
+    : { value: summarized };
+}
+
+function summarizeHostedExecutionJobForInspection(job: HostedMcpExecutionJobRecord): HostedMcpExecutionJobRecord {
+  if (!job.execution_result) {
+    return job;
+  }
+
+  return {
+    ...job,
+    execution_result: {
+      ...job.execution_result,
+      output: summarizeHostedJobEventPayload(job.execution_result.output),
+    },
   };
 }
 

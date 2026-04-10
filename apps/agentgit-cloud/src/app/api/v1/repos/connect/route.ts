@@ -33,6 +33,8 @@ async function buildRepositoryBootstrap(access: { workspaceSession: WorkspaceSes
   return RepositoryConnectionBootstrapSchema.parse({
     availableRepositories,
     connectedRepositoryIds: persistedState?.repositoryIds ?? [],
+    defaultNotificationChannel: persistedState?.defaultNotificationChannel ?? "slack",
+    policyPack: persistedState?.policyPack ?? "guarded",
     activeConnectorCount: connectors.items.filter((connector) => connector.status === "active").length,
     totalConnectorCount: connectors.total,
     staleConnectorCount: connectors.items.filter((connector) => connector.status === "stale").length,
@@ -129,8 +131,8 @@ export async function POST(request: Request) {
         },
       ],
       invites: previousState?.invites ?? [],
-      defaultNotificationChannel: previousState?.defaultNotificationChannel ?? "slack",
-      policyPack: previousState?.policyPack ?? "guarded",
+      defaultNotificationChannel: payload.data.defaultNotificationChannel,
+      policyPack: payload.data.policyPack,
       launchedAt: previousState?.launchedAt ?? savedAt,
     });
 

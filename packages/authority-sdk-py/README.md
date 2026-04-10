@@ -33,7 +33,7 @@ from agentgit_authority import AuthorityClient, build_register_run_payload
 client = AuthorityClient()
 
 # Verify daemon is reachable
-hello = client.hello()
+hello = client.hello(["/path/to/workspace"])
 print(hello["accepted_api_version"])  # "authority.v1"
 
 # Register a run
@@ -131,10 +131,27 @@ client.resolve_approval("apr_123", "deny",    "risky — needs review")
 ```python
 # Plan recovery for an action or snapshot
 plan = client.plan_recovery("act_123")
-print(f"Recovery type: {plan['recovery_type']}, confidence: {plan['confidence']}")
+print(plan["recovery_plan"]["strategy"])
 
-# Execute the plan after reviewing it
-result = client.execute_recovery(plan["plan_id"])
+# Execute recovery for the same target after reviewing the plan
+result = client.execute_recovery("act_123")
+print(result["outcome"])
+```
+
+## Hosted MCP And Checkpoints
+
+```python
+checkpoint = client.create_run_checkpoint(
+    {
+        "run_id": run_id,
+        "checkpoint_kind": "hard_checkpoint",
+        "reason": "checkpoint before destructive change",
+    }
+)
+
+job = client.get_hosted_mcp_job("mcpjob_123")
+jobs = client.list_hosted_mcp_jobs({"status": "failed"})
+review = client.get_mcp_server_review({"server_profile_id": "mcpprof_123"})
 ```
 
 ---

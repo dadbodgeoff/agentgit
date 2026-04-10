@@ -6,9 +6,11 @@ import { useState } from "react";
 import { MetricCard, PageHeader } from "@/components/composites";
 import { PageStatePanel } from "@/components/feedback";
 import { Badge, Button, Card, Input, TabList, TabTrigger } from "@/components/primitives";
-import { useActivityQuery } from "@/lib/query/hooks";
 import { getApiErrorMessage } from "@/lib/api/client";
+import { useWorkspace } from "@/lib/auth/workspace-context";
 import { authenticatedRoutes, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
+import { useActivityQuery } from "@/lib/query/hooks";
+import { hasAtLeastRole } from "@/lib/rbac/roles";
 import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 
@@ -50,21 +52,24 @@ function splitRepoLabel(repo: string): { owner: string; name: string } | null {
 
 export function ActivityPage() {
   const activityQuery = useActivityQuery();
+  const { activeWorkspace } = useWorkspace();
   const [selectedGroup, setSelectedGroup] = useState<ActivityGroup>("all");
   const [search, setSearch] = useState("");
+  const canAccessAudit = hasAtLeastRole(activeWorkspace.role, "admin");
+  const headerAction = canAccessAudit ? (
+    <Link
+      className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
+      href={authenticatedRoutes.audit}
+    >
+      Open audit log
+    </Link>
+  ) : null;
 
   if (activityQuery.isPending) {
     return (
       <>
         <PageHeader
-          actions={
-            <Link
-              className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
-              href={authenticatedRoutes.audit}
-            >
-              Open audit log
-            </Link>
-          }
+          actions={headerAction}
           description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
           title="Activity"
         />
@@ -77,14 +82,7 @@ export function ActivityPage() {
     return (
       <>
         <PageHeader
-          actions={
-            <Link
-              className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
-              href={authenticatedRoutes.audit}
-            >
-              Open audit log
-            </Link>
-          }
+          actions={headerAction}
           description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
           title="Activity"
         />
@@ -133,14 +131,7 @@ export function ActivityPage() {
     return (
       <>
         <PageHeader
-          actions={
-            <Link
-              className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
-              href={authenticatedRoutes.audit}
-            >
-              Open audit log
-            </Link>
-          }
+          actions={headerAction}
           description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
           title="Activity"
         />
@@ -154,16 +145,9 @@ export function ActivityPage() {
   }
 
   return (
-    <>
-      <PageHeader
-        actions={
-          <Link
-            className="ag-focus-ring inline-flex h-9 items-center justify-center rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] px-3 text-sm font-medium text-[var(--ag-text-primary)] transition-colors hover:border-[var(--ag-border-strong)] hover:bg-[var(--ag-bg-hover)]"
-            href={authenticatedRoutes.audit}
-          >
-            Open audit log
-          </Link>
-        }
+      <>
+        <PageHeader
+          actions={headerAction}
         description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
         title="Activity"
       />

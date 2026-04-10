@@ -176,7 +176,7 @@ export function RepositoryDetailPage({
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Agent status</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Agent status</div>
                 <div className="mt-2 flex items-center gap-2">
                   <Badge tone={statusTone(repository.agentStatus)}>{repository.agentStatus}</Badge>
                   <Badge tone={statusTone(repository.lastRunStatus)}>{repository.lastRunStatus}</Badge>
@@ -186,7 +186,7 @@ export function RepositoryDetailPage({
                 </div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                   Provider identity
                 </div>
                 <div className="mt-2 flex items-center gap-2">
@@ -288,11 +288,11 @@ export function RepositoryDetailPage({
           <h2 className="text-lg font-semibold">Runtime context</h2>
           <div className="space-y-3 text-sm">
             <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Default branch</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Default branch</div>
               <div className="mt-1 font-medium">{repository.defaultBranch}</div>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                 Provider identity
               </div>
               <div className="mt-1 flex items-center gap-2">
@@ -308,15 +308,15 @@ export function RepositoryDetailPage({
               ) : null}
             </div>
             <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Latest workflow</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Latest workflow</div>
               <div className="mt-1 font-medium">{repository.latestWorkflowName ?? "No governed runs yet"}</div>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Last updated</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Last updated</div>
               <div className="mt-1 font-medium">{formatAbsoluteDate(repository.lastUpdatedAt)}</div>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Workspace root</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Workspace root</div>
               <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">{repository.rootPath}</div>
             </div>
           </div>

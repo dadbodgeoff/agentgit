@@ -479,6 +479,12 @@ describe("action detail backend adapter", () => {
         severity: "low",
         message: "Safe to run with a snapshot.",
       });
+      expect(detail?.eventTrail.map((event) => event.eventType)).toEqual([
+        "policy.evaluated",
+        "action.normalized",
+        "execution.completed",
+        "snapshot.created",
+      ]);
     } finally {
       journal.close();
     }

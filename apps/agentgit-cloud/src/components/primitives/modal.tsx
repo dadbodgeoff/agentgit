@@ -15,7 +15,7 @@ export function ModalFrame({
       <div
         aria-modal="true"
         className={cn(
-          "w-full max-w-[560px] rounded-[var(--ag-radius-xl)] border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] p-6 shadow-[var(--ag-shadow-xl)]",
+          "w-full max-w-[560px] rounded-[var(--ag-radius-xl)] border border-[var(--ag-border-default)] bg-[var(--ag-surface-overlay)] p-6 shadow-[var(--ag-shadow-xl)]",
           className,
         )}
         role="dialog"

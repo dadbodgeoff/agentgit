@@ -123,6 +123,8 @@ Rules:
 - the platform must expose a public uptime probe endpoint that is safe for external monitors and separate from the admin-only readiness route
 - production readiness must fail until uptime monitoring, request-metrics ownership, and Sentry alerting are explicitly configured and acknowledged
 - connector install guidance must provide a copy-ready bootstrap command, token-copy affordances, expiry context, and immediate feedback while waiting for the first connector heartbeat
+- the initial hosted repository-connect journey may apply policy-pack and notification-channel choices as workspace defaults for the selected repository batch, but it must make that scope explicit in the UI rather than implying repo-specific overrides that do not yet exist
+- the repository-connect confirmation step must treat runtime binding as per-repository connector coverage; if any selected repository lacks an active connector heartbeat, the flow must hand the operator into bootstrap and waiting states instead of claiming governance already started
 - billing must ship either as a real Stripe-backed subscription flow or as an explicit hosted beta gate; the cloud UI must never present fake card collection or fake invoice history as if it were live billing
 - while Stripe is deferred, the hosted beta gate must enforce the selected plan's seat and repository limits on mutating routes and surface approval-volume overages in the billing UI
 - if Stripe is enabled, hosted billing must include live checkout, webhook-backed subscription state, customer-portal access, and invoice sync; if Stripe is disabled, pricing, docs, and billing must all continue to present the hosted beta gate honestly
@@ -233,6 +235,7 @@ Required test layers:
 - visual regression on key screens
 - automated accessibility checks
 - browser smoke must cover replay queueing, snapshot restore initiation from the hosted UI, billing-mode truthfulness, and workspace settings secret-write behavior before the cloud app is called production-ready
+- the canonical release gate for hosted cloud smoke is `pnpm --filter @agentgit/cloud-ui test:smoke`, and root release verification must invoke that exact command rather than maintaining an alternate bypass path
 
 The implementation is not complete when only the happy path works manually.
 
@@ -272,6 +275,7 @@ The cloud product is not production-ready until the deployment and first-run pat
 - at least one admin or owner can sign in and generate a connector bootstrap token
 - the connector CLI can bootstrap against the cloud endpoint, register the first workspace connector, and stay alive in daemon mode for ongoing sync
 - smoke coverage passes for sign-in, approvals, settings, fleet, snapshots, restore, and writeback flows
+- CI and release verification must both fail when the hosted smoke path fails
 
 The authoritative deployment and first-run checklist lives in:
 

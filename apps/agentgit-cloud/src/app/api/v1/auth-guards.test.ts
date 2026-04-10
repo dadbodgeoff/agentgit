@@ -30,12 +30,20 @@ const routeCases: RouteCase[] = [
     deniedPayload: { message: "Unauthorized." },
   },
   {
+    modulePath: "@/app/api/v1/audit/route",
+    exportName: "GET",
+    request: new Request("http://localhost/api/v1/audit"),
+    sessionKind: "role",
+    deniedStatus: 403,
+    deniedPayload: { message: "Forbidden." },
+  },
+  {
     modulePath: "@/app/api/v1/audit/export/route",
     exportName: "GET",
     request: new Request("http://localhost/api/v1/audit/export?format=csv"),
-    sessionKind: "session",
-    deniedStatus: 401,
-    deniedPayload: { message: "Unauthorized." },
+    sessionKind: "role",
+    deniedStatus: 403,
+    deniedPayload: { message: "Forbidden." },
   },
   {
     modulePath: "@/app/api/v1/settings/billing/stripe/portal/route",

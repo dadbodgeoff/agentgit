@@ -1,0 +1,594 @@
+{
+  "api_version": "authority.v1",
+  "methods": {
+    "hello": {
+      "required": [
+        "session_id",
+        "accepted_api_version",
+        "runtime_version",
+        "schema_pack_version",
+        "capabilities"
+      ],
+      "field_kinds": {
+        "session_id": "string",
+        "accepted_api_version": "const",
+        "runtime_version": "string",
+        "schema_pack_version": "const",
+        "capabilities": "object"
+      }
+    },
+    "register_run": {
+      "required": [
+        "run_id",
+        "run_handle",
+        "effective_policy_profile"
+      ],
+      "field_kinds": {
+        "run_id": "string",
+        "run_handle": "object",
+        "effective_policy_profile": "string"
+      }
+    },
+    "get_run_summary": {
+      "required": [
+        "run"
+      ],
+      "field_kinds": {
+        "run": "object"
+      }
+    },
+    "get_capabilities": {
+      "required": [
+        "capabilities",
+        "detection_timestamps",
+        "degraded_mode_warnings"
+      ],
+      "field_kinds": {
+        "capabilities": "array",
+        "detection_timestamps": "object",
+        "degraded_mode_warnings": "array"
+      }
+    },
+    "get_effective_policy": {
+      "required": [
+        "policy",
+        "summary"
+      ],
+      "field_kinds": {
+        "policy": "object",
+        "summary": "object"
+      }
+    },
+    "validate_policy_config": {
+      "required": [
+        "valid",
+        "issues",
+        "normalized_config",
+        "compiled_profile_name",
+        "compiled_rule_count"
+      ],
+      "field_kinds": {
+        "valid": "boolean",
+        "issues": "array",
+        "normalized_config": "anyOf",
+        "compiled_profile_name": "anyOf",
+        "compiled_rule_count": "anyOf"
+      }
+    },
+    "get_policy_calibration_report": {
+      "required": [
+        "report"
+      ],
+      "field_kinds": {
+        "report": "object"
+      }
+    },
+    "explain_policy_action": {
+      "required": [
+        "action",
+        "policy_outcome",
+        "action_family",
+        "effective_policy_profile",
+        "low_confidence_threshold",
+        "confidence_score",
+        "confidence_triggered",
+        "snapshot_selection"
+      ],
+      "field_kinds": {
+        "action": "object",
+        "policy_outcome": "object",
+        "action_family": "string",
+        "effective_policy_profile": "string",
+        "low_confidence_threshold": "anyOf",
+        "confidence_score": "number",
+        "confidence_triggered": "boolean",
+        "snapshot_selection": "anyOf"
+      }
+    },
+    "get_policy_threshold_recommendations": {
+      "required": [
+        "generated_at",
+        "filters",
+        "effective_policy_profile",
+        "recommendations"
+      ],
+      "field_kinds": {
+        "generated_at": "string",
+        "filters": "object",
+        "effective_policy_profile": "string",
+        "recommendations": "array"
+      }
+    },
+    "replay_policy_thresholds": {
+      "required": [
+        "generated_at",
+        "filters",
+        "effective_policy_profile",
+        "candidate_thresholds",
+        "summary",
+        "action_families",
+        "samples_truncated"
+      ],
+      "field_kinds": {
+        "generated_at": "string",
+        "filters": "object",
+        "effective_policy_profile": "string",
+        "candidate_thresholds": "array",
+        "summary": "object",
+        "action_families": "array",
+        "changed_samples": "array",
+        "samples_truncated": "boolean"
+      }
+    },
+    "list_mcp_servers": {
+      "required": [
+        "servers"
+      ],
+      "field_kinds": {
+        "servers": "array"
+      }
+    },
+    "list_mcp_server_candidates": {
+      "required": [
+        "candidates"
+      ],
+      "field_kinds": {
+        "candidates": "array"
+      }
+    },
+    "submit_mcp_server_candidate": {
+      "required": [
+        "candidate"
+      ],
+      "field_kinds": {
+        "candidate": "object"
+      }
+    },
+    "list_mcp_server_profiles": {
+      "required": [
+        "profiles"
+      ],
+      "field_kinds": {
+        "profiles": "array"
+      }
+    },
+    "resolve_mcp_server_candidate": {
+      "required": [
+        "candidate",
+        "profile",
+        "created_profile",
+        "drift_detected"
+      ],
+      "field_kinds": {
+        "candidate": "object",
+        "profile": "object",
+        "created_profile": "boolean",
+        "drift_detected": "boolean"
+      }
+    },
+    "list_mcp_server_trust_decisions": {
+      "required": [
+        "trust_decisions"
+      ],
+      "field_kinds": {
+        "trust_decisions": "array"
+      }
+    },
+    "approve_mcp_server_profile": {
+      "required": [
+        "profile",
+        "trust_decision",
+        "created"
+      ],
+      "field_kinds": {
+        "profile": "object",
+        "trust_decision": "object",
+        "created": "boolean"
+      }
+    },
+    "list_mcp_server_credential_bindings": {
+      "required": [
+        "credential_bindings"
+      ],
+      "field_kinds": {
+        "credential_bindings": "array"
+      }
+    },
+    "bind_mcp_server_credentials": {
+      "required": [
+        "profile",
+        "credential_binding",
+        "created"
+      ],
+      "field_kinds": {
+        "profile": "object",
+        "credential_binding": "object",
+        "created": "boolean"
+      }
+    },
+    "revoke_mcp_server_credentials": {
+      "required": [
+        "profile",
+        "credential_binding"
+      ],
+      "field_kinds": {
+        "profile": "anyOf",
+        "credential_binding": "object"
+      }
+    },
+    "activate_mcp_server_profile": {
+      "required": [
+        "profile"
+      ],
+      "field_kinds": {
+        "profile": "object"
+      }
+    },
+    "quarantine_mcp_server_profile": {
+      "required": [
+        "profile"
+      ],
+      "field_kinds": {
+        "profile": "object"
+      }
+    },
+    "revoke_mcp_server_profile": {
+      "required": [
+        "profile"
+      ],
+      "field_kinds": {
+        "profile": "object"
+      }
+    },
+    "upsert_mcp_server": {
+      "required": [
+        "server",
+        "created"
+      ],
+      "field_kinds": {
+        "server": "object",
+        "created": "boolean"
+      }
+    },
+    "remove_mcp_server": {
+      "required": [
+        "removed",
+        "removed_server"
+      ],
+      "field_kinds": {
+        "removed": "boolean",
+        "removed_server": "anyOf"
+      }
+    },
+    "list_mcp_secrets": {
+      "required": [
+        "secrets"
+      ],
+      "field_kinds": {
+        "secrets": "array"
+      }
+    },
+    "upsert_mcp_secret": {
+      "required": [
+        "secret",
+        "created",
+        "rotated"
+      ],
+      "field_kinds": {
+        "secret": "object",
+        "created": "boolean",
+        "rotated": "boolean"
+      }
+    },
+    "remove_mcp_secret": {
+      "required": [
+        "removed",
+        "removed_secret"
+      ],
+      "field_kinds": {
+        "removed": "boolean",
+        "removed_secret": "anyOf"
+      }
+    },
+    "list_mcp_host_policies": {
+      "required": [
+        "policies"
+      ],
+      "field_kinds": {
+        "policies": "array"
+      }
+    },
+    "upsert_mcp_host_policy": {
+      "required": [
+        "policy",
+        "created"
+      ],
+      "field_kinds": {
+        "policy": "object",
+        "created": "boolean"
+      }
+    },
+    "remove_mcp_host_policy": {
+      "required": [
+        "removed",
+        "removed_policy"
+      ],
+      "field_kinds": {
+        "removed": "boolean",
+        "removed_policy": "anyOf"
+      }
+    },
+    "get_hosted_mcp_job": {
+      "required": [
+        "job",
+        "lifecycle",
+        "leases",
+        "attestations",
+        "recent_events"
+      ],
+      "field_kinds": {
+        "job": "object",
+        "lifecycle": "object",
+        "leases": "array",
+        "attestations": "array",
+        "recent_events": "array"
+      }
+    },
+    "list_hosted_mcp_jobs": {
+      "required": [
+        "jobs",
+        "summary"
+      ],
+      "field_kinds": {
+        "jobs": "array",
+        "summary": "object"
+      }
+    },
+    "requeue_hosted_mcp_job": {
+      "required": [
+        "job",
+        "requeued",
+        "previous_status",
+        "attempt_count_reset",
+        "max_attempts_updated"
+      ],
+      "field_kinds": {
+        "job": "object",
+        "requeued": "boolean",
+        "previous_status": "enum",
+        "attempt_count_reset": "boolean",
+        "max_attempts_updated": "boolean"
+      }
+    },
+    "cancel_hosted_mcp_job": {
+      "required": [
+        "job",
+        "cancellation_requested",
+        "previous_status",
+        "terminal"
+      ],
+      "field_kinds": {
+        "job": "object",
+        "cancellation_requested": "boolean",
+        "previous_status": "enum",
+        "terminal": "boolean"
+      }
+    },
+    "get_mcp_server_review": {
+      "required": [
+        "candidate",
+        "profile",
+        "active_trust_decision",
+        "active_credential_binding",
+        "review"
+      ],
+      "field_kinds": {
+        "candidate": "anyOf",
+        "profile": "anyOf",
+        "active_trust_decision": "anyOf",
+        "active_credential_binding": "anyOf",
+        "review": "object"
+      }
+    },
+    "diagnostics": {
+      "required": [
+        "daemon_health",
+        "journal_health",
+        "maintenance_backlog",
+        "projection_lag",
+        "storage_summary",
+        "capability_summary",
+        "policy_summary",
+        "security_posture",
+        "hosted_worker",
+        "hosted_queue"
+      ],
+      "field_kinds": {
+        "daemon_health": "anyOf",
+        "journal_health": "anyOf",
+        "maintenance_backlog": "anyOf",
+        "projection_lag": "anyOf",
+        "storage_summary": "anyOf",
+        "capability_summary": "anyOf",
+        "policy_summary": "anyOf",
+        "security_posture": "anyOf",
+        "hosted_worker": "anyOf",
+        "hosted_queue": "anyOf"
+      }
+    },
+    "run_maintenance": {
+      "required": [
+        "accepted_priority",
+        "scope",
+        "jobs",
+        "stream_id"
+      ],
+      "field_kinds": {
+        "accepted_priority": "enum",
+        "scope": "anyOf",
+        "jobs": "array",
+        "stream_id": "anyOf"
+      }
+    },
+    "submit_action_attempt": {
+      "required": [
+        "action",
+        "policy_outcome"
+      ],
+      "field_kinds": {
+        "action": "object",
+        "policy_outcome": "object",
+        "execution_result": "anyOf",
+        "snapshot_record": "anyOf",
+        "approval_request": "anyOf"
+      }
+    },
+    "create_run_checkpoint": {
+      "required": [
+        "run_checkpoint",
+        "branch_point",
+        "checkpoint_kind",
+        "snapshot_record",
+        "snapshot_selection"
+      ],
+      "field_kinds": {
+        "run_checkpoint": "string",
+        "branch_point": "object",
+        "checkpoint_kind": "enum",
+        "snapshot_record": "object",
+        "snapshot_selection": "object"
+      }
+    },
+    "list_approvals": {
+      "required": [
+        "approvals"
+      ],
+      "field_kinds": {
+        "approvals": "array"
+      }
+    },
+    "query_approval_inbox": {
+      "required": [
+        "items",
+        "counts"
+      ],
+      "field_kinds": {
+        "items": "array",
+        "counts": "object"
+      }
+    },
+    "resolve_approval": {
+      "required": [
+        "approval_request"
+      ],
+      "field_kinds": {
+        "approval_request": "object",
+        "execution_result": "anyOf",
+        "snapshot_record": "anyOf"
+      }
+    },
+    "query_timeline": {
+      "required": [
+        "run_summary",
+        "steps",
+        "projection_status",
+        "visibility_scope",
+        "redactions_applied",
+        "preview_budget"
+      ],
+      "field_kinds": {
+        "run_summary": "object",
+        "steps": "array",
+        "projection_status": "enum",
+        "visibility_scope": "enum",
+        "redactions_applied": "integer",
+        "preview_budget": "object"
+      }
+    },
+    "query_helper": {
+      "required": [
+        "answer",
+        "confidence",
+        "visibility_scope",
+        "redactions_applied",
+        "preview_budget",
+        "evidence",
+        "uncertainty"
+      ],
+      "field_kinds": {
+        "answer": "string",
+        "confidence": "number",
+        "primary_reason": "anyOf",
+        "visibility_scope": "enum",
+        "redactions_applied": "integer",
+        "preview_budget": "object",
+        "evidence": "array",
+        "uncertainty": "array"
+      }
+    },
+    "query_artifact": {
+      "required": [
+        "artifact",
+        "artifact_status",
+        "visibility_scope",
+        "content_available",
+        "content",
+        "content_truncated",
+        "returned_chars",
+        "max_inline_chars"
+      ],
+      "field_kinds": {
+        "artifact": "object",
+        "artifact_status": "enum",
+        "visibility_scope": "enum",
+        "content_available": "boolean",
+        "content": "string",
+        "content_truncated": "boolean",
+        "returned_chars": "integer",
+        "max_inline_chars": "integer"
+      }
+    },
+    "plan_recovery": {
+      "required": [
+        "recovery_plan"
+      ],
+      "field_kinds": {
+        "recovery_plan": "object"
+      }
+    },
+    "execute_recovery": {
+      "required": [
+        "recovery_plan",
+        "restored",
+        "outcome",
+        "executed_at"
+      ],
+      "field_kinds": {
+        "recovery_plan": "object",
+        "restored": "boolean",
+        "outcome": "enum",
+        "executed_at": "string"
+      }
+    }
+  }
+}

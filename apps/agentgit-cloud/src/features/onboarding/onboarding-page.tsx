@@ -8,7 +8,8 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { EmptyState, LoadingSkeleton, PageStatePanel } from "@/components/feedback";
 import { MetricCard, PageHeader } from "@/components/composites";
-import { Badge, Button, Card, Input, ToastCard, ToastViewport } from "@/components/primitives";
+import { Badge, Button, Card, Input, Select, Stepper } from "@/components/primitives";
+import { useToast } from "@/components/providers/toast-provider";
 import { WorkspaceSetupChecklist } from "@/features/shared/workspace-setup-checklist";
 import { ApiClientError } from "@/lib/api/client";
 import { launchOnboarding } from "@/lib/api/endpoints/onboarding";
@@ -41,53 +42,8 @@ const policyPackDescriptions: Record<PolicyPack, string> = {
   strict: "Max review coverage for regulated or highly sensitive repositories.",
 };
 
-function selectClassName() {
-  return "ag-focus-ring h-9 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] px-3 text-[14px] text-[var(--ag-text-primary)] hover:border-[var(--ag-border-strong)] focus:border-[var(--ag-color-brand)]";
-}
-
 function checkboxClassName() {
   return "h-4 w-4 rounded border border-[var(--ag-border-default)] bg-[var(--ag-bg-card)] text-[var(--ag-color-brand)]";
-}
-
-function Stepper({ activeStep }: { activeStep: number }) {
-  return (
-    <div className="grid gap-3 md:grid-cols-5">
-      {onboardingSteps.map((step, index) => {
-        const status = index < activeStep ? "complete" : index === activeStep ? "active" : "upcoming";
-
-        return (
-          <div className="space-y-2" key={step.id}>
-            <div className="flex items-center gap-3">
-              <div
-                className={
-                  status === "complete"
-                    ? "flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ag-color-brand)] text-sm font-semibold text-[var(--ag-color-brand)]"
-                    : status === "active"
-                      ? "flex h-9 w-9 items-center justify-center rounded-full bg-[var(--ag-color-brand)] text-sm font-semibold text-[#0b0f14]"
-                      : "flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ag-border-default)] text-sm font-semibold text-[var(--ag-text-secondary)]"
-                }
-              >
-                {status === "complete" ? "✓" : index + 1}
-              </div>
-              {index < onboardingSteps.length - 1 ? (
-                <div
-                  className={
-                    status === "complete"
-                      ? "h-px flex-1 bg-[var(--ag-color-brand)]"
-                      : "h-px flex-1 bg-[var(--ag-border-default)]"
-                  }
-                />
-              ) : null}
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">{step.title}</div>
-              <div className="text-xs text-[var(--ag-text-secondary)]">{step.description}</div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 function OnboardingSkeleton() {
@@ -111,10 +67,9 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
   const router = useRouter();
   const [isRedirecting, startTransition] = useTransition();
   const { user, activeWorkspace } = useWorkspace();
+  const { pushToast } = useToast();
   const bootstrapQuery = useOnboardingBootstrapQuery(previewState);
   const [activeStep, setActiveStep] = useState(0);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [errorToast, setErrorToast] = useState<string | null>(null);
 
   const form = useForm<OnboardingFormValues>({
     resolver: zodResolver(OnboardingFormValuesSchema),
@@ -162,30 +117,6 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
     });
   }, [bootstrapQuery.data, reset]);
 
-  useEffect(() => {
-    if (!toastMessage) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
-
-    return () => window.clearTimeout(timeout);
-  }, [toastMessage]);
-
-  useEffect(() => {
-    if (!errorToast) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      setErrorToast(null);
-    }, 4000);
-
-    return () => window.clearTimeout(timeout);
-  }, [errorToast]);
-
   const watchedValues = watch();
   const selectedRepositoryIds = watchedValues.repositoryIds;
   const selectedRepositories = useMemo(
@@ -199,7 +130,11 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
   const launchMutation = useMutation({
     mutationFn: (values: OnboardingFormValues) => launchOnboarding(values),
     onSuccess: async (result) => {
-      setToastMessage(result.message);
+      pushToast({
+        description: result.message,
+        title: "Workspace launched",
+        tone: "success",
+      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
         queryClient.invalidateQueries({ queryKey: queryKeys.repositories }),
@@ -221,11 +156,19 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
           typeof error.details.message === "string"
             ? error.details.message
             : "Could not launch the workspace. Try again.";
-        setErrorToast(message);
+        pushToast({
+          description: message,
+          title: "Launch failed",
+          tone: "error",
+        });
         return;
       }
 
-      setErrorToast("Could not launch the workspace. Try again.");
+      pushToast({
+        description: "Could not launch the workspace. Try again.",
+        title: "Launch failed",
+        tone: "error",
+      });
     },
   });
 
@@ -331,7 +274,7 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,1fr)]">
         <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
           <Card className="space-y-6">
-            <Stepper activeStep={activeStep} />
+            <Stepper currentStep={activeStep} steps={[...onboardingSteps]} />
           </Card>
 
           {activeStep === 0 ? (
@@ -454,14 +397,11 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                           {...register(`invites.${index}.email`)}
                         />
                       </div>
-                      <label className="flex w-full flex-col gap-1">
-                        <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Role</span>
-                        <select className={selectClassName()} {...register(`invites.${index}.role`)}>
+                      <Select id={`invite-role-${field.id}`} label="Role" {...register(`invites.${index}.role`)}>
                           <option value="member">Member</option>
                           <option value="admin">Admin</option>
                           <option value="owner">Owner</option>
-                        </select>
-                      </label>
+                      </Select>
                     </Card>
                   ))}
                 </div>
@@ -498,16 +438,11 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                 </p>
               </div>
 
-              <label className="flex w-full flex-col gap-1">
-                <span className="text-[13px] font-semibold text-[var(--ag-text-primary)]">
-                  Default notification channel
-                </span>
-                <select className={selectClassName()} {...register("defaultNotificationChannel")}>
+              <Select id="onboarding-default-notification-channel" label="Default notification channel" {...register("defaultNotificationChannel")}>
                   <option value="slack">Slack</option>
                   <option value="email">Email</option>
                   <option value="in_app">In-app</option>
-                </select>
-              </label>
+              </Select>
 
               <div className="space-y-3">
                 <div className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Policy pack</div>
@@ -684,42 +619,17 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
           </Card>
 
           <Card className="space-y-4">
-            <h2 className="text-lg font-semibold">Build loop backlog</h2>
+            <h2 className="text-lg font-semibold">Launch checklist</h2>
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
-              <div>Closed in this pass:</div>
-              <div>- owner-only onboarding stepper</div>
-              <div>- multi-step RHF validation across 5 steps</div>
-              <div>- auth-protected onboarding bootstrap and launch API</div>
-              <div>- durable workspace connection persistence</div>
-              <div className="mt-3">Next queued:</div>
-              <div>- repository detail and run history sourced from backend truth</div>
-              <div>- production auth/session hardening and workspace enforcement</div>
-              <div>- observability and release readiness rails</div>
+              <div>Before launch:</div>
+              <div>- confirm repository scope matches the first governed loop</div>
+              <div>- invite the initial operator roster and assign starting roles</div>
+              <div>- review the default policy pack and notification channel</div>
+              <div>- verify the connector will be installed on the machine that hosts the selected repos</div>
             </div>
           </Card>
         </div>
       </div>
-
-      {toastMessage ? (
-        <ToastViewport>
-          <ToastCard className="border-[color:rgb(34_197_94_/_0.28)]">
-            <div className="space-y-1">
-              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Workspace launched</div>
-              <p className="text-sm text-[var(--ag-text-secondary)]">{toastMessage}</p>
-            </div>
-          </ToastCard>
-        </ToastViewport>
-      ) : null}
-      {errorToast ? (
-        <ToastViewport>
-          <ToastCard className="border-[color:rgb(239_68_68_/_0.28)]">
-            <div className="space-y-1">
-              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Launch failed</div>
-              <p className="text-sm text-[var(--ag-text-secondary)]">{errorToast}</p>
-            </div>
-          </ToastCard>
-        </ToastViewport>
-      ) : null}
     </>
   );
 }

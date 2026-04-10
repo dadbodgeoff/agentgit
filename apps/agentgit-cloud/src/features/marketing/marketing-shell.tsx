@@ -26,10 +26,11 @@ export function MarketingShell({ children, currentPath }: { children: ReactNode;
               AG
             </span>
             <div className="space-y-0.5">
-              <div className="text-sm font-semibold tracking-[0.18em] text-[var(--ag-text-primary)] uppercase">
-                AgentGit Cloud
+              <div className="ag-text-body-sm font-semibold">
+                <span className="text-[var(--ag-text-primary)]">Agent</span>
+                <span className="text-[var(--ag-color-brand)]">Git</span>
               </div>
-              <div className="text-xs text-[var(--ag-text-secondary)]">Governed shipping for autonomous teams</div>
+              <div className="ag-text-overline text-[var(--ag-text-secondary)]">Cloud</div>
             </div>
           </Link>
 
@@ -54,7 +55,7 @@ export function MarketingShell({ children, currentPath }: { children: ReactNode;
             >
               Docs
             </Link>
-            <Badge tone="accent">Hosted beta</Badge>
+            <Badge tone="brand">Hosted beta</Badge>
           </nav>
 
           <div className="flex items-center gap-3">
@@ -118,7 +119,7 @@ export function MarketingSection({
     <section className={cn("mx-auto w-full max-w-7xl px-5 py-16 sm:px-6 lg:px-8 lg:py-20", className)}>
       <div className="grid gap-10 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:gap-16">
         <div className="space-y-4">
-          <div className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-color-brand)]">{eyebrow}</div>
+          <div className="ag-text-overline text-[var(--ag-color-brand)]">{eyebrow}</div>
           <h2 className="max-w-xl text-3xl font-semibold tracking-[-0.03em] text-[var(--ag-text-primary)] sm:text-4xl">
             {title}
           </h2>

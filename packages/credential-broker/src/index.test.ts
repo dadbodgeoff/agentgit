@@ -1,38 +1,28 @@
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { LocalEncryptedSecretStore, SessionCredentialBroker } from "./index.js";
+import { createFileBackedSecretKeyProvider, LocalEncryptedSecretStore, SessionCredentialBroker } from "./index.js";
 
 const dirs: string[] = [];
-const keychainCleanup: Array<{ serviceName: string; keyIdentifier: string }> = [];
 
 afterEach(() => {
   while (dirs.length > 0) {
     fs.rmSync(dirs.pop()!, { recursive: true, force: true });
   }
-
-  while (keychainCleanup.length > 0) {
-    const item = keychainCleanup.pop()!;
-    if (process.platform === "darwin") {
-      try {
-        execFileSync("security", [
-          "delete-generic-password",
-          "-a",
-          "mcp-envelope-key",
-          "-s",
-          `${item.serviceName}:${item.keyIdentifier}`,
-        ]);
-      } catch {
-        // ignore cleanup failures
-      }
-    }
-  }
 });
+
+function createTestSecretStore(root: string, serviceName: string): LocalEncryptedSecretStore {
+  return new LocalEncryptedSecretStore({
+    dbPath: path.join(root, "mcp-secrets.db"),
+    keyPath: path.join(root, "mcp-secrets.key"),
+    serviceName,
+    keyProvider: createFileBackedSecretKeyProvider(),
+  });
+}
 
 describe("SessionCredentialBroker", () => {
   it("registers and resolves brokered bearer access without exposing token metadata", () => {
@@ -88,24 +78,34 @@ describe("SessionCredentialBroker", () => {
     ).toThrow("required scope");
   });
 
+  it("supports deterministic file-backed secret storage for test environments", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-credential-broker-"));
+    dirs.push(root);
+    const keyPath = path.join(root, "mcp-secrets.key");
+    const store = createTestSecretStore(root, `com.agentgit.tests.credential-broker.file-backed.${Date.now()}`);
+
+    expect(fs.existsSync(keyPath)).toBe(true);
+    expect(fs.statSync(keyPath).mode & 0o777).toBe(0o600);
+    expect(store.storageDetails().legacy_key_path).toBe(keyPath);
+
+    store.upsertMcpBearerSecret({
+      secret_id: "mcp_secret_file_backed",
+      bearer_token: "file-backed-secret",
+    });
+
+    const reopened = createTestSecretStore(root, `com.agentgit.tests.credential-broker.file-backed-reopen.${Date.now()}`);
+    expect(reopened.resolveMcpBearerSecret("mcp_secret_file_backed").authorization_header).toBe(
+      "Bearer file-backed-secret",
+    );
+  });
+
   it("stores, rotates, and resolves MCP bearer secrets without listing the raw token", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-credential-broker-"));
     dirs.push(root);
     const serviceName = `com.agentgit.tests.credential-broker.${Date.now()}`;
     const broker = new SessionCredentialBroker({
-      mcpSecretStore: new LocalEncryptedSecretStore({
-        dbPath: path.join(root, "mcp-secrets.db"),
-        keyPath: path.join(root, "mcp-secrets.key"),
-        serviceName,
-      }),
+      mcpSecretStore: createTestSecretStore(root, serviceName),
     });
-    const durableDetails = broker.durableSecretStorageDetails();
-    if (durableDetails) {
-      keychainCleanup.push({
-        serviceName,
-        keyIdentifier: durableDetails.key_identifier,
-      });
-    }
 
     const created = broker.upsertMcpBearerSecret({
       secret_id: "mcp_secret_notion",
@@ -138,7 +138,6 @@ describe("SessionCredentialBroker", () => {
       }),
     ]);
     expect(JSON.stringify(listed)).not.toContain("secret-token-v2");
-    expect(fs.existsSync(path.join(root, "mcp-secrets.key"))).toBe(false);
 
     const resolved = broker.resolveMcpBearerSecret("mcp_secret_notion");
     expect(resolved.authorization_header).toBe("Bearer secret-token-v2");
@@ -150,19 +149,8 @@ describe("SessionCredentialBroker", () => {
     dirs.push(root);
     const serviceName = `com.agentgit.tests.credential-broker.expired.${Date.now()}`;
     const broker = new SessionCredentialBroker({
-      mcpSecretStore: new LocalEncryptedSecretStore({
-        dbPath: path.join(root, "mcp-secrets.db"),
-        keyPath: path.join(root, "mcp-secrets.key"),
-        serviceName,
-      }),
+      mcpSecretStore: createTestSecretStore(root, serviceName),
     });
-    const durableDetails = broker.durableSecretStorageDetails();
-    if (durableDetails) {
-      keychainCleanup.push({
-        serviceName,
-        keyIdentifier: durableDetails.key_identifier,
-      });
-    }
 
     broker.upsertMcpBearerSecret({
       secret_id: "mcp_secret_expired",
@@ -178,19 +166,8 @@ describe("SessionCredentialBroker", () => {
     dirs.push(root);
     const serviceName = `com.agentgit.tests.credential-broker.runtime-bindings.${Date.now()}`;
     const broker = new SessionCredentialBroker({
-      mcpSecretStore: new LocalEncryptedSecretStore({
-        dbPath: path.join(root, "mcp-secrets.db"),
-        keyPath: path.join(root, "mcp-secrets.key"),
-        serviceName,
-      }),
+      mcpSecretStore: createTestSecretStore(root, serviceName),
     });
-    const durableDetails = broker.durableSecretStorageDetails();
-    if (durableDetails) {
-      keychainCleanup.push({
-        serviceName,
-        keyIdentifier: durableDetails.key_identifier,
-      });
-    }
 
     broker.upsertMcpBearerSecret({
       secret_id: "mcp_secret_runtime",
@@ -236,19 +213,8 @@ describe("SessionCredentialBroker", () => {
     dirs.push(root);
     const serviceName = `com.agentgit.tests.credential-broker.runtime-ticket.${Date.now()}`;
     const broker = new SessionCredentialBroker({
-      mcpSecretStore: new LocalEncryptedSecretStore({
-        dbPath: path.join(root, "mcp-secrets.db"),
-        keyPath: path.join(root, "mcp-secrets.key"),
-        serviceName,
-      }),
+      mcpSecretStore: createTestSecretStore(root, serviceName),
     });
-    const durableDetails = broker.durableSecretStorageDetails();
-    if (durableDetails) {
-      keychainCleanup.push({
-        serviceName,
-        keyIdentifier: durableDetails.key_identifier,
-      });
-    }
 
     broker.upsertMcpBearerSecret({
       secret_id: "mcp_secret_ticket",
@@ -310,11 +276,7 @@ describe("SessionCredentialBroker", () => {
     dirs.push(root);
     const serviceName = `com.agentgit.tests.credential-broker.runtime-ticket.no-audience.${Date.now()}`;
     const broker = new SessionCredentialBroker({
-      mcpSecretStore: new LocalEncryptedSecretStore({
-        dbPath: path.join(root, "mcp-secrets.db"),
-        keyPath: path.join(root, "mcp-secrets.key"),
-        serviceName,
-      }),
+      mcpSecretStore: createTestSecretStore(root, serviceName),
     });
 
     broker.upsertMcpBearerSecret({

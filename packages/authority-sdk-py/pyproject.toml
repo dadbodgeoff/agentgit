@@ -36,4 +36,4 @@ include-package-data = true
 include = ["agentgit_authority*"]
 
 [tool.setuptools.package-data]
-agentgit_authority = ["py.typed"]
+agentgit_authority = ["py.typed", "daemon_response_contract.json"]

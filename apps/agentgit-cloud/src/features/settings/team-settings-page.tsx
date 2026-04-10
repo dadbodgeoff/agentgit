@@ -294,7 +294,7 @@ export function TeamSettingsPage() {
               <div>
                 <h2 className="text-base font-semibold">Save roster</h2>
                 <p className="text-sm text-[var(--ag-text-secondary)]">
-                  Team invites now persist into the workspace state loop instead of living in a placeholder page.
+                  Invite changes update the durable workspace roster that drives hosted access and approval routing.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -316,9 +316,9 @@ export function TeamSettingsPage() {
 
         <div className="space-y-6">
           <Card className="space-y-4">
-            <h2 className="text-lg font-semibold">What this proves</h2>
+            <h2 className="text-lg font-semibold">Roster guidance</h2>
             <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">
-              <p>Admin-only settings now cover another real mutation surface instead of a scaffold.</p>
+              <p>Workspace admins control the live roster for hosted access, notifications, and approval coverage here.</p>
               <p>
                 Invite editing reuses the onboarding invite schema so team management cannot drift from launch-time
                 rules.

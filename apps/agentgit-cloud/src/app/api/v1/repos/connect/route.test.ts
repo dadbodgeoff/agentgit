@@ -112,6 +112,8 @@ describe("repository connect route", () => {
     expect(response.status).toBe(200);
     expect(listWorkspaceRepositoryOptions).toHaveBeenCalledWith("ws_01");
     expect(body.connectedRepositoryIds).toEqual(["repo_01"]);
+    expect(body.defaultNotificationChannel).toBe("slack");
+    expect(body.policyPack).toBe("guarded");
     expect(body.activeConnectorRepositoryIds).toEqual(["repo_01"]);
     expect(body.totalConnectorCount).toBe(1);
   });
@@ -141,6 +143,8 @@ describe("repository connect route", () => {
         method: "POST",
         body: JSON.stringify({
           repositoryIds: ["repo_01", "repo_02"],
+          defaultNotificationChannel: "email",
+          policyPack: "balanced",
         }),
       }),
     );
@@ -150,7 +154,13 @@ describe("repository connect route", () => {
     expect(body.connectedRepositoryCount).toBe(2);
     expect(body.newlyConnectedRepositoryIds).toEqual(["repo_02"]);
     expect(body.connectorBootstrapSuggested).toBe(true);
-    expect(saveWorkspaceConnectionState).toHaveBeenCalled();
+    expect(saveWorkspaceConnectionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repositoryIds: ["repo_01", "repo_02"],
+        defaultNotificationChannel: "email",
+        policyPack: "balanced",
+      }),
+    );
   });
 
   it("returns 409 when repository selections exceed the workspace beta cap", async () => {
@@ -176,6 +186,8 @@ describe("repository connect route", () => {
         method: "POST",
         body: JSON.stringify({
           repositoryIds: ["repo_01", "repo_02"],
+          defaultNotificationChannel: "slack",
+          policyPack: "guarded",
         }),
       }),
     );

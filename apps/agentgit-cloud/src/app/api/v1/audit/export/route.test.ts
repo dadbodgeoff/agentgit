@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const requireApiSession = vi.fn();
+const requireApiRole = vi.fn();
 const exportWorkspaceAuditLog = vi.fn();
 
 vi.mock("server-only", () => ({}));
 
 vi.mock("@/lib/auth/api-session", () => ({
-  requireApiSession,
+  requireApiRole,
 }));
 
 vi.mock("@/lib/backend/workspace/audit-log", () => ({
@@ -19,10 +19,10 @@ describe("audit export route", () => {
   });
 
   it("returns a downloadable export for the active workspace", async () => {
-    requireApiSession.mockResolvedValue({
-      unauthorized: null,
+    requireApiRole.mockResolvedValue({
+      denied: null,
       workspaceSession: {
-        activeWorkspace: { id: "ws_acme_01", slug: "acme", role: "member" },
+        activeWorkspace: { id: "ws_acme_01", slug: "acme", role: "admin" },
       },
     });
     exportWorkspaceAuditLog.mockResolvedValue({
@@ -51,10 +51,10 @@ describe("audit export route", () => {
   });
 
   it("rejects invalid export query ranges", async () => {
-    requireApiSession.mockResolvedValue({
-      unauthorized: null,
+    requireApiRole.mockResolvedValue({
+      denied: null,
       workspaceSession: {
-        activeWorkspace: { id: "ws_acme_01", slug: "acme", role: "member" },
+        activeWorkspace: { id: "ws_acme_01", slug: "acme", role: "admin" },
       },
     });
 

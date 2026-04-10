@@ -5,7 +5,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/composites";
 import { PageStatePanel } from "@/components/feedback";
 import { Badge, Card, CodeBlock } from "@/components/primitives";
-import { getApiErrorMessage } from "@/lib/api/client";
+import { ApiClientError, getApiErrorMessage } from "@/lib/api/client";
 import { repositorySnapshotsRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { useActionDetailQuery } from "@/lib/query/hooks";
 import { formatAbsoluteDate, formatConfidence, formatNumber, formatRelativeTimestamp } from "@/lib/utils/format";
@@ -84,16 +84,18 @@ export function ActionDetailPage({
   }
 
   if (actionQuery.isError) {
+    const errorMessage =
+      actionQuery.error instanceof ApiClientError && actionQuery.error.status === 404
+        ? "Action detail was not found. The run may have been trimmed, or this repository is no longer available in your workspace."
+        : getApiErrorMessage(actionQuery.error, "Could not load action detail. Retry.");
+
     return (
       <>
         <PageHeader
           description={`Normalized governed action detail for ${owner}/${name}, run ${runId}, action ${actionId}.`}
           title="Action detail"
         />
-        <PageStatePanel
-          errorMessage={getApiErrorMessage(actionQuery.error, "Could not load action detail. Retry.")}
-          state="error"
-        />
+        <PageStatePanel errorMessage={errorMessage} state="error" />
       </>
     );
   }
@@ -123,14 +125,39 @@ export function ActionDetailPage({
         title="Action detail"
       />
 
+      {action.execution.status === "failed" || action.execution.status === "blocked" || action.execution.status === "partial" ? (
+        <Card className="space-y-3 border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)]">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={executionTone(action.execution.status)}>{action.execution.status}</Badge>
+            {action.policyOutcome.decision ? (
+              <Badge tone={decisionTone(action.policyOutcome.decision)}>
+                {action.policyOutcome.decision.replaceAll("_", " ")}
+              </Badge>
+            ) : null}
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold">Investigation summary</h2>
+            <p className="text-sm text-[var(--ag-text-secondary)]">{action.execution.summary}</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
+              {action.execution.helperSummary ?? "No execution helper summary is available for this step."}
+            </div>
+            <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
+              {action.execution.policyExplanation ?? "No policy explanation is available for this step."}
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
         <Card>
-          <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Confidence</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Confidence</div>
           <div className="mt-2 text-2xl font-semibold">{formatConfidence(action.normalizedAction.confidenceScore)}</div>
           <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">{action.normalizedAction.confidenceBand}</div>
         </Card>
         <Card>
-          <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Policy decision</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Policy decision</div>
           <div className="mt-2">
             <Badge tone={decisionTone(action.policyOutcome.decision)}>
               {action.policyOutcome.decision ?? "unknown"}
@@ -141,14 +168,14 @@ export function ActionDetailPage({
           </div>
         </Card>
         <Card>
-          <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Execution</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Execution</div>
           <div className="mt-2">
             <Badge tone={executionTone(action.execution.status)}>{action.execution.status}</Badge>
           </div>
           <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">{action.execution.stepType}</div>
         </Card>
         <Card>
-          <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Impact</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Impact</div>
           <div className="mt-2 text-2xl font-semibold">{formatNumber(action.execution.laterActionsAffected)}</div>
           <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">later actions affected</div>
         </Card>
@@ -174,7 +201,7 @@ export function ActionDetailPage({
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Action</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Action</div>
               <div className="text-sm font-medium">
                 {action.normalizedAction.domain} / {action.normalizedAction.kind}
               </div>
@@ -189,7 +216,7 @@ export function ActionDetailPage({
               </div>
             </div>
             <div className="space-y-2 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
-              <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Timing</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Timing</div>
               <div className="text-sm text-[var(--ag-text-secondary)]">
                 Occurred {formatRelativeTimestamp(action.occurredAt)}
               </div>
@@ -202,12 +229,12 @@ export function ActionDetailPage({
           </div>
 
           <div className="space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+            <h3 className="text-sm font-semibold uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
               Policy reasoning
             </h3>
             <div className="grid gap-3 md:grid-cols-2">
               <Card className="space-y-2">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Budget</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Budget</div>
                 <div className="text-sm font-medium">{action.policyOutcome.budgetCheck}</div>
                 <div className="text-sm text-[var(--ag-text-secondary)]">
                   {action.policyOutcome.approvalRequired
@@ -216,7 +243,7 @@ export function ActionDetailPage({
                 </div>
               </Card>
               <Card className="space-y-2">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Matched rules</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Matched rules</div>
                 <div className="text-sm font-medium">{action.policyOutcome.matchedRules.length}</div>
                 <div className="text-sm text-[var(--ag-text-secondary)]">
                   {action.policyOutcome.matchedRules.length > 0
@@ -234,7 +261,7 @@ export function ActionDetailPage({
                       className="rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] px-3 py-2"
                       key={`${reason.code}:${reason.message}`}
                     >
-                      <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                         {reason.severity}
                       </div>
                       <div className="text-sm font-medium">{reason.code}</div>
@@ -313,7 +340,7 @@ export function ActionDetailPage({
                 </div>
                 {action.approvalContext.primaryReason ? (
                   <div className="rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                       Primary reason
                     </div>
                     <div className="text-sm font-medium">{action.approvalContext.primaryReason.code}</div>
@@ -347,7 +374,7 @@ export function ActionDetailPage({
             </div>
             {action.execution.artifactLabels.length > 0 ? (
               <div className="space-y-2">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Artifacts</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Artifacts</div>
                 <div className="flex flex-wrap gap-2">
                   {action.execution.artifactLabels.map((label) => (
                     <Badge key={label} tone="neutral">
@@ -399,6 +426,30 @@ export function ActionDetailPage({
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <Card className="space-y-3">
+          <h2 className="text-lg font-semibold">Execution event trail</h2>
+          <div className="space-y-3">
+            {action.eventTrail.map((event) => (
+              <div
+                className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3"
+                key={event.id}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
+                      {event.eventType.replaceAll(".", " ")}
+                    </div>
+                    <div className="text-sm text-[var(--ag-text-secondary)]">{event.summary}</div>
+                  </div>
+                  <div className="text-xs text-[var(--ag-text-tertiary)]">{formatRelativeTimestamp(event.occurredAt)}</div>
+                </div>
+                <div className="mt-3">
+                  <CodeBlock>{JSON.stringify(event.payload, null, 2)}</CodeBlock>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
         <Card className="space-y-3">
           <h2 className="text-lg font-semibold">Normalized input</h2>
           <div className="text-sm text-[var(--ag-text-secondary)]">
