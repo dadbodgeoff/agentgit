@@ -191,7 +191,7 @@ export function RepositoryRunsPage({
                           {run.workflowName}
                         </Link>
                         <div className="text-xs text-[var(--ag-text-secondary)]">{run.summary}</div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ag-text-tertiary)]">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--ag-text-secondary)]">
                           <span className="font-mono">{run.id}</span>
                           <span>
                             {run.eventCount} event{run.eventCount === 1 ? "" : "s"}

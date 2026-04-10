@@ -118,7 +118,7 @@ export function ApprovalCard({
         </div>
         <p className="text-sm text-[var(--ag-text-secondary)]">{item.actionSummary}</p>
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-hover)] px-3 py-2 text-sm text-[var(--ag-text-secondary)]">
-          <div className="font-mono text-xs text-[var(--ag-text-tertiary)]">Target</div>
+          <div className="font-mono text-xs text-[var(--ag-text-secondary)]">Target</div>
           <div className="mt-1">{item.targetLabel ?? item.targetLocator}</div>
         </div>
         {item.reasonSummary ? <p className="text-sm text-[var(--ag-text-secondary)]">{item.reasonSummary}</p> : null}

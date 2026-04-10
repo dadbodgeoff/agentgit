@@ -12,21 +12,44 @@
  *
  * `ACCESSIBILITY_MODE` env var controls behavior:
  *
- *   "report"  — DEFAULT. Logs every violation but never fails the test.
- *               Used while we baseline the existing surface and fix
- *               violations iteratively. CI runs in this mode today.
+ *   "enforce" — DEFAULT. Fails the test on any serious or critical
+ *               violation. All 4 public routes are currently green
+ *               under this mode, and regressions block CI.
  *
- *   "enforce" — Fails the test on any serious or critical violation.
- *               Set this once the public-route violation cleanup pass
- *               has landed and the surface is green. The intent is for
- *               CI to flip to enforce mode in a follow-up commit so a
- *               regression cannot land unnoticed.
+ *   "report"  — Logs every violation but never fails the test.
+ *               Temporary escape hatch when baselining a new surface
+ *               (e.g., adding authenticated routes for the first time
+ *               before their violations are cleaned up). DO NOT set
+ *               this in production CI.
  *
- * The infrastructure is the same in both modes — the gate is wired up,
- * the rules are the spec rules, and every PR run produces a violation
- * report. The toggle exists so we can land the gate before we land the
- * cleanup, and so we can run the spec locally in enforce mode while
- * working on a fix without changing production CI behavior.
+ * ## History
+ *
+ * When the gate first landed, the public surface had 4 baseline
+ * violations. All 4 were cleaned up in the same commit that flipped
+ * this default to enforce:
+ *
+ *   1. "a { color: inherit }" was escaping @layer base, so every
+ *      arbitrary-value text utility on an <a> was losing the cascade.
+ *      Moving the base rules into @layer base fixed marketing header
+ *      buttons site-wide.
+ *
+ *   2. `--color-base: var(--ag-bg-base)` in @theme was shadowing
+ *      Tailwind v4's built-in `.text-base` font-size utility with a
+ *      text color, making every `text-base` body copy render as dark
+ *      void text (invisible on dark backgrounds). Removing that one
+ *      token entry fixed the sign-in section headings and every
+ *      `text-base` usage across the codebase.
+ *
+ *   3. Tertiary text (#6B7280) at 12px was failing AA contrast on
+ *      Slate card backgrounds. Per spec §12.2 tertiary only passes
+ *      AA at 18px+ or 14px bold. 85 occurrences across 17 files were
+ *      migrated to secondary text (#9BA3B0) which passes AA at 6.1:1.
+ *
+ *   4. A plain-color link inside a paragraph failed link-in-text-block
+ *      because color alone isn't a sufficient differentiator. Adding
+ *      underline + underline-offset fixed it.
+ *
+ * ## Auth
  *
  * Authenticated routes are intentionally NOT covered here yet because
  * they require the daemon + dev sign-in plumbing already exercised by
@@ -39,7 +62,7 @@
  */
 
 const ACCESSIBILITY_MODE: "report" | "enforce" =
-  process.env.ACCESSIBILITY_MODE === "enforce" ? "enforce" : "report";
+  process.env.ACCESSIBILITY_MODE === "report" ? "report" : "enforce";
 
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
@@ -125,14 +148,13 @@ async function runAxe(page: Page, route: PublicRoute) {
 
   // Always log advisory + blocking findings so every CI run produces a
   // violation report we can review before flipping to enforce mode.
+  // eslint already allows console in e2e specs.
   if (advisory.length > 0) {
-    // eslint-disable-next-line no-console -- intentional reporter output
     console.log(
       `[axe ${route.name}] ${advisory.length} advisory finding(s):\n${summariseViolations(advisory)}`,
     );
   }
   if (blocking.length > 0) {
-    // eslint-disable-next-line no-console -- intentional reporter output
     console.log(
       `[axe ${route.name}] ${blocking.length} BLOCKING finding(s) (${ACCESSIBILITY_MODE} mode):\n${summariseViolations(blocking)}`,
     );

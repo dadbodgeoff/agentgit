@@ -178,6 +178,39 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
   const [focus, setFocus] = useState<DashboardFocus>("all");
   const canAccessAudit = hasAtLeastRole(activeWorkspace.role, "admin");
 
+  // Recent activity is the only value `focusedActivity` depends on. Hoist
+  // the memo above the loading/error early returns so the hook order is
+  // identical across every render path — React's Rules of Hooks require
+  // hooks to be called in the same order every render, and putting
+  // `useMemo` after the early returns below caused
+  // "Rendered more hooks than during the previous render" on mount,
+  // crashing the dashboard behind the /app/error.tsx boundary.
+  const recentActivity = dashboardQuery.data?.recentActivity;
+  const focusedActivity = useMemo(() => {
+    if (!recentActivity) {
+      return [];
+    }
+    return recentActivity.filter((activity) => {
+      if (focus === "all") {
+        return true;
+      }
+
+      if (focus === "approvals") {
+        return activity.kind === "approval_requested" || activity.kind === "approval_resolved";
+      }
+
+      if (focus === "failures") {
+        return activity.kind === "run_failed" || activity.tone === "error";
+      }
+
+      if (focus === "recovery") {
+        return activity.kind === "snapshot_restored";
+      }
+
+      return activity.kind === "connector_command" || activity.kind === "connector_event";
+    });
+  }, [recentActivity, focus]);
+
   if (dashboardQuery.isPending) {
     return (
       <>
@@ -211,27 +244,6 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
   const dashboard = dashboardQuery.data;
   const hotspotRepos = buildHotspotRepos(dashboard.recentRuns, dashboard.recentActivity);
   const attentionQueue = buildAttentionQueue(dashboard.recentRuns, dashboard.recentActivity, canAccessAudit);
-  const focusedActivity = useMemo(() => {
-    return dashboard.recentActivity.filter((activity) => {
-      if (focus === "all") {
-        return true;
-      }
-
-      if (focus === "approvals") {
-        return activity.kind === "approval_requested" || activity.kind === "approval_resolved";
-      }
-
-      if (focus === "failures") {
-        return activity.kind === "run_failed" || activity.tone === "error";
-      }
-
-      if (focus === "recovery") {
-        return activity.kind === "snapshot_restored";
-      }
-
-      return activity.kind === "connector_command" || activity.kind === "connector_event";
-    });
-  }, [dashboard.recentActivity, focus]);
   const writebackCount = dashboard.recentActivity.filter(
     (activity) =>
       activity.kind === "connector_command" &&
@@ -382,17 +394,17 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Writeback</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Writeback</div>
                 <div className="mt-2 text-2xl font-semibold">{writebackCount}</div>
                 <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">commit, push, and PR outcomes</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Recovery</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Recovery</div>
                 <div className="mt-2 text-2xl font-semibold">{recoveryCount}</div>
                 <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">restore and rollback signals</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Approvals</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Approvals</div>
                 <div className="mt-2 text-2xl font-semibold">{approvalCount}</div>
                 <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">operator review touchpoints</div>
               </div>

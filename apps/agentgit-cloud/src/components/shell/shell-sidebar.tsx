@@ -8,7 +8,7 @@ import { ChevronLeft, ChevronRight, ChevronsUpDown, CircleHelp, LogOut } from "l
 import { Button, Tooltip } from "@/components/primitives";
 import { appNavigationItems } from "@/components/shell/app-navigation";
 import { useWorkspace } from "@/lib/auth/workspace-context";
-import { publicRoutes } from "@/lib/navigation/routes";
+import { authenticatedRoutes, publicRoutes } from "@/lib/navigation/routes";
 import { hasAtLeastRole } from "@/lib/rbac/roles";
 import { cn } from "@/lib/utils/cn";
 
@@ -31,6 +31,39 @@ export function ShellSidebar({
     acc[item.section].push(item);
     return acc;
   }, {});
+
+  // Compute the single "active" nav item for the current pathname using a
+  // longest-prefix-wins rule so nested routes don't highlight their parent
+  // item alongside themselves.
+  //
+  // - "/app" (dashboard) is exact-match only; otherwise every authenticated
+  //   route would highlight Dashboard because "/app/foo".startsWith("/app/").
+  // - "/app/settings" (workspace settings) is nested under the team/billing/
+  //   integrations children; without longest-prefix-wins, visiting
+  //   /app/settings/team lights up both Workspace and Team.
+  // - For all other items, the first exact match or longest startsWith
+  //   match wins.
+  const activeHref = (() => {
+    if (pathname === authenticatedRoutes.dashboard) {
+      return authenticatedRoutes.dashboard;
+    }
+    let best: { href: string; depth: number } | null = null;
+    for (const candidate of visibleItems) {
+      if (candidate.href === authenticatedRoutes.dashboard) {
+        continue;
+      }
+      const isExact = pathname === candidate.href;
+      const isPrefix = pathname.startsWith(`${candidate.href}/`);
+      if (!isExact && !isPrefix) {
+        continue;
+      }
+      const depth = candidate.href.length;
+      if (!best || depth > best.depth) {
+        best = { href: candidate.href, depth };
+      }
+    }
+    return best?.href ?? null;
+  })();
 
   return (
     <>
@@ -85,7 +118,10 @@ export function ShellSidebar({
                   <div className="px-3 ag-text-overline text-[var(--ag-text-tertiary)]">{section}</div>
                 ) : null}
                 {items.map((item) => {
-                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  // Single active item per render: longest-prefix-wins
+                  // was computed above in activeHref. See the comment
+                  // block on that computation for rationale.
+                  const active = item.href === activeHref;
                   const Icon = item.icon;
                   const content = (
                     <Link

@@ -582,13 +582,13 @@ export function RepositoryPolicyPage({
                         </div>
                         <div className="mt-3 grid gap-3 lg:grid-cols-2">
                           <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
                               Before
                             </div>
                             <CodeBlock className="min-h-0">{entry.before ?? "Not set"}</CodeBlock>
                           </div>
                           <div>
-                            <div className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+                            <div className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
                               After
                             </div>
                             <CodeBlock className="min-h-0">{entry.after ?? "Removed"}</CodeBlock>

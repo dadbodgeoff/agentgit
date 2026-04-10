@@ -465,14 +465,14 @@ export function RepositoryConnectionDialog({
 
                 <div className="grid gap-4 md:grid-cols-4">
                   <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Available</div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">Available</div>
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
                       {connectionQuery.data.availableRepositories.length}
                     </div>
                     <div className="text-sm text-[var(--ag-text-secondary)]">Repositories this workspace can claim</div>
                   </Card>
                   <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Selected</div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">Selected</div>
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
                       {selectedRepositoryIds.length}
                     </div>
@@ -481,7 +481,7 @@ export function RepositoryConnectionDialog({
                     </div>
                   </Card>
                   <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">
                       Covered now
                     </div>
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
@@ -492,7 +492,7 @@ export function RepositoryConnectionDialog({
                     </div>
                   </Card>
                   <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Fleet</div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">Fleet</div>
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
                       {connectionQuery.data.totalConnectorCount}
                     </div>

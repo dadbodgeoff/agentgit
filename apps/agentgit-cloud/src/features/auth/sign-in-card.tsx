@@ -166,9 +166,18 @@ export function SignInCard({
         </div>
       ) : null}
 
-      <p className="text-xs text-[var(--ag-text-tertiary)]">
+      {/*
+        Brand Identity v2 §12.2: Tertiary text (#6B7280) only passes
+        WCAG AA for large text (18px+ or 14px bold). This sentence is
+        12px body copy, so use secondary text (#9BA3B0) which passes
+        AA at 6.1:1 on the Slate card background.
+      */}
+      <p className="text-xs text-[var(--ag-text-secondary)]">
         OAuth callback endpoints are handled under `/api/auth/*`. The legacy callback stub remains available at{" "}
-        <Link className="text-[var(--ag-color-brand)]" href={publicRoutes.signInCallback}>
+        <Link
+          className="text-[var(--ag-color-brand)] underline underline-offset-2 decoration-[var(--ag-color-brand)]/60 hover:decoration-[var(--ag-color-brand)]"
+          href={publicRoutes.signInCallback}
+        >
           {publicRoutes.signInCallback}
         </Link>
         .

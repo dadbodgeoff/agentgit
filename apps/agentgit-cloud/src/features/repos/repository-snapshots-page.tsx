@@ -407,28 +407,28 @@ export function RepositorySnapshotsPage({
             <div className="space-y-4">
               <div className="space-y-3 text-sm">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Workflow</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Workflow</div>
                   <div className="mt-1 font-medium">{selectedSnapshot.workflowName}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Action</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Action</div>
                   <div className="mt-1 font-medium">{selectedSnapshot.actionSummary}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Target</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Target</div>
                   <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">
                     {selectedSnapshot.targetLocator}
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Captured</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Captured</div>
                   <div className="mt-1 font-medium">
                     {formatAbsoluteDate(selectedSnapshot.createdAt)} ·{" "}
                     {formatRelativeTimestamp(selectedSnapshot.createdAt)}
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Scope</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Scope</div>
                   <div className="mt-1 space-y-1">
                     {selectedSnapshot.scopePaths.map((scopePath) => (
                       <div className="font-mono text-xs text-[var(--ag-text-secondary)]" key={scopePath}>
@@ -438,7 +438,7 @@ export function RepositorySnapshotsPage({
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Linked run</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Linked run</div>
                   <Link
                     className="mt-1 inline-flex text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
                     href={runDetailRoute(owner, name, selectedSnapshot.runId)}
@@ -454,7 +454,7 @@ export function RepositorySnapshotsPage({
                   <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
                     {selectedSnapshot.latestRecovery.outcome} via {selectedSnapshot.latestRecovery.strategy}
                   </div>
-                  <div className="mt-1 text-xs text-[var(--ag-text-tertiary)]">
+                  <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
                     {formatAbsoluteDate(selectedSnapshot.latestRecovery.executedAt)} ·{" "}
                     {selectedSnapshot.latestRecovery.recoveryClass}
                   </div>
@@ -482,7 +482,7 @@ export function RepositorySnapshotsPage({
                     </span>
                   </div>
                   {selectedSnapshot.latestRestoreCommandUpdatedAt ? (
-                    <div className="mt-1 text-xs text-[var(--ag-text-tertiary)]">
+                    <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
                       {formatAbsoluteDate(selectedSnapshot.latestRestoreCommandUpdatedAt)} ·{" "}
                       {formatRelativeTimestamp(selectedSnapshot.latestRestoreCommandUpdatedAt)}
                     </div>
@@ -586,13 +586,13 @@ export function RepositorySnapshotsPage({
                   <div className="text-sm text-[var(--ag-text-secondary)]">{activePreview.plan.strategy}</div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                         Confidence
                       </div>
                       <div className="mt-1 font-medium">{formatConfidence(activePreview.plan.confidence)}</div>
                     </div>
                     <div>
-                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                         Paths to change
                       </div>
                       <div className="mt-1 font-medium">
@@ -600,7 +600,7 @@ export function RepositorySnapshotsPage({
                       </div>
                     </div>
                     <div>
-                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                         Later actions affected
                       </div>
                       <div className="mt-1 font-medium">
@@ -608,7 +608,7 @@ export function RepositorySnapshotsPage({
                       </div>
                     </div>
                     <div>
-                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                         Data loss risk
                       </div>
                       <div className="mt-1 font-medium capitalize">
@@ -618,7 +618,7 @@ export function RepositorySnapshotsPage({
                   </div>
                   {activePreview.plan.warnings.length > 0 ? (
                     <div className="space-y-2">
-                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Warnings</div>
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Warnings</div>
                       {activePreview.plan.warnings.map((warning) => (
                         <div
                           className="text-sm text-[var(--ag-status-warning)]"

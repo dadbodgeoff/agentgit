@@ -154,12 +154,12 @@ export function ActionDetailPage({
 
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
         <Card>
-          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Confidence</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Confidence</div>
           <div className="mt-2 text-2xl font-semibold">{formatConfidence(action.normalizedAction.confidenceScore)}</div>
           <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">{action.normalizedAction.confidenceBand}</div>
         </Card>
         <Card>
-          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Policy decision</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Policy decision</div>
           <div className="mt-2">
             <Badge tone={decisionTone(action.policyOutcome.decision)}>
               {action.policyOutcome.decision ?? "unknown"}
@@ -170,14 +170,14 @@ export function ActionDetailPage({
           </div>
         </Card>
         <Card>
-          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Execution</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Execution</div>
           <div className="mt-2">
             <Badge tone={executionTone(action.execution.status)}>{action.execution.status}</Badge>
           </div>
           <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">{action.execution.stepType}</div>
         </Card>
         <Card>
-          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Impact</div>
+          <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Impact</div>
           <div className="mt-2 text-2xl font-semibold">{formatNumber(action.execution.laterActionsAffected)}</div>
           <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">later actions affected</div>
         </Card>
@@ -203,7 +203,7 @@ export function ActionDetailPage({
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
-              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Action</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Action</div>
               <div className="text-sm font-medium">
                 {action.normalizedAction.domain} / {action.normalizedAction.kind}
               </div>
@@ -218,7 +218,7 @@ export function ActionDetailPage({
               </div>
             </div>
             <div className="space-y-2 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
-              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Timing</div>
+              <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Timing</div>
               <div className="text-sm text-[var(--ag-text-secondary)]">
                 Occurred {formatRelativeTimestamp(action.occurredAt)}
               </div>
@@ -236,7 +236,7 @@ export function ActionDetailPage({
             </h3>
             <div className="grid gap-3 md:grid-cols-2">
               <Card className="space-y-2">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Budget</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Budget</div>
                 <div className="text-sm font-medium">{action.policyOutcome.budgetCheck}</div>
                 <div className="text-sm text-[var(--ag-text-secondary)]">
                   {action.policyOutcome.approvalRequired
@@ -245,7 +245,7 @@ export function ActionDetailPage({
                 </div>
               </Card>
               <Card className="space-y-2">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Matched rules</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Matched rules</div>
                 <div className="text-sm font-medium">{action.policyOutcome.matchedRules.length}</div>
                 <div className="text-sm text-[var(--ag-text-secondary)]">
                   {action.policyOutcome.matchedRules.length > 0
@@ -263,7 +263,7 @@ export function ActionDetailPage({
                       className="rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] px-3 py-2"
                       key={`${reason.code}:${reason.message}`}
                     >
-                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                         {reason.severity}
                       </div>
                       <div className="text-sm font-medium">{reason.code}</div>
@@ -342,7 +342,7 @@ export function ActionDetailPage({
                 </div>
                 {action.approvalContext.primaryReason ? (
                   <div className="rounded-[var(--ag-radius-sm)] border border-[var(--ag-border-subtle)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                       Primary reason
                     </div>
                     <div className="text-sm font-medium">{action.approvalContext.primaryReason.code}</div>
@@ -376,7 +376,7 @@ export function ActionDetailPage({
             </div>
             {action.execution.artifactLabels.length > 0 ? (
               <div className="space-y-2">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Artifacts</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Artifacts</div>
                 <div className="flex flex-wrap gap-2">
                   {action.execution.artifactLabels.map((label) => (
                     <Badge key={label} tone="neutral">
@@ -443,7 +443,7 @@ export function ActionDetailPage({
                     </div>
                     <div className="text-sm text-[var(--ag-text-secondary)]">{event.summary}</div>
                   </div>
-                  <div className="text-xs text-[var(--ag-text-tertiary)]">
+                  <div className="text-xs text-[var(--ag-text-secondary)]">
                     {formatRelativeTimestamp(event.occurredAt)}
                   </div>
                 </div>

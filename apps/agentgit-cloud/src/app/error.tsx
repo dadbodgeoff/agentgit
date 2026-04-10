@@ -27,7 +27,7 @@ export default function RootError({ error, reset }: { error: Error & { digest?: 
         <main className="mx-auto flex min-h-screen max-w-3xl items-center px-6 py-12">
           <Card className="w-full space-y-4">
             <div className="space-y-2">
-              <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+              <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                 Application error
               </p>
               <h1 className="text-3xl font-semibold">The app shell hit an unexpected error.</h1>
@@ -39,7 +39,7 @@ export default function RootError({ error, reset }: { error: Error & { digest?: 
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
               {error.message || "Unknown application error"}
             </div>
-            {error.digest ? <div className="text-xs text-[var(--ag-text-tertiary)]">Digest: {error.digest}</div> : null}
+            {error.digest ? <div className="text-xs text-[var(--ag-text-secondary)]">Digest: {error.digest}</div> : null}
             <Button onClick={reset}>Try again</Button>
           </Card>
         </main>

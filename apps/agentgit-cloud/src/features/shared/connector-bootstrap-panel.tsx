@@ -63,7 +63,7 @@ export function ConnectorBootstrapPanel({
     <div className="space-y-3 rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-page)] px-4 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
-          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">
             Connector bootstrap command
           </div>
           <div className="text-sm text-[var(--ag-text-secondary)]">
@@ -88,13 +88,13 @@ export function ConnectorBootstrapPanel({
 
       <div className="grid gap-3 text-sm text-[var(--ag-text-secondary)] sm:grid-cols-2">
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-3">
-          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
             Workspace
           </div>
           <div className="mt-1 text-[var(--ag-text-primary)]">{bootstrapDetails.workspaceSlug}</div>
         </div>
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-3">
-          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-tertiary)]">
+          <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--ag-text-secondary)]">
             Expires
           </div>
           <div className="mt-1 text-[var(--ag-text-primary)]">

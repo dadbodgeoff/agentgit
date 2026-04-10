@@ -210,7 +210,7 @@ export function RunDetailPage({
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Run status</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Run status</div>
                 <div className="mt-2 flex items-center gap-2">
                   <Badge tone={badgeToneForStatus(run.status)}>{run.status}</Badge>
                   <Badge tone="neutral">{run.projectionStatus}</Badge>
@@ -218,7 +218,7 @@ export function RunDetailPage({
                 <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">{run.summary}</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                   Operator signals
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -325,7 +325,7 @@ export function RunDetailPage({
                     Jump to first issue
                   </a>
                 ) : null}
-                <span className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                <span className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                   {run.projectionStatus}
                 </span>
               </div>
@@ -412,25 +412,25 @@ export function RunDetailPage({
             </div>
             <div className="space-y-4 text-sm">
               <div>
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Workflow</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Workflow</div>
                 <div className="mt-1 font-medium">{run.workflowName}</div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Agent runtime</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Agent runtime</div>
                 <div className="mt-1 font-medium">
                   {run.agentFramework} / {run.agentName}
                 </div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Completed at</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Completed at</div>
                 <div className="mt-1 font-medium">{formatAbsoluteDate(run.endedAt)}</div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Summary</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Summary</div>
                 <div className="mt-1 text-[var(--ag-text-secondary)]">{run.summary}</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                   Attention queue
                 </div>
                 <div className="mt-3 space-y-3">
@@ -455,7 +455,7 @@ export function RunDetailPage({
                 </div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                   Workspace roots
                 </div>
                 <div className="mt-1 space-y-1">

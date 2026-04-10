@@ -228,7 +228,7 @@ export function ActivityPage() {
                       </div>
                       <div className="text-sm text-[var(--ag-text-secondary)]">{item.message}</div>
                     </div>
-                    <div className="text-xs text-[var(--ag-text-tertiary)]">
+                    <div className="text-xs text-[var(--ag-text-secondary)]">
                       {formatRelativeTimestamp(item.createdAt)}
                     </div>
                   </div>

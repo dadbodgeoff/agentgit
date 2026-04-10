@@ -191,7 +191,7 @@ export function ConnectorInstallGuide({
 
       {summary.uncoveredRepositories.length > 0 ? (
         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-page)] px-4 py-3">
-          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Install target</div>
+          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">Install target</div>
           <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
             Run the bootstrap command on the exact machine that has the repository checkout and local AgentGit daemon
             state for:
@@ -208,7 +208,7 @@ export function ConnectorInstallGuide({
 
       {summary.connectedRepositories.length > 0 ? (
         <div className="space-y-2">
-          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
+          <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-secondary)]">
             Selected repositories
           </div>
           <div className="flex flex-wrap gap-2">

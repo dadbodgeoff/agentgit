@@ -9,8 +9,21 @@
   --color-accent: var(--ag-color-accent);
   --color-accent-hover: var(--ag-color-accent-hover);
 
-  /* Surfaces */
-  --color-base: var(--ag-bg-base);
+  /* Surfaces.
+   *
+   * IMPORTANT: do NOT define `--color-base` here. Tailwind v4 would
+   * generate a `.text-base` utility whose `color: var(--color-base)`
+   * rule wins over the built-in font-size `.text-base` utility, and
+   * every existing `text-base` font-size usage in the codebase ends
+   * up rendered as dark void text on dark backgrounds. The surface
+   * `#0b0f14` is already reachable via `bg-[var(--ag-bg-base)]` or
+   * `.ag-page-shell`; consumers that need a utility can use
+   * `bg-elevated` (Charcoal) or `bg-card` (Slate) instead.
+   *
+   * By the same logic, avoid shadowing any Tailwind v4 reserved
+   * typography name (base, xs, sm, lg, xl, 2xl, ...) with a
+   * `--color-*` token.
+   */
   --color-elevated: var(--ag-bg-elevated);
   --color-card: var(--ag-bg-card);
   --color-card-hover: var(--ag-bg-card-hover);
@@ -162,23 +175,34 @@ body {
   text-rendering: optimizelegibility;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
+/*
+ * Element defaults go in @layer base so Tailwind utilities and component
+ * classes can still win the cascade. Without the layer, a root-level
+ * `a { color: inherit }` rule wins over arbitrary-value utilities like
+ * `text-[#0b0f14]`, which is the bug axe flagged as color-contrast on
+ * the marketing "Sign in with GitHub" button — the declared dark text
+ * was being overridden by inherited Fog, producing ~3.3:1 contrast on
+ * the brand teal background instead of the intended 8.2:1.
+ */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 
-code,
-pre,
-kbd,
-samp {
-  font-family: var(--ag-font-mono);
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--ag-font-mono);
+  }
 }
 
 table,

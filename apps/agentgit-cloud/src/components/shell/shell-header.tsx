@@ -14,6 +14,11 @@ function deriveBreadcrumbs(pathname: string): Array<{ href: string; label: strin
     return [{ href: authenticatedRoutes.dashboard, label: "Dashboard" }];
   }
 
+  // /app/repos itself (no owner/name) — fall into the repo list label.
+  if (pathname === authenticatedRoutes.repositories) {
+    return [{ href: authenticatedRoutes.repositories, label: "Repositories" }];
+  }
+
   if (pathname.startsWith("/app/repos/")) {
     const segments = pathname.split("/");
     const owner = segments[3];
