@@ -136,7 +136,7 @@ export default function PricingPage() {
       >
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-[28px] border border-[var(--ag-border-subtle)] bg-[color:rgb(255_255_255_/_0.02)] p-6">
-            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-brand)]">
+            <div className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--ag-color-brand)]">
               During beta
             </div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
@@ -147,8 +147,14 @@ export default function PricingPage() {
               <p>No fake invoices. No pretend card portal. No surprise billing behavior that operators cannot trust.</p>
             </div>
           </div>
-          <div className="rounded-[28px] border border-[color:rgb(232_255_89_/_0.2)] bg-[color:rgb(232_255_89_/_0.05)] p-6">
-            <div className="font-mono text-xs uppercase tracking-[0.18em] text-[var(--ag-color-accent)]">
+          {/*
+            Brand Identity v2 §5.1 / §14: Signal Lime is reserved for
+            agent-initiated actions only. "When Stripe is enabled" describes
+            the connected/live billing state, which maps to spec §7.2
+            success semantics ("connected"). Use --ag-color-success here.
+          */}
+          <div className="rounded-[28px] border border-[color:rgb(16_185_129_/_0.22)] bg-[color:rgb(16_185_129_/_0.06)] p-6">
+            <div className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--ag-color-success)]">
               When Stripe is enabled
             </div>
             <div className="mt-3 space-y-3 text-base leading-7 text-[var(--ag-text-secondary)]">
