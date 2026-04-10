@@ -212,11 +212,15 @@ async function copyRegularFileNoFollow(sourcePath: string, destinationPath: stri
     }
   } catch (error) {
     if (isLowDiskPressureError(error)) {
-      throw storageUnavailableError("Workspace index could not copy a snapshot file because storage was unavailable.", error, {
-        source_path: sourcePath,
-        destination_path: destinationPath,
-        ...details,
-      });
+      throw storageUnavailableError(
+        "Workspace index could not copy a snapshot file because storage was unavailable.",
+        error,
+        {
+          source_path: sourcePath,
+          destination_path: destinationPath,
+          ...details,
+        },
+      );
     }
 
     throw error;
@@ -371,7 +375,11 @@ async function measurePathBytes(targetPath: string): Promise<number> {
   return 0;
 }
 
-function resolveWorkspaceRelativePath(workspaceRoot: string, inputPath: string, details?: Record<string, unknown>): string {
+function resolveWorkspaceRelativePath(
+  workspaceRoot: string,
+  inputPath: string,
+  details?: Record<string, unknown>,
+): string {
   const resolvedRoot = path.resolve(workspaceRoot);
   const resolvedPath = path.resolve(resolvedRoot, inputPath);
   if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {

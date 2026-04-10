@@ -380,7 +380,9 @@ function summarizeHostedJobEventValue(value: unknown, depth = 0): unknown {
   }
 
   if (Array.isArray(value)) {
-    const items = value.slice(0, HOSTED_JOB_EVENT_MAX_ARRAY_ITEMS).map((entry) => summarizeHostedJobEventValue(entry, depth + 1));
+    const items = value
+      .slice(0, HOSTED_JOB_EVENT_MAX_ARRAY_ITEMS)
+      .map((entry) => summarizeHostedJobEventValue(entry, depth + 1));
     if (value.length <= HOSTED_JOB_EVENT_MAX_ARRAY_ITEMS) {
       return items;
     }

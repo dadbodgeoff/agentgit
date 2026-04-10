@@ -33,7 +33,8 @@ function parseGitHubRepositoryResponse(value: unknown): GitHubRepositoryResponse
   }
 
   const record = value as Record<string, unknown>;
-  const ownerRecord = record.owner && typeof record.owner === "object" ? (record.owner as Record<string, unknown>) : null;
+  const ownerRecord =
+    record.owner && typeof record.owner === "object" ? (record.owner as Record<string, unknown>) : null;
 
   return {
     id: typeof record.id === "number" ? record.id : undefined,

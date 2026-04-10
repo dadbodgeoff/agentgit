@@ -53,6 +53,11 @@ export default [
     plugins: {
       "@next/next": nextPlugin,
     },
+    settings: {
+      next: {
+        rootDir: ["apps/agentgit-cloud/"],
+      },
+    },
     rules: {
       ...nextPlugin.configs.recommended.rules,
       ...nextPlugin.configs["core-web-vitals"].rules,
@@ -64,7 +69,8 @@ export default [
       "no-restricted-syntax": [
         "error",
         {
-          selector: "CallExpression[callee.type='MemberExpression'][callee.object.name='request'][callee.property.name='json']",
+          selector:
+            "CallExpression[callee.type='MemberExpression'][callee.object.name='request'][callee.property.name='json']",
           message: "Use readJsonBody(request) in API routes instead of calling request.json() directly.",
         },
       ],

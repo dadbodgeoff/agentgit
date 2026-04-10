@@ -94,8 +94,7 @@ function externalUrlForCommand(_command: { result?: Record<string, unknown> | nu
 
 function csvCell(value: string | null | undefined) {
   const normalized = value ?? "";
-  const formulaEscaped =
-    normalized.length > 0 && /^[=+\-@\t\r]/.test(normalized) ? `'${normalized}` : normalized;
+  const formulaEscaped = normalized.length > 0 && /^[=+\-@\t\r]/.test(normalized) ? `'${normalized}` : normalized;
   return `"${formulaEscaped.replaceAll('"', '""')}"`;
 }
 

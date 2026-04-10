@@ -102,7 +102,8 @@ export function RunDetailPage({
   }, [replayErrorToast]);
 
   useEffect(() => {
-    const nextVisibleCount = runQuery.data?.steps.length && runQuery.data.steps.length > 100 ? 50 : runQuery.data?.steps.length ?? 50;
+    const nextVisibleCount =
+      runQuery.data?.steps.length && runQuery.data.steps.length > 100 ? 50 : (runQuery.data?.steps.length ?? 50);
     setVisibleStepCount(nextVisibleCount);
   }, [runId, runQuery.data?.steps.length]);
 
@@ -146,12 +147,10 @@ export function RunDetailPage({
   const visibleSteps = run.steps.slice(0, visibleStepCount);
   const hasMoreSteps = visibleStepCount < run.steps.length;
   const firstInvestigationStep =
-    failedSteps[0] ??
-    blockedSteps[0] ??
-    run.steps.find((step) => step.status === "partial") ??
-    null;
-  const firstInvestigationHref =
-    firstInvestigationStep?.actionId ? actionDetailRoute(owner, name, runId, firstInvestigationStep.actionId) : null;
+    failedSteps[0] ?? blockedSteps[0] ?? run.steps.find((step) => step.status === "partial") ?? null;
+  const firstInvestigationHref = firstInvestigationStep?.actionId
+    ? actionDetailRoute(owner, name, runId, firstInvestigationStep.actionId)
+    : null;
   const replayPreview = replayQuery.data;
   const liveLabel =
     liveUpdateStatus.state === "connected"
@@ -276,7 +275,8 @@ export function RunDetailPage({
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)] px-4 py-3">
                     <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Approval or delivery gate</div>
                     <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
-                      {blockedSteps.length} step{blockedSteps.length === 1 ? "" : "s"} are blocked or waiting for approval delivery.
+                      {blockedSteps.length} step{blockedSteps.length === 1 ? "" : "s"} are blocked or waiting for
+                      approval delivery.
                     </div>
                     <Link
                       className="mt-3 inline-flex text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
@@ -290,7 +290,8 @@ export function RunDetailPage({
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)] px-4 py-3">
                     <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Run still in progress</div>
                     <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
-                      The timeline is still changing. Keep this page open to follow live invalidations and the active step.
+                      The timeline is still changing. Keep this page open to follow live invalidations and the active
+                      step.
                     </div>
                   </div>
                 ) : null}
@@ -298,7 +299,8 @@ export function RunDetailPage({
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
                     <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Large run handling</div>
                     <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
-                      This run has {run.steps.length} timeline steps. The page starts with the first 50 so failure follow-up stays usable.
+                      This run has {run.steps.length} timeline steps. The page starts with the first 50 so failure
+                      follow-up stays usable.
                     </div>
                   </div>
                 ) : null}
@@ -391,7 +393,10 @@ export function RunDetailPage({
                 <p className="text-sm text-[var(--ag-text-secondary)]">
                   Load the next 50 steps for deeper investigation without losing your current place.
                 </p>
-                <Button onClick={() => setVisibleStepCount((current) => Math.min(current + 50, run.steps.length))} variant="secondary">
+                <Button
+                  onClick={() => setVisibleStepCount((current) => Math.min(current + 50, run.steps.length))}
+                  variant="secondary"
+                >
                   Load more
                 </Button>
               </div>

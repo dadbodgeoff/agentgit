@@ -325,10 +325,7 @@ export async function enforceConnectorBootstrapTokenRateLimits(
     windowMs: 60_000,
   });
   if (!workspaceDecision.allowed) {
-    return buildRateLimitResponse(
-      workspaceDecision,
-      "Workspace bootstrap token quota exceeded. Retry in a minute.",
-    );
+    return buildRateLimitResponse(workspaceDecision, "Workspace bootstrap token quota exceeded. Retry in a minute.");
   }
 
   return null;

@@ -38,9 +38,6 @@ export function TableCell({ className, ...props }: HTMLAttributes<HTMLTableCellE
 
 export function TableHeaderCell({ className, ...props }: HTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th
-      className={cn("px-4 py-3 text-left ag-text-overline text-[var(--ag-text-secondary)]", className)}
-      {...props}
-    />
+    <th className={cn("px-4 py-3 text-left ag-text-overline text-[var(--ag-text-secondary)]", className)} {...props} />
   );
 }

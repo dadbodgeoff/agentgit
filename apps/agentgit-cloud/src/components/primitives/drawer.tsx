@@ -68,7 +68,9 @@ export function Drawer({
             <X aria-hidden="true" className="size-4" strokeWidth={1.75} />
           </Button>
         </div>
-        {actions ? <div className="flex items-center gap-2 border-b border-[var(--ag-border-subtle)] py-4">{actions}</div> : null}
+        {actions ? (
+          <div className="flex items-center gap-2 border-b border-[var(--ag-border-subtle)] py-4">{actions}</div>
+        ) : null}
         <div className="pt-4">{children}</div>
       </aside>
     </div>

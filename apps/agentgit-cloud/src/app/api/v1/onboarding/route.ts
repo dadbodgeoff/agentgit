@@ -108,7 +108,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  if (await isWorkspaceSlugOwnedByAnotherWorkspace(payload.data.workspaceSlug, access.workspaceSession.activeWorkspace.id)) {
+  if (
+    await isWorkspaceSlugOwnedByAnotherWorkspace(payload.data.workspaceSlug, access.workspaceSession.activeWorkspace.id)
+  ) {
     return jsonWithRequestId({ message: "Workspace slug is already in use." }, { status: 409 }, requestId);
   }
 

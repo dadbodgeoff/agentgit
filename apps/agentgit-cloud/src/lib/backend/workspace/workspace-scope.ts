@@ -12,7 +12,10 @@ function normalizeWorkspaceSlug(slug: string): string {
   return slug.trim().toLowerCase();
 }
 
-export async function isWorkspaceSlugOwnedByAnotherWorkspace(workspaceSlug: string, workspaceId: string): Promise<boolean> {
+export async function isWorkspaceSlugOwnedByAnotherWorkspace(
+  workspaceSlug: string,
+  workspaceId: string,
+): Promise<boolean> {
   const normalizedSlug = normalizeWorkspaceSlug(workspaceSlug);
   const [matchingState, matchingSettings] = await Promise.all([
     findWorkspaceConnectionStateBySlug(normalizedSlug),

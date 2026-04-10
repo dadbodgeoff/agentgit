@@ -70,14 +70,20 @@ export function ShellSidebar({
               size="sm"
               variant="ghost"
             >
-              {collapsed ? <ChevronRight className="size-4" strokeWidth={1.75} /> : <ChevronLeft className="size-4" strokeWidth={1.75} />}
+              {collapsed ? (
+                <ChevronRight className="size-4" strokeWidth={1.75} />
+              ) : (
+                <ChevronLeft className="size-4" strokeWidth={1.75} />
+              )}
             </Button>
           </div>
 
           <nav className="flex-1 space-y-4">
             {Object.entries(groupedItems).map(([section, items]) => (
               <div className="space-y-1" key={section}>
-                {!collapsed ? <div className="px-3 ag-text-overline text-[var(--ag-text-tertiary)]">{section}</div> : null}
+                {!collapsed ? (
+                  <div className="px-3 ag-text-overline text-[var(--ag-text-tertiary)]">{section}</div>
+                ) : null}
                 {items.map((item) => {
                   const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                   const Icon = item.icon;
@@ -137,7 +143,9 @@ export function ShellSidebar({
                     <div className="truncate ag-text-body-sm font-semibold text-[var(--ag-text-primary)]">
                       {activeWorkspace.name}
                     </div>
-                    <div className="ag-text-caption capitalize text-[var(--ag-text-secondary)]">{activeWorkspace.role}</div>
+                    <div className="ag-text-caption capitalize text-[var(--ag-text-secondary)]">
+                      {activeWorkspace.role}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -159,12 +167,19 @@ export function ShellSidebar({
 
       {mobileOpen ? (
         <div className="fixed inset-0 z-[var(--ag-z-modal-backdrop)] sm:hidden">
-          <button aria-label="Close navigation" className="absolute inset-0 bg-black/50" onClick={onCloseMobile} type="button" />
+          <button
+            aria-label="Close navigation"
+            className="absolute inset-0 bg-black/50"
+            onClick={onCloseMobile}
+            type="button"
+          />
           <div className="absolute inset-y-0 left-0 w-[min(88vw,320px)] bg-[var(--ag-surface-raised)] p-4 shadow-[var(--ag-shadow-xl)]">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <div className="ag-text-overline text-[var(--ag-text-tertiary)]">Workspace</div>
-                <div className="ag-text-body-sm font-semibold text-[var(--ag-text-primary)]">{activeWorkspace.name}</div>
+                <div className="ag-text-body-sm font-semibold text-[var(--ag-text-primary)]">
+                  {activeWorkspace.name}
+                </div>
               </div>
               <Button onClick={onCloseMobile} size="sm" variant="ghost">
                 <ChevronLeft className="size-4" strokeWidth={1.75} />

@@ -33,7 +33,8 @@ function parseHostRule(input: string): HostRule {
   const port = parts[1] ? Number(parts[1]) : undefined;
   if (
     host.length === 0 ||
-    (!net.isIP(host) && (!/^[a-z0-9.-]+$/.test(host) || host.startsWith(".") || host.endsWith(".") || !host.includes(".")))
+    (!net.isIP(host) &&
+      (!/^[a-z0-9.-]+$/.test(host) || host.startsWith(".") || host.endsWith(".") || !host.includes(".")))
   ) {
     throw new AgentGitError("Contained egress host entry is malformed.", "BAD_REQUEST", {
       value: input,

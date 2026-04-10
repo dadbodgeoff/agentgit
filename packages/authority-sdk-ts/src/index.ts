@@ -1127,17 +1127,19 @@ async function writeAndReadLine(socketPath: string, payload: unknown, transport:
   throw lastError;
 }
 
-function parseDaemonResponse<TPayload>(
-  method: RequestEnvelope<TPayload>["method"],
-  rawResponse: unknown,
-) {
+function parseDaemonResponse<TPayload>(method: RequestEnvelope<TPayload>["method"], rawResponse: unknown) {
   try {
     return parseDaemonResponseEnvelope(method, rawResponse);
   } catch (error) {
-    throw new AuthorityClientTransportError("Daemon returned an invalid response envelope.", "INVALID_RESPONSE", false, {
-      cause: error instanceof Error ? error.message : String(error),
-      method,
-    });
+    throw new AuthorityClientTransportError(
+      "Daemon returned an invalid response envelope.",
+      "INVALID_RESPONSE",
+      false,
+      {
+        cause: error instanceof Error ? error.message : String(error),
+        method,
+      },
+    );
   }
 }
 

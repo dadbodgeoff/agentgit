@@ -37,7 +37,9 @@ describe("billing stripe checkout route", () => {
     });
 
     const { POST } = await import("./route");
-    const response = await POST(new Request("http://localhost/api/v1/settings/billing/stripe/checkout", { method: "POST" }));
+    const response = await POST(
+      new Request("http://localhost/api/v1/settings/billing/stripe/checkout", { method: "POST" }),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -58,7 +60,9 @@ describe("billing stripe checkout route", () => {
     );
 
     const { POST } = await import("./route");
-    const response = await POST(new Request("http://localhost/api/v1/settings/billing/stripe/checkout", { method: "POST" }));
+    const response = await POST(
+      new Request("http://localhost/api/v1/settings/billing/stripe/checkout", { method: "POST" }),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(503);

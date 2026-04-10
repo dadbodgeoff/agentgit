@@ -1,8 +1,5 @@
 import { requireApiRole } from "@/lib/auth/api-session";
-import {
-  CONNECTOR_BOOTSTRAP_TOKEN_HEADER,
-  issueConnectorBootstrapToken,
-} from "@/lib/backend/control-plane/connectors";
+import { CONNECTOR_BOOTSTRAP_TOKEN_HEADER, issueConnectorBootstrapToken } from "@/lib/backend/control-plane/connectors";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { enforceConnectorBootstrapTokenRateLimits } from "@/lib/security/rate-limit";
 
@@ -15,7 +12,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const rateLimited = await enforceConnectorBootstrapTokenRateLimits(request, access.workspaceSession.activeWorkspace.id);
+    const rateLimited = await enforceConnectorBootstrapTokenRateLimits(
+      request,
+      access.workspaceSession.activeWorkspace.id,
+    );
     if (rateLimited) {
       return rateLimited;
     }

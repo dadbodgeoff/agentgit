@@ -425,8 +425,8 @@ export function RepositoryConnectionDialog({
                   ) : null}
                 </div>
                 <p className="text-sm text-[var(--ag-text-secondary)]">
-                  Connect real repository scope for this workspace, choose the launch defaults that govern it, and
-                  bring the connector online before you expect approvals, run detail, snapshots, and writeback to sync.
+                  Connect real repository scope for this workspace, choose the launch defaults that govern it, and bring
+                  the connector online before you expect approvals, run detail, snapshots, and writeback to sync.
                 </p>
               </div>
               <Button onClick={closeDialog} variant="ghost">
@@ -465,22 +465,20 @@ export function RepositoryConnectionDialog({
 
                 <div className="grid gap-4 md:grid-cols-4">
                   <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
-                      Available
-                    </div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Available</div>
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
                       {connectionQuery.data.availableRepositories.length}
                     </div>
                     <div className="text-sm text-[var(--ag-text-secondary)]">Repositories this workspace can claim</div>
                   </Card>
                   <Card className="space-y-1">
-                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
-                      Selected
-                    </div>
+                    <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Selected</div>
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
                       {selectedRepositoryIds.length}
                     </div>
-                    <div className="text-sm text-[var(--ag-text-secondary)]">Repositories that will appear in cloud</div>
+                    <div className="text-sm text-[var(--ag-text-secondary)]">
+                      Repositories that will appear in cloud
+                    </div>
                   </Card>
                   <Card className="space-y-1">
                     <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">
@@ -489,7 +487,9 @@ export function RepositoryConnectionDialog({
                     <div className="text-2xl font-semibold text-[var(--ag-text-primary)]">
                       {selectedRepositories.length - uncoveredSelectedRepositories.length}
                     </div>
-                    <div className="text-sm text-[var(--ag-text-secondary)]">Selected repos with an active connector</div>
+                    <div className="text-sm text-[var(--ag-text-secondary)]">
+                      Selected repos with an active connector
+                    </div>
                   </Card>
                   <Card className="space-y-1">
                     <div className="text-xs uppercase tracking-[0.18em] text-[var(--ag-text-tertiary)]">Fleet</div>
@@ -497,8 +497,8 @@ export function RepositoryConnectionDialog({
                       {connectionQuery.data.totalConnectorCount}
                     </div>
                     <div className="text-sm text-[var(--ag-text-secondary)]">
-                      {connectionQuery.data.activeConnectorCount} active, {connectionQuery.data.staleConnectorCount} stale,{" "}
-                      {connectionQuery.data.revokedConnectorCount} revoked
+                      {connectionQuery.data.activeConnectorCount} active, {connectionQuery.data.staleConnectorCount}{" "}
+                      stale, {connectionQuery.data.revokedConnectorCount} revoked
                     </div>
                   </Card>
                 </div>
@@ -562,14 +562,19 @@ export function RepositoryConnectionDialog({
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.85fr)]">
                     <Card className="space-y-5">
                       <div className="space-y-1">
-                        <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">Configure launch defaults</h3>
+                        <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">
+                          Configure launch defaults
+                        </h3>
                         <p className="text-sm text-[var(--ag-text-secondary)]">
                           These defaults apply to the repository scope you are connecting now so the first governed loop
                           is coherent from policy, notification, and connector-readiness perspectives.
                         </p>
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-semibold text-[var(--ag-text-primary)]" htmlFor="repo-connect-notifications">
+                        <label
+                          className="text-sm font-semibold text-[var(--ag-text-primary)]"
+                          htmlFor="repo-connect-notifications"
+                        >
                           Notification channel
                         </label>
                         <select
@@ -645,9 +650,13 @@ export function RepositoryConnectionDialog({
                         </div>
                         {selectedNeedsOrgApproval > 0 ? (
                           <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)] px-4 py-3">
-                            <div className="font-semibold text-[var(--ag-text-primary)]">Org approval still required</div>
+                            <div className="font-semibold text-[var(--ag-text-primary)]">
+                              Org approval still required
+                            </div>
                             <div className="mt-1 text-[var(--ag-text-secondary)]">
-                              {selectedNeedsOrgApproval} selected {selectedNeedsOrgApproval === 1 ? "repository is" : "repositories are"} flagged for org-level approval before governance can begin.
+                              {selectedNeedsOrgApproval} selected{" "}
+                              {selectedNeedsOrgApproval === 1 ? "repository is" : "repositories are"} flagged for
+                              org-level approval before governance can begin.
                             </div>
                           </div>
                         ) : null}
@@ -668,7 +677,9 @@ export function RepositoryConnectionDialog({
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.85fr)]">
                     <Card className="space-y-4">
                       <div className="space-y-1">
-                        <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">Review repository connection</h3>
+                        <h3 className="text-lg font-semibold text-[var(--ag-text-primary)]">
+                          Review repository connection
+                        </h3>
                         <p className="text-sm text-[var(--ag-text-secondary)]">
                           Confirm the repo scope, launch defaults, and connector state before you replace the current
                           workspace connection configuration.
@@ -712,7 +723,8 @@ export function RepositoryConnectionDialog({
                         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
                           <div className="font-semibold text-[var(--ag-text-primary)]">Defaults</div>
                           <div className="mt-1 text-[var(--ag-text-secondary)]">
-                            {formatNotificationLabel(defaultNotificationChannel)} notifications · {policyPack} policy pack
+                            {formatNotificationLabel(defaultNotificationChannel)} notifications · {policyPack} policy
+                            pack
                           </div>
                         </div>
                         <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">

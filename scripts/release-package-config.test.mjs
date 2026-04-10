@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  authorityCliCompatibilityPackages,
-  releaseNpmPackages,
-} from "./release-package-config.mjs";
+import { authorityCliCompatibilityPackages, releaseNpmPackages } from "./release-package-config.mjs";
 
 test("release package config discovers every public package", () => {
   assert.deepEqual(

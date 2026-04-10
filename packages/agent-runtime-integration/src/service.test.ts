@@ -110,6 +110,32 @@ describe("authority session hardening", () => {
   });
 });
 
+describe("workspace secret store bootstrapping", () => {
+  it("bootstraps a runtime-scoped secret store with a file-backed key path", () => {
+    tempDir = makeTempDir();
+    const runtimeRoot = path.join(tempDir, "runtime");
+    const workspaceRoot = path.join(tempDir, "workspace");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    const store = __testables.createWorkspaceSecretStore(workspaceRoot, process.env, runtimeRoot);
+    const details = store.storageDetails();
+
+    expect(details.legacy_key_path).toBe(path.join(runtimeRoot, "mcp", "secret-store.key"));
+    expect(fs.existsSync(details.legacy_key_path ?? "")).toBe(true);
+
+    const result = store.upsertMcpBearerSecret({
+      secret_id: "secret_demo",
+      bearer_token: "token-value",
+      display_name: "Demo token",
+    });
+
+    expect(result.secret.secret_id).toBe("secret_demo");
+    expect(store.getMcpBearerSecret("secret_demo")?.display_name).toBe("Demo token");
+
+    store.close();
+  });
+});
+
 describe("restore presentation helpers", () => {
   it("derives action-boundary restore targets for review-only steps without snapshots", () => {
     const target = __testables.deriveRestoreTargetFromStep({

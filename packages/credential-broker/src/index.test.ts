@@ -93,7 +93,10 @@ describe("SessionCredentialBroker", () => {
       bearer_token: "file-backed-secret",
     });
 
-    const reopened = createTestSecretStore(root, `com.agentgit.tests.credential-broker.file-backed-reopen.${Date.now()}`);
+    const reopened = createTestSecretStore(
+      root,
+      `com.agentgit.tests.credential-broker.file-backed-reopen.${Date.now()}`,
+    );
     expect(reopened.resolveMcpBearerSecret("mcp_secret_file_backed").authorization_header).toBe(
       "Bearer file-backed-secret",
     );

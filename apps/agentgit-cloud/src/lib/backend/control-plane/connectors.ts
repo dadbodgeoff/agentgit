@@ -106,7 +106,10 @@ function parseStoredSyncResponse<T>(raw: string, parser: { parse(input: unknown)
   return parser.parse(JSON.parse(raw) as unknown);
 }
 
-function requireActiveConnectorAccess(store: ControlPlaneStateStore, access: ConnectorAccessContext): ConnectorAccessContext {
+function requireActiveConnectorAccess(
+  store: ControlPlaneStateStore,
+  access: ConnectorAccessContext,
+): ConnectorAccessContext {
   const token = store.getConnectorToken(access.token.tokenHash);
   if (!token) {
     throw new ConnectorAccessError("Connector access token is invalid.", 401);
@@ -472,7 +475,8 @@ function buildAuditEntriesForConnectorEvents(params: {
 
       const approval = parsedApproval.data;
       const resolved = event.type === "approval.resolution" || approval.status !== "pending";
-      const resolutionStatus = approval.status === "approved" ? "success" : approval.status === "denied" ? "failure" : "info";
+      const resolutionStatus =
+        approval.status === "approved" ? "success" : approval.status === "denied" ? "failure" : "info";
       entries.push({
         workspaceId: params.workspaceId,
         id: `event:${event.eventId}`,
@@ -496,7 +500,9 @@ function buildAuditEntriesForConnectorEvents(params: {
         details:
           approval.resolution_note ??
           approval.primary_reason?.message ??
-          (resolved ? "Approval resolution was synchronized into the control plane." : "Approval request entered the cloud review queue."),
+          (resolved
+            ? "Approval resolution was synchronized into the control plane."
+            : "Approval request entered the cloud review queue."),
       });
       continue;
     }
@@ -527,7 +533,8 @@ function buildAuditEntriesForConnectorEvents(params: {
     }
 
     const runId = typeof event.payload.runId === "string" ? event.payload.runId : null;
-    const runEvent = typeof event.payload.event === "object" && event.payload.event !== null ? event.payload.event : null;
+    const runEvent =
+      typeof event.payload.event === "object" && event.payload.event !== null ? event.payload.event : null;
     const eventType =
       typeof (runEvent as { event_type?: unknown } | null)?.event_type === "string"
         ? (runEvent as { event_type: string }).event_type
@@ -550,7 +557,10 @@ function buildAuditEntriesForConnectorEvents(params: {
       actorType: "system",
       category: eventType === "recovery.executed" ? "recovery" : "run",
       action: eventType,
-      target: typeof eventPayload?.workflow_name === "string" ? eventPayload.workflow_name : `${event.repository.owner}/${event.repository.name}`,
+      target:
+        typeof eventPayload?.workflow_name === "string"
+          ? eventPayload.workflow_name
+          : `${event.repository.owner}/${event.repository.name}`,
       outcome: eventType === "recovery.executed" ? "warning" : "failure",
       repo: `${event.repository.owner}/${event.repository.name}`,
       runId,
@@ -600,7 +610,7 @@ export function issueConnectorBootstrapToken(
     `--cloud-url ${cloudBaseUrl}`,
     `--workspace-id ${workspaceSession.activeWorkspace.id}`,
     `--workspace-root ${JSON.stringify(process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS?.split(",")[0] ?? process.cwd())}`,
-    "--bootstrap-token \"$AGENTGIT_BOOTSTRAP_TOKEN\"",
+    '--bootstrap-token "$AGENTGIT_BOOTSTRAP_TOKEN"',
     "&&",
     "agentgit-cloud-connector run",
     `--workspace-root ${JSON.stringify(process.env.AGENTGIT_CLOUD_WORKSPACE_ROOTS?.split(",")[0] ?? process.cwd())}`,
@@ -1347,20 +1357,18 @@ export function queueConnectorCommand(
     }
 
     if (request.type === "resolve_approval") {
-      const duplicateApprovalCommand = store
-        .listCommands(connectorId)
-        .find((candidate) => {
-          if (
-            candidate.command.workspaceId !== workspaceSession.activeWorkspace.id ||
-            candidate.command.type !== "resolve_approval" ||
-            (candidate.status !== "pending" && candidate.status !== "acked" && candidate.status !== "completed")
-          ) {
-            return false;
-          }
+      const duplicateApprovalCommand = store.listCommands(connectorId).find((candidate) => {
+        if (
+          candidate.command.workspaceId !== workspaceSession.activeWorkspace.id ||
+          candidate.command.type !== "resolve_approval" ||
+          (candidate.status !== "pending" && candidate.status !== "acked" && candidate.status !== "completed")
+        ) {
+          return false;
+        }
 
-          const payload = candidate.command.payload as { approvalId?: unknown; resolution?: unknown };
-          return payload.approvalId === request.approvalId && payload.resolution === request.resolution;
-        });
+        const payload = candidate.command.payload as { approvalId?: unknown; resolution?: unknown };
+        return payload.approvalId === request.approvalId && payload.resolution === request.resolution;
+      });
 
       if (duplicateApprovalCommand) {
         throw new ConnectorAccessError("Approval decision is already queued for connector delivery.", 409);

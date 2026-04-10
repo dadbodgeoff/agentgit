@@ -198,7 +198,13 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
   }
 
   private computeDocumentHmac(collection: string, key: string, bodyJson: string): string {
-    return createHmac("sha256", this.integrityKey).update(collection, "utf8").update("\0", "utf8").update(key, "utf8").update("\0", "utf8").update(bodyJson, "utf8").digest("hex");
+    return createHmac("sha256", this.integrityKey)
+      .update(collection, "utf8")
+      .update("\0", "utf8")
+      .update(key, "utf8")
+      .update("\0", "utf8")
+      .update(bodyJson, "utf8")
+      .digest("hex");
   }
 
   private verifyDocumentIntegrity(collection: string, key: string, bodyJson: string, bodyHmac: string): void {
@@ -339,9 +345,7 @@ export class IntegrationState<TCollections extends Record<string, unknown>> {
     try {
       row = this.db
         .prepare("SELECT body_json, body_hmac FROM documents WHERE collection = ? AND key = ?")
-        .get(collection, key) as
-        | { body_json: string; body_hmac: string }
-        | undefined;
+        .get(collection, key) as { body_json: string; body_hmac: string } | undefined;
     } catch (error) {
       throw storageUnavailableError("Integration state document could not be read.", error, {
         collection,

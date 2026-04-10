@@ -6,7 +6,10 @@ import {
   registerConnector,
   registerConnectorWithBootstrapToken,
 } from "@/lib/backend/control-plane/connectors";
-import { buildCloudSyncSchemaVersionErrorMessage, hasExpectedCloudSyncSchemaVersion } from "@/lib/http/cloud-sync-version";
+import {
+  buildCloudSyncSchemaVersionErrorMessage,
+  hasExpectedCloudSyncSchemaVersion,
+} from "@/lib/http/cloud-sync-version";
 import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { enforceConnectorRegistrationRateLimits } from "@/lib/security/rate-limit";

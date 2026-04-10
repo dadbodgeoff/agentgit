@@ -709,7 +709,10 @@ export function ensureGenericGovernedLaunchAssets(workspaceRoot: string): Govern
   const helperSource = buildGovernedRunnerSource();
   writeExecutableFile(metadata.helper_script_path, helperSource);
   for (const command of metadata.shim_commands) {
-    writeExecutableFile(governedShimPath(workspaceRoot, command), buildGovernedShimSource(command, metadata.helper_script_sha256));
+    writeExecutableFile(
+      governedShimPath(workspaceRoot, command),
+      buildGovernedShimSource(command, metadata.helper_script_sha256),
+    );
   }
   return metadata;
 }
@@ -722,7 +725,10 @@ export function ensureOpenClawGovernedLaunchAssets(workspaceRoot: string): Gover
   }
   writeTextFile(path.join(metadata.openclaw_plugin_root, "package.json"), buildOpenClawPluginPackageJson());
   writeTextFile(path.join(metadata.openclaw_plugin_root, "openclaw.plugin.json"), buildOpenClawManifest());
-  writeTextFile(path.join(metadata.openclaw_plugin_root, "index.mjs"), buildOpenClawPluginSource(metadata.helper_script_sha256));
+  writeTextFile(
+    path.join(metadata.openclaw_plugin_root, "index.mjs"),
+    buildOpenClawPluginSource(metadata.helper_script_sha256),
+  );
   writeTextFile(metadata.openclaw_skill_path, buildOpenClawSkillSource());
   return metadata;
 }

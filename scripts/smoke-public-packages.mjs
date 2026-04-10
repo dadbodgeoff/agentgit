@@ -149,11 +149,9 @@ async function main() {
   try {
     await fsp.mkdir(installRoot, { recursive: true });
     await runCommand("npm", ["init", "-y"], { cwd: installRoot });
-    await runCommand(
-      "npm",
-      ["install", "--no-package-lock", ...manifest.packages.map((pkg) => pkg.tarball_path)],
-      { cwd: installRoot },
-    );
+    await runCommand("npm", ["install", "--no-package-lock", ...manifest.packages.map((pkg) => pkg.tarball_path)], {
+      cwd: installRoot,
+    });
 
     const packageChecks = [];
     for (const pkg of manifest.packages) {
@@ -183,9 +181,13 @@ async function main() {
       }
 
       if (shouldImportPackage(packageJson)) {
-        await runCommand(process.execPath, ["--input-type=module", "--eval", `await import(${JSON.stringify(pkg.name)});`], {
-          cwd: installRoot,
-        });
+        await runCommand(
+          process.execPath,
+          ["--input-type=module", "--eval", `await import(${JSON.stringify(pkg.name)});`],
+          {
+            cwd: installRoot,
+          },
+        );
       }
 
       packageChecks.push({

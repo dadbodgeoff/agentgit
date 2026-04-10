@@ -11,6 +11,50 @@ const coverageRoots = ["packages", "apps"];
 
 const thresholdKeys = ["lines", "functions", "statements", "branches"];
 
+function parseArgs(argv) {
+  const parsed = {
+    writeBaseline: false,
+    reason: null,
+    statusDate: new Date().toISOString().slice(0, 10),
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const current = argv[index];
+    if (current === "--") {
+      continue;
+    }
+
+    if (current === "--write-baseline") {
+      parsed.writeBaseline = true;
+      continue;
+    }
+
+    if (current === "--reason") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--reason expects a value.");
+      }
+      parsed.reason = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (current === "--status-date") {
+      const value = argv[index + 1];
+      if (!value || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+        throw new Error("--status-date expects YYYY-MM-DD.");
+      }
+      parsed.statusDate = value;
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`Unknown argument: ${current}`);
+  }
+
+  return parsed;
+}
+
 function extractThresholds(command) {
   const thresholds = {};
   for (const key of thresholdKeys) {
@@ -122,14 +166,28 @@ async function loadMeasuredCoverage() {
   };
 }
 
+function buildBaselineDocument({ statusDate, reason, thresholds, measuredCoverage }) {
+  const baseline = {
+    status_date: statusDate,
+    thresholds,
+    aggregate: Object.fromEntries(thresholdKeys.map((metric) => [metric, measuredCoverage.aggregate[metric].pct])),
+    files: Object.fromEntries(
+      Object.entries(measuredCoverage.files).sort(([left], [right]) => left.localeCompare(right)),
+    ),
+  };
+
+  if (reason && reason.length > 0) {
+    baseline.status_note = reason;
+  }
+
+  return baseline;
+}
+
 async function main() {
-  const [packageJsonRaw, baselineRaw] = await Promise.all([
-    fsp.readFile(packageJsonPath, "utf8"),
-    fsp.readFile(baselinePath, "utf8"),
-  ]);
+  const args = parseArgs(process.argv.slice(2));
+  const packageJsonRaw = await fsp.readFile(packageJsonPath, "utf8");
 
   const packageJson = JSON.parse(packageJsonRaw);
-  const baseline = JSON.parse(baselineRaw);
   const coverageCommand = packageJson?.scripts?.["test:coverage"];
   if (typeof coverageCommand !== "string" || coverageCommand.length === 0) {
     throw new Error("package.json is missing scripts.test:coverage.");
@@ -137,6 +195,37 @@ async function main() {
 
   const current = extractThresholds(coverageCommand);
   const measuredCoverage = await loadMeasuredCoverage();
+
+  if (args.writeBaseline) {
+    const baseline = buildBaselineDocument({
+      statusDate: args.statusDate,
+      reason: args.reason,
+      thresholds: current,
+      measuredCoverage,
+    });
+    await fsp.writeFile(`${baselinePath}.tmp`, `${JSON.stringify(baseline, null, 2)}\n`, "utf8");
+    await fsp.rename(`${baselinePath}.tmp`, baselinePath);
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          ok: true,
+          updated: true,
+          baseline_path: baselinePath,
+          status_date: baseline.status_date,
+          status_note: baseline.status_note ?? null,
+          thresholds: baseline.thresholds,
+          aggregate: baseline.aggregate,
+          files_written: Object.keys(baseline.files),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return;
+  }
+
+  const baselineRaw = await fsp.readFile(baselinePath, "utf8");
+  const baseline = JSON.parse(baselineRaw);
   const violations = [];
 
   for (const key of thresholdKeys) {

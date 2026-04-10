@@ -171,7 +171,9 @@ export function CommandPalette({ onClose, open }: { onClose: () => void; open: b
           )}
         </div>
         <div className="flex items-center justify-between border-t border-[var(--ag-border-subtle)] px-4 py-3">
-          <span className="ag-text-caption text-[var(--ag-text-secondary)]">Press Enter to run. Press Escape to close.</span>
+          <span className="ag-text-caption text-[var(--ag-text-secondary)]">
+            Press Enter to run. Press Escape to close.
+          </span>
           <Button onClick={onClose} size="sm" variant="ghost">
             Close
           </Button>

@@ -4853,7 +4853,8 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       });
       expect(
         inspectSucceededJobResponse.result?.recent_events.every(
-          (event) => event.payload === null || !("execution_result" in event.payload) || event.payload.execution_result === null,
+          (event) =>
+            event.payload === null || !("execution_result" in event.payload) || event.payload.execution_result === null,
         ),
       ).toBe(true);
       expect(
@@ -7310,18 +7311,16 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
   });
 
   it("marks idempotent submit_action_attempt completion failures as unknown and blocks replay", async () => {
-    const completeSpy = vi
-      .spyOn(RunJournal.prototype, "completeIdempotentMutation")
-      .mockImplementationOnce(() => {
-        throw new AgentGitError(
-          "simulated durable completion failure",
-          "STORAGE_UNAVAILABLE",
-          {
-            storage_error_code: "SIMULATED",
-          },
-          false,
-        );
-      });
+    const completeSpy = vi.spyOn(RunJournal.prototype, "completeIdempotentMutation").mockImplementationOnce(() => {
+      throw new AgentGitError(
+        "simulated durable completion failure",
+        "STORAGE_UNAVAILABLE",
+        {
+          storage_error_code: "SIMULATED",
+        },
+        false,
+      );
+    });
 
     const harness = await createHarness();
     const { sessionId, runId } = await createSessionAndRun(harness, "idempotent-completion-failure");

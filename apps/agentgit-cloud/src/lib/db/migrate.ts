@@ -90,7 +90,8 @@ const migrationSteps: MigrationStep[] = [
   $$`,
   (sql) =>
     sql`create unique index if not exists cloud_workspace_invites_workspace_email_idx on cloud_workspace_invites (workspace_id, email)`,
-  (sql) => sql`create index if not exists cloud_workspace_memberships_user_idx on cloud_workspace_memberships (user_id)`,
+  (sql) =>
+    sql`create index if not exists cloud_workspace_memberships_user_idx on cloud_workspace_memberships (user_id)`,
   (sql) => sql`create index if not exists cloud_workspace_invites_email_idx on cloud_workspace_invites (email)`,
   (sql) => sql`create table if not exists cloud_workspace_repositories (
     workspace_id text not null references cloud_workspaces(id) on delete cascade,

@@ -26,7 +26,10 @@ function applyThresholdsToPolicyDocument(
   candidateThresholds: Array<{ actionFamily: string; askBelow: number }>,
 ) {
   const thresholdMap = new Map(
-    (workspaceConfig.thresholds?.low_confidence ?? []).map((threshold) => [threshold.action_family, threshold.ask_below]),
+    (workspaceConfig.thresholds?.low_confidence ?? []).map((threshold) => [
+      threshold.action_family,
+      threshold.ask_below,
+    ]),
   );
 
   for (const threshold of candidateThresholds) {
@@ -87,10 +90,16 @@ export function CalibrationPage({
   );
   const activeRepository = repositories.find((repository) => repository.id === selectedRepoId) ?? null;
   const actionableRecommendations = calibrationQuery.data
-    ? calibrationQuery.data.recommendations.filter((recommendation) => recommendation.currentAskThreshold !== recommendation.recommended)
+    ? calibrationQuery.data.recommendations.filter(
+        (recommendation) => recommendation.currentAskThreshold !== recommendation.recommended,
+      )
     : [];
   const policyQuery = useQuery({
-    queryKey: ["repository-policy-for-calibration", activeRepository?.owner ?? "none", activeRepository?.name ?? "none"],
+    queryKey: [
+      "repository-policy-for-calibration",
+      activeRepository?.owner ?? "none",
+      activeRepository?.name ?? "none",
+    ],
     queryFn: () => getRepositoryPolicy(activeRepository?.owner ?? "", activeRepository?.name ?? ""),
     enabled: previewState === "ready" && Boolean(activeRepository),
   });
@@ -126,7 +135,9 @@ export function CalibrationPage({
 
       void queryClient.invalidateQueries({ queryKey: queryKeys.calibration(selectedRepoId) });
       if (activeRepository) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.repositoryPolicy(activeRepository.owner, activeRepository.name) });
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.repositoryPolicy(activeRepository.owner, activeRepository.name),
+        });
       }
       setToastMessage(result.message);
     },
@@ -358,7 +369,9 @@ export function CalibrationPage({
                 Review the projected approval impact before saving the updated policy thresholds.
               </p>
             </div>
-            {replayMutation.data ? <Badge tone="accent">{replayMutation.data.summary.changedDecisions} changed</Badge> : null}
+            {replayMutation.data ? (
+              <Badge tone="accent">{replayMutation.data.summary.changedDecisions} changed</Badge>
+            ) : null}
           </div>
           {actionableRecommendations.length === 0 ? (
             <PageStatePanel
@@ -376,15 +389,21 @@ export function CalibrationPage({
                   <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.replayableSamples}</div>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Approvals reduced</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                    Approvals reduced
+                  </div>
                   <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.approvalsReduced}</div>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Approvals increased</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                    Approvals increased
+                  </div>
                   <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.approvalsIncreased}</div>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Unsafe auto-allow</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                    Unsafe auto-allow
+                  </div>
                   <div className="mt-1 text-lg font-semibold">
                     {replayMutation.data.summary.historicallyDeniedAutoAllowed}
                   </div>
@@ -404,7 +423,9 @@ export function CalibrationPage({
                       </div>
                     </div>
                     <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
-                      {family.replayableSamples} replayable sample{family.replayableSamples === 1 ? "" : "s"}, {family.changedDecisions} changed decision{family.changedDecisions === 1 ? "" : "s"}, {family.approvalsReduced} approval reduction, {family.approvalsIncreased} approval increase.
+                      {family.replayableSamples} replayable sample{family.replayableSamples === 1 ? "" : "s"},{" "}
+                      {family.changedDecisions} changed decision{family.changedDecisions === 1 ? "" : "s"},{" "}
+                      {family.approvalsReduced} approval reduction, {family.approvalsIncreased} approval increase.
                     </div>
                   </div>
                 ))}
@@ -413,10 +434,17 @@ export function CalibrationPage({
                 <div className="space-y-3">
                   <div className="text-sm font-medium text-[var(--ag-text-primary)]">Generated policy document</div>
                   <pre className="overflow-x-auto rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-xs text-[var(--ag-text-secondary)]">
-                    {applyThresholdsToPolicyDocument(policyQuery.data.workspaceConfig, replayMutation.data.candidateThresholds)}
+                    {applyThresholdsToPolicyDocument(
+                      policyQuery.data.workspaceConfig,
+                      replayMutation.data.candidateThresholds,
+                    )}
                   </pre>
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button disabled={applyMutation.isPending} onClick={() => applyMutation.mutate()} variant="secondary">
+                    <Button
+                      disabled={applyMutation.isPending}
+                      onClick={() => applyMutation.mutate()}
+                      variant="secondary"
+                    >
                       {applyMutation.isPending ? "Applying..." : "Apply recommended thresholds"}
                     </Button>
                     <Link

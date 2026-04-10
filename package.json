@@ -9,8 +9,8 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "test": "turbo run test && node --test scripts/*.test.mjs",
-    "test:coverage": "turbo run test --filter=!@agentgit/schemas --filter=!@agentgit/test-fixtures -- --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=json-summary --coverage.reporter=lcov --coverage.thresholds.lines=50 --coverage.thresholds.functions=50 --coverage.thresholds.statements=50 --coverage.thresholds.branches=40 && pnpm --filter @agentgit/schemas test",
+    "test": "turbo run test --concurrency=1 && node --test scripts/*.test.mjs",
+    "test:coverage": "turbo run test --concurrency=1 --filter=!@agentgit/schemas --filter=!@agentgit/test-fixtures -- --coverage.enabled --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=json-summary --coverage.reporter=lcov --coverage.thresholds.lines=50 --coverage.thresholds.functions=50 --coverage.thresholds.statements=50 --coverage.thresholds.branches=40 && pnpm --filter @agentgit/schemas test",
     "typecheck": "turbo run typecheck",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
@@ -30,6 +30,7 @@
     "security:audit": "pnpm security:audit:node && pnpm security:audit:python",
     "release:verify:claims": "node scripts/verify-release-scope-claims.mjs",
     "release:verify:coverage-ratchet": "node scripts/verify-coverage-ratchet.mjs",
+    "release:refresh-coverage-baseline": "node scripts/verify-coverage-ratchet.mjs --write-baseline",
     "release:pack": "node scripts/pack-release-artifacts.mjs",
     "release:verify:artifacts": "node scripts/verify-release-artifacts.mjs --artifacts-dir .release-artifacts/packed --signature-mode allow-unsigned",
     "smoke:public-packages": "node scripts/smoke-public-packages.mjs --artifacts-dir .release-artifacts/packed",

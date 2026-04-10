@@ -581,9 +581,7 @@ describe("inspector ui", () => {
     });
 
     const app = await listenHttp(createInspectorServer({ authToken: TEST_AUTH_TOKEN, socketPath: daemon.socketPath }));
-    const response = await fetch(
-      authedInspectorUrl(app, "/api/run-view?run_id=run_ui&visibility_scope=internal"),
-    );
+    const response = await fetch(authedInspectorUrl(app, "/api/run-view?run_id=run_ui&visibility_scope=internal"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

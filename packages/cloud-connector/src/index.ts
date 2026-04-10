@@ -450,10 +450,7 @@ export class CloudConnectorStateStore {
 
   getRegistration() {
     const registration = this.store.get("registration", "active");
-    if (
-      registration &&
-      Date.parse(registration.response.expiresAt) <= Date.now()
-    ) {
+    if (registration && Date.parse(registration.response.expiresAt) <= Date.now()) {
       throw new Error("Cloud connector registration is expired. Re-register the connector before syncing again.");
     }
     return registration;

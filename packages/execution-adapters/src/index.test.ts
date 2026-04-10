@@ -2317,7 +2317,9 @@ describe("FilesystemExecutionAdapter", () => {
 
     expect(fs.readFileSync(targetPath, "utf8")).toBe("before text");
     expect(
-      fs.readdirSync(path.dirname(targetPath)).filter((entry) => entry.startsWith("file.txt.") && entry.endsWith(".tmp")),
+      fs
+        .readdirSync(path.dirname(targetPath))
+        .filter((entry) => entry.startsWith("file.txt.") && entry.endsWith(".tmp")),
     ).toHaveLength(0);
   });
 

@@ -4,10 +4,7 @@ import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { CalibrationReplayRequestSchema } from "@/schemas/cloud";
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ repoId: string }> },
-) {
+export async function POST(request: Request, context: { params: Promise<{ repoId: string }> }) {
   const requestId = createRequestId(request);
   const access = await requireApiRole("admin", request);
 
@@ -46,6 +43,10 @@ export async function POST(
     return jsonWithRequestId(replay, undefined, requestId);
   } catch (error) {
     logRouteError("repository_calibration_replay", requestId, error, { repoId });
-    return jsonWithRequestId({ message: "Could not replay calibration thresholds. Retry." }, { status: 500 }, requestId);
+    return jsonWithRequestId(
+      { message: "Could not replay calibration thresholds. Retry." },
+      { status: 500 },
+      requestId,
+    );
   }
 }

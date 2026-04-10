@@ -96,7 +96,10 @@ describe("api auth guard regressions", () => {
         requireApiRole,
       }));
 
-      const routeModule = (await import(testCase.modulePath)) as Record<string, (...args: unknown[]) => Promise<Response>>;
+      const routeModule = (await import(testCase.modulePath)) as Record<
+        string,
+        (...args: unknown[]) => Promise<Response>
+      >;
       const handler = routeModule[testCase.exportName];
       const response = testCase.routeContext
         ? await handler(testCase.request, testCase.routeContext)

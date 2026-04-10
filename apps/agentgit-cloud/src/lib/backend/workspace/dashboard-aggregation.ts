@@ -111,7 +111,10 @@ export async function getDashboardSummaryFromWorkspace(workspaceId: string): Pro
   const approvalProjections = await listWorkspaceApprovalProjections(workspaceId);
   const recentRuns = mapRecentRuns(repositories);
   const localRepoLabels = new Set(repositories.map((record) => `${record.metadata.owner}/${record.metadata.name}`));
-  const recentActivity = [...mapRecentActivity(repositories), ...syncedActivity.filter((event) => !localRepoLabels.has(event.repo))]
+  const recentActivity = [
+    ...mapRecentActivity(repositories),
+    ...syncedActivity.filter((event) => !localRepoLabels.has(event.repo)),
+  ]
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
     .slice(0, 8);
   const pendingApprovals = Math.max(

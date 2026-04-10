@@ -23,7 +23,9 @@ export function Select({ children, className, errorText, helpText, label, ...pro
           aria-invalid={errorText ? true : undefined}
           className={cn(
             "ag-focus-ring min-h-11 w-full appearance-none rounded-[var(--ag-radius-md)] border border-[var(--ag-border-default)] bg-[var(--ag-surface-overlay)] px-3 pr-10 ag-text-body text-[var(--ag-text-primary)] hover:border-[var(--ag-border-strong)]",
-            errorText ? "border-[var(--ag-color-error)] bg-[var(--ag-bg-error)]" : "focus:border-[var(--ag-color-brand)]",
+            errorText
+              ? "border-[var(--ag-color-error)] bg-[var(--ag-bg-error)]"
+              : "focus:border-[var(--ag-color-brand)]",
             className,
           )}
           {...props}

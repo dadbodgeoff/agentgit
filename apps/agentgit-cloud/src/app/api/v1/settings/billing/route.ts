@@ -22,7 +22,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     return access.denied;
   }
 
-  return jsonWithRequestId(toWorkspaceBillingApiResponse(await resolveWorkspaceBilling(access.workspaceSession)), undefined, requestId);
+  return jsonWithRequestId(
+    toWorkspaceBillingApiResponse(await resolveWorkspaceBilling(access.workspaceSession)),
+    undefined,
+    requestId,
+  );
 }
 
 export async function PUT(request: Request): Promise<NextResponse> {

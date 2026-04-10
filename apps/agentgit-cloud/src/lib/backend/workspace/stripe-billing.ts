@@ -346,10 +346,7 @@ export function constructStripeWebhookEvent(body: string, signature: string): St
   return getStripeClient().webhooks.constructEvent(body, signature, webhookSecret);
 }
 
-export async function syncWorkspaceBillingFromStripe(params: {
-  billing: WorkspaceBilling;
-  workspaceName: string;
-}) {
+export async function syncWorkspaceBillingFromStripe(params: { billing: WorkspaceBilling; workspaceName: string }) {
   if (!params.billing.stripeCustomerId) {
     throw new WorkspaceStripeStateError("No Stripe customer is associated with this workspace.");
   }
@@ -385,7 +382,10 @@ export async function syncWorkspaceBillingFromStripe(params: {
   const subscriptionPriceId = subscription.items.data[0]?.price?.id ?? null;
   const mappedPlan = subscriptionPriceId ? resolvePlanFromPriceId(subscriptionPriceId) : null;
   if (!mappedPlan) {
-    throw new WorkspaceStripeStateError("The active Stripe subscription does not map to a configured AgentGit plan.", 502);
+    throw new WorkspaceStripeStateError(
+      "The active Stripe subscription does not map to a configured AgentGit plan.",
+      502,
+    );
   }
 
   const invoices = await stripe.invoices.list({

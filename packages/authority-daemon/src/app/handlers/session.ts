@@ -952,8 +952,8 @@ export function handleDiagnostics(
         ? {
             code: "HOSTED_QUEUE_BLOCKED_ON_WORKER",
             message: `${hostedQueueSnapshot.queued_jobs} queued hosted MCP execution job(s) are blocked on worker reachability.`,
-        }
-      : null;
+          }
+        : null;
   const latencyMetricsSnapshot = latencyMetrics.snapshot();
   const policySummaryWarnings = [...policyRuntime.effective_policy.summary.warnings];
   if (latencyMetricsSnapshot.policy_eval_ms.within_target === false) {

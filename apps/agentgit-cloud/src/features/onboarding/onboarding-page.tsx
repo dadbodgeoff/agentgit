@@ -398,9 +398,9 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                         />
                       </div>
                       <Select id={`invite-role-${field.id}`} label="Role" {...register(`invites.${index}.role`)}>
-                          <option value="member">Member</option>
-                          <option value="admin">Admin</option>
-                          <option value="owner">Owner</option>
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                        <option value="owner">Owner</option>
                       </Select>
                     </Card>
                   ))}
@@ -438,10 +438,14 @@ export function OnboardingPage({ previewState = "ready" }: { previewState?: Prev
                 </p>
               </div>
 
-              <Select id="onboarding-default-notification-channel" label="Default notification channel" {...register("defaultNotificationChannel")}>
-                  <option value="slack">Slack</option>
-                  <option value="email">Email</option>
-                  <option value="in_app">In-app</option>
+              <Select
+                id="onboarding-default-notification-channel"
+                label="Default notification channel"
+                {...register("defaultNotificationChannel")}
+              >
+                <option value="slack">Slack</option>
+                <option value="email">Email</option>
+                <option value="in_app">In-app</option>
               </Select>
 
               <div className="space-y-3">

@@ -405,7 +405,10 @@ export function createFileBackedSecretKeyProvider(options: { kind?: SecretKeyPro
     kind: options.kind ?? resolveFileBackedSecretKeyProviderKind(),
     loadOrCreateKey(params: { serviceName: string; keyIdentifier: string; legacyKeyPath?: string }): Buffer {
       if (!params.legacyKeyPath) {
-        throw new AgentGitError("Durable MCP secret storage fallback requires a legacy key path.", "BROKER_UNAVAILABLE");
+        throw new AgentGitError(
+          "Durable MCP secret storage fallback requires a legacy key path.",
+          "BROKER_UNAVAILABLE",
+        );
       }
 
       const existing = readLegacyKeyFile(params.legacyKeyPath);
@@ -808,15 +811,11 @@ export class LocalEncryptedSecretStore {
       const ttlSeconds = Math.max(60, Math.min(bindingMetadataNumber(metadata, "ticket_ttl_seconds") ?? 900, 86_400));
       const audience = bindingMetadataString(metadata, "audience");
       if (!audience) {
-        throw new AgentGitError(
-          "Runtime credential tickets require a non-empty audience.",
-          "BROKER_UNAVAILABLE",
-          {
-            binding_id: binding.binding_id,
-            kind: binding.kind,
-            broker_source_ref: binding.broker_source_ref,
-          },
-        );
+        throw new AgentGitError("Runtime credential tickets require a non-empty audience.", "BROKER_UNAVAILABLE", {
+          binding_id: binding.binding_id,
+          kind: binding.kind,
+          broker_source_ref: binding.broker_source_ref,
+        });
       }
       const ticketExpiresAt = new Date(
         Math.min(

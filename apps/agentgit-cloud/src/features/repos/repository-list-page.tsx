@@ -2,10 +2,7 @@
 
 import Link from "next/link";
 
-import {
-  Button,
-  Card,
-} from "@/components/primitives";
+import { Button, Card } from "@/components/primitives";
 import { DataTable } from "@/components/composites";
 import { PageStatePanel } from "@/components/feedback";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
@@ -150,7 +147,9 @@ export function RepositoryListPage({ previewState = "ready" }: { previewState?: 
             {
               key: "updated",
               header: "Updated",
-              cell: (repo) => <span className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(repo.lastUpdatedAt)}</span>,
+              cell: (repo) => (
+                <span className="text-[var(--ag-text-secondary)]">{formatRelativeTimestamp(repo.lastUpdatedAt)}</span>
+              ),
               sortValue: (repo) => new Date(repo.lastUpdatedAt).getTime(),
             },
           ]}

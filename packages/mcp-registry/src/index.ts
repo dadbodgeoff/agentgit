@@ -186,7 +186,9 @@ function stableJsonStringify(value: unknown): string {
   }
 
   if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
     return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableJsonStringify(entryValue)}`).join(",")}}`;
   }
 
@@ -1171,12 +1173,12 @@ export class McpServerRegistry {
       const existingCapabilities = {
         tools: existing.server.tools,
         transport: existing.server.transport,
-        sandbox: existing.server.transport === "stdio" ? existing.server.sandbox ?? null : null,
+        sandbox: existing.server.transport === "stdio" ? (existing.server.sandbox ?? null) : null,
       };
       const nextCapabilities = {
         tools: normalizedServer.tools,
         transport: normalizedServer.transport,
-        sandbox: normalizedServer.transport === "stdio" ? normalizedServer.sandbox ?? null : null,
+        sandbox: normalizedServer.transport === "stdio" ? (normalizedServer.sandbox ?? null) : null,
       };
       if (stableJsonStringify(existingCapabilities) !== stableJsonStringify(nextCapabilities)) {
         throw new AgentGitError(

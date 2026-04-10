@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -9,7 +9,7 @@ import {
   runAuthorityDaemon,
   type StartedAuthorityDaemon,
 } from "@agentgit/authority-daemon";
-import { LocalEncryptedSecretStore } from "@agentgit/credential-broker";
+import { createFileBackedSecretKeyProvider, LocalEncryptedSecretStore } from "@agentgit/credential-broker";
 import { AgentGitError, type RecoveryTarget, type RunCheckpointKind } from "@agentgit/schemas";
 
 import {
@@ -74,9 +74,13 @@ function ensurePrivateDirectory(directoryPath: string): void {
   fs.chmodSync(directoryPath, 0o700);
   const stats = fs.lstatSync(directoryPath);
   if (!stats.isDirectory()) {
-    throw new AgentGitError("AgentGit runtime expected a directory but found another file type.", "PRECONDITION_FAILED", {
-      path: directoryPath,
-    });
+    throw new AgentGitError(
+      "AgentGit runtime expected a directory but found another file type.",
+      "PRECONDITION_FAILED",
+      {
+        path: directoryPath,
+      },
+    );
   }
 
   const uid = currentUid();
@@ -130,12 +134,16 @@ function assertPathWithinRoot(rootPath: string, candidatePath: string, envKey: s
     ? path.resolve(candidatePath)
     : path.resolve(resolvedRoot, candidatePath);
   if (resolvedCandidate !== resolvedRoot && !resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`)) {
-    throw new AgentGitError(`AgentGit rejected ${envKey} because it escapes the managed runtime root.`, "PRECONDITION_FAILED", {
-      env_key: envKey,
-      candidate_path: candidatePath,
-      resolved_root: resolvedRoot,
-      resolved_candidate_path: resolvedCandidate,
-    });
+    throw new AgentGitError(
+      `AgentGit rejected ${envKey} because it escapes the managed runtime root.`,
+      "PRECONDITION_FAILED",
+      {
+        env_key: envKey,
+        candidate_path: candidatePath,
+        resolved_root: resolvedRoot,
+        resolved_candidate_path: resolvedCandidate,
+      },
+    );
   }
 
   return resolvedCandidate;
@@ -299,39 +307,11 @@ function createWorkspaceSecretStore(
 
   const keyPath =
     authorityEnv.AGENTGIT_MCP_SECRET_KEY_PATH?.trim() || path.join(runtimeRoot, "mcp", "secret-store.key");
-  try {
-    return new LocalEncryptedSecretStore({
-      dbPath,
-      keyPath,
-    });
-  } catch (error) {
-    if (!(error instanceof AgentGitError) || error.code !== "BROKER_UNAVAILABLE" || !keyPath) {
-      throw error;
-    }
-
-    return new LocalEncryptedSecretStore({
-      dbPath,
-      keyPath,
-      keyProvider: {
-        kind: process.platform === "darwin" ? "macos_keychain" : "linux_secret_service",
-        loadOrCreateKey(params) {
-          if (params.legacyKeyPath && fs.existsSync(params.legacyKeyPath)) {
-            const existing = Buffer.from(fs.readFileSync(params.legacyKeyPath, "utf8").trim(), "base64");
-            if (existing.length === 32) {
-              fs.chmodSync(params.legacyKeyPath, 0o600);
-              return existing;
-            }
-          }
-
-          const created = randomBytes(32);
-          if (params.legacyKeyPath) {
-            writeSecureTextFile(params.legacyKeyPath, created.toString("base64"));
-          }
-          return created;
-        },
-      },
-    });
-  }
+  return new LocalEncryptedSecretStore({
+    dbPath,
+    keyPath,
+    keyProvider: createFileBackedSecretKeyProvider(),
+  });
 }
 
 async function ensureAuthoritySession(
@@ -436,6 +416,7 @@ async function ensureAuthoritySession(
 
 export const __testables = {
   ensureAuthoritySession,
+  createWorkspaceSecretStore,
   isAddressInUseFailure,
   deriveRestoreTargetFromStep,
   buildRestoreCommand,

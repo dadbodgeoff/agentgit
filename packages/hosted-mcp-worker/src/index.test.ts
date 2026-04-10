@@ -225,9 +225,7 @@ describe("hosted MCP worker", () => {
     ).toThrow(/attestation key material could not be loaded/i);
   });
 
-  it(
-    "caps oversized control-plane requests before buffering them indefinitely",
-    async () => {
+  it("caps oversized control-plane requests before buffering them indefinitely", async () => {
     fs.mkdirSync(TEMP_ROOT, { recursive: true });
     const socketPath = path.join(TEMP_ROOT, "worker.sock");
     const keyPath = path.join(TEMP_ROOT, "worker-key.json");
@@ -255,7 +253,5 @@ describe("hosted MCP worker", () => {
 
     expect(response.ok).toBe(false);
     expect(response.error?.code).toBe("BAD_REQUEST");
-    },
-    20_000,
-  );
+  }, 20_000);
 });

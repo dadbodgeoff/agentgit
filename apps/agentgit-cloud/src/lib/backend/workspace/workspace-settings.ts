@@ -99,7 +99,8 @@ export async function saveWorkspaceSettings(
     (!existingSettings?.enterpriseSso.enabled ||
       existingSettings.enterpriseSso.issuerUrl !== settings.enterpriseSso.issuerUrl ||
       existingSettings.enterpriseSso.clientId !== settings.enterpriseSso.clientId ||
-      (typeof settings.enterpriseSso.clientSecret === "string" && settings.enterpriseSso.clientSecret.trim().length > 0));
+      (typeof settings.enterpriseSso.clientSecret === "string" &&
+        settings.enterpriseSso.clientSecret.trim().length > 0));
 
   if (enterpriseConfigChanged) {
     const normalizedIssuer = settings.enterpriseSso.issuerUrl.replace(/\/+$/, "");
@@ -115,14 +116,12 @@ export async function saveWorkspaceSettings(
       );
     }
 
-    const discovery = (await response.json().catch(() => null)) as
-      | {
-          issuer?: unknown;
-          authorization_endpoint?: unknown;
-          token_endpoint?: unknown;
-          jwks_uri?: unknown;
-        }
-      | null;
+    const discovery = (await response.json().catch(() => null)) as {
+      issuer?: unknown;
+      authorization_endpoint?: unknown;
+      token_endpoint?: unknown;
+      jwks_uri?: unknown;
+    } | null;
 
     if (
       !discovery ||

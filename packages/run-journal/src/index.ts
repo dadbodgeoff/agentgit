@@ -648,7 +648,9 @@ export class RunJournal {
     }
   }
 
-  private typedStatement<BindParameters extends unknown[], Result>(source: string): TypedSqliteStatement<BindParameters, Result> {
+  private typedStatement<BindParameters extends unknown[], Result>(
+    source: string,
+  ): TypedSqliteStatement<BindParameters, Result> {
     return this.db.prepare(source) as unknown as TypedSqliteStatement<BindParameters, Result>;
   }
 
@@ -826,15 +828,14 @@ export class RunJournal {
 
   private reserveServerEventTimestamps(runId: string, count: number): string[] {
     const lastRecordedRow = this.typedStatement<[string], { recorded_at: string }>(
-        `
+      `
           SELECT recorded_at
           FROM run_events
           WHERE run_id = ?
           ORDER BY sequence DESC
           LIMIT 1
         `,
-      )
-      .get(runId);
+    ).get(runId);
     const nowMs = Date.now();
     const lastRecordedAtMs = lastRecordedRow ? Date.parse(lastRecordedRow.recorded_at) : Number.NaN;
     let nextMs = Number.isFinite(lastRecordedAtMs) && lastRecordedAtMs >= nowMs ? lastRecordedAtMs + 1 : nowMs;
@@ -1031,13 +1032,11 @@ export class RunJournal {
     const referencedPaths = new Set<string>();
 
     try {
-      const rows = (
-        this.typedStatement<[], { storage_relpath: string }>(
-          `
+      const rows = this.typedStatement<[], { storage_relpath: string }>(
+        `
             SELECT storage_relpath
             FROM artifacts
           `,
-        )
       ).all();
 
       for (const row of rows) {
@@ -1129,22 +1128,21 @@ export class RunJournal {
 
   getRunArtifactStateDigest(runId: string): string {
     try {
-      const rows = (
-        this.typedStatement<
-          [string],
-          {
-            artifact_id: string;
-            storage_relpath: string;
-            byte_size: number;
-            integrity_schema_version: string | null;
-            content_digest_algorithm: string | null;
-            content_digest: string | null;
-            content_sha256: string | null;
-            expires_at: string | null;
-            expired_at: string | null;
-          }
-        >(
-          `
+      const rows = this.typedStatement<
+        [string],
+        {
+          artifact_id: string;
+          storage_relpath: string;
+          byte_size: number;
+          integrity_schema_version: string | null;
+          content_digest_algorithm: string | null;
+          content_digest: string | null;
+          content_sha256: string | null;
+          expires_at: string | null;
+          expired_at: string | null;
+        }
+      >(
+        `
             SELECT
               artifact_id,
               storage_relpath,
@@ -1159,7 +1157,6 @@ export class RunJournal {
             WHERE run_id = ?
             ORDER BY artifact_id ASC
           `,
-        )
       ).all(runId);
 
       const digestInput = rows.map((row) => ({
@@ -1185,21 +1182,21 @@ export class RunJournal {
   }): HelperFactCacheRecord | null {
     try {
       const row = this.typedStatement<
-          [string],
-          {
-            run_id: string;
-            question_type: HelperQuestionType;
-            focus_step_id: string | null;
-            compare_step_id: string | null;
-            visibility_scope: VisibilityScope;
-            event_count: number;
-            latest_sequence: number;
-            artifact_state_digest: string;
-            response_json: string;
-            warmed_at: string;
-          }
-        >(
-          `
+        [string],
+        {
+          run_id: string;
+          question_type: HelperQuestionType;
+          focus_step_id: string | null;
+          compare_step_id: string | null;
+          visibility_scope: VisibilityScope;
+          event_count: number;
+          latest_sequence: number;
+          artifact_state_digest: string;
+          response_json: string;
+          warmed_at: string;
+        }
+      >(
+        `
             SELECT
               run_id,
               question_type,
@@ -1214,16 +1211,15 @@ export class RunJournal {
             FROM helper_fact_cache
             WHERE cache_key = ?
           `,
-        )
-        .get(
-          this.helperFactCacheKey({
-            run_id: input.run_id,
-            question_type: input.question_type,
-            focus_step_id: input.focus_step_id ?? null,
-            compare_step_id: input.compare_step_id ?? null,
-            visibility_scope: input.visibility_scope,
-          }),
-        );
+      ).get(
+        this.helperFactCacheKey({
+          run_id: input.run_id,
+          question_type: input.question_type,
+          focus_step_id: input.focus_step_id ?? null,
+          compare_step_id: input.compare_step_id ?? null,
+          visibility_scope: input.visibility_scope,
+        }),
+      );
 
       if (!row) {
         return null;
@@ -1546,12 +1542,7 @@ export class RunJournal {
             WHERE session_id = ? AND idempotency_key = ? AND state != 'completed'
           `,
         )
-        .run(
-          input.uncertainty_recorded_at,
-          input.uncertainty_reason,
-          input.session_id,
-          input.idempotency_key,
-        );
+        .run(input.uncertainty_recorded_at, input.uncertainty_reason, input.session_id, input.idempotency_key);
     } catch (error) {
       if (isLowDiskPressureError(error)) {
         throw storageUnavailableError("Failed to record uncertain idempotent mutation state.", error, {
@@ -1939,50 +1930,46 @@ export class RunJournal {
 
   private getMaintenanceStatus(runId?: string): RunMaintenanceStatus {
     const artifactRows = runId
-      ? (
-          this.typedStatement<
-            [string],
-            {
-              artifact_id: string;
-              storage_relpath: string;
-              byte_size: number;
-              integrity_schema_version: string | null;
-              content_digest_algorithm: string | null;
-              content_digest: string | null;
-              content_sha256: string | null;
-              expires_at: string | null;
-              expired_at: string | null;
-            }
-          >(
-            `
+      ? this.typedStatement<
+          [string],
+          {
+            artifact_id: string;
+            storage_relpath: string;
+            byte_size: number;
+            integrity_schema_version: string | null;
+            content_digest_algorithm: string | null;
+            content_digest: string | null;
+            content_sha256: string | null;
+            expires_at: string | null;
+            expired_at: string | null;
+          }
+        >(
+          `
               SELECT artifact_id, storage_relpath, byte_size, content_sha256, expires_at, expired_at
                    , integrity_schema_version, content_digest_algorithm, content_digest
                 FROM artifacts
                 WHERE run_id = ?
             `,
-          )
         ).all(runId)
-      : (
-          this.typedStatement<
-            [],
-            {
-              artifact_id: string;
-              storage_relpath: string;
-              byte_size: number;
-              integrity_schema_version: string | null;
-              content_digest_algorithm: string | null;
-              content_digest: string | null;
-              content_sha256: string | null;
-              expires_at: string | null;
-              expired_at: string | null;
-            }
-          >(
-            `
+      : this.typedStatement<
+          [],
+          {
+            artifact_id: string;
+            storage_relpath: string;
+            byte_size: number;
+            integrity_schema_version: string | null;
+            content_digest_algorithm: string | null;
+            content_digest: string | null;
+            content_sha256: string | null;
+            expires_at: string | null;
+            expired_at: string | null;
+          }
+        >(
+          `
               SELECT artifact_id, storage_relpath, byte_size, content_sha256, expires_at, expired_at
                    , integrity_schema_version, content_digest_algorithm, content_digest
                 FROM artifacts
             `,
-          )
         ).all();
 
     const artifactHealth: RunMaintenanceStatus["artifact_health"] = {
@@ -2000,24 +1987,20 @@ export class RunJournal {
     }
 
     const degradedRows = runId
-      ? (
-          this.typedStatement<[string], { payload_json: string }>(
-            `
+      ? this.typedStatement<[string], { payload_json: string }>(
+          `
               SELECT payload_json
               FROM run_events
               WHERE run_id = ?
                 AND event_type IN ('execution.completed', 'execution.simulated')
             `,
-          )
         ).all(runId)
-      : (
-          this.typedStatement<[], { payload_json: string }>(
-            `
+      : this.typedStatement<[], { payload_json: string }>(
+          `
               SELECT payload_json
               FROM run_events
               WHERE event_type IN ('execution.completed', 'execution.simulated')
             `,
-          )
         ).all();
 
     let degradedArtifactCaptureActions = 0;
@@ -2061,10 +2044,12 @@ export class RunJournal {
   getDiagnosticsOverview(): RunJournalDiagnosticsOverview {
     try {
       const totalRunsRow = this.typedStatement<[], { count: number }>("SELECT COUNT(*) AS count FROM runs").get();
-      const totalEventsRow = this.typedStatement<[], { count: number }>("SELECT COUNT(*) AS count FROM run_events").get();
-      const pendingApprovalsRow = this
-        .typedStatement<[], { count: number }>("SELECT COUNT(*) AS count FROM approval_requests WHERE status = 'pending'")
-        .get();
+      const totalEventsRow = this.typedStatement<[], { count: number }>(
+        "SELECT COUNT(*) AS count FROM run_events",
+      ).get();
+      const pendingApprovalsRow = this.typedStatement<[], { count: number }>(
+        "SELECT COUNT(*) AS count FROM approval_requests WHERE status = 'pending'",
+      ).get();
 
       return {
         total_runs: totalRunsRow?.count ?? 0,
@@ -2095,9 +2080,9 @@ export class RunJournal {
         };
       }
 
-      const row = this
-        .typedStatement<[], { busy?: number; log?: number; checkpointed?: number }>("PRAGMA wal_checkpoint(TRUNCATE)")
-        .get();
+      const row = this.typedStatement<[], { busy?: number; log?: number; checkpointed?: number }>(
+        "PRAGMA wal_checkpoint(TRUNCATE)",
+      ).get();
 
       return {
         journal_mode: "WAL",
@@ -2120,20 +2105,20 @@ export class RunJournal {
   getRunSummary(runId: string): RunSummary | null {
     try {
       const runRow = this.typedStatement<
-          [string],
-          {
-            run_id: string;
-            session_id: string;
-            workflow_name: string;
-            agent_framework: string;
-            agent_name: string;
-            workspace_roots_json: string;
-            budget_config_json: string;
-            created_at: string;
-            started_at: string;
-          }
-        >(
-          `
+        [string],
+        {
+          run_id: string;
+          session_id: string;
+          workflow_name: string;
+          agent_framework: string;
+          agent_name: string;
+          workspace_roots_json: string;
+          budget_config_json: string;
+          created_at: string;
+          started_at: string;
+        }
+      >(
+        `
             SELECT
               run_id,
               session_id,
@@ -2147,34 +2132,29 @@ export class RunJournal {
             FROM runs
             WHERE run_id = ?
           `,
-        )
-        .get(runId);
+      ).get(runId);
 
       if (!runRow) {
         return null;
       }
 
-      const eventCountRow = this
-        .typedStatement<[string], { event_count: number }>(
-          `
+      const eventCountRow = this.typedStatement<[string], { event_count: number }>(
+        `
             SELECT COUNT(*) AS event_count
             FROM run_events
             WHERE run_id = ?
           `,
-        )
-        .get(runId);
+      ).get(runId);
 
-      const latestEventRow = this
-        .typedStatement<[string], RunEventSummary>(
-          `
+      const latestEventRow = this.typedStatement<[string], RunEventSummary>(
+        `
             SELECT sequence, event_type, occurred_at, recorded_at
             FROM run_events
             WHERE run_id = ?
             ORDER BY sequence DESC
             LIMIT 1
           `,
-        )
-        .get(runId);
+      ).get(runId);
 
       return {
         run_id: runRow.run_id,
@@ -2205,15 +2185,13 @@ export class RunJournal {
         throw new NotFoundError(`No run found for ${runId}.`, { run_id: runId });
       }
 
-      const nextSequenceRow = this
-        .typedStatement<[string], { next_sequence: number }>(
-          `
+      const nextSequenceRow = this.typedStatement<[string], { next_sequence: number }>(
+        `
             SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
             FROM run_events
             WHERE run_id = ?
           `,
-        )
-        .get(runId);
+      ).get(runId);
 
       const insertEvent = this.db.prepare(`
         INSERT INTO run_events (
@@ -2385,13 +2363,21 @@ export class RunJournal {
       );
       const rows = selectEvents.all(runId);
 
-      return rows.map((row: { sequence: number; event_type: string; occurred_at: string; recorded_at: string; payload_json: string }) => ({
-        sequence: row.sequence,
-        event_type: row.event_type,
-        occurred_at: row.occurred_at,
-        recorded_at: row.recorded_at,
-        payload: JSON.parse(row.payload_json) as Record<string, unknown>,
-      }));
+      return rows.map(
+        (row: {
+          sequence: number;
+          event_type: string;
+          occurred_at: string;
+          recorded_at: string;
+          payload_json: string;
+        }) => ({
+          sequence: row.sequence,
+          event_type: row.event_type,
+          occurred_at: row.occurred_at,
+          recorded_at: row.recorded_at,
+          payload: JSON.parse(row.payload_json) as Record<string, unknown>,
+        }),
+      );
     } catch (error) {
       if (error instanceof NotFoundError) {
         throw error;
@@ -2581,23 +2567,23 @@ export class RunJournal {
   getStoredApproval(approvalId: string): StoredApprovalRecord | null {
     try {
       const row = this.typedStatement<
-          [string],
-          {
-            approval_id: string;
-            run_id: string;
-            action_id: string;
-            status: ApprovalRequest["status"];
-            requested_at: string;
-            resolved_at: string | null;
-            resolution_note: string | null;
-            decision_requested: "approve_or_deny";
-            action_summary: string;
-            action_json: string;
-            policy_outcome_json: string;
-            snapshot_record_json: string | null;
-          }
-        >(
-          `
+        [string],
+        {
+          approval_id: string;
+          run_id: string;
+          action_id: string;
+          status: ApprovalRequest["status"];
+          requested_at: string;
+          resolved_at: string | null;
+          resolution_note: string | null;
+          decision_requested: "approve_or_deny";
+          action_summary: string;
+          action_json: string;
+          policy_outcome_json: string;
+          snapshot_record_json: string | null;
+        }
+      >(
+        `
             SELECT
               approval_id,
               run_id,
@@ -2614,8 +2600,7 @@ export class RunJournal {
             FROM approval_requests
             WHERE approval_id = ?
           `,
-        )
-        .get(approvalId);
+      ).get(approvalId);
 
       if (!row) {
         return null;
@@ -2710,80 +2695,72 @@ export class RunJournal {
     const params = filters.run_id ? [filters.run_id] : [];
     const runClause = filters.run_id ? "AND run_id = ?" : "";
 
-    const policyRows = (
-      this.typedStatement<
-        string[],
-        {
-          run_id: string;
-          occurred_at: string;
-          payload_json: string;
-        }
-      >(
-        `
+    const policyRows = this.typedStatement<
+      string[],
+      {
+        run_id: string;
+        occurred_at: string;
+        payload_json: string;
+      }
+    >(
+      `
           SELECT run_id, occurred_at, payload_json
           FROM run_events
           WHERE event_type = 'policy.evaluated'
           ${runClause}
           ORDER BY recorded_at ASC, sequence ASC
         `,
-      )
     ).all(...params);
 
-    const approvalRows = (
-      this.typedStatement<
-        string[],
-        {
-          run_id: string;
-          approval_id: string;
-          action_id: string;
-          status: ApprovalRequest["status"];
-          resolved_at: string | null;
-        }
-      >(
-        `
+    const approvalRows = this.typedStatement<
+      string[],
+      {
+        run_id: string;
+        approval_id: string;
+        action_id: string;
+        status: ApprovalRequest["status"];
+        resolved_at: string | null;
+      }
+    >(
+      `
           SELECT run_id, approval_id, action_id, status, resolved_at
           FROM approval_requests
           ${filters.run_id ? "WHERE run_id = ?" : ""}
           ORDER BY requested_at ASC
         `,
-      )
     ).all(...params);
 
-    const recoveryRows = (
-      this.typedStatement<
-        string[],
-        {
-          run_id: string;
-          payload_json: string;
-        }
-      >(
-        `
+    const recoveryRows = this.typedStatement<
+      string[],
+      {
+        run_id: string;
+        payload_json: string;
+      }
+    >(
+      `
           SELECT run_id, payload_json
           FROM run_events
           WHERE event_type = 'recovery.executed'
           ${runClause}
           ORDER BY recorded_at ASC, sequence ASC
         `,
-      )
     ).all(...params);
 
-    const normalizedRows = (
-      this.typedStatement<
-        string[],
-        {
-          run_id: string;
-          occurred_at: string;
-          payload_json: string;
-        }
-      >(
-        `
+    const normalizedRows = this.typedStatement<
+      string[],
+      {
+        run_id: string;
+        occurred_at: string;
+        payload_json: string;
+      }
+    >(
+      `
           SELECT run_id, occurred_at, payload_json
           FROM run_events
           WHERE event_type = 'action.normalized'
           ${runClause}
           ORDER BY recorded_at ASC, sequence ASC
         `,
-      )
     ).all(...params);
 
     const approvalByActionKey = new Map<

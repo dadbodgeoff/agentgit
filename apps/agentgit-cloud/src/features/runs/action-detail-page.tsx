@@ -125,7 +125,9 @@ export function ActionDetailPage({
         title="Action detail"
       />
 
-      {action.execution.status === "failed" || action.execution.status === "blocked" || action.execution.status === "partial" ? (
+      {action.execution.status === "failed" ||
+      action.execution.status === "blocked" ||
+      action.execution.status === "partial" ? (
         <Card className="space-y-3 border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)]">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={executionTone(action.execution.status)}>{action.execution.status}</Badge>
@@ -441,7 +443,9 @@ export function ActionDetailPage({
                     </div>
                     <div className="text-sm text-[var(--ag-text-secondary)]">{event.summary}</div>
                   </div>
-                  <div className="text-xs text-[var(--ag-text-tertiary)]">{formatRelativeTimestamp(event.occurredAt)}</div>
+                  <div className="text-xs text-[var(--ag-text-tertiary)]">
+                    {formatRelativeTimestamp(event.occurredAt)}
+                  </div>
                 </div>
                 <div className="mt-3">
                   <CodeBlock>{JSON.stringify(event.payload, null, 2)}</CodeBlock>

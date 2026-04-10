@@ -4,7 +4,17 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 
-import { Button, Checkbox, Select, TableBody, TableCell, TableHead, TableHeaderCell, TableRoot, TableRow } from "@/components/primitives";
+import {
+  Button,
+  Checkbox,
+  Select,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRoot,
+  TableRow,
+} from "@/components/primitives";
 import { cn } from "@/lib/utils/cn";
 
 type SortDirection = "asc" | "desc" | null;
@@ -131,7 +141,9 @@ export function DataTable<T>({
                 <dl className="space-y-3">
                   {columns.map((column) => (
                     <div className="space-y-1" key={column.key}>
-                      <dt className="ag-text-overline text-[var(--ag-text-tertiary)]">{column.mobileLabel ?? column.header}</dt>
+                      <dt className="ag-text-overline text-[var(--ag-text-tertiary)]">
+                        {column.mobileLabel ?? column.header}
+                      </dt>
                       <dd className="ag-text-body-sm text-[var(--ag-text-primary)]">{column.cell(row)}</dd>
                     </div>
                   ))}
@@ -164,10 +176,11 @@ export function DataTable<T>({
 
                 return (
                   <TableHeaderCell
-                    aria-sort={
-                      isSorted === "asc" ? "ascending" : isSorted === "desc" ? "descending" : "none"
-                    }
-                    className={cn(index === 0 && "sticky left-[57px] z-[1] bg-[var(--ag-surface-raised)]", column.className)}
+                    aria-sort={isSorted === "asc" ? "ascending" : isSorted === "desc" ? "descending" : "none"}
+                    className={cn(
+                      index === 0 && "sticky left-[57px] z-[1] bg-[var(--ag-surface-raised)]",
+                      column.className,
+                    )}
                     key={column.key}
                   >
                     {column.sortValue ? (
@@ -249,7 +262,11 @@ export function DataTable<T>({
             </Select>
           </div>
           <div className="flex items-center gap-2">
-            <Button disabled={safePage === 0} onClick={() => setPage((current) => Math.max(current - 1, 0))} variant="secondary">
+            <Button
+              disabled={safePage === 0}
+              onClick={() => setPage((current) => Math.max(current - 1, 0))}
+              variant="secondary"
+            >
               Previous
             </Button>
             <span className="ag-text-body-sm text-[var(--ag-text-secondary)]">

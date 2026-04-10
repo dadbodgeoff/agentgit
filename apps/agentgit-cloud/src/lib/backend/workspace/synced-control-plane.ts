@@ -71,12 +71,7 @@ function upsertSyncedRepository(
   });
 }
 
-function detailPathForRunEvent(params: {
-  owner: string;
-  name: string;
-  runId: string;
-  actionId?: string;
-}) {
+function detailPathForRunEvent(params: { owner: string; name: string; runId: string; actionId?: string }) {
   if (params.actionId) {
     return actionDetailRoute(params.owner, params.name, params.runId, params.actionId);
   }
@@ -297,7 +292,11 @@ export async function listWorkspaceSyncedActivityEvents(workspaceId: string): Pr
             repo: buildRepoLabel(record.event.repository.owner, record.event.repository.name),
             actorLabel: "AgentGit cloud connector",
             runId: summary.data.run_id,
-            detailPath: runDetailRoute(record.event.repository.owner, record.event.repository.name, summary.data.run_id),
+            detailPath: runDetailRoute(
+              record.event.repository.owner,
+              record.event.repository.name,
+              summary.data.run_id,
+            ),
             createdAt: record.event.occurredAt,
             tone: "neutral",
           });

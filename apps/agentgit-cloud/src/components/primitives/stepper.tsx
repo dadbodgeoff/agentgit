@@ -30,13 +30,22 @@ export function Stepper({
               >
                 {isComplete ? <Check aria-hidden="true" className="size-4" strokeWidth={2} /> : index + 1}
               </span>
-              {index < steps.length - 1 ? <span className="hidden h-full w-px bg-[var(--ag-border-subtle)] md:block" /> : null}
+              {index < steps.length - 1 ? (
+                <span className="hidden h-full w-px bg-[var(--ag-border-subtle)] md:block" />
+              ) : null}
             </span>
             <span className="space-y-1">
-              <span className={cn("ag-text-body-sm font-semibold", isCurrent ? "text-[var(--ag-text-primary)]" : "text-[var(--ag-text-secondary)]")}>
+              <span
+                className={cn(
+                  "ag-text-body-sm font-semibold",
+                  isCurrent ? "text-[var(--ag-text-primary)]" : "text-[var(--ag-text-secondary)]",
+                )}
+              >
                 {step.title}
               </span>
-              {step.description ? <span className="ag-text-caption text-[var(--ag-text-secondary)]">{step.description}</span> : null}
+              {step.description ? (
+                <span className="ag-text-caption text-[var(--ag-text-secondary)]">{step.description}</span>
+              ) : null}
             </span>
           </li>
         );

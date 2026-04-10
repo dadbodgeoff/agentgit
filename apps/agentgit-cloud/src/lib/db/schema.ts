@@ -74,10 +74,7 @@ export const cloudWorkspaceMemberships = pgTable(
   (table) => ({
     pk: primaryKey({ columns: [table.workspaceId, table.userId], name: "cloud_workspace_memberships_pk" }),
     userIdx: index("cloud_workspace_memberships_user_idx").on(table.userId),
-    roleCheck: check(
-      "cloud_workspace_memberships_role_check",
-      sql`${table.role} in ('member', 'admin', 'owner')`,
-    ),
+    roleCheck: check("cloud_workspace_memberships_role_check", sql`${table.role} in ('member', 'admin', 'owner')`),
   }),
 );
 
@@ -300,12 +297,18 @@ export const cloudAuditEvents = pgTable(
   },
   (table) => ({
     workspaceOccurredIdx: index("cloud_audit_events_workspace_occurred_idx").on(table.workspaceId, table.occurredAt),
-    actorTypeCheck: check("cloud_audit_events_actor_type_check", sql`${table.actorType} in ('human', 'agent', 'system')`),
+    actorTypeCheck: check(
+      "cloud_audit_events_actor_type_check",
+      sql`${table.actorType} in ('human', 'agent', 'system')`,
+    ),
     categoryCheck: check(
       "cloud_audit_events_category_check",
       sql`${table.category} in ('approval', 'connector', 'run', 'recovery', 'policy', 'fleet')`,
     ),
-    outcomeCheck: check("cloud_audit_events_outcome_check", sql`${table.outcome} in ('success', 'warning', 'failure', 'info')`),
+    outcomeCheck: check(
+      "cloud_audit_events_outcome_check",
+      sql`${table.outcome} in ('success', 'warning', 'failure', 'info')`,
+    ),
   }),
 );
 

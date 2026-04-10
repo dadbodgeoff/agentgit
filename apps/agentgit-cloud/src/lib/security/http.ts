@@ -75,7 +75,10 @@ export function buildApiCorsResponse(request: NextRequest, forwardedRequestHeade
   const origin = request.headers.get("origin");
 
   if (!origin && isStateChangingMethod(request.method)) {
-    const denied = NextResponse.json({ message: "Origin header is required for state-changing API requests." }, { status: 403 });
+    const denied = NextResponse.json(
+      { message: "Origin header is required for state-changing API requests." },
+      { status: 403 },
+    );
     setVaryHeader(denied);
     return denied;
   }
@@ -92,7 +95,9 @@ export function buildApiCorsResponse(request: NextRequest, forwardedRequestHeade
 
   return applyApiCors(
     request,
-    forwardedRequestHeaders ? NextResponse.next({ request: { headers: forwardedRequestHeaders } }) : NextResponse.next(),
+    forwardedRequestHeaders
+      ? NextResponse.next({ request: { headers: forwardedRequestHeaders } })
+      : NextResponse.next(),
   );
 }
 

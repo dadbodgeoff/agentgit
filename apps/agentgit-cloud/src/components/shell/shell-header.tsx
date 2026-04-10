@@ -111,7 +111,9 @@ export function ShellHeader({
           <nav className="hidden min-w-0 items-center gap-2 sm:flex">
             {breadcrumbs.slice(-3).map((crumb, index) => (
               <span className="flex min-w-0 items-center gap-2" key={`${crumb.href}-${crumb.label}`}>
-                {index > 0 ? <ChevronRight className="size-4 shrink-0 text-[var(--ag-text-tertiary)]" strokeWidth={1.75} /> : null}
+                {index > 0 ? (
+                  <ChevronRight className="size-4 shrink-0 text-[var(--ag-text-tertiary)]" strokeWidth={1.75} />
+                ) : null}
                 <Link
                   className={
                     index === breadcrumbs.slice(-3).length - 1
@@ -140,7 +142,13 @@ export function ShellHeader({
           </button>
         </div>
         <div className="flex items-center gap-2">
-          <Button aria-label="Open command palette" className="md:hidden" onClick={onOpenCommandPalette} size="sm" variant="ghost">
+          <Button
+            aria-label="Open command palette"
+            className="md:hidden"
+            onClick={onOpenCommandPalette}
+            size="sm"
+            variant="ghost"
+          >
             <Search className="size-4" strokeWidth={1.75} />
           </Button>
           <Button aria-label="Notifications" size="sm" variant="ghost">

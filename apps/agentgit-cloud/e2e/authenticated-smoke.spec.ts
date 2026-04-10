@@ -19,11 +19,12 @@ async function expectConnectorCommandState(page: Page, commandType: string, pend
   await expect(page.locator("main")).toContainText(new RegExp(`Pending commands\\s*${escapeForRegex(pendingCount)}`), {
     timeout: 20_000,
   });
-  await expect(
-    page.locator("main"),
-  ).toContainText(new RegExp(`Last command\\s*${escapeForRegex(commandType)}\\s*/\\s*pending`), {
-    timeout: 20_000,
-  });
+  await expect(page.locator("main")).toContainText(
+    new RegExp(`Last command\\s*${escapeForRegex(commandType)}\\s*/\\s*pending`),
+    {
+      timeout: 20_000,
+    },
+  );
 }
 
 async function signInAs(
@@ -338,11 +339,11 @@ async function seedRepositorySnapshot(): Promise<{
       event_type: "recovery.executed",
       occurred_at: "2026-04-07T15:00:05Z",
       recorded_at: "2026-04-07T15:00:05Z",
-        payload: {
-          action_id: actionId,
-          snapshot_id: snapshotId,
-        },
-      });
+      payload: {
+        action_id: actionId,
+        snapshot_id: snapshotId,
+      },
+    });
   } finally {
     journal.close();
   }
@@ -370,7 +371,9 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
   await page.getByRole("button", { name: "Connect repository" }).first().click();
   await expect(page.getByRole("heading", { name: "Connect repositories" })).toBeVisible();
   await page
-    .getByRole("button", { name: new RegExp(`${escapeForRegex(repositoryState.owner)}/${escapeForRegex(repositoryState.name)}`) })
+    .getByRole("button", {
+      name: new RegExp(`${escapeForRegex(repositoryState.owner)}/${escapeForRegex(repositoryState.name)}`),
+    })
     .first()
     .click();
   await page.getByRole("button", { name: "Continue" }).click();
@@ -457,12 +460,17 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
 
   await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}`);
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
-  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/replay`);
+  await waitForOkResponse(
+    page,
+    `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/replay`,
+  );
   await expect(page.locator("main")).toContainText("Replay run", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("Investigation focus", { timeout: 20_000 });
   await page.getByRole("button", { name: "Queue replay through connector" }).click();
   await expect(page.locator("main")).toContainText(/queued|Queueing replay/i, { timeout: 20_000 });
-  await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/actions/${snapshotSeed.actionId}`);
+  await page.goto(
+    `/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/actions/${snapshotSeed.actionId}`,
+  );
   await expect(page.getByRole("heading", { name: "Action detail" })).toBeVisible();
   await expect(page.locator("main")).toContainText("Execution event trail", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("action normalized", { timeout: 20_000 });

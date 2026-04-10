@@ -263,7 +263,11 @@ export class ControlPlaneStateStore {
     return connectorId ? rows.filter((row) => row.command.connectorId === connectorId) : rows;
   }
 
-  private requestReceiptKey(connectorId: string, requestKind: ConnectorRequestReceipt["requestKind"], requestId: string) {
+  private requestReceiptKey(
+    connectorId: string,
+    requestKind: ConnectorRequestReceipt["requestKind"],
+    requestId: string,
+  ) {
     return `${connectorId}:${requestKind}:${requestId}`;
   }
 

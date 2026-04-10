@@ -24,14 +24,7 @@ export function Checkbox({ className, description, id, indeterminate = false, la
   return (
     <label className={cn("flex min-h-11 items-start gap-3 text-left", className)}>
       <span className="relative mt-0.5 inline-flex">
-        <input
-          {...props}
-          className="peer sr-only"
-          id={id}
-          ref={inputRef}
-          role="checkbox"
-          type="checkbox"
-        />
+        <input {...props} className="peer sr-only" id={id} ref={inputRef} role="checkbox" type="checkbox" />
         <span className="ag-focus-ring inline-flex size-5 items-center justify-center rounded-[6px] border border-[var(--ag-border-default)] bg-[var(--ag-surface-overlay)] text-transparent transition-colors duration-[var(--ag-duration-fast)] peer-checked:border-[var(--ag-color-brand)] peer-checked:bg-[var(--ag-color-brand)] peer-checked:text-[#0b0f14] peer-disabled:opacity-50">
           <Check aria-hidden="true" className="size-3.5" strokeWidth={2.25} />
         </span>

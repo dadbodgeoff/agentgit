@@ -2,7 +2,10 @@ import { ConnectorHeartbeatRequestSchema } from "@agentgit/cloud-sync-protocol";
 
 import { requireConnectorSession } from "@/lib/auth/connector-session";
 import { ConnectorAccessError, recordConnectorHeartbeat } from "@/lib/backend/control-plane/connectors";
-import { buildCloudSyncSchemaVersionErrorMessage, hasExpectedCloudSyncSchemaVersion } from "@/lib/http/cloud-sync-version";
+import {
+  buildCloudSyncSchemaVersionErrorMessage,
+  hasExpectedCloudSyncSchemaVersion,
+} from "@/lib/http/cloud-sync-version";
 import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 

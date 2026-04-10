@@ -315,7 +315,8 @@ export async function saveWorkspaceBilling(workspaceSession: WorkspaceSession, u
       update.billingCycle === "yearly"
         ? Math.round(planLimits.monthlyEstimateUsd * 0.85)
         : planLimits.monthlyEstimateUsd,
-    nextInvoiceDate: currentBilling.billingProvider === "stripe" ? currentBilling.nextInvoiceDate : getNextInvoiceDate(),
+    nextInvoiceDate:
+      currentBilling.billingProvider === "stripe" ? currentBilling.nextInvoiceDate : getNextInvoiceDate(),
     paymentMethodLabel:
       currentBilling.billingProvider === "stripe" ? currentBilling.paymentMethodLabel : DEFAULT_PAYMENT_METHOD_LABEL,
     paymentMethodStatus:
@@ -425,7 +426,8 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object;
-      const metadataWorkspaceId = typeof session.metadata?.workspaceId === "string" ? session.metadata.workspaceId : null;
+      const metadataWorkspaceId =
+        typeof session.metadata?.workspaceId === "string" ? session.metadata.workspaceId : null;
       if (!metadataWorkspaceId) {
         return;
       }
@@ -437,7 +439,11 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
         return;
       }
 
-      if (existingBilling.stripeCustomerId && stripeCustomerId && existingBilling.stripeCustomerId !== stripeCustomerId) {
+      if (
+        existingBilling.stripeCustomerId &&
+        stripeCustomerId &&
+        existingBilling.stripeCustomerId !== stripeCustomerId
+      ) {
         return;
       }
 
@@ -454,8 +460,7 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
       const subscription = event.data.object;
-      workspaceId =
-        typeof subscription.metadata?.workspaceId === "string" ? subscription.metadata.workspaceId : null;
+      workspaceId = typeof subscription.metadata?.workspaceId === "string" ? subscription.metadata.workspaceId : null;
       stripeCustomerId = typeof subscription.customer === "string" ? subscription.customer : null;
 
       if (workspaceId) {
@@ -464,7 +469,11 @@ export async function handleWorkspaceStripeWebhook(body: string, signature: stri
           return;
         }
 
-        if (existingBilling.stripeCustomerId && stripeCustomerId && existingBilling.stripeCustomerId !== stripeCustomerId) {
+        if (
+          existingBilling.stripeCustomerId &&
+          stripeCustomerId &&
+          existingBilling.stripeCustomerId !== stripeCustomerId
+        ) {
           return;
         }
 

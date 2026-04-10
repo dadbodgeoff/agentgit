@@ -166,8 +166,7 @@ function formatLatencyMetric(
   },
 ): string {
   const p95 = metric.p95_ms === null ? "no samples" : `${metric.p95_ms}ms`;
-  const status =
-    metric.within_target === null ? "n/a" : metric.within_target ? "within target" : "above target";
+  const status = metric.within_target === null ? "n/a" : metric.within_target ? "within target" : "above target";
   return `${label}: ${p95} p95 against ${metric.target_ms}ms target (${status}, ${metric.count} samples)`;
 }
 

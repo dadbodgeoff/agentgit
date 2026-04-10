@@ -425,6 +425,40 @@ describe("McpPublicHostPolicyRegistry", () => {
 
     registry.close();
   });
+
+  it("supports policy lookup, removal, and explicit allowlist enforcement", () => {
+    const root = dirs.make();
+    const registry = new McpPublicHostPolicyRegistry({
+      dbPath: path.join(root, "host-policies.db"),
+    });
+
+    const created = registry.upsertPolicy({
+      host: "api.example.com",
+      display_name: "Example API",
+      allow_subdomains: false,
+      allowed_ports: [8443, 443, 443],
+    });
+
+    expect(created.created).toBe(true);
+    expect(registry.getPolicy(" api.example.com ")?.policy.allowed_ports).toEqual([443, 8443]);
+    expect(registry.assertUrlAllowed(new URL("https://api.example.com:8443/mcp")).policy.host).toBe("api.example.com");
+
+    const removed = registry.removePolicy("api.example.com");
+    expect(removed?.policy.host).toBe("api.example.com");
+    expect(registry.removePolicy("api.example.com")).toBeNull();
+    expect(registry.findPolicyForUrl(new URL("https://api.example.com/mcp"))).toBeNull();
+    expect(() => registry.assertUrlAllowed(new URL("https://api.example.com/mcp"), "server_demo")).toThrow(
+      "requires an explicit operator-managed host allowlist policy",
+    );
+    expect(registry.checkpointWal()).toEqual(
+      expect.objectContaining({
+        checkpointed: expect.any(Boolean),
+        journal_mode: expect.any(String),
+      }),
+    );
+
+    registry.close();
+  });
 });
 
 describe("McpServerRegistry", () => {
@@ -752,5 +786,227 @@ describe("McpServerRegistry", () => {
       },
     ]);
     reloaded.close();
+  });
+
+  it("round-trips governed registry records across credential, lease, attestation, and job surfaces", () => {
+    const root = dirs.make();
+    const dbPath = path.join(root, "registry.db");
+    const registry = new McpServerRegistry({ dbPath });
+
+    registry.submitCandidate({
+      candidate_id: "mcpcand_rel",
+      source_kind: "user_input",
+      raw_endpoint: "https://api.example.com/mcp",
+      transport_hint: "streamable_http",
+      workspace_id: "workspace_demo",
+      submitted_by_session_id: "sess_demo",
+      submitted_by_run_id: null,
+      notes: "  Candidate note  ",
+      resolution_state: "resolved",
+      resolution_error: null,
+      submitted_at: "2026-04-01T10:00:00.000Z",
+      updated_at: "2026-04-01T10:00:00.000Z",
+    });
+
+    const trustDecision = registry.upsertTrustDecision({
+      trust_decision_id: "mcptrust_rel",
+      server_profile_id: "mcpprof_rel",
+      decision: "allow_policy_managed",
+      trust_tier: "operator_approved_public",
+      allowed_execution_modes: ["local_proxy", "local_proxy"],
+      max_side_effect_level_without_approval: "read_only",
+      reason_codes: ["REVIEWED", "REVIEWED"],
+      approved_by_session_id: "sess_demo",
+      approved_at: "2026-04-01T10:00:00.000Z",
+      valid_until: null,
+      reapproval_triggers: ["tool_inventory_hash_changed", "tool_inventory_hash_changed"],
+    });
+    const credentialBinding = registry.upsertCredentialBinding({
+      credential_binding_id: "mcpcred_rel",
+      server_profile_id: "mcpprof_rel",
+      binding_mode: "session_token",
+      broker_profile_id: "broker_demo",
+      scope_labels: ["scope:read", "scope:read"],
+      audience: "https://api.example.com",
+      status: "active",
+      created_at: "2026-04-01T10:00:00.000Z",
+      updated_at: "2026-04-01T10:00:00.000Z",
+      revoked_at: null,
+    });
+    const profile = registry.upsertProfile({
+      server_profile_id: "mcpprof_rel",
+      candidate_id: "mcpcand_rel",
+      display_name: " Example MCP ",
+      transport: "streamable_http",
+      canonical_endpoint: "https://api.example.com/mcp",
+      network_scope: "public_https",
+      trust_tier: "operator_approved_public",
+      status: "active",
+      drift_state: "clean",
+      quarantine_reason_codes: ["REVIEW_PENDING", "REVIEW_PENDING"],
+      allowed_execution_modes: ["local_proxy", "local_proxy"],
+      active_trust_decision_id: trustDecision.trust_decision.trust_decision_id,
+      auth_descriptor: {
+        mode: "session_token",
+        audience: " https://api.example.com ",
+        scope_labels: ["scope:read", "scope:read"],
+      },
+      identity_baseline: {
+        canonical_host: " api.example.com ",
+        canonical_port: 443,
+        tls_identity_summary: " tls ",
+        auth_issuer: " issuer ",
+        publisher_identity: " publisher ",
+        tool_inventory_hash: " hash ",
+        fetched_at: "2026-04-01T10:00:00.000Z",
+      },
+      tool_inventory_version: " v1 ",
+      active_credential_binding_id: credentialBinding.credential_binding.credential_binding_id,
+      imported_tools: [
+        {
+          tool_name: " echo_note ",
+          side_effect_level: "read_only",
+          approval_mode: "allow",
+          input_schema_hash: " in ",
+          output_schema_hash: " out ",
+          annotations: {
+            zeta: "last",
+            alpha: "first",
+          },
+          imported_at: "2026-04-01T10:00:00.000Z",
+        },
+      ],
+      last_resolved_at: "2026-04-01T10:00:00.000Z",
+      created_at: "2026-04-01T10:00:00.000Z",
+      updated_at: "2026-04-01T10:00:00.000Z",
+    });
+    const lease = registry.upsertHostedExecutionLease({
+      lease_id: "mcplease_rel",
+      run_id: "run_demo",
+      action_id: "act_demo",
+      server_profile_id: "mcpprof_rel",
+      tool_name: " echo_note ",
+      auth_context_ref: " auth_demo ",
+      allowed_hosts: ["api.example.com", "api.example.com"],
+      issued_at: "2026-04-01T10:00:00.000Z",
+      expires_at: "2026-04-01T11:00:00.000Z",
+      artifact_budget: {
+        max_artifacts: 2,
+        max_total_bytes: 4096,
+      },
+      single_use: true,
+      status: "issued",
+      consumed_at: null,
+      revoked_at: null,
+    });
+    const attestation = registry.upsertHostedExecutionAttestation({
+      attestation_id: "mcpatt_rel",
+      lease_id: lease.lease.lease_id,
+      worker_runtime_id: "worker_demo",
+      worker_image_digest:
+        "docker.io/agentgit/worker@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      started_at: "2026-04-01T10:05:00.000Z",
+      completed_at: "2026-04-01T10:06:00.000Z",
+      result_hash: "result_hash",
+      artifact_manifest_hash: "manifest_hash",
+      signature: "signed_payload",
+      verified_at: "2026-04-01T10:07:00.000Z",
+    });
+    const job = registry.upsertHostedExecutionJob({
+      job_id: "mcpjob_rel",
+      run_id: "run_demo",
+      action_id: "act_demo",
+      server_profile_id: "mcpprof_rel",
+      tool_name: "echo_note",
+      server_display_name: "Example MCP",
+      canonical_endpoint: "https://api.example.com/mcp",
+      network_scope: "public_https",
+      allowed_hosts: ["api.example.com", "api.example.com"],
+      auth_context_ref: "auth_demo",
+      arguments: {
+        note: "hello",
+      },
+      status: "succeeded",
+      attempt_count: 1,
+      max_attempts: 3,
+      current_lease_id: lease.lease.lease_id,
+      claimed_by: "worker_demo",
+      claimed_at: "2026-04-01T10:05:00.000Z",
+      last_heartbeat_at: "2026-04-01T10:05:30.000Z",
+      cancel_requested_at: null,
+      cancel_requested_by_session_id: null,
+      cancel_reason: null,
+      canceled_at: null,
+      next_attempt_at: "2026-04-01T10:05:00.000Z",
+      created_at: "2026-04-01T10:00:00.000Z",
+      updated_at: "2026-04-01T10:06:00.000Z",
+      completed_at: "2026-04-01T10:06:00.000Z",
+      last_error: null,
+      execution_result: {
+        execution_id: "exec_demo",
+        action_id: "act_demo",
+        mode: "executed",
+        success: true,
+        output: {
+          ok: true,
+        },
+        artifacts: [],
+        started_at: "2026-04-01T10:05:00.000Z",
+        completed_at: "2026-04-01T10:06:00.000Z",
+      },
+    });
+
+    registry.upsertServer(
+      {
+        server_id: "notes_stdio_rel",
+        display_name: "Operator owned",
+        transport: "stdio",
+        command: process.execPath,
+        sandbox: {
+          type: "oci_container",
+          image: TEST_PINNED_OCI_IMAGE,
+          allowed_registries: ["docker.io"],
+          signature_verification: TEST_OCI_SIGNATURE_POLICY,
+        },
+        tools: [
+          {
+            tool_name: "echo_note",
+            side_effect_level: "read_only",
+            approval_mode: "allow",
+          },
+        ],
+      },
+      "operator_api",
+    );
+
+    expect(registry.getCandidate("mcpcand_rel")?.notes).toBe("Candidate note");
+    expect(registry.getProfile("mcpprof_rel")?.display_name).toBe("Example MCP");
+    expect(registry.getProfileByCandidateId("mcpcand_rel")?.server_profile_id).toBe("mcpprof_rel");
+    expect(registry.getTrustDecision("mcptrust_rel")?.trust_decision_id).toBe("mcptrust_rel");
+    expect(registry.getActiveTrustDecision("mcpprof_rel")?.trust_decision_id).toBe("mcptrust_rel");
+    expect(registry.listTrustDecisions("mcpprof_rel")).toHaveLength(1);
+    expect(registry.getCredentialBinding("mcpcred_rel")?.credential_binding_id).toBe("mcpcred_rel");
+    expect(registry.getActiveCredentialBinding("mcpprof_rel")?.credential_binding_id).toBe("mcpcred_rel");
+    expect(registry.listCredentialBindings("mcpprof_rel")).toHaveLength(1);
+    expect(registry.getHostedExecutionLease("mcplease_rel")?.lease_id).toBe("mcplease_rel");
+    expect(registry.listHostedExecutionLeases("mcpprof_rel")).toHaveLength(1);
+    expect(registry.getHostedExecutionAttestation("mcpatt_rel")?.attestation_id).toBe("mcpatt_rel");
+    expect(registry.listHostedExecutionAttestations("mcplease_rel")).toHaveLength(1);
+    expect(registry.getHostedExecutionJob("mcpjob_rel")?.job_id).toBe("mcpjob_rel");
+    expect(registry.listHostedExecutionJobs("mcpprof_rel")).toHaveLength(1);
+    expect(registry.listDefinitions().map((server) => server.server_id)).toContain("notes_stdio_rel");
+    expect(registry.removeServer("notes_stdio_rel")?.server.server_id).toBe("notes_stdio_rel");
+    expect(registry.removeServer("notes_stdio_rel")).toBeNull();
+    expect(registry.checkpointWal()).toEqual(
+      expect.objectContaining({
+        checkpointed: expect.any(Boolean),
+        journal_mode: expect.any(String),
+      }),
+    );
+    expect(profile.profile.auth_descriptor.scope_labels).toEqual(["scope:read"]);
+    expect(attestation.created).toBe(true);
+    expect(job.created).toBe(true);
+
+    registry.close();
   });
 });

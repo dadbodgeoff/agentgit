@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { CLOUD_SYNC_SCHEMA_VERSION, ConnectorRegistrationRequestSchema, ConnectorEventEnvelopeSchema } from "./index.js";
+import {
+  CLOUD_SYNC_SCHEMA_VERSION,
+  ConnectorRegistrationRequestSchema,
+  ConnectorEventEnvelopeSchema,
+} from "./index.js";
 
 describe("cloud sync protocol schemas", () => {
   it("parses a connector registration request", () => {

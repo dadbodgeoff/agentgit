@@ -27,7 +27,9 @@ function ManagedToast({ toast }: { toast: AppToast }) {
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="ag-text-body-sm font-semibold text-[var(--ag-text-primary)]">{toast.title}</div>
-          {toast.description ? <p className="ag-text-body-sm text-[var(--ag-text-secondary)]">{toast.description}</p> : null}
+          {toast.description ? (
+            <p className="ag-text-body-sm text-[var(--ag-text-secondary)]">{toast.description}</p>
+          ) : null}
           {toast.actionLabel && toast.onAction ? (
             <button
               className="ag-focus-ring ag-text-body-sm font-medium text-[var(--ag-color-brand)]"
@@ -60,7 +62,9 @@ export function ToastViewport({ children, className, ...props }: HTMLAttributes<
       )}
       {...props}
     >
-      {toastContext?.toasts.map((toast) => <ManagedToast key={toast.id} toast={toast} />)}
+      {toastContext?.toasts.map((toast) => (
+        <ManagedToast key={toast.id} toast={toast} />
+      ))}
       {children}
     </div>
   );

@@ -145,9 +145,9 @@ export function ActivityPage() {
   }
 
   return (
-      <>
-        <PageHeader
-          actions={headerAction}
+    <>
+      <PageHeader
+        actions={headerAction}
         description="Workspace-wide governed activity from runs, approvals, recoveries, and connector commands."
         title="Activity"
       />

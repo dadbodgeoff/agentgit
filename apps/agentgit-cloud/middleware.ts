@@ -49,10 +49,7 @@ export default auth((request) => {
   }
 
   const signInUrl = new URL(publicRoutes.signIn, request.nextUrl.origin);
-  signInUrl.searchParams.set(
-    "callbackUrl",
-    `${request.nextUrl.pathname}${request.nextUrl.search}`,
-  );
+  signInUrl.searchParams.set("callbackUrl", `${request.nextUrl.pathname}${request.nextUrl.search}`);
 
   return withSecurityResponse(request, NextResponse.redirect(signInUrl), nonce);
 });

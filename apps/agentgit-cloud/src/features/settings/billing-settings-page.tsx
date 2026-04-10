@@ -292,10 +292,7 @@ export function BillingSettingsPage() {
     saveMutation.isPending ||
     stripeStatusQuery.isPending ||
     !stripeStatus?.checkoutEnabled;
-  const portalDisabled =
-    portalMutation.isPending ||
-    stripeStatusQuery.isPending ||
-    !stripeStatus?.portalEnabled;
+  const portalDisabled = portalMutation.isPending || stripeStatusQuery.isPending || !stripeStatus?.portalEnabled;
 
   return (
     <>
@@ -592,14 +589,25 @@ export function BillingSettingsPage() {
             <h2 className="text-lg font-semibold">Shipping status</h2>
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
               <div>Active billing mode:</div>
-              <div>- {billing.billingProvider === "stripe" ? "live Stripe subscription with webhook sync" : "hosted beta gate with enforced plan caps"}</div>
+              <div>
+                -{" "}
+                {billing.billingProvider === "stripe"
+                  ? "live Stripe subscription with webhook sync"
+                  : "hosted beta gate with enforced plan caps"}
+              </div>
               <div>- durable owner-managed billing contacts</div>
               <div>
-                - {billing.billingProvider === "stripe" ? "customer portal and invoice history are live" : "live card collection only appears when Stripe is configured"}
+                -{" "}
+                {billing.billingProvider === "stripe"
+                  ? "customer portal and invoice history are live"
+                  : "live card collection only appears when Stripe is configured"}
               </div>
               <div className="mt-3">Operator expectation:</div>
               <div>
-                - {billing.billingProvider === "stripe" ? "manage plan and payment method in Stripe" : "upgrade the selected tier before adding more seats or repositories"}
+                -{" "}
+                {billing.billingProvider === "stripe"
+                  ? "manage plan and payment method in Stripe"
+                  : "upgrade the selected tier before adding more seats or repositories"}
               </div>
               <div>- review approval volume before the next access checkpoint</div>
             </div>

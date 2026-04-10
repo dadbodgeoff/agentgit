@@ -1778,64 +1778,66 @@ function policyPredicateDepth(predicate: PolicyPredicate): number {
 }
 
 export const PolicyPredicateSchema: z.ZodType<PolicyPredicate> = z.lazy(() =>
-  z.discriminatedUnion("type", [
-    z
-      .object({
-        type: z.literal("field"),
-        field: z.string().min(1),
-        operator: PolicyPredicateOperatorSchema,
-        value: z.unknown().optional(),
-      })
-      .superRefine((predicate, ctx) => {
-        if (predicate.operator !== "matches") {
-          return;
-        }
+  z
+    .discriminatedUnion("type", [
+      z
+        .object({
+          type: z.literal("field"),
+          field: z.string().min(1),
+          operator: PolicyPredicateOperatorSchema,
+          value: z.unknown().optional(),
+        })
+        .superRefine((predicate, ctx) => {
+          if (predicate.operator !== "matches") {
+            return;
+          }
 
-        if (typeof predicate.value !== "string" || predicate.value.length === 0) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["value"],
-            message: "Regex match predicates require a non-empty string value.",
-          });
-          return;
-        }
+          if (typeof predicate.value !== "string" || predicate.value.length === 0) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["value"],
+              message: "Regex match predicates require a non-empty string value.",
+            });
+            return;
+          }
 
-        for (const issue of validatePolicyRegexPattern(predicate.value)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["value"],
-            message: issue,
-          });
-        }
-      })
-      .strict(),
-    z
-      .object({
-        type: z.literal("all"),
-        conditions: z.array(PolicyPredicateSchema).min(1),
-      })
-      .strict(),
-    z
-      .object({
-        type: z.literal("any"),
-        conditions: z.array(PolicyPredicateSchema).min(1),
-      })
-      .strict(),
-    z
-      .object({
-        type: z.literal("not"),
-        condition: PolicyPredicateSchema,
-      })
-      .strict(),
-  ]).superRefine((predicate, ctx) => {
-    const depth = policyPredicateDepth(predicate);
-    if (depth > MAX_POLICY_PREDICATE_DEPTH) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `Policy predicates may not exceed nesting depth ${MAX_POLICY_PREDICATE_DEPTH}.`,
-      });
-    }
-  }),
+          for (const issue of validatePolicyRegexPattern(predicate.value)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["value"],
+              message: issue,
+            });
+          }
+        })
+        .strict(),
+      z
+        .object({
+          type: z.literal("all"),
+          conditions: z.array(PolicyPredicateSchema).min(1),
+        })
+        .strict(),
+      z
+        .object({
+          type: z.literal("any"),
+          conditions: z.array(PolicyPredicateSchema).min(1),
+        })
+        .strict(),
+      z
+        .object({
+          type: z.literal("not"),
+          condition: PolicyPredicateSchema,
+        })
+        .strict(),
+    ])
+    .superRefine((predicate, ctx) => {
+      const depth = policyPredicateDepth(predicate);
+      if (depth > MAX_POLICY_PREDICATE_DEPTH) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Policy predicates may not exceed nesting depth ${MAX_POLICY_PREDICATE_DEPTH}.`,
+        });
+      }
+    }),
 );
 
 export const PolicyRuleSchema = z

@@ -13,9 +13,7 @@ import { releaseNpmPackages } from "./release-package-config.mjs";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultOutDir = path.join(repoRoot, ".release-artifacts", "packed");
 const signingModes = new Set(["if-key", "required", "none"]);
-const NPM = resolveCommandPath("npm");
 const PNPM = resolveCommandPath("pnpm");
-const TAR = resolveCommandPath("tar");
 
 function parseArgs(argv) {
   const parsed = {

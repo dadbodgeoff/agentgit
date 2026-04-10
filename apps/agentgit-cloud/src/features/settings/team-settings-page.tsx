@@ -318,7 +318,9 @@ export function TeamSettingsPage() {
           <Card className="space-y-4">
             <h2 className="text-lg font-semibold">Roster guidance</h2>
             <div className="space-y-3 text-sm text-[var(--ag-text-secondary)]">
-              <p>Workspace admins control the live roster for hosted access, notifications, and approval coverage here.</p>
+              <p>
+                Workspace admins control the live roster for hosted access, notifications, and approval coverage here.
+              </p>
               <p>
                 Invite editing reuses the onboarding invite schema so team management cannot drift from launch-time
                 rules.

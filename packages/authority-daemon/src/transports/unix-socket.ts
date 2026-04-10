@@ -273,11 +273,7 @@ export class UnixSocketTransport implements TransportListener {
       })();
 
       const daemonUid = currentUid();
-      if (
-        peerCredentials &&
-        daemonUid !== null &&
-        peerCredentials.uid !== daemonUid
-      ) {
+      if (peerCredentials && daemonUid !== null && peerCredentials.uid !== daemonUid) {
         const response = makeErrorResponse(
           "req_unauthorized",
           undefined,
@@ -330,11 +326,15 @@ export class UnixSocketTransport implements TransportListener {
           },
           (error) => {
             const requestId =
-              parsed && typeof parsed === "object" && typeof (parsed as { request_id?: unknown }).request_id === "string"
+              parsed &&
+              typeof parsed === "object" &&
+              typeof (parsed as { request_id?: unknown }).request_id === "string"
                 ? (parsed as { request_id: string }).request_id
                 : "req_internal_error";
             const sessionId =
-              parsed && typeof parsed === "object" && typeof (parsed as { session_id?: unknown }).session_id === "string"
+              parsed &&
+              typeof parsed === "object" &&
+              typeof (parsed as { session_id?: unknown }).session_id === "string"
                 ? (parsed as { session_id: string }).session_id
                 : undefined;
             const response = makeErrorResponse(requestId, sessionId, error);

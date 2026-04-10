@@ -574,11 +574,15 @@ async function executeHostedMcp(
     let listToolsIterations = 0;
     do {
       if (listToolsIterations >= MAX_HOSTED_MCP_LIST_TOOLS_ITERATIONS) {
-        throw new AgentGitError("Hosted MCP tool discovery exceeded the maximum pagination depth.", "PRECONDITION_FAILED", {
-          action_id: payload.action_id,
-          server_id: payload.server_id,
-          max_iterations: MAX_HOSTED_MCP_LIST_TOOLS_ITERATIONS,
-        });
+        throw new AgentGitError(
+          "Hosted MCP tool discovery exceeded the maximum pagination depth.",
+          "PRECONDITION_FAILED",
+          {
+            action_id: payload.action_id,
+            server_id: payload.server_id,
+            max_iterations: MAX_HOSTED_MCP_LIST_TOOLS_ITERATIONS,
+          },
+        );
       }
       listToolsIterations += 1;
       const listed = await withTimeout(
@@ -782,10 +786,7 @@ export function startHostedMcpWorkerServer(options: HostedMcpWorkerServerOptions
       openSockets.delete(socket);
     });
     socket.on("data", async (chunk) => {
-      if (
-        Buffer.byteLength(buffer, "utf8") + Buffer.byteLength(chunk, "utf8") >
-        MAX_HOSTED_MCP_REQUEST_BUFFER_BYTES
-      ) {
+      if (Buffer.byteLength(buffer, "utf8") + Buffer.byteLength(chunk, "utf8") > MAX_HOSTED_MCP_REQUEST_BUFFER_BYTES) {
         const response = makeErrorResponse(
           "unknown",
           new AgentGitError("Hosted MCP worker request exceeded the maximum supported size.", "BAD_REQUEST", {

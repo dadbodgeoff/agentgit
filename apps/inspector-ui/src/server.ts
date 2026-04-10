@@ -143,9 +143,7 @@ function isAllowedInspectorOrigin(origin: string | null, server: http.Server): b
   }
 
   return (
-    origin === `http://127.0.0.1:${port}` ||
-    origin === `http://localhost:${port}` ||
-    origin === `http://[::1]:${port}`
+    origin === `http://127.0.0.1:${port}` || origin === `http://localhost:${port}` || origin === `http://[::1]:${port}`
   );
 }
 
@@ -1487,7 +1485,13 @@ export function createInspectorServer(options: InspectorServerOptions = {}): htt
           return;
         }
         const result = await withClient(socketPath, (client) =>
-          client.queryHelper(runId, questionType, focusStepId ?? undefined, compareStepId ?? undefined, visibilityScope),
+          client.queryHelper(
+            runId,
+            questionType,
+            focusStepId ?? undefined,
+            compareStepId ?? undefined,
+            visibilityScope,
+          ),
         );
         json(response, 200, result);
         return;

@@ -136,12 +136,20 @@ export function Combobox({
                       type="button"
                     >
                       <span className="space-y-0.5">
-                        <span className="ag-text-body-sm font-medium text-[var(--ag-text-primary)]">{option.label}</span>
+                        <span className="ag-text-body-sm font-medium text-[var(--ag-text-primary)]">
+                          {option.label}
+                        </span>
                         {option.description ? (
                           <span className="ag-text-caption text-[var(--ag-text-secondary)]">{option.description}</span>
                         ) : null}
                       </span>
-                      {isSelected ? <Check aria-hidden="true" className="mt-0.5 size-4 text-[var(--ag-color-brand)]" strokeWidth={2} /> : null}
+                      {isSelected ? (
+                        <Check
+                          aria-hidden="true"
+                          className="mt-0.5 size-4 text-[var(--ag-color-brand)]"
+                          strokeWidth={2}
+                        />
+                      ) : null}
                     </button>
                   );
                 })}

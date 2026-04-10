@@ -1127,12 +1127,6 @@ function localSnapshotRecoveryContext(action: ActionRecord): Partial<PolicyOutco
   });
 }
 
-function shellSnapshotRecoveryContext(): Partial<PolicyOutcomeRecord["policy_context"]> {
-  return {
-    recoverability_class: "unrecoverable_or_degraded",
-  };
-}
-
 function makeShellApprovalOutcome(
   action: ActionRecord,
   reason: PolicyReason,
@@ -2073,7 +2067,11 @@ export function evaluatePolicy(action: ActionRecord, context: PolicyEvaluationCo
                   ["policy.domain.unsupported"],
                 );
 
-    return withBudgetEffects(action, enforceShellApprovalGuardrail(action, applyPolicyOverlay(baseOutcome, compiledPolicyOutcome)), context);
+    return withBudgetEffects(
+      action,
+      enforceShellApprovalGuardrail(action, applyPolicyOverlay(baseOutcome, compiledPolicyOutcome)),
+      context,
+    );
   } catch (error) {
     const wrapped =
       error instanceof InternalError

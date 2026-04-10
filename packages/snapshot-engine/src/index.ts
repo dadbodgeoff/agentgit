@@ -569,7 +569,9 @@ export class MetadataOnlySnapshotEngine implements SnapshotEngine {
 }
 
 async function sha256File(filePath: string): Promise<string> {
-  return createHash("sha256").update(await fs.readFile(filePath)).digest("hex");
+  return createHash("sha256")
+    .update(await fs.readFile(filePath))
+    .digest("hex");
 }
 
 export interface LocalSnapshotEngineOptions {

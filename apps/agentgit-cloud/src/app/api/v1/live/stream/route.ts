@@ -33,10 +33,7 @@ export async function GET(request: Request) {
         }
 
         const refreshedAccess = await requireApiSession(request);
-        if (
-          refreshedAccess.unauthorized ||
-          refreshedAccess.workspaceSession.activeWorkspace.id !== workspaceId
-        ) {
+        if (refreshedAccess.unauthorized || refreshedAccess.workspaceSession.activeWorkspace.id !== workspaceId) {
           closed = true;
           if (interval) {
             clearInterval(interval);
