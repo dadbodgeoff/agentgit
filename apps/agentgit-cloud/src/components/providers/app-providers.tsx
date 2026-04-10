@@ -9,6 +9,7 @@ import { WorkspaceProvider } from "@/lib/auth/workspace-context";
 import { QueryProvider } from "@/lib/query/provider";
 import type { WorkspaceSession } from "@/schemas/cloud";
 import { LiveUpdateProvider } from "@/components/providers/live-update-provider";
+import { ToastProvider } from "@/components/providers/toast-provider";
 
 export function AppProviders({
   children,
@@ -36,7 +37,9 @@ export function AppProviders({
     <SessionProvider session={session}>
       <WorkspaceProvider value={workspaceSession}>
         <QueryProvider>
-          <LiveUpdateProvider workspaceSession={workspaceSession}>{children}</LiveUpdateProvider>
+          <ToastProvider>
+            <LiveUpdateProvider workspaceSession={workspaceSession}>{children}</LiveUpdateProvider>
+          </ToastProvider>
         </QueryProvider>
       </WorkspaceProvider>
     </SessionProvider>

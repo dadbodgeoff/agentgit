@@ -24,7 +24,7 @@ export default function AppSegmentError({ error, reset }: { error: Error & { dig
   return (
     <div className="space-y-6">
       <div className="space-y-2 border-b border-[var(--ag-border-subtle)] pb-6">
-        <p className="font-mono text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Route boundary</p>
+        <p className="font-mono text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Route boundary</p>
         <h1 className="text-[32px] font-semibold tracking-[-0.02em]">This workspace view crashed.</h1>
         <p className="max-w-2xl text-sm text-[var(--ag-text-secondary)]">
           The shell is still running. Reset this route to recover without dropping the rest of the session.

@@ -1,14 +1,14 @@
-import { requireApiSession } from "@/lib/auth/api-session";
+import { requireApiRole } from "@/lib/auth/api-session";
 import { listWorkspaceAuditLog } from "@/lib/backend/workspace/audit-log";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { isPaginationQueryError, parseCursorPaginationQuery } from "@/lib/pagination/cursor";
 
 export async function GET(request: Request) {
   const requestId = createRequestId(request);
-  const { unauthorized, workspaceSession } = await requireApiSession(request);
+  const { denied, workspaceSession } = await requireApiRole("admin", request);
 
-  if (unauthorized) {
-    return unauthorized;
+  if (denied) {
+    return denied;
   }
 
   try {

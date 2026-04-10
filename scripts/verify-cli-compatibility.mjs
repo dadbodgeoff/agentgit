@@ -17,6 +17,30 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const NPM = resolveCommandPath("npm");
 const PNPM = resolveCommandPath("pnpm");
 const TAR = resolveCommandPath("tar");
+const parsedArgs = parseArgs(process.argv.slice(2));
+
+function parseArgs(argv) {
+  const parsed = {
+    currentArtifactsDir: null,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const current = argv[index];
+    if (current === "--current-artifacts-dir") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--current-artifacts-dir expects a path.");
+      }
+      parsed.currentArtifactsDir = path.resolve(value);
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`Unknown argument: ${current}`);
+  }
+
+  return parsed;
+}
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -147,6 +171,11 @@ async function buildCompatibilityTargets(targetRepoRoot) {
 }
 
 async function packRepoArtifacts(targetRepoRoot, outDir) {
+  if (targetRepoRoot === repoRoot && parsedArgs.currentArtifactsDir) {
+    const manifestPath = path.join(parsedArgs.currentArtifactsDir, "manifest.json");
+    return JSON.parse(await fsp.readFile(manifestPath, "utf8"));
+  }
+
   await buildCompatibilityTargets(targetRepoRoot);
   await fsp.rm(outDir, { recursive: true, force: true });
   await fsp.mkdir(outDir, { recursive: true });

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
+import type { SecretKeyProvider } from "@agentgit/credential-broker";
 import {
   AdapterRegistry,
   FilesystemExecutionAdapter,
@@ -37,6 +38,7 @@ export interface StartServerOptions {
   mcpRegistryPath?: string;
   mcpSecretStorePath?: string;
   mcpSecretKeyPath?: string;
+  mcpSecretKeyProvider?: SecretKeyProvider;
   mcpHostPolicyPath?: string;
   mcpConcurrencyLeasePath?: string;
   mcpHostedWorkerEndpoint?: string;
@@ -99,6 +101,7 @@ export async function createLocalStores(options: StartServerOptions): Promise<Lo
   const credentialBroker = createCredentialBroker({
     mcpSecretStorePath,
     mcpSecretKeyPath,
+    mcpSecretKeyProvider: options.mcpSecretKeyProvider,
   });
   const publicHostPolicyRegistry = new McpPublicHostPolicyRegistry({
     dbPath: mcpHostPolicyPath,

@@ -334,6 +334,47 @@ function successEnvelope(request: Record<string, unknown>, result: unknown): Rec
   };
 }
 
+function helloResult(sessionId: string): Record<string, unknown> {
+  return {
+    session_id: sessionId,
+    accepted_api_version: "authority.v1",
+    runtime_version: "test-daemon",
+    schema_pack_version: "v1",
+    capabilities: {
+      local_only: true,
+      methods: [
+        "hello",
+        "get_run_summary",
+        "get_capabilities",
+        "diagnostics",
+        "query_timeline",
+        "query_helper",
+        "query_approval_inbox",
+        "list_approvals",
+        "run_maintenance",
+      ],
+    },
+  };
+}
+
+function maintenanceStatus(totalArtifacts: number, availableArtifacts: number): Record<string, unknown> {
+  return {
+    projection_status: "fresh",
+    projection_lag_events: 0,
+    degraded_artifact_capture_actions: 0,
+    low_disk_pressure_signals: 0,
+    artifact_health: {
+      status: "healthy",
+      total: totalArtifacts,
+      available: availableArtifacts,
+      expired: 0,
+      missing: 0,
+      corrupted: 0,
+      tampered: 0,
+    },
+  };
+}
+
 describe("inspector ui", () => {
   it("renders the local inspector shell without leaking the daemon socket path", async () => {
     const app = await listenHttp(
@@ -390,44 +431,35 @@ describe("inspector ui", () => {
 
       switch (method) {
         case "hello":
-          return successEnvelope(request, { session_id: "sess_ui" });
+          return successEnvelope(request, helloResult("sess_ui"));
         case "get_run_summary":
           return successEnvelope(request, {
-            run_id: payload.run_id,
-            session_id: "sess_ui",
-            workflow_name: "inspector-flow",
-            agent_framework: "cli",
-            agent_name: "agentgit-cli",
-            workspace_roots: ["/workspace/project"],
-            event_count: 4,
-            latest_event: {
-              sequence: 4,
-              event_type: "execution.completed",
-              occurred_at: "2026-03-31T12:00:04.000Z",
-              recorded_at: "2026-03-31T12:00:04.000Z",
-            },
-            budget_config: {
-              max_mutating_actions: null,
-              max_destructive_actions: null,
-            },
-            budget_usage: {
-              mutating_actions: 1,
-              destructive_actions: 0,
-            },
-            maintenance_status: {
-              projection_status: "fresh",
-              artifact_health: {
-                status: "healthy",
-                total: 1,
-                available: 1,
-                expired: 0,
-                missing: 0,
-                corrupted: 0,
-                tampered: 0,
+            run: {
+              run_id: payload.run_id,
+              session_id: "sess_ui",
+              workflow_name: "inspector-flow",
+              agent_framework: "cli",
+              agent_name: "agentgit-cli",
+              workspace_roots: ["/workspace/project"],
+              event_count: 4,
+              latest_event: {
+                sequence: 4,
+                event_type: "execution.completed",
+                occurred_at: "2026-03-31T12:00:04.000Z",
+                recorded_at: "2026-03-31T12:00:04.000Z",
               },
+              budget_config: {
+                max_mutating_actions: null,
+                max_destructive_actions: null,
+              },
+              budget_usage: {
+                mutating_actions: 1,
+                destructive_actions: 0,
+              },
+              maintenance_status: maintenanceStatus(1, 1),
+              created_at: "2026-03-31T12:00:00.000Z",
+              started_at: "2026-03-31T12:00:00.000Z",
             },
-            created_at: "2026-03-31T12:00:00.000Z",
-            started_at: "2026-03-31T12:00:00.000Z",
           });
         case "query_timeline":
           return successEnvelope(request, {
@@ -453,18 +485,7 @@ describe("inspector ui", () => {
                 mutating_actions: 1,
                 destructive_actions: 0,
               },
-              maintenance_status: {
-                projection_status: "fresh",
-                artifact_health: {
-                  status: "healthy",
-                  total: 1,
-                  available: 1,
-                  expired: 0,
-                  missing: 0,
-                  corrupted: 0,
-                  tampered: 0,
-                },
-              },
+              maintenance_status: maintenanceStatus(1, 1),
               created_at: "2026-03-31T12:00:00.000Z",
               started_at: "2026-03-31T12:00:00.000Z",
             },
@@ -544,7 +565,14 @@ describe("inspector ui", () => {
             uncertainty: [],
           });
         case "query_approval_inbox":
-          return successEnvelope(request, { items: [] });
+          return successEnvelope(request, {
+            items: [],
+            counts: {
+              pending: 0,
+              approved: 0,
+              denied: 0,
+            },
+          });
         case "list_approvals":
           return successEnvelope(request, { approvals: [] });
         default:
@@ -559,7 +587,7 @@ describe("inspector ui", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.run_summary.run_id).toBe("run_ui");
+    expect(body.run_summary.run.run_id).toBe("run_ui");
     expect(body.timeline.visibility_scope).toBe("internal");
     expect(body.timeline.steps).toHaveLength(1);
     expect(body.helper_cards).toHaveLength(4);
@@ -586,7 +614,7 @@ describe("inspector ui", () => {
 
       switch (method) {
         case "hello":
-          return successEnvelope(request, { session_id: "sess_ws" });
+          return successEnvelope(request, helloResult("sess_ws"));
         case "diagnostics":
           return successEnvelope(request, {
             daemon_health: {
@@ -660,41 +688,32 @@ describe("inspector ui", () => {
           });
         case "get_run_summary":
           return successEnvelope(request, {
-            run_id: payload.run_id,
-            session_id: "sess_ws",
-            workflow_name: "inspector-flow",
-            agent_framework: "cli",
-            agent_name: "agentgit-cli",
-            workspace_roots: ["/workspace/project"],
-            event_count: 2,
-            latest_event: {
-              sequence: 2,
-              event_type: "execution.completed",
-              occurred_at: "2026-03-31T12:00:02.000Z",
-              recorded_at: "2026-03-31T12:00:02.000Z",
-            },
-            budget_config: {
-              max_mutating_actions: null,
-              max_destructive_actions: null,
-            },
-            budget_usage: {
-              mutating_actions: 0,
-              destructive_actions: 0,
-            },
-            maintenance_status: {
-              projection_status: "fresh",
-              artifact_health: {
-                status: "healthy",
-                total: 0,
-                available: 0,
-                expired: 0,
-                missing: 0,
-                corrupted: 0,
-                tampered: 0,
+            run: {
+              run_id: payload.run_id,
+              session_id: "sess_ws",
+              workflow_name: "inspector-flow",
+              agent_framework: "cli",
+              agent_name: "agentgit-cli",
+              workspace_roots: ["/workspace/project"],
+              event_count: 2,
+              latest_event: {
+                sequence: 2,
+                event_type: "execution.completed",
+                occurred_at: "2026-03-31T12:00:02.000Z",
+                recorded_at: "2026-03-31T12:00:02.000Z",
               },
+              budget_config: {
+                max_mutating_actions: null,
+                max_destructive_actions: null,
+              },
+              budget_usage: {
+                mutating_actions: 0,
+                destructive_actions: 0,
+              },
+              maintenance_status: maintenanceStatus(0, 0),
+              created_at: "2026-03-31T12:00:00.000Z",
+              started_at: "2026-03-31T12:00:00.000Z",
             },
-            created_at: "2026-03-31T12:00:00.000Z",
-            started_at: "2026-03-31T12:00:00.000Z",
           });
         case "query_timeline":
           return successEnvelope(request, {
@@ -720,18 +739,7 @@ describe("inspector ui", () => {
                 mutating_actions: 0,
                 destructive_actions: 0,
               },
-              maintenance_status: {
-                projection_status: "fresh",
-                artifact_health: {
-                  status: "healthy",
-                  total: 0,
-                  available: 0,
-                  expired: 0,
-                  missing: 0,
-                  corrupted: 0,
-                  tampered: 0,
-                },
-              },
+              maintenance_status: maintenanceStatus(0, 0),
               created_at: "2026-03-31T12:00:00.000Z",
               started_at: "2026-03-31T12:00:00.000Z",
             },
@@ -793,7 +801,14 @@ describe("inspector ui", () => {
             uncertainty: [],
           });
         case "query_approval_inbox":
-          return successEnvelope(request, { items: [] });
+          return successEnvelope(request, {
+            items: [],
+            counts: {
+              pending: 0,
+              approved: 0,
+              denied: 0,
+            },
+          });
         case "list_approvals":
           return successEnvelope(request, { approvals: [] });
         default:
@@ -843,7 +858,7 @@ describe("inspector ui", () => {
   it("rejects malformed maintenance requests before they reach the daemon", async () => {
     const daemon = await createFakeDaemon((request) => {
       if (request.method === "hello") {
-        return successEnvelope(request, { session_id: "sess_ui" });
+        return successEnvelope(request, helloResult("sess_ui"));
       }
 
       throw new Error("The inspector should not proxy malformed maintenance payloads.");

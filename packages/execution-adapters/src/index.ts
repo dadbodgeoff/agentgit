@@ -1732,6 +1732,48 @@ async function removeResolvedPathIfSafe(targetPath: string, details?: Record<str
   return true;
 }
 
+async function fsyncDirectory(directoryPath: string): Promise<void> {
+  const handle = await fs.open(directoryPath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeTextFileAtomically(targetPath: string, content: string): Promise<void> {
+  const directoryPath = path.dirname(targetPath);
+  await fs.mkdir(directoryPath, { recursive: true });
+  const existingMode = (() => {
+    try {
+      return fsSync.statSync(targetPath).mode & 0o777;
+    } catch {
+      return 0o600;
+    }
+  })();
+  const tempPath = path.join(directoryPath, `${path.basename(targetPath)}.${randomUUID()}.tmp`);
+  const handle = await fs.open(tempPath, "w", existingMode);
+
+  try {
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+
+  await handle.close();
+
+  try {
+    await fs.rename(tempPath, targetPath);
+    await fsyncDirectory(directoryPath);
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 function fileContentArtifact(targetPath: string, byteSize: number): ExecutionArtifact {
   return {
     artifact_id: `artifact_file_${Date.now()}`,
@@ -3581,8 +3623,7 @@ export class FilesystemExecutionAdapter implements ExecutionAdapter {
       const executionId = `exec_fs_${Date.now()}`;
       const content = typeof rawInput.content === "string" ? rawInput.content : "";
       const previousContent = await readExistingText(targetPath);
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      await fs.writeFile(targetPath, content, "utf8");
+      await writeTextFileAtomically(targetPath, content);
 
       const completedAt = new Date().toISOString();
       const diffPreview = buildDiffPreview(previousContent, content);

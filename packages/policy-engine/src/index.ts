@@ -815,6 +815,41 @@ function applyPolicyOverlay(
   return baseOutcome;
 }
 
+function enforceShellApprovalGuardrail(action: ActionRecord, outcome: PolicyOutcomeRecord): PolicyOutcomeRecord {
+  if (action.operation.domain !== "shell" || outcome.decision === "deny" || outcome.decision === "ask") {
+    return outcome;
+  }
+
+  const autoAllowedReadOnly = action.risk_hints.side_effect_level === "read_only" && outcome.decision === "allow";
+  if (autoAllowedReadOnly) {
+    return outcome;
+  }
+
+  return {
+    ...outcome,
+    decision: "ask",
+    reasons: [
+      ...outcome.reasons,
+      {
+        code: "LOCAL_SHELL_AUTO_EXECUTION_UNSUPPORTED",
+        severity: "high",
+        message:
+          "Local governed shell execution is not runtime-contained, so automatic execution is blocked unless it remains read-only.",
+      },
+    ],
+    preconditions: {
+      ...outcome.preconditions,
+      snapshot_required: outcome.preconditions.snapshot_required || action.risk_hints.side_effect_level !== "read_only",
+      approval_required: true,
+    },
+    policy_context: {
+      ...outcome.policy_context,
+      matched_rules: [...outcome.policy_context.matched_rules, "shell.guardrail.require_approval"],
+      recoverability_class: "unrecoverable_or_degraded",
+    },
+  };
+}
+
 export function compilePolicyPack(configs: PolicyConfig[]): CompiledPolicyPack {
   const normalizedConfigs = configs.map((config) => PolicyConfigSchema.parse(config));
   const rules: CompiledPolicyRule[] = [];
@@ -1098,6 +1133,15 @@ function shellSnapshotRecoveryContext(): Partial<PolicyOutcomeRecord["policy_con
   };
 }
 
+function makeShellApprovalOutcome(
+  action: ActionRecord,
+  reason: PolicyReason,
+  matchedRule: string,
+  snapshotRequired = true,
+): PolicyOutcomeRecord {
+  return makeCapabilityApprovalOutcome(action, reason, matchedRule, snapshotRequired);
+}
+
 function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
   const locator = action.target.primary.locator;
   const confidenceScore = actionConfidenceScore(action);
@@ -1172,7 +1216,7 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
           {
             code: "TRUSTED_GOVERNED_FS_WRITE",
             severity: "low",
-            message: "Small governed filesystem writes are allowed in safe mode.",
+            message: "Small governed filesystem writes use atomic durable replacement and are allowed automatically.",
           },
         ],
         ["filesystem.safe.small_write"],
@@ -1247,17 +1291,15 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
     if (confidenceTriggered) {
       return (
         evaluateShellCapabilityState(action, context) ??
-        makeAutomaticSnapshotOutcome(
+        makeShellApprovalOutcome(
           action,
           {
             code: "LOW_NORMALIZATION_CONFIDENCE",
             severity: "moderate",
             message:
-              "Shell command confidence is below the configured automation threshold, so AgentGit will create a recovery boundary before continuing.",
+              "Shell command confidence is below the configured automation threshold, and local shell execution is not runtime-contained, so explicit approval is required.",
           },
-          "shell.low_confidence.snapshot",
-          undefined,
-          shellSnapshotRecoveryContext(),
+          "shell.low_confidence.ask",
         )
       );
     }
@@ -1299,17 +1341,15 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
   if (confidenceTriggered) {
     return (
       evaluateShellCapabilityState(action, context) ??
-      makeAutomaticSnapshotOutcome(
+      makeShellApprovalOutcome(
         action,
         {
           code: "LOW_NORMALIZATION_CONFIDENCE",
           severity: "moderate",
           message:
-            "Shell command confidence is below the configured automation threshold, so AgentGit will create a recovery boundary before continuing.",
+            "Shell command confidence is below the configured automation threshold, and local shell execution is not runtime-contained, so explicit approval is required.",
         },
-        "shell.low_confidence.snapshot",
-        undefined,
-        shellSnapshotRecoveryContext(),
+        "shell.low_confidence.ask",
       )
     );
   }
@@ -1321,19 +1361,15 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
   ) {
     return (
       evaluateShellCapabilityState(action, context) ??
-      makeOutcome(
+      makeShellApprovalOutcome(
         action,
-        "allow_with_snapshot",
-        [
-          {
-            code: "FS_DESTRUCTIVE_WORKSPACE_MUTATION",
-            severity: "high",
-            message: "Mutating shell commands require snapshot protection before proceeding.",
-          },
-        ],
-        ["shell.mutating.requires_snapshot"],
-        undefined,
-        shellSnapshotRecoveryContext(),
+        {
+          code: "SHELL_MUTATION_REQUIRES_APPROVAL",
+          severity: "high",
+          message:
+            "Local shell execution is not contained, and snapshots do not provide trusted automatic rollback for shell side effects, so explicit approval is required.",
+        },
+        "shell.mutating.ask",
       )
     );
   }
@@ -1341,17 +1377,15 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
   if (commandFamily === "package_manager") {
     return (
       evaluateShellCapabilityState(action, context) ??
-      makeAutomaticSnapshotOutcome(
+      makeShellApprovalOutcome(
         action,
         {
-          code: "PACKAGE_MANAGER_REQUIRES_SNAPSHOT",
+          code: "PACKAGE_MANAGER_REQUIRES_APPROVAL",
           severity: "moderate",
           message:
-            "Package manager commands are allowed automatically when AgentGit can create a recovery boundary first.",
+            "Package manager shell commands can mutate broadly and are not runtime-contained, so explicit approval is required.",
         },
-        "shell.package_manager.snapshot",
-        undefined,
-        shellSnapshotRecoveryContext(),
+        "shell.package_manager.ask",
       )
     );
   }
@@ -1359,16 +1393,15 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
   if (commandFamily === "build_tool") {
     return (
       evaluateShellCapabilityState(action, context) ??
-      makeAutomaticSnapshotOutcome(
+      makeShellApprovalOutcome(
         action,
         {
-          code: "BUILD_TOOL_REQUIRES_SNAPSHOT",
+          code: "BUILD_TOOL_REQUIRES_APPROVAL",
           severity: "moderate",
-          message: "Build tool commands are allowed automatically when AgentGit can create a recovery boundary first.",
+          message:
+            "Build tool shell commands can execute opaque workspace-wide side effects without containment, so explicit approval is required.",
         },
-        "shell.build_tool.snapshot",
-        undefined,
-        shellSnapshotRecoveryContext(),
+        "shell.build_tool.ask",
       )
     );
   }
@@ -1376,34 +1409,30 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
   if (commandFamily === "interpreter") {
     return (
       evaluateShellCapabilityState(action, context) ??
-      makeAutomaticSnapshotOutcome(
+      makeShellApprovalOutcome(
         action,
         {
-          code: "INTERPRETER_EXECUTION_REQUIRES_SNAPSHOT",
+          code: "INTERPRETER_EXECUTION_REQUIRES_APPROVAL",
           severity: "high",
           message:
-            "Interpreter-launched scripts remain opaque, so AgentGit will create a recovery boundary before continuing automatically.",
+            "Interpreter-launched shell scripts remain opaque and uncontained, so explicit approval is required.",
         },
-        "shell.interpreter.snapshot",
-        undefined,
-        shellSnapshotRecoveryContext(),
+        "shell.interpreter.ask",
       )
     );
   }
 
   return (
     evaluateShellCapabilityState(action, context) ??
-    makeAutomaticSnapshotOutcome(
+    makeShellApprovalOutcome(
       action,
       {
-        code: "OPAQUE_SHELL_REQUIRES_SNAPSHOT",
+        code: "OPAQUE_SHELL_REQUIRES_APPROVAL",
         severity: "high",
         message:
-          "Opaque shell commands are allowed automatically only after AgentGit creates a recovery boundary first.",
+          "Opaque local shell commands are not runtime-contained, so explicit approval is required before execution.",
       },
-      "shell.unclassified.snapshot",
-      undefined,
-      shellSnapshotRecoveryContext(),
+      "shell.unclassified.ask",
     )
   );
 }
@@ -2044,7 +2073,7 @@ export function evaluatePolicy(action: ActionRecord, context: PolicyEvaluationCo
                   ["policy.domain.unsupported"],
                 );
 
-    return withBudgetEffects(action, applyPolicyOverlay(baseOutcome, compiledPolicyOutcome), context);
+    return withBudgetEffects(action, enforceShellApprovalGuardrail(action, applyPolicyOverlay(baseOutcome, compiledPolicyOutcome)), context);
   } catch (error) {
     const wrapped =
       error instanceof InternalError

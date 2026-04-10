@@ -372,19 +372,19 @@ export function CalibrationPage({
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Replayable</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Replayable</div>
                   <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.replayableSamples}</div>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Approvals reduced</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Approvals reduced</div>
                   <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.approvalsReduced}</div>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Approvals increased</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Approvals increased</div>
                   <div className="mt-1 text-lg font-semibold">{replayMutation.data.summary.approvalsIncreased}</div>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Unsafe auto-allow</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Unsafe auto-allow</div>
                   <div className="mt-1 text-lg font-semibold">
                     {replayMutation.data.summary.historicallyDeniedAutoAllowed}
                   </div>

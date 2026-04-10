@@ -22,8 +22,8 @@ export default function LandingPage() {
             <div className="ag-reveal flex flex-col justify-center gap-8">
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center gap-3">
-                  <Badge tone="accent">Hosted beta</Badge>
-                  <span className="font-mono text-xs uppercase tracking-[0.22em] text-[var(--ag-text-secondary)]">
+                  <Badge tone="brand">Hosted beta</Badge>
+                  <span className="ag-text-overline text-[var(--ag-text-secondary)]">
                     Local execution. Cloud oversight.
                   </span>
                 </div>

@@ -222,7 +222,7 @@ export function WorkspaceSettingsPage() {
             <div className="space-y-2">
               <h2 className="text-lg font-semibold">Workspace profile</h2>
               <p className="text-sm text-[var(--ag-text-secondary)]">
-                This is the first real React Hook Form + Zod flow in the app scaffold.
+                Update the hosted workspace identity, approval defaults, and enterprise SSO contract from one place.
               </p>
             </div>
 
@@ -454,20 +454,13 @@ export function WorkspaceSettingsPage() {
           </Card>
 
           <Card className="space-y-4">
-            <h2 className="text-lg font-semibold">Build loop backlog</h2>
+            <h2 className="text-lg font-semibold">Settings operating notes</h2>
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
-              <div>Closed in this pass:</div>
-              <div>- route-level RBAC guard coverage</div>
-              <div>- root and /app error boundaries</div>
-              <div>- first RHF + Zod form in settings</div>
-              <div>- NextAuth session plumbing and /app middleware redirects</div>
-              <div>- owner-only onboarding stepper with 5-step validation</div>
-              <div>- owner-only billing form and invoice surface</div>
-              <div>- admin-only integrations settings with test delivery states</div>
-              <div className="mt-3">Next queued:</div>
-              <div>- connect dashboard and repositories to real backend contracts</div>
-              <div>- remove development credentials before production launch</div>
-              <div>- replace fixture-backed billing and integrations data with backend APIs</div>
+              <div>Use this page to keep workspace-wide defaults aligned:</div>
+              <div>- workspace identity used across the shell and notifications</div>
+              <div>- approval TTL used by governed review flows</div>
+              <div>- enterprise SSO issuer, allowlist, and default-role policy</div>
+              <div>- notification channel defaults shared with onboarding and repository connection</div>
             </div>
           </Card>
         </div>

@@ -664,7 +664,7 @@ describe.sequential("agentgit product CLI", () => {
     service.close();
   }, 20_000);
 
-  it("keeps shell mutation recovery in review-only inspect mode", async () => {
+  it("pauses mutating shell subprocesses for approval instead of silently executing them", async () => {
     const harness = setupWorkspace();
     tempDir = harness.root;
     const sourcePath = path.join(harness.workspaceRoot, "shell-restore-source.txt");
@@ -679,9 +679,9 @@ describe.sequential("agentgit product CLI", () => {
       )}`,
     ]);
     const runResult = await runCli(["run"]);
-    expect(runResult?.exit_code).toBe(0);
-    expect(fs.existsSync(sourcePath)).toBe(false);
-    expect(fs.existsSync(destinationPath)).toBe(true);
+    expect(runResult?.exit_code).toBe(2);
+    expect(fs.existsSync(sourcePath)).toBe(true);
+    expect(fs.existsSync(destinationPath)).toBe(false);
 
     const service = new AgentRuntimeIntegrationService({
       cwd: harness.workspaceRoot,
@@ -689,19 +689,12 @@ describe.sequential("agentgit product CLI", () => {
     });
     const inspectResult = await service.inspect(harness.workspaceRoot);
     expect(inspectResult.found).toBe(true);
-    expect(inspectResult.restore_available).toBe(true);
-    expect(inspectResult.restore_boundary).toBe("review-only snapshot boundary");
-    expect(inspectResult.restore_guidance).toContain("manual review");
-    expect(inspectResult.restore_guidance).toContain("exact automatic replay");
-
-    const previewResult = await service.restore(harness.workspaceRoot);
-    expect(previewResult.preview_only).toBe(true);
-    expect(previewResult.recovery_class).toBe("review_only");
-    expect(previewResult.exactness).toBe("review_only");
-    expect(previewResult.restore_boundary).toBe("review-only snapshot boundary");
-    expect(previewResult.preview_reason).toBe(
-      "AgentGit is previewing only because this recovery boundary is not trusted for exact automatic restore.",
-    );
+    expect(inspectResult.summary).toContain("waiting for approval");
+    expect(inspectResult.action_title).toBe("Approval requested");
+    expect(inspectResult.action_status).toBe("awaiting_approval");
+    expect(inspectResult.restore_available).toBe(false);
+    expect(inspectResult.restore_boundary).toBeNull();
+    expect(inspectResult.restore_guidance).toBeNull();
 
     service.close();
   }, 20_000);

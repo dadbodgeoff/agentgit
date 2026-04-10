@@ -80,9 +80,10 @@ Key edge cases:
 1. User opens `/app/repos` and clicks `Connect repository`.
 2. GitHub OAuth requests needed repo and webhook scopes if needed.
 3. User picks repositories from a searchable multi-select.
-4. For each repo, user configures policy pack, runtime binding, and notification channel.
-5. AgentGit installs GitHub App webhook(s).
-6. Confirmation screen explains when governance begins.
+4. User confirms the policy pack and notification channel that will apply as the workspace default for this connected repository batch.
+5. The confirmation step checks connector coverage for each selected repository and shows which repositories can begin governance immediately versus which still need bootstrap on a local machine.
+6. If a selected repository lacks connector coverage, the flow generates a bootstrap command, token, and waiting state until the first heartbeat arrives.
+7. Confirmation screen explains exactly when governance begins for the selected repositories.
 
 Key edge cases:
 

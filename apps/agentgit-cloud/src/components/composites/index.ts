@@ -1,4 +1,5 @@
 export * from "@/components/composites/approval-card";
 export * from "@/components/composites/breadcrumbs";
+export * from "@/components/composites/data-table";
 export * from "@/components/composites/metric-card";
 export * from "@/components/composites/page-header";

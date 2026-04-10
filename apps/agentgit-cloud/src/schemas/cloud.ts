@@ -729,6 +729,8 @@ export const RepositoryConnectionBootstrapSchema = z
   .object({
     availableRepositories: z.array(OnboardingRepositoryOptionSchema),
     connectedRepositoryIds: z.array(z.string().min(1)),
+    defaultNotificationChannel: NotificationChannelSchema,
+    policyPack: PolicyPackSchema,
     activeConnectorCount: z.number().int().nonnegative(),
     totalConnectorCount: z.number().int().nonnegative(),
     staleConnectorCount: z.number().int().nonnegative(),
@@ -742,6 +744,8 @@ export type RepositoryConnectionBootstrap = z.infer<typeof RepositoryConnectionB
 export const RepositoryConnectionUpdateSchema = z
   .object({
     repositoryIds: z.array(z.string().min(1)),
+    defaultNotificationChannel: NotificationChannelSchema,
+    policyPack: PolicyPackSchema,
   })
   .strict();
 export type RepositoryConnectionUpdate = z.infer<typeof RepositoryConnectionUpdateSchema>;
@@ -1199,6 +1203,17 @@ export const ActionDetailSchema = z
         overlappingPaths: z.array(z.string().min(1)),
       })
       .strict(),
+    eventTrail: z.array(
+      z
+        .object({
+          id: z.string().min(1),
+          occurredAt: TimestampStringSchema,
+          eventType: z.string().min(1),
+          summary: z.string().min(1),
+          payload: z.record(z.string(), z.unknown()),
+        })
+        .strict(),
+    ),
   })
   .strict();
 export type ActionDetail = z.infer<typeof ActionDetailSchema>;

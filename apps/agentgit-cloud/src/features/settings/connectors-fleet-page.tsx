@@ -566,7 +566,7 @@ export function ConnectorsFleetPage() {
                         <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
                           {connector.machineName} · {connector.workspaceSlug}
                         </div>
-                        <div className="mt-2 text-[11px] uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                        <div className="mt-2 text-[11px] uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                           {selected ? "Selected" : "Click for diagnostics"}
                         </div>
                       </button>
@@ -642,7 +642,7 @@ export function ConnectorsFleetPage() {
 
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-2 text-sm">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Repository</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Repository</div>
                   <Link
                     className="mt-1 inline-flex font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
                     href={repositoryRoute(selectedConnector.repositoryOwner, selectedConnector.repositoryName)}
@@ -651,7 +651,7 @@ export function ConnectorsFleetPage() {
                   </Link>
                 </div>
                 <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-2 text-sm">
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Sync state</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Sync state</div>
                   <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
                     {selectedConnector.daemonReachable
                       ? "Local daemon heartbeat is healthy."
@@ -662,7 +662,7 @@ export function ConnectorsFleetPage() {
 
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Provider URL</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Provider URL</div>
                   <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
                     {sanitizeExternalUrl(selectedConnector.providerIdentity.repositoryUrl) ? (
                       <a
@@ -679,7 +679,7 @@ export function ConnectorsFleetPage() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                     Provider state
                   </div>
                   <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
@@ -690,36 +690,36 @@ export function ConnectorsFleetPage() {
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                     Default branch
                   </div>
                   <div className="mt-1 font-medium">{selectedConnector.providerIdentity.defaultBranch}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Visibility</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Visibility</div>
                   <div className="mt-1 font-medium capitalize">{selectedConnector.providerIdentity.visibility}</div>
                 </div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Pending</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Pending</div>
                   <div className="mt-1 font-medium">{formatNumber(selectedConnector.pendingCommandCount)}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Leased</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Leased</div>
                   <div className="mt-1 font-medium">{formatNumber(selectedConnector.leasedCommandCount)}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Retryable</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Retryable</div>
                   <div className="mt-1 font-medium">{formatNumber(selectedConnector.retryableCommandCount)}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Auto retries</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Auto retries</div>
                   <div className="mt-1 font-medium">{formatNumber(selectedConnector.automaticRetryCount)}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Events</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Events</div>
                   <div className="mt-1 font-medium">{formatNumber(selectedConnector.eventCount)}</div>
                 </div>
               </div>
@@ -876,19 +876,19 @@ export function ConnectorsFleetPage() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Active</div>
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Active</div>
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedActiveCommandCount)}</div>
                   </div>
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Replayable</div>
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Replayable</div>
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedReplayableCount)}</div>
                   </div>
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Settled</div>
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Settled</div>
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedSettledCount)}</div>
                   </div>
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                       Scheduled retry
                     </div>
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedScheduledRetryCount)}</div>

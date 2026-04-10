@@ -1,9 +1,10 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
 import type { RequestContext } from "@agentgit/core-ports";
 import {
+  createFileBackedSecretKeyProvider,
   LocalEncryptedSecretStore,
   SessionCredentialBroker,
   type SecretKeyProvider,
@@ -862,30 +863,9 @@ export function createCredentialBroker(
     env?: NodeJS.ProcessEnv;
     mcpSecretStorePath?: string;
     mcpSecretKeyPath?: string;
+    mcpSecretKeyProvider?: SecretKeyProvider;
   } = {},
 ): SessionCredentialBroker {
-  const createFallbackKeyProvider = (): SecretKeyProvider => ({
-    kind: process.platform === "darwin" ? "macos_keychain" : "linux_secret_service",
-    loadOrCreateKey(params: { legacyKeyPath?: string }) {
-      if (!params.legacyKeyPath) {
-        throw new AgentGitError("Durable MCP secret storage fallback requires a legacy key path.", "BROKER_UNAVAILABLE");
-      }
-
-      if (fs.existsSync(params.legacyKeyPath)) {
-        const existing = Buffer.from(fs.readFileSync(params.legacyKeyPath, "utf8").trim(), "base64");
-        if (existing.length === 32) {
-          fs.chmodSync(params.legacyKeyPath, 0o600);
-          return existing;
-        }
-      }
-
-      const created = randomBytes(32);
-      fs.mkdirSync(path.dirname(params.legacyKeyPath), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(params.legacyKeyPath, created.toString("base64"), { encoding: "utf8", mode: 0o600 });
-      fs.chmodSync(params.legacyKeyPath, 0o600);
-      return created;
-    },
-  });
   const env = options.env ?? process.env;
   let mcpSecretStore: LocalEncryptedSecretStore | null = null;
   if (options.mcpSecretStorePath && options.mcpSecretKeyPath) {
@@ -893,6 +873,7 @@ export function createCredentialBroker(
       mcpSecretStore = new LocalEncryptedSecretStore({
         dbPath: options.mcpSecretStorePath,
         keyPath: options.mcpSecretKeyPath,
+        keyProvider: options.mcpSecretKeyProvider,
       });
     } catch (error) {
       if (!(error instanceof AgentGitError) || error.code !== "BROKER_UNAVAILABLE") {
@@ -902,7 +883,7 @@ export function createCredentialBroker(
       mcpSecretStore = new LocalEncryptedSecretStore({
         dbPath: options.mcpSecretStorePath,
         keyPath: options.mcpSecretKeyPath,
-        keyProvider: createFallbackKeyProvider(),
+        keyProvider: options.mcpSecretKeyProvider ?? createFileBackedSecretKeyProvider(),
       });
     }
   }
@@ -2062,16 +2043,18 @@ async function handleRunMaintenance(
       }
       case "startup_reconcile_recoveries": {
         const reconciledActions = recoverInterruptedActions(journal);
+        const reconciledIdempotencyKeys = reconcileInterruptedIdempotentMutations(journal);
         jobs.push({
           job_type: jobType,
           status: "completed",
           performed_inline: true,
           summary:
-            reconciledActions > 0
-              ? `Marked ${reconciledActions} interrupted action(s) as outcome_unknown for manual reconciliation.`
-              : "No interrupted actions required recovery reconciliation.",
+            reconciledActions > 0 || reconciledIdempotencyKeys > 0
+              ? `Marked ${reconciledActions} interrupted action(s) and ${reconciledIdempotencyKeys} interrupted idempotent request(s) as outcome_unknown for manual reconciliation.`
+              : "No interrupted actions or idempotent requests required recovery reconciliation.",
           stats: {
             reconciled_actions: reconciledActions,
+            reconciled_idempotency_keys: reconciledIdempotencyKeys,
           },
         });
         break;
@@ -2640,6 +2623,22 @@ export async function handleRequest(
       );
     }
 
+    if (idempotencyClaim?.status === "outcome_unknown") {
+      throw new PreconditionError(
+        "A previous request with this idempotency key has an unknown outcome after interruption or journal finalization failure. Inspect side effects before retrying or reusing the key.",
+        {
+          session_id: request.session_id,
+          idempotency_key: request.idempotency_key,
+          method: request.method,
+          stored_at: idempotencyClaim.record.stored_at,
+          uncertainty_recorded_at: idempotencyClaim.record.uncertainty_recorded_at,
+          uncertainty_reason: idempotencyClaim.record.uncertainty_reason,
+        },
+      );
+    }
+
+    let idempotencyFinalizedOrLocked = false;
+
     try {
       let response: ResponseEnvelope<unknown>;
 
@@ -2893,18 +2892,54 @@ export async function handleRequest(
       }
 
       if (idempotencyClaim?.status === "claimed" && request.session_id && request.idempotency_key && response.ok) {
-        journal.completeIdempotentMutation({
-          session_id: request.session_id,
-          idempotency_key: request.idempotency_key,
-          response,
-          completed_at: new Date().toISOString(),
-        });
+        try {
+          journal.completeIdempotentMutation({
+            session_id: request.session_id,
+            idempotency_key: request.idempotency_key,
+            response,
+            completed_at: new Date().toISOString(),
+          });
+          idempotencyFinalizedOrLocked = true;
+        } catch (completionError) {
+          const uncertaintyRecordedAt = new Date().toISOString();
+          journal.markIdempotentMutationOutcomeUnknown({
+            session_id: request.session_id,
+            idempotency_key: request.idempotency_key,
+            uncertainty_recorded_at: uncertaintyRecordedAt,
+            uncertainty_reason: "response_persistence_failed_after_side_effects",
+          });
+          idempotencyFinalizedOrLocked = true;
+
+          throw new AgentGitError(
+            "Request side effects completed, but durable idempotency finalization failed. The request outcome is now locked as unknown until an operator reconciles it.",
+            completionError instanceof AgentGitError ? completionError.code : "INTERNAL_ERROR",
+            {
+              session_id: request.session_id,
+              idempotency_key: request.idempotency_key,
+              method: request.method,
+              uncertainty_recorded_at: uncertaintyRecordedAt,
+              cause: completionError instanceof Error ? completionError.message : String(completionError),
+            },
+            false,
+          );
+        }
       }
 
       return response;
     } catch (error) {
-      if (idempotencyClaim?.status === "claimed" && request.session_id && request.idempotency_key) {
-        journal.releaseIdempotentMutation(request.session_id, request.idempotency_key);
+      if (
+        idempotencyClaim?.status === "claimed" &&
+        request.session_id &&
+        request.idempotency_key &&
+        !idempotencyFinalizedOrLocked
+      ) {
+        journal.markIdempotentMutationOutcomeUnknown({
+          session_id: request.session_id,
+          idempotency_key: request.idempotency_key,
+          uncertainty_recorded_at: new Date().toISOString(),
+          uncertainty_reason: "request_failed_before_durable_completion",
+        });
+        idempotencyFinalizedOrLocked = true;
       }
 
       throw error;
@@ -2915,15 +2950,7 @@ export async function handleRequest(
 }
 
 export function rehydrateState(state: AuthorityState, journal: RunJournal): void {
-  const result = reconcilePersistedRuns(state, journal);
-
-  process.stdout.write(
-    `${JSON.stringify({
-      status: "rehydrated",
-      sessions: result.total_sessions,
-      runs: result.total_runs,
-    })}\n`,
-  );
+  reconcilePersistedRuns(state, journal);
 }
 
 function reconcilePersistedRuns(
@@ -2960,11 +2987,26 @@ export function recoverInterruptedActions(journal: RunJournal): number {
 
   for (const run of runs) {
     const events = journal.listRunEvents(run.run_id);
-    const snapshotEvents = events.filter((event) => event.event_type === "snapshot.created");
+    const candidates = new Map<string, { snapshot_created: boolean; execution_started: boolean }>();
 
-    for (const snapshotEvent of snapshotEvents) {
-      const actionId = typeof snapshotEvent.payload?.action_id === "string" ? snapshotEvent.payload.action_id : null;
+    for (const event of events) {
+      const actionId = typeof event.payload?.action_id === "string" ? event.payload.action_id : null;
       if (!actionId) {
+        continue;
+      }
+
+      const candidate = candidates.get(actionId) ?? { snapshot_created: false, execution_started: false };
+      if (event.event_type === "snapshot.created") {
+        candidate.snapshot_created = true;
+      }
+      if (event.event_type === "execution.started") {
+        candidate.execution_started = true;
+      }
+      candidates.set(actionId, candidate);
+    }
+
+    for (const [actionId, candidate] of candidates.entries()) {
+      if (!candidate.snapshot_created && !candidate.execution_started) {
         continue;
       }
 
@@ -2993,9 +3035,10 @@ export function recoverInterruptedActions(journal: RunJournal): number {
         recorded_at: now,
         payload: {
           action_id: actionId,
-          reason: "daemon_crash_recovery",
-          message:
-            "Daemon restarted before a terminal execution event was recorded. Workspace may have changed; snapshot preserved for reconciliation or manual recovery.",
+          reason: candidate.execution_started ? "daemon_crash_recovery_in_flight" : "daemon_crash_recovery_preflight",
+          message: candidate.execution_started
+            ? "Daemon restarted after execution began but before a terminal event was recorded. Side effects may have landed; reconcile manually before retrying."
+            : "Daemon restarted after a recovery boundary was captured but before a terminal event was recorded. Execution start was not durably observed, so retry only after reviewing the preserved boundary.",
         },
       });
       reconciledActions += 1;
@@ -3003,6 +3046,10 @@ export function recoverInterruptedActions(journal: RunJournal): number {
   }
 
   return reconciledActions;
+}
+
+export function reconcileInterruptedIdempotentMutations(journal: RunJournal): number {
+  return journal.reconcilePendingIdempotentMutations();
 }
 
 export class AuthorityService {
@@ -3039,7 +3086,9 @@ export class AuthorityService {
   }
 
   recoverInterrupted(): number {
-    return recoverInterruptedActions(this.deps.journal);
+    const reconciledActions = recoverInterruptedActions(this.deps.journal);
+    reconcileInterruptedIdempotentMutations(this.deps.journal);
+    return reconciledActions;
   }
 
   close(): void {}

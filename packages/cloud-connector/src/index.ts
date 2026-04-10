@@ -736,7 +736,7 @@ export class CloudConnectorService {
     return response;
   }
 
-  async sendHeartbeat(input: Omit<z.infer<typeof ConnectorHeartbeatRequestSchema>, "requestId">) {
+  async sendHeartbeat(input: Omit<z.infer<typeof ConnectorHeartbeatRequestSchema>, "requestId" | "schemaVersion">) {
     const registration = this.stateStore.getRegistration();
     if (!registration) {
       throw new Error("Cloud connector is not registered.");

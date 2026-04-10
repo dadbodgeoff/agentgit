@@ -8,7 +8,8 @@ import { useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-
 import { ApprovalCard } from "@/components/composites";
 import { EmptyState, LoadingSkeleton, PageStatePanel, StaleIndicator } from "@/components/feedback";
 import { MetricCard, PageHeader } from "@/components/composites";
-import { Badge, Button, Card, CodeBlock, Input, ToastCard, ToastViewport } from "@/components/primitives";
+import { Badge, Button, Card, CodeBlock, Input, Overline } from "@/components/primitives";
+import { useToast } from "@/components/providers/toast-provider";
 import { ApiClientError, getApiErrorMessage } from "@/lib/api/client";
 import { approveApproval, rejectApproval } from "@/lib/api/endpoints/approvals";
 import { useWorkspace } from "@/lib/auth/workspace-context";
@@ -21,11 +22,6 @@ import { ApprovalDecisionResponseSchema, type ApprovalListItem, type ApprovalLis
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 
 type DecisionIntent = "approve" | "reject";
-type QueueToast = {
-  tone: "success" | "warning" | "error";
-  message: string;
-};
-
 function describeReviewLoad(items: ApprovalListItem[]): string {
   const snapshotRequired = items.filter((item) => item.snapshotRequired).length;
   if (items.length === 0) {
@@ -113,6 +109,7 @@ function ApprovalQueueSkeleton() {
 export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: PreviewState }) {
   const queryClient = useQueryClient();
   const { user } = useWorkspace();
+  const { pushToast } = useToast();
   const liveUpdateStatus = useLiveUpdateStatus();
   const approvalsQuery = useApprovalsQuery(previewState);
   const [selectedApprovalId, setSelectedApprovalId] = useState<string | null>(null);
@@ -120,7 +117,6 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
   const [decisionComment, setDecisionComment] = useState("");
   const [confirmRejectId, setConfirmRejectId] = useState<string | null>(null);
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
-  const [toast, setToast] = useState<QueueToast | null>(null);
   const approvals = approvalsQuery.data;
   const approvalItems = approvals?.items ?? [];
   const pendingApprovals = approvalItems.filter((item) => item.status === "pending");
@@ -174,18 +170,6 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
     setDecisionComment("");
     setConfirmRejectId(null);
   }, [selectedApprovalId]);
-
-  useEffect(() => {
-    if (!toast) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      setToast(null);
-    }, 4000);
-
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
 
   function removeApprovalFromCache(approvalId: string) {
     queryClient.setQueryData<InfiniteData<ApprovalListResponse>>([...queryKeys.approvals, previewState], (current) => {
@@ -248,9 +232,10 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
       });
       setConfirmRejectId(null);
       setDecisionComment("");
-      setToast({
+      pushToast({
+        description: result.message,
+        title: result.status === "approved" ? "Approval recorded" : "Queue updated",
         tone: result.status === "approved" ? "success" : "warning",
-        message: result.message,
       });
       removeApprovalFromCache(variables.approvalId);
     },
@@ -259,9 +244,10 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
         const parsedConflict = ApprovalDecisionResponseSchema.safeParse(error.details);
 
         if (error.status === 409 && parsedConflict.success) {
-          setToast({
+          pushToast({
+            description: parsedConflict.data.message,
+            title: "Queue updated",
             tone: "warning",
-            message: parsedConflict.data.message,
           });
           setConfirmRejectId(null);
           setDecisionComment("");
@@ -281,9 +267,10 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
           ...current,
           [variables.approvalId]: fallbackMessage,
         }));
-        setToast({
+        pushToast({
+          description: fallbackMessage,
+          title: "Decision failed",
           tone: "error",
-          message: fallbackMessage,
         });
         return;
       }
@@ -292,9 +279,10 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
         ...current,
         [variables.approvalId]: "Could not submit the decision. Try again.",
       }));
-      setToast({
+      pushToast({
+        description: "Could not submit the decision. Try again.",
+        title: "Decision failed",
         tone: "error",
-        message: "Could not submit the decision. Try again.",
       });
     },
   });
@@ -522,11 +510,11 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
 
                 <div className="grid gap-3 rounded-[var(--ag-radius-lg)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4 text-sm sm:grid-cols-2">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Workflow</div>
+                    <Overline>Workflow</Overline>
                     <div className="mt-1 font-medium">{selectedApproval.workflowName}</div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Repository</div>
+                    <Overline>Repository</Overline>
                     <div className="mt-1 font-medium">
                       {selectedApproval.repositoryOwner && selectedApproval.repositoryName
                         ? `${selectedApproval.repositoryOwner}/${selectedApproval.repositoryName}`
@@ -534,21 +522,19 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Target</div>
+                    <Overline>Target</Overline>
                     <div className="mt-1 font-medium">
                       {selectedApproval.targetLabel ?? selectedApproval.targetLocator}
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
-                      Snapshot gate
-                    </div>
+                    <Overline>Snapshot gate</Overline>
                     <div className="mt-1 font-medium">
                       {selectedApproval.snapshotRequired ? "Required before execution" : "Not required"}
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Run</div>
+                    <Overline>Run</Overline>
                     <div className="mt-1 font-mono text-xs text-[var(--ag-text-secondary)]">
                       {selectedApproval.runId}
                     </div>
@@ -606,17 +592,13 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
                 </div>
 
                 <div className="space-y-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
-                    Authority target locator
-                  </h3>
+                  <Overline as="h3">Authority target locator</Overline>
                   <CodeBlock>{selectedApproval.targetLocator}</CodeBlock>
                 </div>
 
                 {selectedApproval.resolutionNote ? (
                   <div className="space-y-3">
-                    <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
-                      Resolution note
-                    </h3>
+                    <Overline as="h3">Resolution note</Overline>
                     <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 text-sm text-[var(--ag-text-secondary)]">
                       {selectedApproval.resolutionNote}
                     </div>
@@ -705,63 +687,24 @@ export function ApprovalQueuePage({ previewState = "ready" }: { previewState?: P
 
           <Card className="space-y-4">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">Build loop backlog</h2>
+              <h2 className="text-lg font-semibold">Operator notes</h2>
               <Badge>{user.name}</Badge>
             </div>
             <p className="text-sm text-[var(--ag-text-secondary)]">
-              Foundation follow-ups are captured alongside the approval loop so implementation work and cleanup work
-              stay in the same operating rhythm.
+              Use the approval queue as the handoff between automated execution and human review.
             </p>
-            <CodeBlock>
-              {`Backlog file:
-engineering-docs/pre-code-specs/cloud-product/05-foundation-loop-backlog.md
-
-Closed in this pass:
-- route-level RBAC guard coverage
-- root and /app error boundaries
-- first RHF + Zod form in settings
-- NextAuth session plumbing and /app middleware redirects
-- owner-only onboarding stepper with 5-step validation
-- owner-only billing form and invoice surface
-- admin-only integrations settings with test delivery states
-- authority-backed approval inbox and decision mutations via the local daemon
-- authority-backed run detail summary and timeline adapter
-
-Preview states:
-?state=empty
-
-Local authority prerequisites:
-- start the daemon so /api/v1/approvals and /api/v1/runs/[id] can resolve real contracts
-- set AGENTGIT_CLOUD_WORKSPACE_ROOTS only if the app should hello a workspace outside this repo`}
-            </CodeBlock>
+            <div className="space-y-3 rounded-[var(--ag-radius-lg)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] p-4">
+              <Overline>Review checklist</Overline>
+              <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--ag-text-secondary)]">
+                <li>Open the action or run detail before making an irreversible decision.</li>
+                <li>Confirm connector health if delivery looks delayed.</li>
+                <li>Use the resolution note when another operator may review the same action.</li>
+                <li>Watch activity and audit after a decision to verify the result landed cleanly.</li>
+              </ul>
+            </div>
           </Card>
         </div>
       </div>
-
-      {toast ? (
-        <ToastViewport>
-          <ToastCard
-            className={
-              toast.tone === "success"
-                ? "border-[color:rgb(34_197_94_/_0.28)]"
-                : toast.tone === "warning"
-                  ? "border-[color:rgb(245_158_11_/_0.28)]"
-                  : "border-[color:rgb(239_68_68_/_0.28)]"
-            }
-          >
-            <div className="space-y-1">
-              <div className="text-sm font-semibold text-[var(--ag-text-primary)]">
-                {toast.tone === "success"
-                  ? "Approval recorded"
-                  : toast.tone === "warning"
-                    ? "Queue updated"
-                    : "Decision failed"}
-              </div>
-              <p className="text-sm text-[var(--ag-text-secondary)]">{toast.message}</p>
-            </div>
-          </ToastCard>
-        </ToastViewport>
-      ) : null}
     </>
   );
 }

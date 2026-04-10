@@ -841,7 +841,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.policy_context.recoverability_class).toBe("unrecoverable_or_degraded");
   });
 
-  it("should mark mutating shell snapshot boundaries as degraded recovery, not local exact restore", () => {
+  it("should require approval for mutating shell boundaries while keeping degraded recovery semantics", () => {
     const outcome = evaluatePolicy(
       makeAction({
         actor: {
@@ -897,7 +897,9 @@ describe("evaluatePolicy", () => {
       }),
     );
 
-    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.decision).toBe("ask");
+    expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.preconditions.snapshot_required).toBe(true);
     expect(outcome.policy_context.recoverability_class).toBe("unrecoverable_or_degraded");
   });
 
@@ -1565,7 +1567,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.reasons[0]?.code).toBe("LOW_NORMALIZATION_CONFIDENCE");
   });
 
-  it("should let explicit low-confidence thresholds strengthen read-only shell actions into auto-snapshot execution", () => {
+  it("should let explicit low-confidence thresholds strengthen read-only shell actions into approval-gated execution", () => {
     const customPolicy: PolicyConfig = {
       profile_name: "custom-thresholds",
       policy_version: "1",
@@ -1584,12 +1586,12 @@ describe("evaluatePolicy", () => {
       compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
     });
 
-    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.decision).toBe("ask");
     expect(outcome.preconditions.snapshot_required).toBe(true);
-    expect(outcome.preconditions.approval_required).toBe(false);
+    expect(outcome.preconditions.approval_required).toBe(true);
   });
 
-  it("should prefer exact action-family thresholds over wildcard thresholds for auto-snapshot low-confidence shell handling", () => {
+  it("should prefer exact action-family thresholds over wildcard thresholds for low-confidence shell approval gating", () => {
     const customPolicy: PolicyConfig = {
       profile_name: "custom-thresholds",
       policy_version: "1",
@@ -1612,9 +1614,9 @@ describe("evaluatePolicy", () => {
       compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
     });
 
-    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.decision).toBe("ask");
     expect(outcome.preconditions.snapshot_required).toBe(true);
-    expect(outcome.preconditions.approval_required).toBe(false);
+    expect(outcome.preconditions.approval_required).toBe(true);
   });
 
   it("should only relax low-confidence snapshot gating when explicit policy config lowers the threshold", () => {
@@ -1636,7 +1638,7 @@ describe("evaluatePolicy", () => {
       compiled_policy: compilePolicyPack([strictPolicy, DEFAULT_POLICY_PACK]),
     });
 
-    expect(strictOutcome.decision).toBe("allow_with_snapshot");
+    expect(strictOutcome.decision).toBe("ask");
     expect(strictOutcome.preconditions.snapshot_required).toBe(true);
 
     const relaxedPolicy: PolicyConfig = {
@@ -2017,7 +2019,7 @@ describe("evaluatePolicy", () => {
     expect(directOutcome.policy_context.recoverability_class).toBe("unrecoverable_or_degraded");
   });
 
-  it("records local snapshot recovery proof for low-confidence shell reads", () => {
+  it("records degraded recovery proof for low-confidence shell reads that now require approval", () => {
     const customPolicy: PolicyConfig = {
       profile_name: "custom-thresholds",
       policy_version: "1",
@@ -2035,7 +2037,7 @@ describe("evaluatePolicy", () => {
       compiled_policy: compilePolicyPack([customPolicy, DEFAULT_POLICY_PACK]),
     });
 
-    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.decision).toBe("ask");
     expect(outcome.policy_context).toMatchObject({
       recoverability_class: "unrecoverable_or_degraded",
     });
@@ -2092,7 +2094,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.budget_effects.budget_check).toBe("hard_limit");
   });
 
-  it("should auto-snapshot package manager commands with a package-manager-specific reason", () => {
+  it("should require approval for package manager commands with a package-manager-specific reason", () => {
     const outcome = evaluatePolicy(
       makeAction({
         operation: {
@@ -2135,9 +2137,10 @@ describe("evaluatePolicy", () => {
       }),
     );
 
-    expect(outcome.decision).toBe("allow_with_snapshot");
+    expect(outcome.decision).toBe("ask");
     expect(outcome.preconditions.snapshot_required).toBe(true);
-    expect(outcome.reasons[0]?.code).toBe("PACKAGE_MANAGER_REQUIRES_SNAPSHOT");
+    expect(outcome.preconditions.approval_required).toBe(true);
+    expect(outcome.reasons[0]?.code).toBe("PACKAGE_MANAGER_REQUIRES_APPROVAL");
   });
 
   it("should keep communication-boundary shell commands approval-gated", () => {

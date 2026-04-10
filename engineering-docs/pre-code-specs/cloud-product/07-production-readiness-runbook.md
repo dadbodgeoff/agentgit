@@ -119,6 +119,8 @@ pnpm --filter @agentgit/cloud-ui build
 pnpm --filter @agentgit/cloud-ui test:smoke
 ```
 
+Repository-wide release verification must include that same hosted smoke command through `pnpm release:verify`. Do not create a second release-only hosted smoke path.
+
 For a local production-like start:
 
 ```bash

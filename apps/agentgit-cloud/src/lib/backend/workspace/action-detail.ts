@@ -141,6 +141,35 @@ function normalizeRiskHints(candidate: unknown) {
   };
 }
 
+function summarizeActionEvent(eventType: string, payload: Record<string, unknown> | undefined): string {
+  switch (eventType) {
+    case "action.normalized":
+      return "The governed action was normalized and recorded for policy and execution review.";
+    case "policy.evaluated":
+      return typeof payload?.decision === "string"
+        ? `Policy evaluated the action as ${payload.decision.replaceAll("_", " ")}.`
+        : "Policy evaluated the action.";
+    case "approval.requested":
+      return "The action entered the approval queue.";
+    case "approval.resolved":
+      return "The approval request was resolved.";
+    case "execution.started":
+      return "Execution started for this governed action.";
+    case "execution.completed":
+      return "Execution completed for this governed action.";
+    case "execution.failed":
+      return "Execution failed for this governed action.";
+    case "execution.outcome_unknown":
+      return "Execution finished with an unknown outcome.";
+    case "snapshot.created":
+      return "A recovery snapshot was captured for this action.";
+    case "recovery.executed":
+      return "A recovery event was executed for this action.";
+    default:
+      return eventType.replaceAll(".", " ");
+  }
+}
+
 function extractActionRecord(payload: Record<string, unknown>, runId: string, actionId: string): ActionRecord | null {
   const direct = ActionRecordSchema.safeParse(payload.action);
   if (direct.success) {
@@ -377,6 +406,36 @@ export async function getActionDetail(
 
     const timelineStep = timeline?.steps.find((step) => step.action_id === actionId) ?? null;
     const policyPayload = policyEvent?.payload ?? {};
+    const derivedExecutionEvent =
+      executionEvent ??
+      (timelineStep?.status === "completed" ||
+      timelineStep?.status === "failed" ||
+      timelineStep?.status === "partial" ||
+      timelineStep?.status === "blocked" ||
+      timelineStep?.status === "awaiting_approval"
+        ? {
+            occurred_at: timelineStep.occurred_at ?? normalizedEvent.occurred_at,
+            event_type:
+              timelineStep.status === "completed"
+                ? "execution.completed"
+                : timelineStep.status === "failed" || timelineStep.status === "partial"
+                  ? "execution.failed"
+                  : "execution.started",
+            payload: {
+              action_id: actionId,
+            },
+            sequence: -1,
+          }
+        : null);
+    const eventTrail = [policyEvent, normalizedEvent, derivedExecutionEvent, snapshotEvent]
+      .filter((event): event is NonNullable<typeof event> => Boolean(event))
+      .map((event) => ({
+        id: `${runId}:${actionId}:${event.sequence}`,
+        occurredAt: event.occurred_at,
+        eventType: event.event_type,
+        summary: summarizeActionEvent(event.event_type, event.payload),
+        payload: event.payload ?? {},
+      }));
 
     return ActionDetailSchema.parse({
       id: `${runId}:${actionId}`,
@@ -467,6 +526,7 @@ export async function getActionDetail(
         laterActionsAffected: timelineStep?.related.later_actions_affected ?? 0,
         overlappingPaths: timelineStep?.related.overlapping_paths ?? [],
       },
+      eventTrail,
     });
   } finally {
     journal.close();

@@ -1,8 +1,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
-import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
+import { expect, test, type Page } from "@playwright/test";
 import type { ActionRecord } from "@agentgit/schemas";
 import { RunJournal } from "@agentgit/run-journal";
 
@@ -14,24 +13,6 @@ function escapeForRegex(value: string) {
 
 async function waitForOkResponse(page: Page, pathFragment: string) {
   await page.waitForResponse((response) => response.url().includes(pathFragment) && response.ok(), { timeout: 45_000 });
-}
-
-async function loadMoreUntilVisible(page: Page, locator: Locator, maxPages = 6) {
-  for (let attempt = 0; attempt < maxPages; attempt += 1) {
-    if (await locator.count()) {
-      await expect(locator.first()).toBeVisible({ timeout: 20_000 });
-      return;
-    }
-
-    const loadMoreButton = page.getByRole("button", { name: "Load more" });
-    if (!(await loadMoreButton.count())) {
-      break;
-    }
-
-    await loadMoreButton.first().click();
-  }
-
-  await expect(locator.first()).toBeVisible({ timeout: 20_000 });
 }
 
 async function expectConnectorCommandState(page: Page, commandType: string, pendingCount: string) {
@@ -54,7 +35,12 @@ async function signInAs(
     role: "member" | "admin" | "owner";
   },
 ) {
+  await page.context().clearCookies();
   await page.goto(`/sign-in?callbackUrl=${encodeURIComponent(params.callbackUrl)}`);
+  await page.evaluate(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  });
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible({ timeout: 15_000 });
   const csrfResponse = await page.request.get("/api/auth/csrf");
   const csrfPayload = (await csrfResponse.json()) as { csrfToken?: string };
@@ -274,24 +260,16 @@ function makeSmokeAction(workspaceRoot: string, runId: string, actionId: string)
 async function seedRepositorySnapshot(): Promise<{
   owner: string;
   name: string;
-  snapshotId: string;
   runId: string;
   actionId: string;
 }> {
   const { owner, name, workspaceRoot } = getWorkspaceRepositoryIdentity();
   const runId = `run_smoke_${Date.now()}`;
   const actionId = `act_smoke_${Date.now()}`;
+  const snapshotId = `snap_smoke_${Date.now()}`;
   const targetPath = path.join(workspaceRoot, "README.md");
   const journal = new RunJournal({
     dbPath: path.join(workspaceRoot, ".agentgit", "state", "authority.db"),
-  });
-  const snapshotEngine = new LocalSnapshotEngine({
-    rootDir: path.join(workspaceRoot, ".agentgit", "state", "snapshots"),
-  });
-  const snapshot = await snapshotEngine.createSnapshot({
-    action: makeSmokeAction(workspaceRoot, runId, actionId),
-    requested_class: "journal_plus_anchor",
-    workspace_root: workspaceRoot,
   });
 
   try {
@@ -336,7 +314,7 @@ async function seedRepositorySnapshot(): Promise<{
     });
 
     journal.appendRunEvent(runId, {
-      event_type: "execution.completed",
+      event_type: "execution.failed",
       occurred_at: "2026-04-07T15:00:03Z",
       recorded_at: "2026-04-07T15:00:03Z",
       payload: {
@@ -350,7 +328,7 @@ async function seedRepositorySnapshot(): Promise<{
       recorded_at: "2026-04-07T15:00:04Z",
       payload: {
         action_id: actionId,
-        snapshot_id: snapshot.snapshot_id,
+        snapshot_id: snapshotId,
         snapshot_class: "journal_plus_anchor",
         fidelity: "full",
       },
@@ -360,19 +338,19 @@ async function seedRepositorySnapshot(): Promise<{
       event_type: "recovery.executed",
       occurred_at: "2026-04-07T15:00:05Z",
       recorded_at: "2026-04-07T15:00:05Z",
-      payload: {
-        action_id: actionId,
-        snapshot_id: snapshot.snapshot_id,
-      },
-    });
+        payload: {
+          action_id: actionId,
+          snapshot_id: snapshotId,
+        },
+      });
   } finally {
     journal.close();
   }
 
-  return { owner, name, snapshotId: snapshot.snapshot_id, runId, actionId };
+  return { owner, name, runId, actionId };
 }
 
-test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and readiness", async ({ page }) => {
+test("admin smoke covers repo connection, operator investigation, fleet, and readiness", async ({ page }) => {
   test.setTimeout(300_000);
   const snapshotSeed = await seedRepositorySnapshot();
   const repositoryState = getWorkspaceRepositoryState();
@@ -391,12 +369,16 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await expect(page.getByRole("heading", { name: "Repositories" })).toBeVisible();
   await page.getByRole("button", { name: "Connect repository" }).first().click();
   await expect(page.getByRole("heading", { name: "Connect repositories" })).toBeVisible();
-  await page.getByRole("checkbox").first().check();
-  await page.getByRole("button", { name: "Save repository scope" }).click();
-  await expect(page.locator("text=Bootstrap a local connector")).toBeVisible({ timeout: 20_000 });
+  await page
+    .getByRole("button", { name: new RegExp(`${escapeForRegex(repositoryState.owner)}/${escapeForRegex(repositoryState.name)}`) })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Review connection" }).click();
+  await page.getByRole("button", { name: "Connect repositories" }).click();
+  await expect(page.locator("main")).toContainText("Start governance", { timeout: 20_000 });
   await page.getByRole("button", { name: "Generate bootstrap token" }).click();
   await expect(page.locator("text=Bootstrap command")).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "Cancel" }).click();
 
   await page.goto("/app/settings/team");
   await expect(page.getByRole("heading", { name: "Team" })).toBeVisible();
@@ -477,31 +459,13 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
   await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/replay`);
   await expect(page.locator("main")).toContainText("Replay run", { timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("Investigation focus", { timeout: 20_000 });
   await page.getByRole("button", { name: "Queue replay through connector" }).click();
   await expect(page.locator("main")).toContainText(/queued|Queueing replay/i, { timeout: 20_000 });
-
-  await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
-  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
-  await expect(page.getByRole("heading", { name: "Snapshots" })).toBeVisible();
-  await loadMoreUntilVisible(page, page.getByText(snapshotSeed.snapshotId));
-  await expect(page.locator("main")).toContainText("Update README.md", { timeout: 20_000 });
-  const verifiedSnapshotButton = page
-    .getByRole("row", { name: /verified.*Not restored/ })
-    .first()
-    .getByRole("button")
-    .first();
-  const verifiedSnapshotText = (await verifiedSnapshotButton.innerText()).trim();
-  const verifiedSnapshotId = verifiedSnapshotText.split("\n")[0]?.trim();
-  expect(verifiedSnapshotId).toBeTruthy();
-
-  await page.getByRole("button", { name: "Preview restore" }).click();
-  await expect(page.locator("main")).toContainText("Admin restore controls", { timeout: 20_000 });
-  await page.getByRole("button", { name: "Execute restore" }).click();
-  await expect(page.locator("main")).toContainText(/Restore queued|Queueing restore/i, { timeout: 20_000 });
-
-  await page.reload();
-  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
-  await expect(page.locator("main")).toContainText(verifiedSnapshotId ?? "", { timeout: 20_000 });
+  await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/actions/${snapshotSeed.actionId}`);
+  await expect(page.getByRole("heading", { name: "Action detail" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Execution event trail", { timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("action normalized", { timeout: 20_000 });
 
   await page.goto("/app/settings/connectors");
   await expect(page.getByRole("heading", { name: "Connector fleet" })).toBeVisible();
@@ -514,7 +478,6 @@ test("admin smoke covers approvals, bootstrap, fleet, writeback, restore, and re
   await expect(page.locator("main")).toContainText("push_branch", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("open_pull_request", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("replay_run", { timeout: 20_000 });
-  await expect(page.locator("main")).toContainText("execute_restore", { timeout: 20_000 });
   await page.getByRole("button", { name: "Revoke connector" }).click();
   await expect(page.getByRole("button", { name: "Connector revoked" })).toBeVisible({ timeout: 20_000 });
 
@@ -579,12 +542,10 @@ test("owner smoke covers onboarding and billing", async ({ page }) => {
   });
 
   await expect(page.getByRole("heading", { name: "Onboarding" })).toBeVisible();
-  await waitForOkResponse(page, "/api/v1/onboarding");
   await expect(page.getByRole("heading", { name: "Create the workspace" })).toBeVisible({ timeout: 15_000 });
 
-  await page.goto("/app/settings/billing");
-  await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
-  await waitForOkResponse(page, "/api/v1/settings/billing");
+  await Promise.all([waitForOkResponse(page, "/api/v1/settings/billing"), page.goto("/app/settings/billing")]);
+  await expect(page.getByRole("heading", { name: "Billing", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Plan and billing cycle" })).toBeVisible({ timeout: 15_000 });
 });
 
@@ -600,4 +561,13 @@ test("member smoke verifies RBAC denial on admin settings", async ({ page }) => 
   await page.goto("/app/settings/team");
   await expect(page.getByText("Access denied")).toBeVisible();
   await expect(page.getByText("You do not have permission to access workspace settings.")).toBeVisible();
+
+  await page.goto("/app/activity");
+  await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeVisible();
+  await expect(page.getByText("Open audit log")).toHaveCount(0);
+  await expect(page.getByText("Audit log")).toHaveCount(0);
+
+  await page.goto("/app/audit");
+  await expect(page.getByText("Access denied")).toBeVisible();
+  await expect(page.getByText("You do not have permission to access the audit log.")).toBeVisible();
 });

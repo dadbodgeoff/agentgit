@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { RunJournal, RunJournalRunRecord } from "@agentgit/run-journal";
 
 import { AuthorityState } from "./state.js";
+import { rehydrateState } from "./app/authority-service.js";
 
 describe("AuthorityState", () => {
   it("creates sessions and runs", () => {
@@ -116,5 +118,55 @@ describe("AuthorityState", () => {
     ).toBe(run);
     expect(state.getSessionCount()).toBe(1);
     expect(state.getRunCount()).toBe(1);
+  });
+
+  it("rehydrates persisted runs without writing to stdout", () => {
+    const state = new AuthorityState();
+    const stdoutWriteSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const run: RunJournalRunRecord = {
+      run_id: "run_from_journal",
+      session_id: "sess_from_journal",
+      workflow_name: "workflow",
+      agent_framework: "cli",
+      agent_name: "agentgit-cli",
+      workspace_roots: ["/workspace/project"],
+      event_count: 0,
+      latest_event: null,
+      budget_config: {},
+      budget_usage: {
+        mutating_actions: 0,
+        destructive_actions: 0,
+      },
+      maintenance_status: {
+        projection_status: "fresh",
+        projection_lag_events: 0,
+        degraded_artifact_capture_actions: 0,
+        low_disk_pressure_signals: 0,
+        artifact_health: {
+          total: 0,
+          available: 0,
+          missing: 0,
+          expired: 0,
+          corrupted: 0,
+          tampered: 0,
+        },
+      },
+      created_at: "2026-03-29T12:00:00.000Z",
+      started_at: "2026-03-29T12:00:00.000Z",
+    };
+    const journal = {
+      listAllRuns: () => [run],
+    } as Pick<RunJournal, "listAllRuns"> as RunJournal;
+
+    try {
+      rehydrateState(state, journal);
+    } finally {
+      stdoutWriteSpy.mockRestore();
+    }
+
+    expect(stdoutWriteSpy).not.toHaveBeenCalled();
+    expect(state.getSessionCount()).toBe(1);
+    expect(state.getRunCount()).toBe(1);
+    expect(state.getRun("run_from_journal")?.rehydrated).toBe(true);
   });
 });

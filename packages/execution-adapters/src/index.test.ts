@@ -1,10 +1,12 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -72,6 +74,19 @@ function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | n
 }
 
 const TEST_OCI_SANDBOX = detectOciSandbox();
+
+function createTestEncryptedSecretStore(root: string): LocalEncryptedSecretStore {
+  const keyPath = path.join(root, "mcp-secrets.key");
+  if (!fs.existsSync(keyPath)) {
+    fs.writeFileSync(keyPath, randomBytes(32).toString("base64"), { encoding: "utf8", mode: 0o600 });
+    fs.chmodSync(keyPath, 0o600);
+  }
+
+  return new LocalEncryptedSecretStore({
+    dbPath: path.join(root, "mcp-secrets.db"),
+    keyPath,
+  });
+}
 
 function makeConfidenceAssessment(score: number): ActionRecord["confidence_assessment"] {
   return {
@@ -2277,6 +2292,33 @@ describe("FilesystemExecutionAdapter", () => {
     expect(result.output.after_preview).toBe("hello from adapter");
     expect(String(result.output.diff_preview)).toContain("- before text");
     expect(String(result.output.diff_preview)).toContain("+ hello from adapter");
+  });
+
+  it("preserves the original file when the atomic replace cannot be committed", async () => {
+    tempDir = tempDirs.make("agentgit-exec-");
+    const targetPath = path.join(tempDir, "nested", "file.txt");
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, "before text", "utf8");
+    const adapter = new FilesystemExecutionAdapter();
+    const renameSpy = vi.spyOn(fsPromises, "rename").mockRejectedValueOnce(new Error("rename failed"));
+
+    try {
+      await expect(
+        adapter.execute({
+          action: makeAction(targetPath, "write"),
+          policy_outcome: makePolicyOutcome(false),
+          workspace_root: tempDir,
+          snapshot_record: null,
+        }),
+      ).rejects.toThrow("rename failed");
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    expect(fs.readFileSync(targetPath, "utf8")).toBe("before text");
+    expect(
+      fs.readdirSync(path.dirname(targetPath)).filter((entry) => entry.startsWith("file.txt.") && entry.endsWith(".tmp")),
+    ).toHaveLength(0);
   });
 
   it("captures a removal preview when deleting an existing file", async () => {
@@ -4868,12 +4910,7 @@ describe("OwnedNoteStore", () => {
       requireBearerToken: "http-secret-ref-token",
     });
     const secretsRoot = tempDirs.make();
-    const secretStore = trackStore(
-      new LocalEncryptedSecretStore({
-        dbPath: path.join(secretsRoot, "mcp-secrets.db"),
-        keyPath: path.join(secretsRoot, "mcp-secrets.key"),
-      }),
-    );
+    const secretStore = trackStore(createTestEncryptedSecretStore(secretsRoot));
     const broker = new SessionCredentialBroker({
       mcpSecretStore: secretStore,
     });
@@ -4957,12 +4994,7 @@ describe("OwnedNoteStore", () => {
       requireBearerToken: "http-secret-ref-token",
     });
     const secretsRoot = tempDirs.make();
-    const secretStore = trackStore(
-      new LocalEncryptedSecretStore({
-        dbPath: path.join(secretsRoot, "mcp-secrets.db"),
-        keyPath: path.join(secretsRoot, "mcp-secrets.key"),
-      }),
-    );
+    const secretStore = trackStore(createTestEncryptedSecretStore(secretsRoot));
     const broker = new SessionCredentialBroker({
       mcpSecretStore: secretStore,
     });

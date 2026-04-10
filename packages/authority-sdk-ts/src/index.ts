@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   API_VERSION,
+  JsonValueSchema,
   type ApprovalRequest,
   type RecoveryTarget,
   type ExecuteRecoveryRequestPayload,
@@ -89,7 +90,6 @@ import {
   type ResolveApprovalRequestPayload,
   type ResolveApprovalResponsePayload,
   type RequestEnvelope,
-  type ResponseEnvelope,
   type SubmitMcpServerCandidateRequestPayload,
   type SubmitMcpServerCandidateResponsePayload,
   type ValidatePolicyConfigRequestPayload,
@@ -110,7 +110,7 @@ import {
   type UpsertMcpSecretResponsePayload,
   type UpsertMcpServerRequestPayload,
   type UpsertMcpServerResponsePayload,
-  isResponseEnvelope,
+  parseDaemonResponseEnvelope,
 } from "@agentgit/schemas";
 import { v7 as uuidv7 } from "uuid";
 
@@ -300,7 +300,7 @@ export class AuthorityClient {
     }
 
     const payload: ValidatePolicyConfigRequestPayload = {
-      config: config as ValidatePolicyConfigRequestPayload["config"],
+      config: JsonValueSchema.parse(config),
     };
     return this.sendRequest<ValidatePolicyConfigRequestPayload, ValidatePolicyConfigResponsePayload>(
       "validate_policy_config",
@@ -1058,16 +1058,7 @@ export class AuthorityClient {
     };
 
     const rawResponse = await writeAndReadLine(this.socketPath, request, this.transport);
-
-    if (!isResponseEnvelope(rawResponse)) {
-      throw new AuthorityClientTransportError(
-        "Daemon returned an invalid response envelope.",
-        "INVALID_RESPONSE",
-        false,
-      );
-    }
-
-    const response = rawResponse as ResponseEnvelope<TResult>;
+    const response = parseDaemonResponse(method, rawResponse) as ReturnType<typeof parseDaemonResponseEnvelope>;
 
     if (!response.ok || !response.result) {
       throw new AuthorityDaemonResponseError(
@@ -1079,7 +1070,7 @@ export class AuthorityClient {
       );
     }
 
-    return response.result;
+    return response.result as TResult;
   }
 }
 
@@ -1134,6 +1125,20 @@ async function writeAndReadLine(socketPath: string, payload: unknown, transport:
   }
 
   throw lastError;
+}
+
+function parseDaemonResponse<TPayload>(
+  method: RequestEnvelope<TPayload>["method"],
+  rawResponse: unknown,
+) {
+  try {
+    return parseDaemonResponseEnvelope(method, rawResponse);
+  } catch (error) {
+    throw new AuthorityClientTransportError("Daemon returned an invalid response envelope.", "INVALID_RESPONSE", false, {
+      cause: error instanceof Error ? error.message : String(error),
+      method,
+    });
+  }
 }
 
 async function writeAndReadLineOnce(

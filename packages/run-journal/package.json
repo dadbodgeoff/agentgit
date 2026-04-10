@@ -1,15 +1,45 @@
 {
   "name": "@agentgit/run-journal",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "SQLite-backed append-only run journal for AgentGit runtime events, approvals, and artifacts.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dadbodgeoff/agentgit.git",
+    "directory": "packages/run-journal"
+  },
+  "homepage": "https://github.com/dadbodgeoff/agentgit/tree/main/packages/run-journal",
+  "bugs": {
+    "url": "https://github.com/dadbodgeoff/agentgit/issues"
+  },
+  "keywords": [
+    "agent",
+    "journal",
+    "sqlite",
+    "audit",
+    "runtime"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "test": "vitest run --dir src",
+    "prepack": "node ../../scripts/verify-package-build.mjs",
     "lint": "eslint . --max-warnings=0"
   },
   "devDependencies": {

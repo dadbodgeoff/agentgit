@@ -4,7 +4,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
-import type { TransportHandler, TransportListener } from "@agentgit/core-ports";
+import type { RequestContext, TransportHandler, TransportListener } from "@agentgit/core-ports";
 import { ValidationError } from "@agentgit/schemas";
 
 import { makeErrorResponse } from "../app/response-helpers.js";
@@ -16,6 +16,7 @@ export interface UnixSocketTransportOptions {
 const SOCKET_IDLE_TIMEOUT_MS = 30_000;
 const MAX_BUFFER_BYTES = 10_000_000;
 const SOCKET_PROBE_TIMEOUT_MS = 200;
+const SOCKET_RESPONSE_CHUNK_BYTES = 4_096;
 const PEER_CREDENTIALS_SCRIPT = String.raw`
 import ctypes
 import ctypes.util
@@ -57,6 +58,49 @@ interface PeerCredentials {
 
 function currentUid(): number | null {
   return typeof process.getuid === "function" ? process.getuid() : null;
+}
+
+function closeSocketWithJsonLine(socket: net.Socket, response: unknown): void {
+  if (socket.destroyed || socket.writableEnded) {
+    return;
+  }
+
+  const payload = `${JSON.stringify(response)}\n`;
+  let offset = 0;
+
+  const finish = (): void => {
+    if (!socket.destroyed && !socket.writableEnded) {
+      socket.end();
+    }
+  };
+
+  const writeNextChunk = (): void => {
+    if (socket.destroyed || socket.writableEnded) {
+      return;
+    }
+
+    const nextOffset = Math.min(offset + SOCKET_RESPONSE_CHUNK_BYTES, payload.length);
+    const chunk = payload.slice(offset, nextOffset);
+    offset = nextOffset;
+
+    const writable = socket.write(chunk);
+    if (offset >= payload.length) {
+      if (writable) {
+        finish();
+      } else {
+        socket.once("drain", finish);
+      }
+      return;
+    }
+
+    if (writable) {
+      setImmediate(writeNextChunk);
+    } else {
+      socket.once("drain", writeNextChunk);
+    }
+  };
+
+  writeNextChunk();
 }
 
 function ensurePrivateSocketDirectory(socketDir: string): void {
@@ -208,6 +252,7 @@ export class UnixSocketTransport implements TransportListener {
       this.openSockets.add(socket);
       let buffer = "";
       let authenticated = false;
+      let handled = false;
       socket.on("close", () => {
         this.openSockets.delete(socket);
       });
@@ -222,8 +267,7 @@ export class UnixSocketTransport implements TransportListener {
               cause: error instanceof Error ? error.message : String(error),
             }),
           );
-          socket.write(`${JSON.stringify(response)}\n`);
-          socket.end();
+          closeSocketWithJsonLine(socket, response);
           return null;
         }
       })();
@@ -242,8 +286,7 @@ export class UnixSocketTransport implements TransportListener {
             daemon_uid: daemonUid,
           }),
         );
-        socket.write(`${JSON.stringify(response)}\n`);
-        socket.end();
+        closeSocketWithJsonLine(socket, response);
         return;
       }
 
@@ -254,16 +297,54 @@ export class UnixSocketTransport implements TransportListener {
         socket.end();
       });
 
-      socket.on("data", async (chunk) => {
-        buffer += chunk;
-        if (Buffer.byteLength(buffer, "utf8") > MAX_BUFFER_BYTES) {
-          const response = makeErrorResponse(
-            "req_too_large",
-            undefined,
-            new ValidationError("Request body exceeded the maximum socket payload size."),
-          );
-          socket.write(`${JSON.stringify(response)}\n`);
-          socket.end();
+      const requestContext: RequestContext = {
+        tenant: peerCredentials
+          ? {
+              tenant_id: `local-user:${peerCredentials.uid}`,
+            }
+          : null,
+        actor: peerCredentials
+          ? {
+              actor_id: `local-user:${peerCredentials.uid}`,
+              auth_method: "local",
+              scopes: ["authority:local_socket"],
+            }
+          : null,
+        workspace: null,
+        transport: "unix_socket" as const,
+        source_address: peerCredentials
+          ? [
+              `local`,
+              `uid=${peerCredentials.uid}`,
+              `gid=${peerCredentials.gid}`,
+              ...(peerCredentials.pid !== undefined ? [`pid=${peerCredentials.pid}`] : []),
+            ].join(":")
+          : "local",
+      };
+
+      const respondToParsedRequest = (parsed: unknown): void => {
+        handled = true;
+        void Promise.resolve(handler(parsed as never, requestContext)).then(
+          (response) => {
+            closeSocketWithJsonLine(socket, response);
+          },
+          (error) => {
+            const requestId =
+              parsed && typeof parsed === "object" && typeof (parsed as { request_id?: unknown }).request_id === "string"
+                ? (parsed as { request_id: string }).request_id
+                : "req_internal_error";
+            const sessionId =
+              parsed && typeof parsed === "object" && typeof (parsed as { session_id?: unknown }).session_id === "string"
+                ? (parsed as { session_id: string }).session_id
+                : undefined;
+            const response = makeErrorResponse(requestId, sessionId, error);
+            closeSocketWithJsonLine(socket, response);
+          },
+        );
+      };
+
+      const processBufferedLines = (): void => {
+        if (handled) {
           return;
         }
 
@@ -283,8 +364,7 @@ export class UnixSocketTransport implements TransportListener {
                 undefined,
                 new ValidationError("Socket authentication failed."),
               );
-              socket.write(`${JSON.stringify(response)}\n`);
-              socket.end();
+              closeSocketWithJsonLine(socket, response);
               return;
             }
             authenticated = true;
@@ -303,38 +383,27 @@ export class UnixSocketTransport implements TransportListener {
                 cause: error instanceof Error ? error.message : String(error),
               }),
             );
-            socket.write(`${JSON.stringify(response)}\n`);
-            socket.end();
+            closeSocketWithJsonLine(socket, response);
             return;
           }
 
-          const response = await handler(parsed as never, {
-            tenant: peerCredentials
-              ? {
-                  tenant_id: `local-user:${peerCredentials.uid}`,
-                }
-              : null,
-            actor: peerCredentials
-              ? {
-                  actor_id: `local-user:${peerCredentials.uid}`,
-                  auth_method: "local",
-                  scopes: ["authority:local_socket"],
-                }
-              : null,
-            workspace: null,
-            transport: "unix_socket",
-            source_address: peerCredentials
-              ? [
-                  `local`,
-                  `uid=${peerCredentials.uid}`,
-                  `gid=${peerCredentials.gid}`,
-                  ...(peerCredentials.pid !== undefined ? [`pid=${peerCredentials.pid}`] : []),
-                ].join(":")
-              : "local",
-          });
-          socket.write(`${JSON.stringify(response)}\n`);
-          socket.end();
+          respondToParsedRequest(parsed);
+          return;
         }
+      };
+
+      socket.on("data", (chunk) => {
+        buffer += chunk;
+        if (Buffer.byteLength(buffer, "utf8") > MAX_BUFFER_BYTES) {
+          const response = makeErrorResponse(
+            "req_too_large",
+            undefined,
+            new ValidationError("Request body exceeded the maximum socket payload size."),
+          );
+          closeSocketWithJsonLine(socket, response);
+          return;
+        }
+        processBufferedLines();
       });
     });
 

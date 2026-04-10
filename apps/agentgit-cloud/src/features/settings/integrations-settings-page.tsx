@@ -744,8 +744,8 @@ export function IntegrationsSettingsPage() {
                     <button
                       className={
                         selected
-                          ? "ag-focus-ring rounded-full border border-[var(--ag-color-brand)] bg-[var(--ag-bg-elevated)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-primary)]"
-                          : "ag-focus-ring rounded-full border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ag-text-secondary)] hover:border-[var(--ag-border-strong)] hover:text-[var(--ag-text-primary)]"
+                          ? "ag-focus-ring rounded-full border border-[var(--ag-color-brand)] bg-[var(--ag-bg-elevated)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--ag-text-primary)]"
+                          : "ag-focus-ring rounded-full border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--ag-text-secondary)] hover:border-[var(--ag-border-strong)] hover:text-[var(--ag-text-primary)]"
                       }
                       key={day}
                       onClick={(event) => {
@@ -1338,9 +1338,9 @@ export function IntegrationsSettingsPage() {
           </Card>
 
           <Card className="space-y-4">
-            <h2 className="text-lg font-semibold">Build loop backlog</h2>
+            <h2 className="text-lg font-semibold">Integration operating notes</h2>
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
-              <div>Closed in this pass:</div>
+              <div>Live in this workspace:</div>
               <div>- admin-only integrations settings route</div>
               <div>- protected GitHub app and notification config API</div>
               <div>- test notification success/error mutation states</div>
@@ -1350,9 +1350,10 @@ export function IntegrationsSettingsPage() {
               <div>- provider-backed GitHub pull request queueing through the connector</div>
               <div>- operator retry and revoke controls for connector fleet management</div>
               <div>- recent command and event diagnostics per registered connector</div>
-              <div className="mt-3">Next queued:</div>
-              <div>- replace remaining placeholder activity, audit, and action-detail surfaces</div>
-              <div>- authority-backed live updates for approvals, dashboard, calibration, and operator views</div>
+              <div className="mt-3">Operator checks:</div>
+              <div>- confirm GitHub app access is approved for every target organization</div>
+              <div>- validate the Slack webhook before relying on alert routing</div>
+              <div>- watch connector diagnostics after the first bootstrap or credential rotation</div>
             </div>
           </Card>
         </div>

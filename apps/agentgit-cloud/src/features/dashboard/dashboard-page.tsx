@@ -20,8 +20,10 @@ import { ScaffoldPage } from "@/features/shared/scaffold-page";
 import { WorkspaceSetupChecklist } from "@/features/shared/workspace-setup-checklist";
 import { useLiveUpdateStatus } from "@/components/providers/live-update-context";
 import { getApiErrorMessage } from "@/lib/api/client";
+import { useWorkspace } from "@/lib/auth/workspace-context";
 import { authenticatedRoutes, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { useDashboardQuery } from "@/lib/query/hooks";
+import { hasAtLeastRole } from "@/lib/rbac/roles";
 import { sanitizeExternalUrl } from "@/lib/security/external-url";
 import type { ActivityEvent, RecentRun } from "@/schemas/cloud";
 import type { PreviewState } from "@/schemas/cloud";
@@ -119,7 +121,7 @@ function buildHotspotRepos(runs: RecentRun[], activity: ActivityEvent[]): Hotspo
     .slice(0, 5);
 }
 
-function buildAttentionQueue(runs: RecentRun[], activity: ActivityEvent[]) {
+function buildAttentionQueue(runs: RecentRun[], activity: ActivityEvent[], canAccessAudit: boolean) {
   const items = [];
 
   const failedRun = runs.find((run) => run.status === "failed");
@@ -148,7 +150,7 @@ function buildAttentionQueue(runs: RecentRun[], activity: ActivityEvent[]) {
   const recovery = activity.find((event) => event.tone === "warning");
   if (recovery) {
     items.push({
-      href: authenticatedRoutes.audit,
+      href: canAccessAudit ? authenticatedRoutes.audit : authenticatedRoutes.activity,
       label: "Verify recovery outcome",
       detail: `${recovery.repo} recorded a recovery event ${formatRelativeTimestamp(recovery.createdAt)}.`,
       tone: "neutral" as const,
@@ -172,7 +174,9 @@ function liveUpdateStatusTone(activity: ActivityEvent[]): "neutral" | "warning" 
 export function DashboardPage({ previewState = "ready" }: { previewState?: PreviewState }) {
   const dashboardQuery = useDashboardQuery(previewState);
   const liveUpdateStatus = useLiveUpdateStatus();
+  const { activeWorkspace } = useWorkspace();
   const [focus, setFocus] = useState<DashboardFocus>("all");
+  const canAccessAudit = hasAtLeastRole(activeWorkspace.role, "admin");
 
   if (dashboardQuery.isPending) {
     return (
@@ -206,7 +210,7 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
 
   const dashboard = dashboardQuery.data;
   const hotspotRepos = buildHotspotRepos(dashboard.recentRuns, dashboard.recentActivity);
-  const attentionQueue = buildAttentionQueue(dashboard.recentRuns, dashboard.recentActivity);
+  const attentionQueue = buildAttentionQueue(dashboard.recentRuns, dashboard.recentActivity, canAccessAudit);
   const focusedActivity = useMemo(() => {
     return dashboard.recentActivity.filter((activity) => {
       if (focus === "all") {
@@ -254,18 +258,19 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
         ? ("warning" as const)
         : ("neutral" as const);
 
-  if (dashboard.metrics.length === 0) {
+  if (dashboard.recentRuns.length === 0 && dashboard.recentActivity.length === 0) {
     return (
       <ScaffoldPage
         actions={<RepositoryConnectionDialog />}
         description="Hosted overview for recent runs, approval demand, activity, and environment health."
         sections={[]}
+        sidePanel={<WorkspaceSetupChecklist compact />}
         title="Dashboard"
       >
         <PageStatePanel
           emptyActionLabel="Connect repository"
-          emptyDescription="Connect your first repository to get started."
-          emptyTitle="No dashboard data yet"
+          emptyDescription="Connect your first repository to start governed runs, approvals, activity, and recovery tracking."
+          emptyTitle="Connect your first repository to get started"
           state="empty"
         />
       </ScaffoldPage>
@@ -330,12 +335,21 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
           <Card className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Attention queue</h2>
-              <Link
-                className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
-                href={authenticatedRoutes.audit}
-              >
-                Open audit
-              </Link>
+              {canAccessAudit ? (
+                <Link
+                  className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                  href={authenticatedRoutes.audit}
+                >
+                  Open audit
+                </Link>
+              ) : (
+                <Link
+                  className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                  href={authenticatedRoutes.activity}
+                >
+                  Open activity
+                </Link>
+              )}
             </div>
             <div className="space-y-3">
               {attentionQueue.map((item) => (
@@ -368,17 +382,17 @@ export function DashboardPage({ previewState = "ready" }: { previewState?: Previ
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Writeback</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Writeback</div>
                 <div className="mt-2 text-2xl font-semibold">{writebackCount}</div>
                 <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">commit, push, and PR outcomes</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Recovery</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Recovery</div>
                 <div className="mt-2 text-2xl font-semibold">{recoveryCount}</div>
                 <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">restore and rollback signals</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Approvals</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Approvals</div>
                 <div className="mt-2 text-2xl font-semibold">{approvalCount}</div>
                 <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">operator review touchpoints</div>
               </div>

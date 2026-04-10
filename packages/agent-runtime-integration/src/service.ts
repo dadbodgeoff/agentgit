@@ -179,6 +179,10 @@ function buildAuthorityClient(socketPath: string): AuthorityClient {
 const AUTHORITY_SESSION_MAX_ATTEMPTS = 4;
 const AUTHORITY_SESSION_RETRY_DELAY_MS = 100;
 
+function resolveSocketAuthTokenPath(socketPath: string): string {
+  return `${socketPath}.token`;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -193,6 +197,7 @@ function isAddressInUseFailure(error: unknown): boolean {
 
 export interface AuthoritySession {
   client: AuthorityClient;
+  session_id: string;
   daemon_config: ReturnType<typeof resolveAuthorityDaemonRuntimeConfig>;
   daemon_started: boolean;
   daemon?: StartedAuthorityDaemon;
@@ -345,9 +350,10 @@ async function ensureAuthoritySession(
     let client = runtime.build_client(daemonConfig.socketPath);
 
     try {
-      await client.hello([workspaceRoot]);
+      const hello = await client.hello([workspaceRoot]);
       return {
         client,
+        session_id: hello.session_id,
         daemon_config: daemonConfig,
         daemon_started: false,
       };
@@ -369,10 +375,11 @@ async function ensureAuthoritySession(
 
     client = runtime.build_client(daemonConfig.socketPath);
     try {
-      await client.hello([workspaceRoot]);
+      const hello = await client.hello([workspaceRoot]);
       releaseRuntimeLock();
       return {
         client,
+        session_id: hello.session_id,
         daemon_config: daemonConfig,
         daemon_started: false,
       };
@@ -399,9 +406,10 @@ async function ensureAuthoritySession(
 
     client = runtime.build_client(daemonConfig.socketPath);
     try {
-      await client.hello([workspaceRoot]);
+      const hello = await client.hello([workspaceRoot]);
       return {
         client,
+        session_id: hello.session_id,
         daemon_config: daemonConfig,
         daemon_started: true,
         daemon,
@@ -1145,6 +1153,33 @@ function parseLaunchCommand(command: string): { command: string; args: string[] 
     command: words[0]!,
     args: words.slice(1),
   };
+}
+
+function resolveLaunchExecutable(command: string, cwd: string, pathValue: string | undefined): string {
+  if (path.isAbsolute(command)) {
+    return command;
+  }
+
+  if (command.includes(path.sep)) {
+    return path.resolve(cwd, command);
+  }
+
+  const pathEntries = (pathValue ?? process.env.PATH ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  for (const entry of pathEntries) {
+    const candidate = path.join(entry, command);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return command;
 }
 
 async function terminateChildProcessIfNeeded(child: ChildProcess): Promise<void> {
@@ -2692,16 +2727,24 @@ export class AgentRuntimeIntegrationService {
 
       const shimBinDir = governedShimBinDirFromProfile(profile);
       const parsedLaunch = parseLaunchCommand(profile.launch_command);
+      const resolvedLaunchCommand = resolveLaunchExecutable(parsedLaunch.command, workspaceRoot, this.env.PATH);
+      const socketAuthTokenPath = resolveSocketAuthTokenPath(session.daemon_config.socketPath);
+      const socketAuthToken = fs.existsSync(socketAuthTokenPath)
+        ? fs.readFileSync(socketAuthTokenPath, "utf8").trim()
+        : "";
       const childEnv: NodeJS.ProcessEnv = {
         ...this.env,
         AGENTGIT_ROOT: workspaceRoot,
         AGENTGIT_SOCKET_PATH: session.daemon_config.socketPath,
+        ...(socketAuthToken.length > 0 ? { AGENTGIT_SOCKET_AUTH_TOKEN: socketAuthToken } : {}),
+        AGENTGIT_SESSION_ID: session.session_id,
         AGENTGIT_RUN_ID: registerResult.run_id,
         AGENTGIT_RUNTIME_PROFILE_ID: profile.profile_id,
         AGENTGIT_RUNTIME_ID: profile.runtime_id,
         ...(shimBinDir ? { PATH: prependPathEntry(this.env.PATH, shimBinDir) } : {}),
       };
-      const child = this.spawnProcess(parsedLaunch.command, parsedLaunch.args, {
+      const child = this.spawnProcess(resolvedLaunchCommand, parsedLaunch.args, {
+        // Launch the configured runtime command directly; only its subprocesses should hit the governed shim PATH.
         cwd: workspaceRoot,
         env: childEnv,
         stdio: "inherit",

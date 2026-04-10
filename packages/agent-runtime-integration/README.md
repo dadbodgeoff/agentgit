@@ -18,6 +18,7 @@ This package implements the launch product surface defined in the agent runtime 
 - Generate governed launch assets under `.agentgit/runtime-integration/`, including a standalone daemon-speaking helper and PATH shims for common shell entrypoints.
 - OpenClaw v1 uses reversible config mutation for workspace, tool policy, and local plugin loading so governed file and shell actions route through AgentGit-owned surfaces instead of trusted native mutators.
 - Generic fallback stores a launch command, generates governed launch assets, and runs through `agentgit run` with shimmed PATH interception for common subprocesses.
+- Read-only shimmed subprocesses can continue automatically, but mutating local shell subprocesses pause for explicit approval instead of silently executing outside containment.
 - Generic contained launch uses Docker with a projected writable workspace, governed publish-back through the real authority daemon, and explicit network and credential policy fields.
 - Contained credentials support `none`, direct host env passthrough for explicitly selected keys, and brokered runtime bindings resolved from AgentGit's encrypted secret store.
 - Brokered runtime bindings are distinct from MCP registry credential bindings and now support `env`, `file`, `header_template`, `runtime_ticket`, and `tool_scoped_ref` delivery shapes.

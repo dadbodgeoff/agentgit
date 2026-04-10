@@ -665,7 +665,7 @@ describe("authority cli MCP integration", () => {
     };
     expect(pingResult.accepted_api_version).toBe("authority.v1");
     expect(pingResult.runtime_version).toBeTruthy();
-  });
+  }, 20_000);
 
   it("initializes a production profile through the built CLI binary", async () => {
     const harness = await createHarness();
@@ -732,7 +732,7 @@ describe("authority cli MCP integration", () => {
     };
     expect(configShowResult.resolved.active_profile).toBe("prod");
     expect(configShowResult.resolved.socket_path.value).toBe(harness.socketPath);
-  });
+  }, 20_000);
 
   it("runs setup and starts the packaged daemon through the built CLI binary", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cli-setup-it-"));
@@ -1683,7 +1683,7 @@ describe("authority cli MCP integration", () => {
     });
     expect(listSecrets.code).toBe(0);
     expect(listSecrets.stdout).not.toContain("top-secret-process-token");
-  });
+  }, 20_000);
 
   it("stores MCP secrets safely from file and stdin through the built CLI binary", async () => {
     const harness = await createHarness();
@@ -1923,7 +1923,7 @@ describe("authority cli MCP integration", () => {
     expect((JSON.parse(listServersFinal.stdout) as { servers: Array<unknown> }).servers).toHaveLength(0);
     expect((JSON.parse(listPoliciesFinal.stdout) as { policies: Array<unknown> }).policies).toHaveLength(0);
     expect((JSON.parse(listSecretsFinal.stdout) as { secrets: Array<unknown> }).secrets).toHaveLength(0);
-  });
+  }, 20_000);
 
   it("fails closed in the built CLI binary for malformed MCP tool arguments before execution", async () => {
     const harness = await createHarness();

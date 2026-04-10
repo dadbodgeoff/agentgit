@@ -52,7 +52,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
     "prepack": "node ../../scripts/verify-package-build.mjs",
-    "test": "pnpm exec turbo run build --filter=@agentgit/authority-daemon^... && mkdir -p coverage/.tmp && vitest run --dir src",
+    "test": "pnpm exec turbo run build --filter=@agentgit/authority-daemon^... && mkdir -p coverage/.tmp && vitest run --dir src --silent=passed-only --teardownTimeout 1000",
     "start": "node dist/main.js",
     "lint": "eslint . --max-warnings=0"
   },

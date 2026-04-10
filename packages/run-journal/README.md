@@ -1,7 +1,5 @@
 # @agentgit/run-journal
 
-> **Internal package** — used by the agentgit daemon. Not published to npm.
-
 The append-only SQLite-backed memory of the entire agentgit runtime. Every action, policy decision, snapshot, execution result, approval, and recovery event is written here as an atomic `RunEvent`. All other subsystems project from this canonical history — nothing is thrown away.
 
 ---

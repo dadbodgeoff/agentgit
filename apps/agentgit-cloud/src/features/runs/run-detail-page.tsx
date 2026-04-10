@@ -21,7 +21,7 @@ import {
 import { PageStatePanel, StaleIndicator } from "@/components/feedback";
 import { useLiveUpdateStatus } from "@/components/providers/live-update-context";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
-import { getApiErrorMessage } from "@/lib/api/client";
+import { ApiClientError, getApiErrorMessage } from "@/lib/api/client";
 import { getRepositoryRunReplay, queueRepositoryRunReplay } from "@/lib/api/endpoints/repositories";
 import { actionDetailRoute, authenticatedRoutes, repositorySnapshotsRoute } from "@/lib/navigation/routes";
 import { useRunDetailQuery } from "@/lib/query/hooks";
@@ -63,6 +63,7 @@ export function RunDetailPage({
   const liveUpdateStatus = useLiveUpdateStatus();
   const [replayMessage, setReplayMessage] = useState<string | null>(null);
   const [replayErrorToast, setReplayErrorToast] = useState<string | null>(null);
+  const [visibleStepCount, setVisibleStepCount] = useState(50);
   const replayQuery = useQuery({
     queryKey: ["repository-run-replay", owner, name, runId],
     queryFn: () => getRepositoryRunReplay(owner, name, runId),
@@ -100,6 +101,11 @@ export function RunDetailPage({
     return () => window.clearTimeout(timeout);
   }, [replayErrorToast]);
 
+  useEffect(() => {
+    const nextVisibleCount = runQuery.data?.steps.length && runQuery.data.steps.length > 100 ? 50 : runQuery.data?.steps.length ?? 50;
+    setVisibleStepCount(nextVisibleCount);
+  }, [runId, runQuery.data?.steps.length]);
+
   if (runQuery.isPending) {
     return (
       <ScaffoldPage
@@ -114,7 +120,10 @@ export function RunDetailPage({
   }
 
   if (runQuery.isError) {
-    const errorMessage = getApiErrorMessage(runQuery.error, "Could not load run detail. Retry.");
+    const errorMessage =
+      runQuery.error instanceof ApiClientError && runQuery.error.status === 404
+        ? "Run detail was not found. It may have been deleted, or you may not have access to this repository."
+        : getApiErrorMessage(runQuery.error, "Could not load run detail. Retry.");
 
     return (
       <ScaffoldPage
@@ -131,7 +140,18 @@ export function RunDetailPage({
   const run = runQuery.data;
   const approvalSteps = run.steps.filter((step) => step.stepType === "approval_step");
   const blockedSteps = run.steps.filter((step) => step.status === "blocked" || step.status === "awaiting_approval");
+  const failedSteps = run.steps.filter((step) => step.status === "failed");
   const snapshotSteps = run.steps.filter((step) => typeof step.snapshotId === "string" && step.snapshotId.length > 0);
+  const largeRun = run.steps.length >= 100;
+  const visibleSteps = run.steps.slice(0, visibleStepCount);
+  const hasMoreSteps = visibleStepCount < run.steps.length;
+  const firstInvestigationStep =
+    failedSteps[0] ??
+    blockedSteps[0] ??
+    run.steps.find((step) => step.status === "partial") ??
+    null;
+  const firstInvestigationHref =
+    firstInvestigationStep?.actionId ? actionDetailRoute(owner, name, runId, firstInvestigationStep.actionId) : null;
   const replayPreview = replayQuery.data;
   const liveLabel =
     liveUpdateStatus.state === "connected"
@@ -191,7 +211,7 @@ export function RunDetailPage({
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Run status</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Run status</div>
                 <div className="mt-2 flex items-center gap-2">
                   <Badge tone={badgeToneForStatus(run.status)}>{run.status}</Badge>
                   <Badge tone="neutral">{run.projectionStatus}</Badge>
@@ -199,7 +219,7 @@ export function RunDetailPage({
                 <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">{run.summary}</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                   Operator signals
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -215,12 +235,98 @@ export function RunDetailPage({
             </div>
           </Card>
 
+          {run.status === "failed" || run.status === "running" || blockedSteps.length > 0 || largeRun ? (
+            <Card className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold">Investigation focus</h2>
+                {firstInvestigationStep ? (
+                  <a
+                    className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                    href={`#step-${firstInvestigationStep.id}`}
+                  >
+                    Jump to first issue
+                  </a>
+                ) : null}
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {run.status === "failed" && firstInvestigationStep ? (
+                  <div className="rounded-[var(--ag-radius-md)] border border-[color:rgb(239_68_68_/_0.2)] bg-[var(--ag-bg-elevated)] px-4 py-3">
+                    <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Failed step</div>
+                    <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">{firstInvestigationStep.title}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Badge tone="error">{firstInvestigationStep.status.replaceAll("_", " ")}</Badge>
+                      {firstInvestigationStep.decision ? (
+                        <Badge tone={badgeToneForStatus(firstInvestigationStep.decision)}>
+                          {firstInvestigationStep.decision.replaceAll("_", " ")}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 text-xs text-[var(--ag-text-secondary)]">{firstInvestigationStep.summary}</div>
+                    {firstInvestigationHref ? (
+                      <Link
+                        className="mt-3 inline-flex text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                        href={firstInvestigationHref}
+                      >
+                        Open action detail
+                      </Link>
+                    ) : null}
+                  </div>
+                ) : null}
+                {blockedSteps.length > 0 ? (
+                  <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)] px-4 py-3">
+                    <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Approval or delivery gate</div>
+                    <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
+                      {blockedSteps.length} step{blockedSteps.length === 1 ? "" : "s"} are blocked or waiting for approval delivery.
+                    </div>
+                    <Link
+                      className="mt-3 inline-flex text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                      href={authenticatedRoutes.approvals}
+                    >
+                      Open approvals
+                    </Link>
+                  </div>
+                ) : null}
+                {run.status === "running" ? (
+                  <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-color-warning)]/30 bg-[var(--ag-bg-elevated)] px-4 py-3">
+                    <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Run still in progress</div>
+                    <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
+                      The timeline is still changing. Keep this page open to follow live invalidations and the active step.
+                    </div>
+                  </div>
+                ) : null}
+                {largeRun ? (
+                  <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
+                    <div className="text-sm font-semibold text-[var(--ag-text-primary)]">Large run handling</div>
+                    <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
+                      This run has {run.steps.length} timeline steps. The page starts with the first 50 so failure follow-up stays usable.
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </Card>
+          ) : null}
+
           <Card className="space-y-4">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">Timeline steps</h2>
-              <span className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
-                {run.projectionStatus}
-              </span>
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold">Timeline steps</h2>
+                <div className="text-sm text-[var(--ag-text-secondary)]">
+                  Showing {visibleSteps.length} of {run.steps.length} steps
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {firstInvestigationStep ? (
+                  <a
+                    className="text-sm font-medium text-[var(--ag-color-brand)] underline-offset-4 hover:underline"
+                    href={`#step-${firstInvestigationStep.id}`}
+                  >
+                    Jump to first issue
+                  </a>
+                ) : null}
+                <span className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
+                  {run.projectionStatus}
+                </span>
+              </div>
             </div>
             <TableRoot>
               <TableHead>
@@ -233,8 +339,18 @@ export function RunDetailPage({
                 </TableRow>
               </TableHead>
               <TableBody>
-                {run.steps.map((step) => (
-                  <TableRow key={step.id}>
+                {visibleSteps.map((step) => (
+                  <TableRow
+                    className={
+                      step.status === "failed"
+                        ? "bg-[color:rgb(239_68_68_/_0.08)]"
+                        : step.status === "blocked" || step.status === "awaiting_approval"
+                          ? "bg-[color:rgb(245_158_11_/_0.08)]"
+                          : undefined
+                    }
+                    id={`step-${step.id}`}
+                    key={step.id}
+                  >
                     <TableCell>
                       <div className="space-y-2">
                         {step.actionId ? (
@@ -270,6 +386,16 @@ export function RunDetailPage({
                 ))}
               </TableBody>
             </TableRoot>
+            {hasMoreSteps ? (
+              <div className="flex items-center justify-between gap-3 border-t border-[var(--ag-border-subtle)] pt-4">
+                <p className="text-sm text-[var(--ag-text-secondary)]">
+                  Load the next 50 steps for deeper investigation without losing your current place.
+                </p>
+                <Button onClick={() => setVisibleStepCount((current) => Math.min(current + 50, run.steps.length))} variant="secondary">
+                  Load more
+                </Button>
+              </div>
+            ) : null}
           </Card>
         </div>
 
@@ -281,25 +407,25 @@ export function RunDetailPage({
             </div>
             <div className="space-y-4 text-sm">
               <div>
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Workflow</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Workflow</div>
                 <div className="mt-1 font-medium">{run.workflowName}</div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Agent runtime</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Agent runtime</div>
                 <div className="mt-1 font-medium">
                   {run.agentFramework} / {run.agentName}
                 </div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Completed at</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Completed at</div>
                 <div className="mt-1 font-medium">{formatAbsoluteDate(run.endedAt)}</div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">Summary</div>
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">Summary</div>
                 <div className="mt-1 text-[var(--ag-text-secondary)]">{run.summary}</div>
               </div>
               <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3">
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                   Attention queue
                 </div>
                 <div className="mt-3 space-y-3">
@@ -324,7 +450,7 @@ export function RunDetailPage({
                 </div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-[0.12em] text-[var(--ag-text-tertiary)]">
+                <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-tertiary)]">
                   Workspace roots
                 </div>
                 <div className="mt-1 space-y-1">

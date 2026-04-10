@@ -97,7 +97,7 @@ export interface CredentialBrokerOptions {
   mcpSecretStore?: LocalEncryptedSecretStore | null;
 }
 
-type SecretKeyProviderKind = "macos_keychain" | "linux_secret_service";
+export type SecretKeyProviderKind = "macos_keychain" | "linux_secret_service";
 
 export interface SecretKeyProviderDetails {
   provider: SecretKeyProviderKind;
@@ -394,6 +394,32 @@ class LinuxSecretServiceKeyProvider implements SecretKeyProvider {
       return key;
     }
   }
+}
+
+function resolveFileBackedSecretKeyProviderKind(platform = process.platform): SecretKeyProviderKind {
+  return platform === "darwin" ? "macos_keychain" : "linux_secret_service";
+}
+
+export function createFileBackedSecretKeyProvider(options: { kind?: SecretKeyProviderKind } = {}): SecretKeyProvider {
+  return {
+    kind: options.kind ?? resolveFileBackedSecretKeyProviderKind(),
+    loadOrCreateKey(params: { serviceName: string; keyIdentifier: string; legacyKeyPath?: string }): Buffer {
+      if (!params.legacyKeyPath) {
+        throw new AgentGitError("Durable MCP secret storage fallback requires a legacy key path.", "BROKER_UNAVAILABLE");
+      }
+
+      const existing = readLegacyKeyFile(params.legacyKeyPath);
+      if (existing) {
+        return existing;
+      }
+
+      const created = randomBytes(32);
+      fs.mkdirSync(path.dirname(params.legacyKeyPath), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(params.legacyKeyPath, created.toString("base64"), { encoding: "utf8", mode: 0o600 });
+      fs.chmodSync(params.legacyKeyPath, 0o600);
+      return created;
+    },
+  };
 }
 
 function createDefaultSecretKeyProvider(): SecretKeyProvider {

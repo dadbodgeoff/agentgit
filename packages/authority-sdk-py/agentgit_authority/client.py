@@ -9,6 +9,7 @@ import stat
 import time
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import cast
 
@@ -33,6 +34,7 @@ class AuthorityClientOptions:
 
 MAX_CONNECT_RETRY_DELAY_S = 5.0
 MAX_RESPONSE_BYTES = 1_048_576
+RESPONSE_CONTRACT_PATH = Path(__file__).with_name("daemon_response_contract.json")
 
 
 def _current_uid() -> int | None:
@@ -192,6 +194,15 @@ class AuthorityClient:
         self._ensure_session()
         return self._send_request("get_run_summary", {"run_id": run_id}, self._session_id)
 
+    def create_run_checkpoint(self, payload: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request(
+            "create_run_checkpoint",
+            payload,
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
     def get_capabilities(self, workspace_root: str | None = None) -> JSONObject:
         self._ensure_session([workspace_root] if workspace_root else None)
         payload: JSONObject = {"workspace_root": workspace_root} if workspace_root else {}
@@ -285,6 +296,10 @@ class AuthorityClient:
     def list_mcp_server_profiles(self) -> JSONObject:
         self._ensure_session()
         return self._send_request("list_mcp_server_profiles", {}, self._session_id)
+
+    def get_mcp_server_review(self, payload: JSONObject) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("get_mcp_server_review", payload, self._session_id)
 
     def resolve_mcp_server_candidate(self, payload: JSONObject, *, idempotency_key: str | None = None) -> JSONObject:
         self._ensure_session()
@@ -399,6 +414,50 @@ class AuthorityClient:
         return self._send_request(
             "remove_mcp_host_policy",
             {"host": host},
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def get_hosted_mcp_job(self, job_id: str) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("get_hosted_mcp_job", {"job_id": job_id}, self._session_id)
+
+    def list_hosted_mcp_jobs(self, filters: JSONObject | None = None) -> JSONObject:
+        self._ensure_session()
+        return self._send_request("list_hosted_mcp_jobs", filters or {}, self._session_id)
+
+    def requeue_hosted_mcp_job(
+        self,
+        job_id: str,
+        payload_overrides: JSONObject | None = None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> JSONObject:
+        self._ensure_session()
+        payload: JSONObject = {"job_id": job_id}
+        if payload_overrides:
+            payload.update(payload_overrides)
+        return self._send_request(
+            "requeue_hosted_mcp_job",
+            payload,
+            self._session_id,
+            idempotency_key=idempotency_key,
+        )
+
+    def cancel_hosted_mcp_job(
+        self,
+        job_id: str,
+        payload_overrides: JSONObject | None = None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> JSONObject:
+        self._ensure_session()
+        payload: JSONObject = {"job_id": job_id}
+        if payload_overrides:
+            payload.update(payload_overrides)
+        return self._send_request(
+            "cancel_hosted_mcp_job",
+            payload,
             self._session_id,
             idempotency_key=idempotency_key,
         )
@@ -1381,7 +1440,7 @@ class AuthorityClient:
                 cast(dict[str, object] | None, error.get("details")) if isinstance(error.get("details"), dict) else None,
             )
 
-        return cast(JSONObject, result)
+        return _validate_method_result(method, cast(JSONObject, result))
 
     def _write_and_read_line(self, payload: JSONObject) -> JSONObject:
         last_error: Exception | None = None
@@ -1554,3 +1613,109 @@ def _normalize_recovery_payload(target: str | JSONObject) -> JSONObject:
             "snapshot_id": target,
         }
     }
+
+
+@lru_cache(maxsize=1)
+def _load_response_contract() -> dict[str, object]:
+    try:
+        payload = json.loads(RESPONSE_CONTRACT_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise AuthorityClientTransportError(
+            "Authority SDK response contract manifest is missing.",
+            "INVALID_RESPONSE",
+            False,
+            {"path": str(RESPONSE_CONTRACT_PATH)},
+        ) from error
+    except json.JSONDecodeError as error:
+        raise AuthorityClientTransportError(
+            "Authority SDK response contract manifest is invalid.",
+            "INVALID_RESPONSE",
+            False,
+            {"path": str(RESPONSE_CONTRACT_PATH), "cause": str(error)},
+        ) from error
+
+    if not isinstance(payload, dict):
+        raise AuthorityClientTransportError(
+            "Authority SDK response contract manifest is malformed.",
+            "INVALID_RESPONSE",
+            False,
+            {"path": str(RESPONSE_CONTRACT_PATH)},
+        )
+
+    if payload.get("api_version") != API_VERSION:
+        raise AuthorityClientTransportError(
+            "Authority SDK response contract manifest targets the wrong API version.",
+            "INVALID_RESPONSE",
+            False,
+            {
+                "path": str(RESPONSE_CONTRACT_PATH),
+                "expected_api_version": API_VERSION,
+                "actual_api_version": payload.get("api_version"),
+            },
+        )
+
+    return payload
+
+
+def _validate_method_result(method: MethodName, result: JSONObject) -> JSONObject:
+    manifest = _load_response_contract()
+    methods = manifest.get("methods")
+    contract = methods.get(method) if isinstance(methods, dict) else None
+    if not isinstance(contract, dict):
+        raise AuthorityClientTransportError(
+            "Authority SDK response contract is missing a method entry.",
+            "INVALID_RESPONSE",
+            False,
+            {"method": method},
+        )
+
+    raw_required = contract.get("required")
+    raw_field_kinds = contract.get("field_kinds")
+    required = raw_required if isinstance(raw_required, list) else []
+    field_kinds = raw_field_kinds if isinstance(raw_field_kinds, dict) else {}
+
+    missing_fields = [field for field in required if isinstance(field, str) and field not in result]
+    invalid_fields = [
+        {
+            "field": field,
+            "expected_kind": expected_kind,
+            "actual_type": type(result.get(field)).__name__,
+        }
+        for field, expected_kind in field_kinds.items()
+        if isinstance(field, str)
+        and isinstance(expected_kind, str)
+        and field in result
+        and not _matches_contract_kind(expected_kind, result.get(field))
+    ]
+
+    if missing_fields or invalid_fields:
+        raise AuthorityClientTransportError(
+            "Daemon returned a response payload that does not match the shared SDK contract.",
+            "INVALID_RESPONSE",
+            False,
+            {
+                "method": method,
+                "missing_fields": missing_fields,
+                "invalid_fields": invalid_fields,
+            },
+        )
+
+    return result
+
+
+def _matches_contract_kind(expected_kind: str, value: object) -> bool:
+    if expected_kind in {"anyOf", "oneOf", "multi"}:
+        return True
+    if expected_kind == "string":
+        return isinstance(value, str)
+    if expected_kind in {"integer", "number"}:
+        return isinstance(value, int | float) and not isinstance(value, bool)
+    if expected_kind == "boolean":
+        return isinstance(value, bool)
+    if expected_kind == "array":
+        return isinstance(value, list)
+    if expected_kind == "object":
+        return isinstance(value, dict)
+    if expected_kind in {"const", "enum"}:
+        return value is not None
+    return True

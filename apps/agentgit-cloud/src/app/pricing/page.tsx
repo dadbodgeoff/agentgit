@@ -18,7 +18,7 @@ export default function PricingPage() {
     <MarketingShell currentPath={publicRoutes.pricing}>
       <section className="border-b border-[var(--ag-border-subtle)]">
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-16 sm:px-6 lg:px-8 lg:py-20">
-          <Badge tone="accent" className="w-fit">
+          <Badge tone="brand" className="w-fit">
             Hosted beta pricing
           </Badge>
           <div className="max-w-4xl space-y-5">
@@ -76,7 +76,7 @@ export default function PricingPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-3">
                   <h2 className="text-2xl font-semibold text-[var(--ag-text-primary)]">{plan.name}</h2>
-                  {plan.accent ? <Badge tone="accent">Recommended</Badge> : null}
+                  {plan.accent ? <Badge tone="brand">Recommended</Badge> : null}
                 </div>
                 <div className="flex items-end gap-2">
                   <div className="text-4xl font-semibold tracking-[-0.04em] text-[var(--ag-text-primary)]">

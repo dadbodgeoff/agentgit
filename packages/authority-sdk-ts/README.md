@@ -45,17 +45,29 @@ console.log(hello.accepted_api_version); // "authority.v1"
 // Register a run
 const run = await client.registerRun({
   workflow_name: "my-agent-run",
+  agent_framework: "custom",
+  agent_name: "demo-agent",
   workspace_roots: ["/path/to/workspace"],
+  client_metadata: { purpose: "readme-quickstart" },
 });
 
 // Submit a governed action
 const result = await client.submitActionAttempt({
   run_id: run.run_id,
-  tool_name: "write_file",
-  execution_domain: "filesystem",
-  raw_inputs: { path: "/path/to/workspace/output.txt", content: "hello" },
-  workspace_roots: ["/path/to/workspace"],
+  tool_registration: {
+    tool_name: "write_file",
+    tool_kind: "filesystem",
+  },
+  raw_call: {
+    path: "/path/to/workspace/output.txt",
+    content: "hello",
+  },
+  environment_context: {
+    workspace_roots: ["/path/to/workspace"],
+  },
+  received_at: new Date().toISOString(),
 });
+console.log(result.decision);
 
 // Inspect the timeline
 const timeline = await client.queryTimeline(run.run_id, "internal");
@@ -63,6 +75,7 @@ timeline.steps.forEach(step => console.log(step.summary));
 
 // Answer a structured question about the run
 const answer = await client.queryHelper(run.run_id, "what_happened");
+console.log(answer.answer);
 ```
 
 ---
@@ -72,20 +85,20 @@ const answer = await client.queryHelper(run.run_id, "what_happened");
 ### Session & Runs
 ```ts
 client.hello(workspaceRoots: string[]): Promise<HelloResponsePayload>
-client.registerRun(payload, options?: { idempotency_key? }): Promise<RegisterRunResponsePayload>
+client.registerRun(payload, options?: { idempotencyKey? }): Promise<RegisterRunResponsePayload>
 client.getRunSummary(runId: string): Promise<GetRunSummaryResponsePayload>
 client.getCapabilities(workspaceRoot?: string): Promise<GetCapabilitiesResponsePayload>
 ```
 
 ### Action Submission
 ```ts
-client.submitActionAttempt(attempt, options?: { idempotency_key? }): Promise<SubmitActionAttemptResponsePayload>
+client.submitActionAttempt(attempt, options?: { idempotencyKey? }): Promise<SubmitActionAttemptResponsePayload>
 ```
 
 ### Approvals
 ```ts
-client.listApprovals(options?: { run_id?, status?, limit? }): Promise<ListApprovalsResponsePayload>
-client.queryApprovalInbox(options?: { run_id?, status?, limit?, offset? }): Promise<...>
+client.listApprovals(options?: { run_id?, status? }): Promise<ListApprovalsResponsePayload>
+client.queryApprovalInbox(options?: { run_id?, status? }): Promise<...>
 // decision: "approve" | "deny"  (not "reject")
 client.resolveApproval(approvalId, decision, note?, options?): Promise<ResolveApprovalResponsePayload>
 ```
@@ -93,11 +106,11 @@ client.resolveApproval(approvalId, decision, note?, options?): Promise<ResolveAp
 ### Inspection
 ```ts
 // visibility: "user" | "model" | "internal" | "sensitive_internal"
-client.queryTimeline(runId, visibility?, options?: { limit?, offset? }): Promise<QueryTimelineResponsePayload>
+client.queryTimeline(runId, visibility?): Promise<QueryTimelineResponsePayload>
 
 // questionType is a HelperQuestionType enum — not a free-form string
 // See wiki/TypeScript-SDK.md for the full list of query types
-client.queryHelper(runId, questionType, options?: { focus_step_id?, compare_step_id?, visibility? }): Promise<QueryHelperResponsePayload>
+client.queryHelper(runId, questionType, focusStepId?, compareStepId?, visibility?): Promise<QueryHelperResponsePayload>
 client.queryArtifact(artifactId, visibility?): Promise<QueryArtifactResponsePayload>
 ```
 
@@ -182,11 +195,11 @@ import {
 
 ## Idempotency
 
-Mutation methods accept `{ idempotency_key }` as the last `options` argument. Requests with the same key within a session replay from cache — safe to retry on timeout.
+Mutation methods accept `{ idempotencyKey }` as the last `options` argument. Requests with the same key within a session replay from cache and are safe to retry on timeout.
 
 ```ts
-await client.registerRun(payload, { idempotency_key: "my-run-session-id" });
-await client.submitActionAttempt(attempt, { idempotency_key: "write-index-ts" });
+await client.registerRun(payload, { idempotencyKey: "my-run-session-id" });
+await client.submitActionAttempt(attempt, { idempotencyKey: "write-index-ts" });
 ```
 
 ---
