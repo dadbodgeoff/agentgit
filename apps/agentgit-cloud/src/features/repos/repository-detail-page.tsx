@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 import { PageStatePanel, StaleIndicator } from "@/components/feedback";
-import { Badge, Button, Card } from "@/components/primitives";
+import { Badge, Button, Card, type BadgeTone } from "@/components/primitives";
 import { useLiveUpdateStatus } from "@/components/providers/live-update-context";
 import { ScaffoldPage } from "@/features/shared/scaffold-page";
 import { getApiErrorMessage } from "@/lib/api/client";
@@ -15,19 +15,31 @@ import {
   runDetailRoute,
 } from "@/lib/navigation/routes";
 import { useRepositoryDetailQuery } from "@/lib/query/hooks";
+import { statusToneWithSynonyms } from "@/lib/status/tone";
 import type { PreviewState } from "@/schemas/cloud";
 import { formatAbsoluteDate, formatRelativeTimestamp } from "@/lib/utils/format";
 
-function statusTone(status: string): "success" | "warning" | "error" | "neutral" {
-  if (status === "healthy" || status === "completed" || status === "verified") {
-    return "success";
-  }
+// Repository health status comes from the cloud aggregator and uses words
+// that aren't all in Design System §7.2 ("completed" / "verified" mean
+// "passed"; "drifted" means "degraded"; "unreachable" means "down").
+// statusToneWithSynonyms maps each domain word to its canonical sibling
+// and then resolves the canonical map.
+//
+// Previous local switch had two real bugs that the centralized map
+// catches:
+//   - "escalated" was bucketed as warning. Per spec §7.2 escalated is the
+//     ONLY canonical status using accent (lime) — it is the agent
+//     identity signal, not a system warning.
+//   - "failed" was bucketed as warning. Per spec §7.2 failed → error.
+const REPOSITORY_STATUS_SYNONYMS = {
+  completed: "passed",
+  verified: "passed",
+  drifted: "degraded",
+  unreachable: "down",
+} as const;
 
-  if (status === "escalated" || status === "failed" || status === "drifted" || status === "unreachable") {
-    return "warning";
-  }
-
-  return "neutral";
+function statusTone(status: string): BadgeTone {
+  return statusToneWithSynonyms(status, REPOSITORY_STATUS_SYNONYMS, "neutral");
 }
 
 export function RepositoryDetailPage({

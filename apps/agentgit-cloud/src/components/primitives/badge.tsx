@@ -2,7 +2,7 @@ import type { HTMLAttributes } from "react";
 
 import { cn } from "@/lib/utils/cn";
 
-type BadgeTone = "neutral" | "success" | "warning" | "error" | "accent" | "brand" | "info";
+export type BadgeTone = "neutral" | "success" | "warning" | "error" | "accent" | "brand" | "info";
 
 const toneClasses: Record<BadgeTone, string> = {
   neutral: "border-[var(--ag-border-default)] bg-[var(--ag-bg-hover)] text-[var(--ag-text-secondary)]",

@@ -1,61 +1,44 @@
 import Link from "next/link";
 import type { KeyboardEvent } from "react";
 
-import { Badge, Button, Card } from "@/components/primitives";
+import { Badge, Button, Card, type BadgeTone } from "@/components/primitives";
 import { actionDetailRoute, repositoryRoute, runDetailRoute } from "@/lib/navigation/routes";
+import { canonicalStatusTone } from "@/lib/status/tone";
 import { cn } from "@/lib/utils/cn";
 import type { ApprovalListItem } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
 
-function getApprovalTone(status: ApprovalListItem["status"]): "warning" | "success" | "error" | "neutral" {
-  if (status === "approved") {
-    return "success";
-  }
-  if (status === "rejected") {
-    return "error";
-  }
-  if (status === "pending") {
-    return "warning";
-  }
-  return "neutral";
+// Approval lifecycle statuses ("pending" | "approved" | "rejected" | "expired")
+// are all canonical Design System §7.2 entries; delegate to the central map.
+function getApprovalTone(status: ApprovalListItem["status"]): BadgeTone {
+  return canonicalStatusTone(status, "neutral");
 }
 
-function getConnectorTone(status: ApprovalListItem["connectorStatus"]): "success" | "warning" | "error" | "neutral" {
-  if (status === "active") {
-    return "success";
-  }
-
+// Connector status: "active" is canonical (success); "stale" / "revoked"
+// are domain-specific extensions and stay in this thin local switch.
+function getConnectorTone(status: ApprovalListItem["connectorStatus"]): BadgeTone {
   if (status === "stale") {
     return "warning";
   }
-
   if (status === "revoked") {
     return "error";
   }
-
-  return "neutral";
+  return canonicalStatusTone(status, "neutral");
 }
 
-function getDeliveryTone(
-  status: ApprovalListItem["decisionCommandStatus"],
-): "success" | "warning" | "error" | "accent" | "neutral" {
-  if (status === "completed") {
-    return "success";
-  }
-
-  if (status === "failed") {
-    return "error";
-  }
-
-  if (status === "expired") {
-    return "warning";
-  }
-
+// Delivery state from the cloud sync command queue. Uses "acked" to mean
+// the daemon has acknowledged the command but hasn't completed it yet —
+// not a Design System §7.2 status, so stays local. Per Brand Identity v2
+// §5.1 lime is reserved for agent-initiated actions; "acked" qualifies as
+// an agent acknowledgement, so the accent tone is appropriate here.
+function getDeliveryTone(status: ApprovalListItem["decisionCommandStatus"]): BadgeTone {
   if (status === "acked") {
     return "accent";
   }
-
-  return "neutral";
+  if (status === "completed") {
+    return canonicalStatusTone("passed", "neutral");
+  }
+  return canonicalStatusTone(status ?? "", "neutral");
 }
 
 export function ApprovalCard({

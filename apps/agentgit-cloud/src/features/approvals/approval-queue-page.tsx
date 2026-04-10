@@ -8,7 +8,7 @@ import { useMutation, useQueryClient, type InfiniteData } from "@tanstack/react-
 import { ApprovalCard } from "@/components/composites";
 import { EmptyState, LoadingSkeleton, PageStatePanel, StaleIndicator } from "@/components/feedback";
 import { MetricCard, PageHeader } from "@/components/composites";
-import { Badge, Button, Card, CodeBlock, Input, Overline } from "@/components/primitives";
+import { Badge, Button, Card, CodeBlock, Input, Overline, type BadgeTone } from "@/components/primitives";
 import { useToast } from "@/components/providers/toast-provider";
 import { ApiClientError, getApiErrorMessage } from "@/lib/api/client";
 import { approveApproval, rejectApproval } from "@/lib/api/endpoints/approvals";
@@ -17,6 +17,7 @@ import { useLiveUpdateStatus } from "@/components/providers/live-update-context"
 import { actionDetailRoute, repositoryRoute, repositorySnapshotsRoute, runDetailRoute } from "@/lib/navigation/routes";
 import { useApprovalsQuery } from "@/lib/query/hooks";
 import { queryKeys } from "@/lib/query/keys";
+import { canonicalStatusTone } from "@/lib/status/tone";
 import type { PreviewState } from "@/schemas/cloud";
 import { ApprovalDecisionResponseSchema, type ApprovalListItem, type ApprovalListResponse } from "@/schemas/cloud";
 import { formatRelativeTimestamp } from "@/lib/utils/format";
@@ -43,42 +44,37 @@ function getOldestApproval(items: ApprovalListItem[]): ApprovalListItem | null {
   );
 }
 
-function connectorTone(status: ApprovalListItem["connectorStatus"]): "success" | "warning" | "error" | "neutral" {
-  if (status === "active") {
-    return "success";
-  }
-
+// Tone helpers delegate to the canonical Design System §7.2 mapping in
+// lib/status/tone.ts for any status that's part of the canonical set, and
+// only keep local logic for domain-specific extensions (connector "stale"
+// / "revoked", delivery "acked"). Same pattern as the ApprovalCard
+// composite — both stay in lock-step because they consume the same map.
+function connectorTone(status: ApprovalListItem["connectorStatus"]): BadgeTone {
   if (status === "stale") {
     return "warning";
   }
-
   if (status === "revoked") {
     return "error";
   }
-
-  return "neutral";
+  // "active" is canonical → success.
+  return canonicalStatusTone(status, "neutral");
 }
 
-function deliveryTone(
-  status: ApprovalListItem["decisionCommandStatus"],
-): "success" | "warning" | "error" | "accent" | "neutral" {
-  if (status === "completed") {
-    return "success";
-  }
-
-  if (status === "failed") {
-    return "error";
-  }
-
-  if (status === "expired") {
-    return "warning";
-  }
-
+function deliveryTone(status: ApprovalListItem["decisionCommandStatus"]): BadgeTone {
+  // "acked" is the cloud sync command queue's "the daemon has it"
+  // state — an agent acknowledgement, so accent (lime) is appropriate
+  // per Brand Identity v2 §5.1 (lime = agent-initiated activity).
   if (status === "acked") {
     return "accent";
   }
-
-  return "neutral";
+  // "completed" is API vocabulary for canonical "passed".
+  if (status === "completed") {
+    return canonicalStatusTone("passed", "neutral");
+  }
+  // "expired" / "failed" are canonical and resolve via the central map.
+  // (Note: canonical "expired" → neutral, NOT warning. Previously this
+  // helper returned warning, which drifted from spec §7.2.)
+  return canonicalStatusTone(status ?? "", "neutral");
 }
 
 function ApprovalQueueSkeleton() {
