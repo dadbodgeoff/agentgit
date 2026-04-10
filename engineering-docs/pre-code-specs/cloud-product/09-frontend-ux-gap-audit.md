@@ -1,9 +1,11 @@
 # Frontend UX Gap Audit — agentgit-cloud
 
-**Date:** 2026-04-08
+**Date:** 2026-04-08 (initial), revised 2026-04-09
 **Auditor:** UX engineering pass
 **Sources of truth:** `01-brand-identity-spec.md`, `02-product-design-system-spec.md`, `03-cloud-implementation-spec.md`
 **Target app:** `apps/agentgit-cloud` (Next.js 15, App Router)
+
+> **2026-04-09 update** — A large parallel landing on `codex/cloud-surface-prod-readiness` (commits `772d62d` + `4e88037`) closed almost the entire P0 list and most of P1 in a single sweep. See **§Phase 1 verification** at the bottom for the post-landing diff. The body of the audit below is preserved as the original snapshot for traceability; do not treat its P0/P1 list as the current state.
 
 ## TL;DR
 
@@ -312,3 +314,80 @@ The audit list is long but the order is tightly coupled. Suggested order:
 8. **Reduced-motion guard + tabular-nums global rule.**
 
 Anything not on this list is Phase 2+ (per-surface UX rebuild) or polish.
+
+---
+
+## Phase 1 verification — 2026-04-09 post-`772d62d`/`4e88037` landing
+
+Verified by reading HEAD source on `codex/cloud-surface-prod-readiness` after the landing. Cross-references each P0/P1 item from the original list.
+
+### P0 — closed
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 1 | Remove "Build loop backlog" `CodeBlock` from approval queue | ✅ | `grep -c 'Build loop backlog\|engineering-docs/pre-code-specs'` returns 0 in `approval-queue-page.tsx` |
+| 2 | Wordmark: `Agent` (Fog) + `Git` (Teal), mixed case | ✅ | `shell-header.tsx`: `<span class="text-[var(--ag-text-primary)]">Agent</span><span class="text-[var(--ag-color-brand)]">Git</span>` |
+| 3 | Lime misuse on landing/pricing/docs marketing badges | 🟡 mostly | Recommended pricing badge now `<Badge tone="brand">`. Landing/docs hits = 0. **One residual on `pricing/page.tsx:151`** — "When Stripe is enabled" callout uses `text-[var(--ag-color-accent)]` + `tracking-[0.18em]`. Spec violation; lime is not an agent action there, and tracking is wrong. P0 cleanup item below. |
+| 4 | Typography tokens + Tailwind v4 `@theme` mapping | ✅ | `tokens.css` defines all spec font shorthands (`--ag-text-display..code`); `globals.css` `@theme` block now bridges brand/surface/text/border/semantic colors, spacing scale, full Tailwind-v4 typography utilities (`--text-h1..code` with line-height/weight/tracking), motion durations + easings. Light-mode semantic text tokens added in `tokens.css` `[data-theme="light"]` block. |
+| 5 | Build missing primitives (Select, Combobox, Checkbox, Switch, Tooltip, Drawer, Stepper, Overline) | ✅ | All eight present in `src/components/primitives/` and exported from `index.ts`. Implementations reviewed below. |
+| 6 | DataTable composite (sort, selection, pagination, sticky col, mobile card-stack, bulk actions) | ✅ | `src/components/composites/data-table.tsx` (270 lines). Implements every spec §3.7 contract: cycle sort none→asc→desc→none, header-checkbox-selects-all, bulk action bar on selection, 25/page default with 10/25/50/100 options, "Showing X-Y of Z", `md:hidden` mobile card-stack via `<dl>`, `sticky left-0` first column, `aria-sort` per column. |
+| 7 | Sidebar collapsed mode + icons + workspace selector + mobile hamburger | ✅ | `shell-sidebar.tsx` accepts `collapsed`, `mobileOpen`, `onToggleCollapsed` props. 240px expanded / 64px collapsed (`w-60` / `w-16`). Workspace selector with avatar circle + `ChevronsUpDown`. Section grouping (`groupedItems`). Bottom-pinned help link + sign-out. Lucide icons per nav row. Tooltips wrap collapsed nav items. Mobile hamburger lives in `shell-header.tsx` (`<Button class="sm:hidden" onClick={onOpenMobileNav}>`). |
+| 8 | Global toast manager | ✅ | `providers/toast-provider.tsx` exposes `useToast` + `useOptionalToast`, `pushToast` returns id, max 3 visible (`.slice(0, 3)`), 5s auto-dismiss for non-error toasts via `setTimeout`, errors persist (filtered out of dismiss timer). Tone enum matches spec: `success | info | warning | error`. Has `actionLabel` + `onAction` for action toasts. |
+| 9 | `Button` loading state with locked width and `aria-busy` | ✅ | `button.tsx` accepts `loading` + `loadingLabel` props. Sets `aria-busy={loading || undefined}` and `disabled={disabled \|\| loading}`. Children are wrapped in `opacity-0` overlay so width is preserved; spinner overlay sits absolutely on top. |
+| 10 | `prefers-reduced-motion` global guard | ✅ | `globals.css` has both `@media (prefers-reduced-motion: no-preference)` (gating animations) and `@media (prefers-reduced-motion: reduce)` (forcing 0.01ms durations on every animation/transition). |
+
+### P1 — closed
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 11 | Header: breadcrumbs, `Cmd+K`, bell, avatar | ✅ | `shell-header.tsx`: `deriveBreadcrumbs()` covers every authenticated route family (repos with owner/name/runs/policy/snapshots/actions detail, plus static labels for approvals/activity/audit/calibration/connectors/settings/team/billing/integrations/onboarding); breadcrumbs trim to last 3 segments per spec §1.2; `Cmd+K` wired via `onOpenCommandPalette` prop into `command-palette.tsx`; `Bell` and `Settings` icons imported; user avatar built from initials. |
+| 19 | Tabular numerals | ✅ | `globals.css`: `table, .ag-tabular-nums, .ag-metric-value { font-variant-numeric: tabular-nums; }` |
+| 20 | Tailwind theme binding rollout | 🟡 partial | `@theme` block bridges every spec token (color, semantic, spacing, typography, motion). **Adoption is partial** — primitives still use `bg-[var(--ag-surface-overlay)]` / `ag-text-body` legacy syntax. Functionally identical (same tokens), but the cleanup pass to `bg-overlay` / `text-body` utilities hasn't started. Tracked as P2 cosmetic; not blocking. |
+
+### P0 / P1 — still open
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| 3b | Lime misuse on `pricing/page.tsx:151` "When Stripe is enabled" callout | ❌ open | Single residual lime violation. Border + bg + text all use accent. Should be brand teal or neutral. Trivially fixable in a 1-line edit. Also fix `tracking-[0.18em]` → `tracking-[0.06em]` on the same line. |
+| 12 | Centralize status→tone mapping in `lib/status/tone.ts` | ❌ open | Inline `tone` helpers (`connectorTone`, `deliveryTone`) still live inside `approval-queue-page.tsx`. Consolidate so every page imports the same map. |
+| 13 | URL state sync sweep | ❌ open | Filters / sort / pagination / active-tab / drawer-open across list pages still in `useState`. Needs migration to `useSearchParams` + `router.replace`. |
+| 14 | Five-state coverage audit per non-approval feature page | ❌ open | Approval queue is gold standard. Every other page (dashboard, repos list/detail, runs, activity, audit, calibration, settings tree, onboarding) needs a verification + fixes pass. |
+| 15 | RHF + Zod `Form` / `FormField` wrapper enforcing blur-first validation | ❌ open | Inputs accept `errorText` but timing is consumer-managed. Centralize in a `<FormField>` wrapper. |
+| 16 | Modal focus trap + destructive type-to-confirm variant | ❌ open | Need to read modal.tsx and verify trap; type-to-confirm Level 2/3 (DS §4.6) almost certainly missing. |
+| 17 | `axe-playwright` CI gate | ❌ open | Playwright is configured but no axe step. Add to E2E run + CI. |
+| 18 | Sentence-case + no-`!` content sweep | ❌ open | Mechanical pass across all static strings. |
+
+### Primitive review notes (HEAD versions)
+
+- **`select.tsx`** — Native `<select>` with custom chevron, label/help/error props, `aria-describedby`, `aria-invalid`, `aria-live="polite"` on error, focus ring, `--ag-surface-overlay` background, `min-h-11` (44px touch target). ⚠️ Native fallback — does not implement spec §3.3 listbox role / type-ahead jump / flip-above. Acceptable for v1; flag a `<Listbox>` upgrade as P2 if dropdown polish becomes a priority.
+- **`combobox.tsx`** — `role="combobox"` + `role="listbox"` + `role="option"`, ArrowUp/Down nav with bounds, Enter selects, Escape closes, click-outside via `mousedown` listener, filter on description + keywords, empty state message, `max-h-80` (320px) per spec, surface-overlay background. ⚠️ No 200ms debounce path for API-backed sources (spec §3.4 — synchronous filter only). ⚠️ No flip-above when insufficient space below. Both P2.
+- **`checkbox.tsx`** — `peer-checked` styling, indeterminate state via ref, label + description, focus ring on visual square, `min-h-11`. Redundant explicit `role="checkbox"` (implicit from native input) — harmless. Spec compliant.
+- **`drawer.tsx`** — 480px max width per spec §1.7, slide from right, backdrop click closes (configurable), Escape closes, X close button, surface-overlay background. ⚠️ No transition animations (spec says slide-in 350ms / out 200ms). ⚠️ No `role="dialog"` / `aria-modal` on the aside. ⚠️ No focus return to trigger on close. P1 polish.
+- **`stepper.tsx`** — Spec §4.4: numbered circles + connecting lines, current = teal fill at 12%, complete = teal outline + Check, upcoming = default border. Step description supported. Spec compliant.
+- **`data-table.tsx`** — see P0 #6 above. ⚠️ Selected row uses `--ag-surface-selected` bg but lacks the spec §13.5 "2px Teal left accent" — easy 1-line add. Otherwise enterprise grade.
+- **`command-palette.tsx`** — 560px max-w per spec §3.10, autoFocus search input, categorized + grouped results (Navigation / Quick Actions / Actions), Arrow nav, Enter executes, Escape closes, Sign-out action, RBAC-filtered nav items via `hasAtLeastRole`. ⚠️ Search input is wrapped in `<Input>` primitive, which means `role="combobox"` and `role="listbox"` semantics aren't on the right elements (spec §3.10). ⚠️ No "max 8 visible results" cap (spec §3.10) — currently shows all matches. P1.
+- **`toast-provider.tsx`** — see P0 #8 above. Spec compliant.
+- **`shell-sidebar.tsx`** — see P0 #7 above. Spec compliant.
+- **`shell-header.tsx`** — see P1 #11 above. Spec compliant.
+
+### Net Phase 1 status
+
+- **P0:** 9 of 10 closed. 1 residual lime/tracking violation on `pricing/page.tsx:151`.
+- **P1:** 3 of 10 closed (header rebuild, tabular numerals, theme binding partial). 7 still open: status mapping, URL state sync, five-state coverage sweep, RHF/Zod form wrapper, modal focus trap + type-to-confirm, axe-playwright CI gate, content sweep.
+- **P2/P3:** unchanged.
+
+### Recommended next moves
+
+Highest leverage, lowest coordination risk first:
+
+1. **Fix the 1 residual P0** — `pricing/page.tsx:151` lime + tracking. Single-line edit, isolated commit.
+2. **Centralize status→tone mapping** — extract `lib/status/tone.ts` and migrate `connectorTone` / `deliveryTone` from `approval-queue-page.tsx`. New file + small page edits.
+3. **Modal primitive audit** — read `modal.tsx`, verify focus trap, add destructive type-to-confirm variant. Single primitive + tests.
+4. **`axe-playwright` CI gate** — wire `@axe-core/playwright` into existing Playwright config and add a test that visits each route. Adds CI floor for accessibility regressions.
+5. **URL state sync sweep** — small `lib/url/use-url-state.ts` hook + migration of one list page (repos) to prove the pattern, then mechanical sweep across the rest.
+6. **Five-state coverage sweep** — start with `dashboard-page.tsx` and `repository-list-page.tsx`, work outward. Adopt `PageStatePanel` + `LoadingSkeleton` everywhere.
+7. **RHF + Zod `<FormField>` wrapper** — once the form pattern is locked, every settings page benefits.
+8. **Content sweep** — automated where possible (`grep -nE '!\s*$' src` for exclamation marks; eyeball capitalization).
+9. **Theme-binding adoption codemod** — replace `bg-[var(--ag-bg-card)]` → `bg-card`, `text-[var(--ag-text-secondary)]` → `text-text-secondary`, etc. Mechanical, large diff, low risk.
+
+After these, Phase 1 fully closes and Phase 2 (per-surface UX rebuild) can begin against a clean primitive baseline.
