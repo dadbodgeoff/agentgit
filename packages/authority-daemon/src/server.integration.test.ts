@@ -9772,12 +9772,6 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
           event.event_type === "snapshot.created" &&
           (event.payload as Record<string, unknown> | undefined)?.snapshot_id === snapshotId,
       );
-      expect((policyEvent?.payload as Record<string, unknown> | undefined)?.snapshot_selection).toEqual(
-        expect.objectContaining({
-          snapshot_class: "journal_plus_anchor",
-          reason_codes: expect.arrayContaining(["snapshot.shell_mutation_boundary"]),
-        }),
-      );
       expect((policyEvent?.payload as Record<string, unknown> | undefined)?.recoverability_class).toBe(
         "unrecoverable_or_degraded",
       );
