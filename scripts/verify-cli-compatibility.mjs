@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { resolveCommandPath } from "./command-paths.mjs";
+import { filterManifestToCompatibilitySurface } from "./cli-compatibility-manifest.mjs";
 import {
   authorityCliCompatibilityPackageNames as publishablePackageNames,
   authorityCliCompatibilityPackages,
@@ -173,7 +174,10 @@ async function buildCompatibilityTargets(targetRepoRoot) {
 async function packRepoArtifacts(targetRepoRoot, outDir) {
   if (targetRepoRoot === repoRoot && parsedArgs.currentArtifactsDir) {
     const manifestPath = path.join(parsedArgs.currentArtifactsDir, "manifest.json");
-    return JSON.parse(await fsp.readFile(manifestPath, "utf8"));
+    return filterManifestToCompatibilitySurface(
+      JSON.parse(await fsp.readFile(manifestPath, "utf8")),
+      publishablePackageNames,
+    );
   }
 
   await buildCompatibilityTargets(targetRepoRoot);
