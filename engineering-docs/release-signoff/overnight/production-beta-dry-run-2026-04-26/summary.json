@@ -1,0 +1,161 @@
+{
+  "generatedAt": "2026-04-26T20:19:53.061Z",
+  "gateStatus": "blocked",
+  "artifactRoot": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-dry-run-2026-04-26",
+  "results": [
+    {
+      "id": "snapshot-regression",
+      "name": "Snapshot Regression",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/workspace-index test -- src/index.test.ts && pnpm --filter @agentgit/snapshot-engine test -- src/index.test.ts",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Snapshot and workspace-index restore semantics must stay exact before user data is trusted.",
+      "artifacts": []
+    },
+    {
+      "id": "openclaw-stress",
+      "name": "OpenClaw Stress",
+      "required": true,
+      "status": "pending",
+      "command": "openclaw-stress",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Governed local agent actions, denials, snapshots, recoveries, and explicit checkpoints must pass together.",
+      "artifacts": []
+    },
+    {
+      "id": "cloud-build",
+      "name": "Cloud Build",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/cloud-ui build",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "The production cloud bundle must compile with the workspace package graph used by the local product.",
+      "artifacts": []
+    },
+    {
+      "id": "browser-surface",
+      "name": "Browser Surface",
+      "required": true,
+      "status": "pending",
+      "command": "browser-surface",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "The actual cloud UI must prove repo, run, action, snapshot, activity, and audit surfaces render correctly.",
+      "artifacts": []
+    },
+    {
+      "id": "crash-restart",
+      "name": "Crash Restart",
+      "required": true,
+      "status": "blocked",
+      "command": "crash-restart",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until daemon, journal, snapshot, restore, and cloud restarts are killed mid-operation and reconciled.",
+      "artifacts": []
+    },
+    {
+      "id": "concurrent-agents",
+      "name": "Concurrent Agents",
+      "required": true,
+      "status": "blocked",
+      "command": "concurrent-agents",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until overlapping agent runs prove locking, ordering, and restore isolation.",
+      "artifacts": []
+    },
+    {
+      "id": "connector-loop",
+      "name": "Connector Loop",
+      "required": true,
+      "status": "blocked",
+      "command": "connector-loop",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until restore/replay commands flow through an active connector with heartbeat, ack, and synced results.",
+      "artifacts": []
+    },
+    {
+      "id": "sensitive-redaction",
+      "name": "Sensitive Redaction",
+      "required": true,
+      "status": "pending",
+      "command": "sensitive-redaction",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Synthetic secrets must not leak into qualification summaries or browser-visible evidence.",
+      "artifacts": []
+    },
+    {
+      "id": "scale-soak",
+      "name": "Scale Soak",
+      "required": true,
+      "status": "blocked",
+      "command": "scale-soak",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until large repos, large files, long action histories, and many snapshots stay within latency and storage budgets.",
+      "artifacts": []
+    },
+    {
+      "id": "snapshot-maintenance",
+      "name": "Snapshot Maintenance",
+      "required": true,
+      "status": "blocked",
+      "command": "snapshot-maintenance",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until snapshot GC, compaction, rebase, and WAL checkpoint jobs preserve restore honesty.",
+      "artifacts": []
+    },
+    {
+      "id": "migration-compat",
+      "name": "Migration Compatibility",
+      "required": true,
+      "status": "blocked",
+      "command": "migration-compat",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until older journal, snapshot, cloud-state, and connector schemas are read or migrated cleanly.",
+      "artifacts": []
+    },
+    {
+      "id": "audit-export",
+      "name": "Audit Export",
+      "required": true,
+      "status": "blocked",
+      "command": "audit-export",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until CSV/JSON exports prove ordering, links, and redaction.",
+      "artifacts": []
+    },
+    {
+      "id": "package-install",
+      "name": "Package Install",
+      "required": true,
+      "status": "blocked",
+      "command": "package-install",
+      "durationMs": 0,
+      "summary": "Suite is registered but not implemented in the qualification runner yet.",
+      "productionImplication": "Release remains incomplete until installed-package CLI and runtime paths pass outside the repo-local dist graph.",
+      "artifacts": []
+    },
+    {
+      "id": "diff-check",
+      "name": "Diff Check",
+      "required": true,
+      "status": "pending",
+      "command": "git diff --check",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Whitespace and patch hygiene must be clean before publishing release evidence.",
+      "artifacts": []
+    }
+  ]
+}

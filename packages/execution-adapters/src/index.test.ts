@@ -38,16 +38,35 @@ const ociTestImageRoot = decodeURIComponent(new URL("./oci-test-image", import.m
 const TEST_OCI_BUILD_IMAGE = `agentgit/test-stdio:${process.pid}`;
 
 function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | null {
+  if (process.env.AGENTGIT_RUN_OCI_SANDBOX_TESTS !== "1") {
+    return null;
+  }
+
   for (const runtime of ["docker", "podman"] as const) {
+    const runtimeEnv =
+      runtime === "docker"
+        ? {
+            ...process.env,
+            DOCKER_CONFIG: path.join(os.tmpdir(), "agentgit-empty-docker-config"),
+          }
+        : process.env;
+    if (runtime === "docker") {
+      fs.mkdirSync(runtimeEnv.DOCKER_CONFIG, { recursive: true });
+    }
+
     const result = spawnSync(runtime, ["info"], {
       encoding: "utf8",
+      env: runtimeEnv,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 3_000,
     });
 
-    if (result.status === 0 && !result.error) {
+    if (result.status === 0 && !result.error && result.stderr.trim().length === 0) {
       const imageResult = spawnSync(runtime, ["image", "inspect", "node:22-bookworm-slim"], {
         encoding: "utf8",
+        env: runtimeEnv,
         stdio: ["ignore", "pipe", "pipe"],
+        timeout: 3_000,
       });
       if (imageResult.status !== 0 || imageResult.error) {
         continue;
@@ -2177,14 +2196,28 @@ function makeTicketUnassignUserFunctionAction(): ActionRecord {
 }
 
 async function closeTicketServer(server: http.Server): Promise<void> {
+  if (!server.listening) {
+    server.closeAllConnections?.();
+    server.closeIdleConnections?.();
+    return;
+  }
+
   await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      server.closeAllConnections?.();
+      resolve();
+    }, 1_000);
+
     server.close((error) => {
+      clearTimeout(timeout);
       if (error) {
         reject(error);
         return;
       }
       resolve();
     });
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
   });
 }
 
@@ -2591,6 +2624,99 @@ describe("ShellExecutionAdapter", () => {
     fs.symlinkSync(outsideDir, symlinkPath, "dir");
 
     await expect(adapter.execute(context)).rejects.toThrow("Resolved path is outside the governed workspace root.");
+  });
+
+  it("rejects opaque interpreter shell execution by default before side effects can land", async () => {
+    tempDir = tempDirs.make("agentgit-shell-");
+    const outsidePath = path.join(os.tmpdir(), `agentgit-shell-outside-${Date.now()}.txt`);
+    const adapter = new ShellExecutionAdapter();
+    const shellAction: ActionRecord = {
+      ...makeAction(path.join(tempDir, "ignored.txt"), "write"),
+      operation: {
+        domain: "shell",
+        kind: "exec",
+        name: "shell.exec",
+        display_name: "Run opaque node command",
+      },
+      execution_path: {
+        surface: "governed_shell",
+        mode: "pre_execution",
+        credential_mode: "none",
+      },
+      target: {
+        primary: {
+          type: "workspace",
+          locator: tempDir,
+          label: path.basename(tempDir),
+        },
+        scope: {
+          breadth: "unknown",
+          unknowns: ["scope", "target_count"],
+        },
+      },
+      input: {
+        raw: {
+          command: `${process.execPath} -e opaque`,
+          argv: [
+            process.execPath,
+            "-e",
+            `require("node:fs").writeFileSync(${JSON.stringify(outsidePath)}, "escaped\\n", "utf8")`,
+          ],
+        },
+        redacted: {},
+        schema_ref: null,
+        contains_sensitive_data: false,
+      },
+      facets: {
+        shell: {
+          argv: [
+            process.execPath,
+            "-e",
+            `require("node:fs").writeFileSync(${JSON.stringify(outsidePath)}, "escaped\\n", "utf8")`,
+          ],
+          cwd: tempDir,
+          interpreter: "node",
+          command_family: "interpreter",
+          classifier_rule: "shell.interpreter.opaque",
+          declared_env_keys: [],
+          stdin_kind: "none",
+        },
+      },
+      risk_hints: {
+        side_effect_level: "mutating",
+        external_effects: "none",
+        reversibility_hint: "potentially_reversible",
+        sensitivity_hint: "moderate",
+        batch: false,
+      },
+      normalization: {
+        mapper: "test-shell",
+        inferred_fields: [],
+        warnings: ["unknown_scope", "opaque_execution"],
+        normalization_confidence: 0.29,
+      },
+      confidence_assessment: {
+        engine_version: "test",
+        score: 0.29,
+        band: "low",
+        requires_human_review: true,
+        factors: [],
+      },
+    };
+    const context = {
+      action: shellAction,
+      policy_outcome: makePolicyOutcome(false),
+      workspace_root: tempDir,
+      snapshot_record: null,
+    } as const;
+
+    try {
+      await expect(adapter.verifyPreconditions(context)).rejects.toThrow("Opaque shell execution is disabled");
+      await expect(adapter.execute(context)).rejects.toThrow("Opaque shell execution is disabled");
+      expect(fs.existsSync(outsidePath)).toBe(false);
+    } finally {
+      fs.rmSync(outsidePath, { force: true });
+    }
   });
 });
 

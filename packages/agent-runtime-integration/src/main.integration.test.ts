@@ -169,6 +169,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const args = process.argv.slice(2);
+const dockerArgs = args[0] === "--config" ? args.slice(2) : args;
 function mountMap(value) {
   return Object.fromEntries(
     String(value)
@@ -178,7 +179,7 @@ function mountMap(value) {
   );
 }
 
-if (args[0] === "version") {
+if (dockerArgs[0] === "version") {
   process.stdout.write(
     JSON.stringify({
       Server: {
@@ -191,7 +192,7 @@ if (args[0] === "version") {
   process.exit(0);
 }
 
-if (args[0] === "info") {
+if (dockerArgs[0] === "info") {
   process.stdout.write(
     JSON.stringify({
       OperatingSystem: "Docker Desktop",
@@ -202,7 +203,7 @@ if (args[0] === "info") {
   process.exit(0);
 }
 
-if (args[0] !== "run") {
+if (dockerArgs[0] !== "run") {
   process.stderr.write("fake docker only supports version, info, and run\\n");
   process.exit(1);
 }
@@ -216,10 +217,10 @@ for (const key of ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "T
 let workspaceRoot = process.cwd();
 let secretMountRoot = null;
 let imageIndex = -1;
-for (let index = 1; index < args.length; index += 1) {
-  const value = args[index];
+for (let index = 1; index < dockerArgs.length; index += 1) {
+  const value = dockerArgs[index];
   if (value === "--mount") {
-    const options = mountMap(args[++index] ?? "");
+    const options = mountMap(dockerArgs[++index] ?? "");
     if (options.target === "/workspace" && options.src) {
       workspaceRoot = options.src;
     }
@@ -229,7 +230,7 @@ for (let index = 1; index < args.length; index += 1) {
     continue;
   }
   if (value === "--env-file") {
-    const envFilePath = args[++index];
+    const envFilePath = dockerArgs[++index];
     if (envFilePath && fs.existsSync(envFilePath)) {
       for (const line of fs.readFileSync(envFilePath, "utf8").split(/\\r?\\n/)) {
         if (!line || line.startsWith("#")) continue;
@@ -241,7 +242,7 @@ for (let index = 1; index < args.length; index += 1) {
     continue;
   }
   if (value === "-e") {
-    const envSpec = args[++index] ?? "";
+    const envSpec = dockerArgs[++index] ?? "";
     const separator = envSpec.indexOf("=");
     if (separator >= 0) {
       env[envSpec.slice(0, separator)] = envSpec.slice(separator + 1).replaceAll("host.docker.internal", "127.0.0.1");
@@ -287,7 +288,7 @@ if (imageIndex === -1) {
   process.exit(1);
 }
 
-const command = args.slice(imageIndex + 1);
+const command = dockerArgs.slice(imageIndex + 1);
 if (command.length === 0) {
   process.exit(0);
 }

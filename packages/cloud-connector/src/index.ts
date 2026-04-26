@@ -15,11 +15,13 @@ import {
 } from "@agentgit/schemas";
 import { LocalSnapshotEngine } from "@agentgit/snapshot-engine";
 import {
+  ALL_CONNECTOR_CAPABILITIES,
   CLOUD_SYNC_SCHEMA_VERSION,
   ConnectorCommandAckRequestSchema,
   ConnectorCommandAckResponseSchema,
   ConnectorCommandPullRequestSchema,
   ConnectorCommandPullResponseSchema,
+  ConnectorCapabilitySchema,
   ConnectorEventBatchRequestSchema,
   ConnectorEventBatchResponseSchema,
   ConnectorEventEnvelopeSchema,
@@ -30,11 +32,13 @@ import {
   ConnectorRegistrationResponseSchema,
   CreateCommitCommandPayloadSchema,
   OpenPullRequestCommandPayloadSchema,
+  READ_ONLY_CONNECTOR_CAPABILITIES,
   ReplayRunCommandPayloadSchema,
   ResolveApprovalCommandPayloadSchema,
   RestoreCommandPayloadSchema,
   PushBranchCommandPayloadSchema,
   type ConnectorCommandEnvelope,
+  type ConnectorCapability,
   type ConnectorEventEnvelope,
   type RepositoryStateSnapshot,
 } from "@agentgit/cloud-sync-protocol";
@@ -341,6 +345,45 @@ function parseRetryAfterMs(response: Response): number | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function defaultConnectorCapabilities(): ConnectorCapability[] {
+  return [...READ_ONLY_CONNECTOR_CAPABILITIES];
+}
+
+export function allConnectorCapabilities(): ConnectorCapability[] {
+  return [...ALL_CONNECTOR_CAPABILITIES];
+}
+
+export function parseConnectorCapabilities(raw: string): ConnectorCapability[] {
+  const values = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return [...new Set(values.map((entry) => ConnectorCapabilitySchema.parse(entry)))];
+}
+
+function requiredCapabilityForCommand(command: ConnectorCommandEnvelope): ConnectorCapability | null {
+  switch (command.type) {
+    case "refresh_repo_state":
+      return "repo_state_sync";
+    case "sync_run_history":
+      return "run_event_sync";
+    case "replay_run":
+      return "run_replay";
+    case "resolve_approval":
+      return "approval_resolution";
+    case "create_commit":
+      return "git_commit";
+    case "push_branch":
+      return "git_push";
+    case "execute_restore":
+      return "restore_execution";
+    case "open_pull_request":
+      return "pull_request_open";
+    default:
+      return null;
+  }
 }
 
 function readUtf8FileWithLimit(filePath: string, maxBytes: number): string {
@@ -1027,15 +1070,7 @@ export class CloudConnectorRuntime {
         arch: process.arch,
         hostname: os.hostname(),
       },
-      capabilities: params.capabilities ?? [
-        "repo_state_sync",
-        "run_event_sync",
-        "snapshot_manifest_sync",
-        "approval_resolution",
-        "git_commit",
-        "git_push",
-        "pull_request_open",
-      ],
+      capabilities: params.capabilities ?? defaultConnectorCapabilities(),
       repository,
     });
   }
@@ -1046,12 +1081,14 @@ export class CloudConnectorRuntime {
     bootstrapToken: string;
     connectorName?: string;
     machineName?: string;
+    capabilities?: z.infer<typeof ConnectorRegistrationRequestSchema>["capabilities"];
   }) {
     return this.options.service.register(
       this.buildRegistrationRequest({
         workspaceId: params.workspaceId,
         connectorName: params.connectorName,
         machineName: params.machineName,
+        capabilities: params.capabilities,
       }),
       {
         bootstrapToken: params.bootstrapToken,
@@ -1534,6 +1571,15 @@ export class CloudConnectorRuntime {
     message: string;
     result?: z.infer<typeof ConnectorCommandAckRequestSchema>["result"];
   }> {
+    const registration = this.options.service.getRegistration();
+    const requiredCapability = requiredCapabilityForCommand(command);
+    if (requiredCapability && !registration?.response.connector.capabilities.includes(requiredCapability)) {
+      return {
+        status: "failed",
+        message: `Connector command ${command.type} requires capability ${requiredCapability}, which this connector did not register.`,
+      };
+    }
+
     switch (command.type) {
       case "refresh_repo_state": {
         const published = await this.publishLocalState({ includeSnapshots: true });

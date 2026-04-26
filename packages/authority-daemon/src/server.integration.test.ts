@@ -62,18 +62,37 @@ const FALLBACK_TEST_PINNED_OCI_IMAGE =
   "docker.io/library/node@sha256:1111111111111111111111111111111111111111111111111111111111111111";
 
 function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | null {
+  if (process.env.AGENTGIT_RUN_OCI_SANDBOX_TESTS !== "1") {
+    return null;
+  }
+
   for (const runtime of ["docker", "podman"] as const) {
+    const runtimeEnv =
+      runtime === "docker"
+        ? {
+            ...process.env,
+            DOCKER_CONFIG: path.join(TEST_TMP_ROOT, "empty-docker-config"),
+          }
+        : process.env;
+    if (runtime === "docker") {
+      fs.mkdirSync(runtimeEnv.DOCKER_CONFIG, { recursive: true });
+    }
+
     const infoResult = spawnSync(runtime, ["info"], {
       encoding: "utf8",
+      env: runtimeEnv,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 3_000,
     });
-    if (infoResult.status !== 0 || infoResult.error) {
+    if (infoResult.status !== 0 || infoResult.error || infoResult.stderr.trim().length > 0) {
       continue;
     }
 
     const inspectResult = spawnSync(runtime, ["image", "inspect", "node:22-bookworm-slim"], {
       encoding: "utf8",
+      env: runtimeEnv,
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: 3_000,
     });
     if (inspectResult.status !== 0 || inspectResult.error) {
       continue;
@@ -2195,6 +2214,9 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     );
     expect(writeResponse.ok).toBe(true);
     expect(writeResponse.result?.execution_result?.mode).toBe("executed");
+    const shellSourcePath = path.join(harness.workspaceRoot, "calibration-shell-source.txt");
+    const shellDestPath = path.join(harness.workspaceRoot, "calibration-shell-dest.txt");
+    fs.writeFileSync(shellSourcePath, "calibration shell run", "utf8");
 
     const shellSubmitResponse = await sendRequest<{
       approval_request: { approval_id: string; status: string } | null;
@@ -2202,11 +2224,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       harness,
       "submit_action_attempt",
       {
-        attempt: makeShellAttempt(runId, harness.workspaceRoot, [
-          process.execPath,
-          "-e",
-          "process.stdout.write('calibration shell run')",
-        ]),
+        attempt: makeShellAttempt(runId, harness.workspaceRoot, ["cp", shellSourcePath, shellDestPath]),
       },
       sessionId,
     );
@@ -2227,7 +2245,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     );
     expect(resolveResponse.ok).toBe(true);
     expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
-    expect(resolveResponse.result?.execution_result?.output?.stdout).toBe("calibration shell run");
+    expect(fs.readFileSync(shellDestPath, "utf8")).toBe("calibration shell run");
 
     const reportResponse = await sendRequest<{
       report: {
@@ -2317,6 +2335,9 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       sessionId,
     );
     expect(writeResponse.ok).toBe(true);
+    const shellSourcePath = path.join(harness.workspaceRoot, "threshold-shell-source.txt");
+    const shellDestPath = path.join(harness.workspaceRoot, "threshold-shell-dest.txt");
+    fs.writeFileSync(shellSourcePath, "threshold shell run", "utf8");
 
     const shellSubmitResponse = await sendRequest<{
       approval_request: { approval_id: string; status: string } | null;
@@ -2324,11 +2345,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       harness,
       "submit_action_attempt",
       {
-        attempt: makeShellAttempt(runId, harness.workspaceRoot, [
-          process.execPath,
-          "-e",
-          "process.stdout.write('threshold shell run')",
-        ]),
+        attempt: makeShellAttempt(runId, harness.workspaceRoot, ["cp", shellSourcePath, shellDestPath]),
       },
       sessionId,
     );
@@ -2349,6 +2366,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     );
     expect(resolveResponse.ok).toBe(true);
     expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
+    expect(fs.readFileSync(shellDestPath, "utf8")).toBe("threshold shell run");
 
     const recommendationResponse = await sendRequest<{
       filters: { run_id: string | null; min_samples: number };
@@ -2385,7 +2403,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
         expect.objectContaining({
           action_family: "shell/exec",
           current_ask_below: 0.3,
-          direction: "relax",
+          direction: "hold",
           automatic_live_application_allowed: false,
         }),
       ]),
@@ -5849,6 +5867,9 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     writeShellApprovalPolicy(harness.workspaceRoot);
     await restartHarness(harness);
     const { sessionId, runId } = await createSessionAndRun(harness, "approval-flow");
+    const approvalSourcePath = path.join(harness.workspaceRoot, "approval-source.txt");
+    const approvalDestPath = path.join(harness.workspaceRoot, "approval-dest.txt");
+    fs.writeFileSync(approvalSourcePath, "approved-shell-run", "utf8");
 
     const submitResponse = await sendRequest<{
       approval_request: {
@@ -5860,18 +5881,14 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       harness,
       "submit_action_attempt",
       {
-        attempt: makeShellAttempt(runId, harness.workspaceRoot, [
-          process.execPath,
-          "-e",
-          "process.stdout.write('approved-shell-run')",
-        ]),
+        attempt: makeShellAttempt(runId, harness.workspaceRoot, ["cp", approvalSourcePath, approvalDestPath]),
       },
       sessionId,
     );
 
     expect(submitResponse.ok).toBe(true);
     expect(submitResponse.result?.approval_request?.status).toBe("pending");
-    expect(submitResponse.result?.approval_request?.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(submitResponse.result?.approval_request?.primary_reason?.code).toBe("SHELL_MUTATION_REQUIRES_APPROVAL");
 
     const inboxBeforeResolution = await sendRequest<{
       items: Array<{
@@ -5892,7 +5909,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(inboxBeforeResolution.result?.items[0]?.workflow_name).toBe("approval-flow");
     expect(inboxBeforeResolution.result?.items[0]?.status).toBe("pending");
     expect(inboxBeforeResolution.result?.items[0]?.reason_summary).toContain("approval is required");
-    expect(inboxBeforeResolution.result?.items[0]?.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(inboxBeforeResolution.result?.items[0]?.primary_reason?.code).toBe("SHELL_MUTATION_REQUIRES_APPROVAL");
 
     const timelineBeforeResolution = await sendRequest<{
       steps: Array<{
@@ -5906,11 +5923,11 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     expect(timelineBeforeResolution.ok).toBe(true);
     const approvalStep = timelineBeforeResolution.result?.steps.find((step) => step.step_type === "approval_step");
     expect(approvalStep?.status).toBe("awaiting_approval");
-    expect(approvalStep?.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(approvalStep?.primary_reason?.code).toBe("SHELL_MUTATION_REQUIRES_APPROVAL");
     const blockedActionStep = timelineBeforeResolution.result?.steps.find(
       (step) => step.step_type === "action_step" && step.status === "awaiting_approval",
     );
-    expect(blockedActionStep?.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(blockedActionStep?.primary_reason?.code).toBe("SHELL_MUTATION_REQUIRES_APPROVAL");
 
     const helperBeforeResolution = await sendRequest<{
       answer: string;
@@ -5918,7 +5935,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     }>(harness, "query_helper", { run_id: runId, question_type: "why_blocked" }, sessionId);
     expect(helperBeforeResolution.ok).toBe(true);
     expect(helperBeforeResolution.result?.answer).toContain("waiting for approval");
-    expect(helperBeforeResolution.result?.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(helperBeforeResolution.result?.primary_reason?.code).toBe("SHELL_MUTATION_REQUIRES_APPROVAL");
 
     const approvalId = submitResponse.result?.approval_request?.approval_id as string;
     const resolveResponse = await sendRequest<{
@@ -5939,7 +5956,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
 
     expect(resolveResponse.ok).toBe(true);
     expect(resolveResponse.result?.execution_result?.mode).toBe("executed");
-    expect(resolveResponse.result?.execution_result?.output?.stdout).toBe("approved-shell-run");
+    expect(fs.readFileSync(approvalDestPath, "utf8")).toBe("approved-shell-run");
 
     const timelineResponse = await sendRequest<{
       steps: Array<{ step_type: string; summary: string }>;
@@ -5980,7 +5997,9 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
     const intruderWorkspaceRoot = `${harness.workspaceRoot}-intruder`;
     fs.mkdirSync(intruderWorkspaceRoot, { recursive: true });
     const intruder = await createSessionAndRunForWorkspaceRoot(harness, intruderWorkspaceRoot, "approval-intruder");
+    const sourcePath = path.join(harness.workspaceRoot, "cross-session-source.txt");
     const targetPath = path.join(harness.workspaceRoot, "cross-session-blocked.txt");
+    fs.writeFileSync(sourcePath, "pending", "utf8");
 
     const submitResponse = await sendRequest<{
       approval_request: { approval_id: string; status: string } | null;
@@ -5988,11 +6007,7 @@ describe("authority daemon integration", { timeout: 30_000 }, () => {
       harness,
       "submit_action_attempt",
       {
-        attempt: makeShellAttempt(owner.runId, harness.workspaceRoot, [
-          process.execPath,
-          "-e",
-          "process.stdout.write('pending')",
-        ]),
+        attempt: makeShellAttempt(owner.runId, harness.workspaceRoot, ["cp", sourcePath, targetPath]),
       },
       owner.sessionId,
     );

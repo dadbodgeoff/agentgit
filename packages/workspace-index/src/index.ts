@@ -851,8 +851,6 @@ export class WorkspaceIndex {
     const stagingBaseDir = path.join(this.snapshotDir, "staging", snapId);
     const stagingFilesDir = path.join(stagingBaseDir, "files");
     const finalBaseDir = path.join(this.snapshotDir, "snaps", snapId);
-    const finalManifestPath = path.join(finalBaseDir, "manifest.json");
-
     try {
       await fs.mkdir(stagingFilesDir, { recursive: true });
 
@@ -1018,8 +1016,6 @@ export class WorkspaceIndex {
         throw error;
       }
 
-      await fs.writeFile(finalManifestPath, JSON.stringify(manifest, null, 2), "utf8");
-
       return {
         snap_id: snapId,
         parent_snap_id: parentSnapId,
@@ -1126,6 +1122,18 @@ export class WorkspaceIndex {
         // Best effort for modes on platforms that support them.
       }
       filesRestored.push({ path: filePath, action: "restored" });
+    }
+
+    const ignorePatterns = await this.loadIgnorePatterns();
+    const liveEntries = await walkWorkspace(this.workspaceRoot, ignorePatterns);
+    for (const entry of liveEntries) {
+      if (restorationSet.has(entry.relativePath)) {
+        continue;
+      }
+
+      if (await removeWorkspacePathIfSafe(this.workspaceRoot, entry.relativePath, { snap_id: targetSnapId })) {
+        filesRestored.push({ path: entry.relativePath, action: "removed" });
+      }
     }
 
     const activeBaselineRows = this.db.prepare("SELECT path FROM file_index WHERE is_deleted = 0").all() as Array<{

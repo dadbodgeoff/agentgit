@@ -36,7 +36,11 @@ Verification fails when either of these is true:
 ## Current Baseline
 
 - threshold floor: lines `50`, functions `50`, statements `50`, branches `40`
-- measured aggregate floor: lines `72.04`, functions `78.91`, statements `71.98`, branches `58.71`
+- measured aggregate floor: lines `72.57`, functions `80.24`, statements `72.50`, branches `58.99`
+
+## 2026-04-23 Re-Baseline
+
+The production-beta hardening pass changed the measured surface for connector capability gating, opaque-shell denial, and contained-runtime verification. The measured baseline was regenerated from a fresh `pnpm test:coverage` run so the release gate continues to enforce the current production surface.
 
 ## 2026-04-09 Re-Baseline
 

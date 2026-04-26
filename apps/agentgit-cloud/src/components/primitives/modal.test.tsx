@@ -134,14 +134,7 @@ describe("Modal", () => {
 
   it("renders an action footer when actions are supplied", () => {
     render(
-      <Modal
-        actions={
-          <button type="button">Save changes</button>
-        }
-        onClose={() => {}}
-        open
-        title="With actions"
-      >
+      <Modal actions={<button type="button">Save changes</button>} onClose={() => {}} open title="With actions">
         Body
       </Modal>,
     );
@@ -228,15 +221,7 @@ describe("ConfirmModal", () => {
   it("does not require typing when typeToConfirm is omitted", async () => {
     const onConfirm = vi.fn();
     const user = userEvent.setup();
-    render(
-      <ConfirmModal
-        confirmLabel="OK"
-        onClose={() => {}}
-        onConfirm={onConfirm}
-        open
-        title="Are you sure?"
-      />,
-    );
+    render(<ConfirmModal confirmLabel="OK" onClose={() => {}} onConfirm={onConfirm} open title="Are you sure?" />);
 
     const confirm = screen.getByRole("button", { name: "OK" });
     expect(confirm).not.toBeDisabled();

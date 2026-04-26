@@ -6,7 +6,7 @@ import {
   buildCloudSyncSchemaVersionErrorMessage,
   hasExpectedCloudSyncSchemaVersion,
 } from "@/lib/http/cloud-sync-version";
-import { readJsonBody, JsonBodyParseError, JsonBodyTooLargeError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
 const MAX_EVENT_BATCH_BODY_BYTES = 1_000_000;
@@ -23,12 +23,9 @@ export async function POST(request: Request) {
   try {
     rawBody = await readJsonBody(request, { maxBytes: MAX_EVENT_BATCH_BODY_BYTES });
   } catch (error) {
-    if (error instanceof JsonBodyTooLargeError) {
-      return jsonWithRequestId({ message: "Connector event batch payload is too large." }, { status: 413 }, requestId);
-    }
-
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
 
     throw error;

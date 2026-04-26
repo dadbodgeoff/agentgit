@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { hasDatabaseUrl } from "@/lib/db/client";
 import { authFeatureFlags, isProductionAuth } from "@/lib/auth/provider-config";
 
 export type ReadinessLevel = "ok" | "warn" | "fail";
@@ -29,6 +28,11 @@ function resolveConfiguredAuthSecret(): string | null {
 function resolveAuthBaseUrl(): string | null {
   const baseUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? null;
   return baseUrl && baseUrl.trim().length > 0 ? baseUrl.trim() : null;
+}
+
+function hasDatabaseUrl(): boolean {
+  const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
+  return databaseUrl.length > 0;
 }
 
 function isEnabled(value: string | undefined): boolean {
@@ -176,7 +180,7 @@ export function getCloudRuntimeChecks(): RuntimeCheck[] {
     },
     {
       id: "sentry_dsn",
-      level: sentryDsn ? "ok" : "warn",
+      level: sentryDsn ? "ok" : isProductionAuth ? "fail" : "warn",
       message: sentryDsn
         ? "Sentry DSN is configured."
         : isProductionAuth
@@ -185,7 +189,7 @@ export function getCloudRuntimeChecks(): RuntimeCheck[] {
     },
     {
       id: "sentry_source_maps",
-      level: sentryBuildConfigReady ? "ok" : "warn",
+      level: sentryBuildConfigReady ? "ok" : isProductionAuth ? "fail" : "warn",
       message: sentryBuildConfigReady
         ? "Sentry source map upload credentials are configured."
         : isProductionAuth
@@ -194,7 +198,7 @@ export function getCloudRuntimeChecks(): RuntimeCheck[] {
     },
     {
       id: "vercel_analytics",
-      level: vercelAnalyticsReady ? "ok" : "warn",
+      level: vercelAnalyticsReady ? "ok" : isProductionAuth ? "fail" : "warn",
       message: vercelAnalyticsReady
         ? "Vercel deployment environment detected for analytics."
         : isProductionAuth

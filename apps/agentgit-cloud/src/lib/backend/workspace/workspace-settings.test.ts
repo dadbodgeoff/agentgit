@@ -132,6 +132,8 @@ describe("workspace settings backend", () => {
     const resolvedSettings = await resolveWorkspaceSettings(buildWorkspaceSession());
 
     expect(response.settings.workspaceName).toBe("Platform control");
+    expect(JSON.stringify(response)).not.toContain("super-secret");
+    expect(response.settings.enterpriseSso).not.toHaveProperty("clientSecret");
     expect(updatedWorkspace).toMatchObject({
       workspaceName: "Platform control",
       workspaceSlug: "platform-control",
@@ -148,6 +150,7 @@ describe("workspace settings backend", () => {
         clientSecretConfigured: true,
       }),
     });
+    expect(resolvedSettings.enterpriseSso).not.toHaveProperty("clientSecret");
   });
 
   it("fails closed when enterprise issuer discovery is invalid", async () => {

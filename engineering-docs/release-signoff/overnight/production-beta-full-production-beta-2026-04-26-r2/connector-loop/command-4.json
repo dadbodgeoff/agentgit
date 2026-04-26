@@ -1,0 +1,10 @@
+{
+  "command": "pnpm --filter @agentgit/cloud-ui test -- src/lib/backend/control-plane/connectors.test.ts src/app/api/v1/sync/register/route.test.ts src/app/api/v1/sync/heartbeat/route.test.ts src/app/api/v1/sync/events/route.test.ts src/app/api/v1/sync/commands/pull/route.test.ts \"src/app/api/v1/sync/commands/[commandId]/ack/route.test.ts\"",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> @agentgit/cloud-ui@0.1.0 test /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n> sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; vitest run \"$@\"; status=$?; rm -rf .next; exit $status' -- -- src/lib/backend/control-plane/connectors.test.ts src/app/api/v1/sync/register/route.test.ts src/app/api/v1/sync/heartbeat/route.test.ts src/app/api/v1/sync/events/route.test.ts src/app/api/v1/sync/commands/pull/route.test.ts 'src/app/api/v1/sync/commands/[commandId]/ack/route.test.ts'\n\n\n RUN  v4.1.2 /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n\n\n Test Files  6 passed (6)\n      Tests  20 passed (20)\n   Start at  17:35:03\n   Duration  1.55s (transform 771ms, setup 464ms, import 909ms, tests 3.52s, environment 3.13s)\n\n",
+  "stderr": ""
+}

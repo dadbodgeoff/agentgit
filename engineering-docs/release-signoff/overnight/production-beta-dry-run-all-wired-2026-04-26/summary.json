@@ -1,0 +1,161 @@
+{
+  "generatedAt": "2026-04-26T20:28:39.803Z",
+  "gateStatus": "incomplete",
+  "artifactRoot": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-dry-run-all-wired-2026-04-26",
+  "results": [
+    {
+      "id": "snapshot-regression",
+      "name": "Snapshot Regression",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/workspace-index test -- src/index.test.ts && pnpm --filter @agentgit/snapshot-engine test -- src/index.test.ts",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Snapshot and workspace-index restore semantics must stay exact before user data is trusted.",
+      "artifacts": []
+    },
+    {
+      "id": "openclaw-stress",
+      "name": "OpenClaw Stress",
+      "required": true,
+      "status": "pending",
+      "command": "openclaw-stress",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Governed local agent actions, denials, snapshots, recoveries, and explicit checkpoints must pass together.",
+      "artifacts": []
+    },
+    {
+      "id": "cloud-build",
+      "name": "Cloud Build",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/cloud-ui build",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "The production cloud bundle must compile with the workspace package graph used by the local product.",
+      "artifacts": []
+    },
+    {
+      "id": "browser-surface",
+      "name": "Browser Surface",
+      "required": true,
+      "status": "pending",
+      "command": "browser-surface",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "The actual cloud UI must prove repo, run, action, snapshot, activity, and audit surfaces render correctly.",
+      "artifacts": []
+    },
+    {
+      "id": "crash-restart",
+      "name": "Crash Restart",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/authority-daemon test -- src/server.integration.test.ts -t \"rehydrates persisted runs after a daemon restart|replays register_run idempotently across restart|creates an explicit run checkpoint and restores back to it\" && pnpm --filter @agentgit/cloud-connector test -- src/index.test.ts -t \"keeps pending events in the durable outbox across a restart\"",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Daemon, journal, checkpoint, restore, and connector outbox state must survive restart boundaries without false success.",
+      "artifacts": []
+    },
+    {
+      "id": "concurrent-agents",
+      "name": "Concurrent Agents",
+      "required": true,
+      "status": "pending",
+      "command": "concurrent-agents",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Overlapping autonomous runs must keep session ownership, checkpoints, and restore evidence isolated.",
+      "artifacts": []
+    },
+    {
+      "id": "connector-loop",
+      "name": "Connector Loop",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/cloud-sync-protocol test && pnpm --filter @agentgit/control-plane-state test && pnpm --filter @agentgit/cloud-connector test -- src/index.test.ts && pnpm --filter @agentgit/cloud-ui test -- src/lib/backend/control-plane/connectors.test.ts src/app/api/v1/sync/register/route.test.ts src/app/api/v1/sync/heartbeat/route.test.ts src/app/api/v1/sync/events/route.test.ts src/app/api/v1/sync/commands/pull/route.test.ts \"src/app/api/v1/sync/commands/[commandId]/ack/route.test.ts\"",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Restore, replay, approval, heartbeat, command pull, and ack paths must round-trip through the local connector contract.",
+      "artifacts": []
+    },
+    {
+      "id": "sensitive-redaction",
+      "name": "Sensitive Redaction",
+      "required": true,
+      "status": "pending",
+      "command": "sensitive-redaction",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Synthetic secrets must not leak into qualification summaries or browser-visible evidence.",
+      "artifacts": []
+    },
+    {
+      "id": "scale-soak",
+      "name": "Scale Soak",
+      "required": true,
+      "status": "pending",
+      "command": "scale-soak",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Longer OpenClaw-style action histories must keep snapshots and recoveries exact across a heavier local run.",
+      "artifacts": []
+    },
+    {
+      "id": "snapshot-maintenance",
+      "name": "Snapshot Maintenance",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/workspace-index test -- src/index.test.ts -t \"compacts snapshots|previewRestore reports overlapping later actions|restores only the requested subset\" && pnpm --filter @agentgit/authority-daemon test -- src/server.integration.test.ts -t \"runs supported maintenance jobs inline|garbage collects orphaned snapshot containers|rebases synthetic snapshot anchors\"",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Snapshot GC, synthetic anchor rebase, compaction, WAL checkpointing, and restore previews must preserve recovery honesty.",
+      "artifacts": []
+    },
+    {
+      "id": "migration-compat",
+      "name": "Migration Compatibility",
+      "required": true,
+      "status": "pending",
+      "command": "node --test scripts/verify-cli-compatibility.test.mjs scripts/release-package-config.test.mjs && pnpm --filter @agentgit/cloud-ui test -- src/app/api/v1/sync/register/route.test.ts src/app/api/v1/sync/heartbeat/route.test.ts src/app/api/v1/sync/events/route.test.ts src/app/api/v1/sync/commands/pull/route.test.ts \"src/app/api/v1/sync/commands/[commandId]/ack/route.test.ts\"",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Older audit bundles, CLI compatibility manifests, and sync-schema incompatibilities must be handled deliberately.",
+      "artifacts": []
+    },
+    {
+      "id": "audit-export",
+      "name": "Audit Export",
+      "required": true,
+      "status": "pending",
+      "command": "pnpm --filter @agentgit/cloud-ui test -- src/lib/backend/workspace/audit-log.test.ts src/app/api/v1/audit/export/route.test.ts src/app/api/v1/auth-guards.test.ts",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "CSV/JSON audit exports must preserve ordering, links, authorization, and redaction-safe payloads.",
+      "artifacts": []
+    },
+    {
+      "id": "package-install",
+      "name": "Package Install",
+      "required": true,
+      "status": "pending",
+      "command": "package-install",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Packed npm artifacts must install into a clean project and the installed CLIs/runtime smoke paths must work outside the monorepo.",
+      "artifacts": []
+    },
+    {
+      "id": "diff-check",
+      "name": "Diff Check",
+      "required": true,
+      "status": "pending",
+      "command": "git diff --check",
+      "durationMs": 0,
+      "summary": "Dry run only; suite was not executed.",
+      "productionImplication": "Whitespace and patch hygiene must be clean before publishing release evidence.",
+      "artifacts": []
+    }
+  ]
+}

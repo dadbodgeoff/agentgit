@@ -61,8 +61,7 @@
  * matrix is generated from that list.
  */
 
-const ACCESSIBILITY_MODE: "report" | "enforce" =
-  process.env.ACCESSIBILITY_MODE === "report" ? "report" : "enforce";
+const ACCESSIBILITY_MODE: "report" | "enforce" = process.env.ACCESSIBILITY_MODE === "report" ? "report" : "enforce";
 
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
@@ -150,9 +149,7 @@ async function runAxe(page: Page, route: PublicRoute) {
   // violation report we can review before flipping to enforce mode.
   // eslint already allows console in e2e specs.
   if (advisory.length > 0) {
-    console.log(
-      `[axe ${route.name}] ${advisory.length} advisory finding(s):\n${summariseViolations(advisory)}`,
-    );
+    console.log(`[axe ${route.name}] ${advisory.length} advisory finding(s):\n${summariseViolations(advisory)}`);
   }
   if (blocking.length > 0) {
     console.log(

@@ -39,7 +39,9 @@ export default function RootError({ error, reset }: { error: Error & { digest?: 
             <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-4 py-3 font-mono text-xs text-[var(--ag-text-secondary)]">
               {error.message || "Unknown application error"}
             </div>
-            {error.digest ? <div className="text-xs text-[var(--ag-text-secondary)]">Digest: {error.digest}</div> : null}
+            {error.digest ? (
+              <div className="text-xs text-[var(--ag-text-secondary)]">Digest: {error.digest}</div>
+            ) : null}
             <Button onClick={reset}>Try again</Button>
           </Card>
         </main>

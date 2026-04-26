@@ -16,12 +16,30 @@ export const ConnectorCapabilitySchema = z.enum([
   "run_event_sync",
   "snapshot_manifest_sync",
   "approval_resolution",
+  "run_replay",
   "restore_execution",
   "git_commit",
   "git_push",
   "pull_request_open",
 ]);
 export type ConnectorCapability = z.infer<typeof ConnectorCapabilitySchema>;
+export const READ_ONLY_CONNECTOR_CAPABILITIES = [
+  "repo_state_sync",
+  "run_event_sync",
+  "snapshot_manifest_sync",
+] as const satisfies readonly ConnectorCapability[];
+export const WRITE_CONNECTOR_CAPABILITIES = [
+  "approval_resolution",
+  "run_replay",
+  "restore_execution",
+  "git_commit",
+  "git_push",
+  "pull_request_open",
+] as const satisfies readonly ConnectorCapability[];
+export const ALL_CONNECTOR_CAPABILITIES = [
+  ...READ_ONLY_CONNECTOR_CAPABILITIES,
+  ...WRITE_CONNECTOR_CAPABILITIES,
+] as const satisfies readonly ConnectorCapability[];
 
 export const ConnectorPlatformSchema = z
   .object({
@@ -86,9 +104,12 @@ export const ConnectorRecordSchema = z
     workspaceSlug: z.string().min(1),
     connectorName: z.string().min(1),
     machineName: z.string().min(1),
-    connectorVersion: z.string().min(1),
+    connectorVersion: z.string().min(1).default("legacy-unknown"),
     platform: ConnectorPlatformSchema,
-    capabilities: z.array(ConnectorCapabilitySchema).min(1),
+    capabilities: z
+      .array(ConnectorCapabilitySchema)
+      .min(1)
+      .default(() => [...READ_ONLY_CONNECTOR_CAPABILITIES]),
     repository: RepositoryStateSnapshotSchema,
     status: ConnectorStatusSchema,
     registeredAt: TimestampStringSchema,

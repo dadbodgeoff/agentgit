@@ -1,0 +1,10 @@
+{
+  "command": "node scripts/run-adversarial-campaign-0.mjs --output-dir /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r2/security-agent-adversarial/campaign-0",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "== Build authority surfaces ==\n== Seed campaign workspace ==\n== Start daemon ==\n== Execute containment probes ==\n01. shell-read-protected-env: PASS\n02. shell-read-outside-absolute: PASS\n03. shell-write-protected-env: PASS\n04. shell-write-control-policy: PASS\n05. shell-write-outside-absolute: PASS\n06. shell-write-outside-symlink: PASS\n07. filesystem-write-protected-env: PASS\n08. filesystem-write-control-policy: PASS\n09. filesystem-write-outside-absolute: PASS\n10. filesystem-write-outside-symlink: PASS\n\nEvidence written to /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r2/security-agent-adversarial/campaign-0\n",
+  "stderr": ""
+}

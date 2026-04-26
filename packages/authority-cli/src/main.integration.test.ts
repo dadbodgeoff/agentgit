@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, createSign, generateKeyPairSync } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -87,15 +87,44 @@ function pnpmCommand(): string {
 }
 
 function detectOciSandbox(): { runtime: "docker" | "podman"; image: string } | null {
+  if (process.env.AGENTGIT_RUN_OCI_SANDBOX_TESTS !== "1") {
+    return null;
+  }
+
   for (const runtime of ["docker", "podman"] as const) {
+    const runtimeEnv =
+      runtime === "docker"
+        ? {
+            ...process.env,
+            DOCKER_CONFIG: path.join(os.tmpdir(), "agentgit-empty-docker-config"),
+          }
+        : process.env;
+    if (runtime === "docker") {
+      fs.mkdirSync(runtimeEnv.DOCKER_CONFIG, { recursive: true });
+    }
+
+    const infoResult = spawnSync(runtime, ["info"], {
+      encoding: "utf8",
+      env: runtimeEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 3_000,
+    });
+    if (infoResult.status !== 0 || infoResult.error || infoResult.stderr.trim().length > 0) {
+      continue;
+    }
+
+    const inspectResult = spawnSync(runtime, ["image", "inspect", "node:22-bookworm-slim"], {
+      encoding: "utf8",
+      env: runtimeEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 3_000,
+    });
+    if (inspectResult.status !== 0 || inspectResult.error) {
+      continue;
+    }
+
     try {
-      execFileSync(runtime, ["info"], {
-        stdio: "ignore",
-      });
-      const inspectOutput = execFileSync(runtime, ["image", "inspect", "node:22-bookworm-slim"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const inspectOutput = inspectResult.stdout;
       const parsed = JSON.parse(inspectOutput) as Array<{ RepoDigests?: string[] }>;
       const repoDigest = parsed[0]?.RepoDigests?.find(
         (digest) => typeof digest === "string" && digest.includes("@sha256:"),
@@ -2034,9 +2063,12 @@ describe("authority cli MCP integration", () => {
     });
     expect(registerRun.code).toBe(0);
     const run = JSON.parse(registerRun.stdout) as { run_id: string };
+    const approvalSourcePath = path.join(harness.workspaceRoot, "approval-source.txt");
+    const approvalDestPath = path.join(harness.workspaceRoot, "approval-dest.txt");
+    fs.writeFileSync(approvalSourcePath, "approved-shell-run", "utf8");
 
     const submit = await runCliProcess(
-      ["--json", "submit-shell", run.run_id, process.execPath, "-e", "process.stdout.write('approved-shell-run')"],
+      ["--json", "submit-shell", run.run_id, "cp", approvalSourcePath, approvalDestPath],
       {
         workspaceRoot: harness.workspaceRoot,
         socketPath: harness.socketPath,
@@ -2053,7 +2085,7 @@ describe("authority cli MCP integration", () => {
       } | null;
     };
     expect(submitResult.approval_request?.status).toBe("pending");
-    expect(submitResult.approval_request?.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(submitResult.approval_request?.primary_reason?.code).toBe("SHELL_MUTATION_REQUIRES_APPROVAL");
     const approvalId = submitResult.approval_request?.approval_id as string;
 
     const inbox = await runCliProcess(["--json", "approval-inbox", run.run_id, "pending"], {
@@ -2094,7 +2126,7 @@ describe("authority cli MCP integration", () => {
         (step) =>
           step.step_type === "approval_step" &&
           step.status === "awaiting_approval" &&
-          step.primary_reason?.code === "OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL",
+          step.primary_reason?.code === "SHELL_MUTATION_REQUIRES_APPROVAL",
       ),
     ).toBe(true);
 
@@ -2108,7 +2140,7 @@ describe("authority cli MCP integration", () => {
       primary_reason?: { code: string } | null;
     };
     expect(helperBeforeResult.answer).toContain("waiting for approval");
-    expect(helperBeforeResult.primary_reason?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(helperBeforeResult.primary_reason?.code).toBe("SHELL_MUTATION_REQUIRES_APPROVAL");
 
     const approve = await runCliProcess(["--json", "approve", approvalId, "cli integration approval"], {
       workspaceRoot: harness.workspaceRoot,
@@ -2130,7 +2162,7 @@ describe("authority cli MCP integration", () => {
     expect(approveResult.approval_request.status).toBe("approved");
     expect(approveResult.approval_request.resolution_note).toBe("cli integration approval");
     expect(approveResult.execution_result?.mode).toBe("executed");
-    expect(approveResult.execution_result?.output?.stdout).toBe("approved-shell-run");
+    expect(fs.readFileSync(approvalDestPath, "utf8")).toBe("approved-shell-run");
 
     const timelineAfter = await runCliProcess(["--json", "timeline", run.run_id], {
       workspaceRoot: harness.workspaceRoot,
@@ -2427,14 +2459,14 @@ describe("authority cli MCP integration", () => {
     });
     expect(registerRun.code).toBe(0);
     const run = JSON.parse(registerRun.stdout) as { run_id: string };
+    const deniedSourcePath = path.join(harness.workspaceRoot, "denied-source.txt");
+    const deniedDestPath = path.join(harness.workspaceRoot, "denied-dest.txt");
+    fs.writeFileSync(deniedSourcePath, "should-not-run", "utf8");
 
-    const submit = await runCliProcess(
-      ["--json", "submit-shell", run.run_id, process.execPath, "-e", "process.stdout.write('should-not-run')"],
-      {
-        workspaceRoot: harness.workspaceRoot,
-        socketPath: harness.socketPath,
-      },
-    );
+    const submit = await runCliProcess(["--json", "submit-shell", run.run_id, "cp", deniedSourcePath, deniedDestPath], {
+      workspaceRoot: harness.workspaceRoot,
+      socketPath: harness.socketPath,
+    });
     expect(submit.code).toBe(0);
     const submitResult = JSON.parse(submit.stdout) as {
       approval_request: { approval_id: string; status: string } | null;
@@ -2459,6 +2491,7 @@ describe("authority cli MCP integration", () => {
     expect(denyResult.approval_request.status).toBe("denied");
     expect(denyResult.approval_request.resolution_note).toBe("cli denied");
     expect(denyResult.execution_result).toBeNull();
+    expect(fs.existsSync(deniedDestPath)).toBe(false);
 
     const deniedApprovals = await runCliProcess(["--json", "list-approvals", run.run_id, "denied"], {
       workspaceRoot: harness.workspaceRoot,

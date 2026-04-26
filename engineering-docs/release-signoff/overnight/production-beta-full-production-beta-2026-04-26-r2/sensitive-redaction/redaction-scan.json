@@ -1,0 +1,15 @@
+{
+  "scannedRoots": [
+    "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-full-production-beta-2026-04-26-r2",
+    "/tmp/agc1-7751d8c576",
+    "/tmp/agc2-7751d8c576",
+    "/tmp/agc3-7751d8c576",
+    "/tmp/agc4-7751d8c576",
+    "/tmp/agc5-7751d8c576",
+    "/tmp/agq-aad62a11e1",
+    "/Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud/test-results",
+    "/Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud/playwright-report"
+  ],
+  "scannedFiles": 337,
+  "leaks": []
+}

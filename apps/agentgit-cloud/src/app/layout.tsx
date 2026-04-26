@@ -13,6 +13,10 @@ import {
   resolveMetadataBase,
 } from "@/lib/metadata/site";
 
+const shouldRenderVercelAnalytics =
+  process.env.NEXT_PUBLIC_AGENTGIT_ENABLE_VERCEL_ANALYTICS === "1" ||
+  (process.env.VERCEL === "1" && Boolean(process.env.VERCEL_URL));
+
 const plexSans = IBM_Plex_Sans({
   subsets: ["latin"],
   variable: "--font-plex-sans",
@@ -52,6 +56,9 @@ export const metadata: Metadata = {
     description: AGENTGIT_DEFAULT_DESCRIPTION,
     images: [AGENTGIT_OG_IMAGE_PATH],
   },
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
@@ -61,7 +68,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
     <html className={`${plexSans.variable} ${plexMono.variable}`} lang="en">
       <body>
         {children}
-        <Analytics />
+        {shouldRenderVercelAnalytics ? <Analytics /> : null}
       </body>
     </html>
   );

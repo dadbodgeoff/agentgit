@@ -1,5 +1,5 @@
 {
-  "status_date": "2026-04-09",
+  "status_date": "2026-04-23",
   "thresholds": {
     "lines": 50,
     "functions": 50,
@@ -7,17 +7,17 @@
     "branches": 40
   },
   "aggregate": {
-    "lines": 72.58,
-    "functions": 80.32,
-    "statements": 72.52,
-    "branches": 58.95
+    "lines": 70.18,
+    "functions": 77.79,
+    "statements": 70.14,
+    "branches": 57.05
   },
   "files": {
     "apps/agentgit-cloud/coverage/coverage-summary.json": {
-      "lines": 64.76,
-      "functions": 68.44,
-      "statements": 64.26,
-      "branches": 48.01
+      "lines": 57.22,
+      "functions": 62.67,
+      "statements": 57,
+      "branches": 42.34
     },
     "apps/inspector-ui/coverage/coverage-summary.json": {
       "lines": 64.05,
@@ -32,9 +32,9 @@
       "branches": 85.63
     },
     "packages/agent-runtime-integration/coverage/coverage-summary.json": {
-      "lines": 75.43,
+      "lines": 75.46,
       "functions": 84.98,
-      "statements": 75.45,
+      "statements": 75.48,
       "branches": 63.53
     },
     "packages/authority-cli/coverage/coverage-summary.json": {
@@ -44,10 +44,10 @@
       "branches": 48.73
     },
     "packages/authority-daemon/coverage/coverage-summary.json": {
-      "lines": 82.03,
+      "lines": 82.08,
       "functions": 88.47,
-      "statements": 81.87,
-      "branches": 65.65
+      "statements": 81.93,
+      "branches": 65.7
     },
     "packages/authority-sdk-ts/coverage/coverage-summary.json": {
       "lines": 77.62,
@@ -56,10 +56,10 @@
       "branches": 54.77
     },
     "packages/cloud-connector/coverage/coverage-summary.json": {
-      "lines": 68.04,
-      "functions": 82.52,
-      "statements": 67.68,
-      "branches": 42.02
+      "lines": 67.33,
+      "functions": 79.09,
+      "statements": 66.86,
+      "branches": 43.29
     },
     "packages/cloud-sync-protocol/coverage/coverage-summary.json": {
       "lines": 100,
@@ -80,10 +80,10 @@
       "branches": 55.95
     },
     "packages/execution-adapters/coverage/coverage-summary.json": {
-      "lines": 72.95,
-      "functions": 72,
-      "statements": 72.65,
-      "branches": 57.9
+      "lines": 73.13,
+      "functions": 72.24,
+      "statements": 72.83,
+      "branches": 58.21
     },
     "packages/hosted-mcp-worker/coverage/coverage-summary.json": {
       "lines": 67.31,
@@ -104,10 +104,10 @@
       "branches": 66.85
     },
     "packages/policy-engine/coverage/coverage-summary.json": {
-      "lines": 75.73,
-      "functions": 97.18,
-      "statements": 76.27,
-      "branches": 67.06
+      "lines": 75.49,
+      "functions": 97.26,
+      "statements": 76.01,
+      "branches": 66.98
     },
     "packages/recovery-engine/coverage/coverage-summary.json": {
       "lines": 88.31,
@@ -134,11 +134,11 @@
       "branches": 66.79
     },
     "packages/workspace-index/coverage/coverage-summary.json": {
-      "lines": 73.04,
+      "lines": 72.96,
       "functions": 79.74,
-      "statements": 72.88,
+      "statements": 72.8,
       "branches": 51.89
     }
   },
-  "status_note": "Re-baselined after repo-wide production surface changes landed across SDKs, daemon/runtime, release verification, and cloud."
+  "status_note": "Production-beta hardening fixed cloud-ui coverage argument forwarding; baseline now reflects a fresh full measured surface instead of relying on stale local cloud coverage artifacts."
 }

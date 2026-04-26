@@ -12,7 +12,7 @@ The result: agents can operate with real autonomy while operators keep control, 
 [![npm](https://img.shields.io/npm/v/@agentgit/agent-runtime-integration?label=%40agentgit%2Fagent-runtime-integration)](https://www.npmjs.com/package/@agentgit/agent-runtime-integration)
 [![npm](https://img.shields.io/npm/v/@agentgit/authority-sdk?label=%40agentgit%2Fauthority-sdk)](https://www.npmjs.com/package/@agentgit/authority-sdk)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D24.14.0-brightgreen)](https://nodejs.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/dadbodgeoff/agentgit/actions/workflows/ci.yml/badge.svg)](https://github.com/dadbodgeoff/agentgit/actions/workflows/ci.yml)
 
 ---
@@ -414,6 +414,7 @@ pnpm cli timeline <run-id>
 pnpm release:pack          # Pack publishable tarballs
 pnpm smoke:cli-install     # End-to-end install smoke test
 pnpm smoke:agent-runtime   # Product demo + generic + contained runtime smoke test
+AGENTGIT_CLOUD_E2E_BASE_URL=https://your-deployment.example pnpm smoke:cloud-deployed
 pnpm release:verify        # Verify artifact signatures
 ```
 

@@ -8,8 +8,10 @@ import type { ConnectorTokenRecord, ControlPlaneStateStore } from "@agentgit/con
 import { createCommandAckResponse, createHeartbeatRecord } from "@agentgit/control-plane-state";
 import { ApprovalInboxItemSchema } from "@agentgit/schemas";
 import {
+  ALL_CONNECTOR_CAPABILITIES,
   CreateCommitCommandPayloadSchema,
   OpenPullRequestCommandPayloadSchema,
+  READ_ONLY_CONNECTOR_CAPABILITIES,
   ReplayRunCommandPayloadSchema,
   ResolveApprovalCommandPayloadSchema,
   RestoreCommandPayloadSchema,
@@ -21,6 +23,7 @@ import {
   ConnectorEventBatchResponseSchema,
   ConnectorHeartbeatResponseSchema,
   ConnectorRegistrationResponseSchema,
+  type ConnectorCapability,
   type ConnectorCommandAckRequest,
   type ConnectorCommandType,
   type ConnectorCommandPullRequest,
@@ -101,6 +104,17 @@ const AUTOMATIC_RETRY_DELAYS_MINUTES = [1, 5, 15] as const;
 const AUTOMATIC_RETRY_COMMAND_TYPES = new Set<ConnectorCommandType>(["refresh_repo_state", "sync_run_history"]);
 export const CONNECTOR_ACCESS_TOKEN_HEADER = "x-agentgit-connector-access-token";
 export const CONNECTOR_BOOTSTRAP_TOKEN_HEADER = "x-agentgit-connector-bootstrap-token";
+
+const CONNECTOR_COMMAND_CAPABILITY_REQUIREMENTS = [
+  ["refresh_repo_state", "repo_state_sync"],
+  ["sync_run_history", "run_event_sync"],
+  ["replay_run", "run_replay"],
+  ["resolve_approval", "approval_resolution"],
+  ["create_commit", "git_commit"],
+  ["push_branch", "git_push"],
+  ["execute_restore", "restore_execution"],
+  ["open_pull_request", "pull_request_open"],
+] as const satisfies ReadonlyArray<readonly [ConnectorCommandType, ConnectorCapability]>;
 
 function parseStoredSyncResponse<T>(raw: string, parser: { parse(input: unknown): T }): T {
   return parser.parse(JSON.parse(raw) as unknown);
@@ -194,6 +208,47 @@ function normalizeCommandPayload(request: ConnectorCommandDispatchRequest): Reco
     default:
       return {};
   }
+}
+
+function requiredCapabilityForCommand(request: ConnectorCommandDispatchRequest): ConnectorCapability | null {
+  return CONNECTOR_COMMAND_CAPABILITY_REQUIREMENTS.find(([commandType]) => commandType === request.type)?.[1] ?? null;
+}
+
+function summarizeConnectorCompatibility(connector: ConnectorRecord) {
+  const capabilitySet = new Set(connector.capabilities);
+  const missingCapabilities = ALL_CONNECTOR_CAPABILITIES.filter((capability) => !capabilitySet.has(capability));
+  const unsupportedCommands = CONNECTOR_COMMAND_CAPABILITY_REQUIREMENTS.filter(
+    ([, capability]) => !capabilitySet.has(capability),
+  ).map(([commandType]) => commandType);
+  const readOnlyCapabilities = new Set<ConnectorCapability>(READ_ONLY_CONNECTOR_CAPABILITIES);
+  const writeEnabled = connector.capabilities.some((capability) => !readOnlyCapabilities.has(capability));
+
+  if (unsupportedCommands.length === 0) {
+    return {
+      status: "full" as const,
+      message: "Connector can receive every cloud-dispatched command.",
+      missingCapabilities,
+      unsupportedCommands,
+    };
+  }
+
+  if (!writeEnabled) {
+    return {
+      status: "read_only" as const,
+      message:
+        "Connector is registered read-only. Re-bootstrap with --enable-write-commands or explicit capabilities before queueing write commands.",
+      missingCapabilities,
+      unsupportedCommands,
+    };
+  }
+
+  return {
+    status: "limited" as const,
+    message:
+      "Connector is missing capabilities for some command types. Re-bootstrap with explicit capabilities before queueing those commands.",
+    missingCapabilities,
+    unsupportedCommands,
+  };
 }
 
 function getConnectorStatusDetails(lastSeenAt: string, revoked: boolean, referenceAt: string) {
@@ -1191,6 +1246,7 @@ export async function listWorkspaceConnectors(
         lastSeenAt: connector.lastSeenAt,
         workspaceSlug: connector.workspaceSlug,
         capabilities: connector.capabilities,
+        compatibility: summarizeConnectorCompatibility(connector),
         repositoryOwner: connector.repository.repo.owner,
         repositoryName: connector.repository.repo.name,
         aheadBy: connector.repository.aheadBy,
@@ -1352,6 +1408,14 @@ export function queueConnectorCommand(
     if (!health.dispatchable) {
       throw new ConnectorAccessError(
         health.reason ?? `Connector ${connector.machineName} is not available for command dispatch.`,
+        409,
+      );
+    }
+
+    const requiredCapability = requiredCapabilityForCommand(request);
+    if (requiredCapability && !connector.capabilities.includes(requiredCapability)) {
+      throw new ConnectorAccessError(
+        `Connector ${connector.machineName} did not register capability ${requiredCapability}, so ${request.type} cannot be queued. Re-bootstrap with --enable-write-commands or include ${requiredCapability} in --capabilities.`,
         409,
       );
     }

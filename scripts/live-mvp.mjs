@@ -152,6 +152,10 @@ function runCommand(command, args, options = {}) {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const timeout =
+      typeof options.timeoutMs === "number" && options.timeoutMs > 0
+        ? setTimeout(() => child.kill("SIGKILL"), options.timeoutMs)
+        : null;
 
     let stdout = "";
     let stderr = "";
@@ -166,6 +170,9 @@ function runCommand(command, args, options = {}) {
 
     child.on("error", reject);
     child.on("close", (code, signal) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       resolve({
         code: code ?? -1,
         signal: signal ?? null,
@@ -197,8 +204,15 @@ async function pathExists(targetPath) {
 }
 
 async function detectDocker() {
-  const result = await runCommand("docker", ["info"]);
-  return result.code === 0;
+  const dockerConfigDir = path.join(os.tmpdir(), "agentgit-empty-docker-config");
+  await fsp.mkdir(dockerConfigDir, { recursive: true });
+  const result = await runCommand("docker", ["--config", dockerConfigDir, "info"], {
+    env: {
+      DOCKER_CONFIG: dockerConfigDir,
+    },
+    timeoutMs: 3_000,
+  });
+  return result.code === 0 && result.stderr.trim().length === 0;
 }
 
 async function buildArtifacts() {

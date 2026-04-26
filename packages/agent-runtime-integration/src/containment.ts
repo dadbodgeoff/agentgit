@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 
@@ -92,9 +93,16 @@ export interface ProjectionDiff {
 }
 
 export function detectDockerCapability(context: AdapterContext): DockerCapability {
-  const result = context.runner.run("docker", ["version", "--format", "{{json .}}"], {
+  const dockerConfigDir = path.join(os.tmpdir(), "agentgit-empty-docker-config");
+  fs.mkdirSync(dockerConfigDir, { recursive: true });
+  const dockerProbeEnv = {
+    ...context.env,
+    DOCKER_CONFIG: dockerConfigDir,
+  };
+  const result = context.runner.run("docker", ["--config", dockerConfigDir, "version", "--format", "{{json .}}"], {
     cwd: context.workspace_root,
-    env: context.env,
+    env: dockerProbeEnv,
+    timeoutMs: 3_000,
   });
   if (!result.ok) {
     return {
@@ -125,9 +133,10 @@ export function detectDockerCapability(context: AdapterContext): DockerCapabilit
     serverArch = undefined;
   }
 
-  const infoResult = context.runner.run("docker", ["info", "--format", "{{json .}}"], {
+  const infoResult = context.runner.run("docker", ["--config", dockerConfigDir, "info", "--format", "{{json .}}"], {
     cwd: context.workspace_root,
-    env: context.env,
+    env: dockerProbeEnv,
+    timeoutMs: 3_000,
   });
   let dockerDesktopVm = false;
   let rootlessDocker = false;

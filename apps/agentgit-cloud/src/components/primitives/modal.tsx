@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { X } from "lucide-react";
 
@@ -370,9 +363,7 @@ export function ConfirmModal({
       {typeToConfirm ? (
         <div className="space-y-3">
           <p className="ag-text-body-sm text-[var(--ag-text-secondary)]">
-            Type{" "}
-            <span className="font-mono text-[var(--ag-text-primary)]">{typeToConfirm}</span>{" "}
-            to confirm.
+            Type <span className="font-mono text-[var(--ag-text-primary)]">{typeToConfirm}</span> to confirm.
           </p>
           <Input
             aria-label={`Type ${typeToConfirm} to confirm`}

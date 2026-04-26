@@ -21,16 +21,20 @@ This contract is subordinate to:
 
 ## Contract Summary
 
-The fix must make shell behave under the same trust contract as filesystem.
+The fix must make shell fail closed under the same trust contract as filesystem.
 
 That means every governed shell attempt must:
 
 1. expose trustworthy path facts to policy when possible
 2. fail closed when those path facts imply protected or external scope
-3. be contained again at execution time as defense in depth
+3. be revalidated at execution time as defense in depth
 4. emit recovery metadata that matches actual restore capability
 
 The implementation is not complete until all four are true at once.
+
+Production-beta note: local shell processes are governed and preflight-checked, but not OS/container contained.
+Opaque, interpreter, and unclassified shell execution is denied by default unless an operator explicitly enables the break-glass override.
+The supported path for arbitrary shell is the runtime-contained lane, where the command runs in a projected workspace and publish-back is mediated by AgentGit.
 
 ## Non-Negotiable Engineering Rules
 
@@ -102,7 +106,7 @@ Required work:
 - apply control-surface mutation deny logic to shell actions where the effective target is a control surface
 - fail closed on out-of-workspace shell path access
 - prevent trusted read-only shell from bypassing path-based policy
-- ensure opaque shell only auto-proceeds when that is still honest and safe
+- ensure opaque shell is denied by default unless the operator explicitly enables the break-glass override
 
 Required outcomes:
 
@@ -123,7 +127,7 @@ Phase exit verification:
 - policy-engine tests pass
 - new policy tests exist for all confirmed shell `P0` repros
 
-### Phase 3. Execution-Time Containment
+### Phase 3. Execution-Time Revalidation
 
 Goal:
 

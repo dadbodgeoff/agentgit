@@ -162,6 +162,27 @@ describe("WorkspaceIndex", () => {
     expect(index.getSnapshotManifest(result.recovery_snapshot_id)).not.toBeNull();
   });
 
+  it("restore removes live files created after an explicit checkpoint even when they were never indexed", async () => {
+    await writeFile(workspaceRoot, "config.json", '{"version":1}');
+    const firstPrepared = await index.prepareScan();
+    const firstSnapshot = await index.commitSnapshot({
+      preparedSet: firstPrepared,
+      trigger_reason: "checkpoint",
+      anchor_path: path.join(workspaceRoot, "config.json"),
+    });
+
+    await writeFile(workspaceRoot, "scratch/post-checkpoint-drift.txt", "unguarded drift");
+    const result = await index.restore(firstSnapshot.snap_id);
+
+    expect(result.files_restored).toContainEqual({
+      path: path.join("scratch", "post-checkpoint-drift.txt"),
+      action: "removed",
+    });
+    await expect(fs.access(path.join(workspaceRoot, "scratch/post-checkpoint-drift.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("previewRestore reports overlapping later actions", async () => {
     await writeFile(workspaceRoot, "config.json", '{"version":1}');
     const firstPrepared = await index.prepareScan();

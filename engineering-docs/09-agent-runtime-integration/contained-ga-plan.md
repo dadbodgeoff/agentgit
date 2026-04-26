@@ -17,6 +17,7 @@ This plan assumes the current state already exists:
 - projection + governed publish-back is live
 - setup / run / inspect / restore / remove / repair are live
 - assurance, governance mode, guarantees, and degraded reasons are persisted and surfaced
+- arbitrary shell is supported through the contained runtime lane, not through uncontained local shell execution
 
 This plan is about closing the remaining enterprise-grade gaps without inflating product claims.
 
@@ -279,6 +280,8 @@ Contained GA requires both deterministic tests and live backend tests.
 - full repo `typecheck`
 - full repo `test`
 - package-level build/typecheck/test for runtime integration
+- `pnpm smoke:agent-runtime`, including the contained shell host-escape assertion
+- `AGENTGIT_CLOUD_E2E_BASE_URL=<deployment> pnpm smoke:cloud-deployed` for deployed browser smoke
 - deterministic demo latency guard
 - no secret leakage in printed output
 

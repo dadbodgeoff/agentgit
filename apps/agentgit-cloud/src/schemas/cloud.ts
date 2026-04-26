@@ -1502,6 +1502,16 @@ export const WorkspaceConnectorEventSummarySchema = z
   .strict();
 export type WorkspaceConnectorEventSummary = z.infer<typeof WorkspaceConnectorEventSummarySchema>;
 
+export const WorkspaceConnectorCompatibilitySchema = z
+  .object({
+    status: z.enum(["full", "limited", "read_only"]),
+    message: z.string().min(1),
+    missingCapabilities: z.array(ConnectorCapabilitySchema),
+    unsupportedCommands: z.array(ConnectorCommandTypeSchema),
+  })
+  .strict();
+export type WorkspaceConnectorCompatibility = z.infer<typeof WorkspaceConnectorCompatibilitySchema>;
+
 export const WorkspaceConnectorSummarySchema = z
   .object({
     id: z.string().min(1),
@@ -1513,6 +1523,7 @@ export const WorkspaceConnectorSummarySchema = z
     lastSeenAt: TimestampStringSchema,
     workspaceSlug: z.string().min(1),
     capabilities: z.array(ConnectorCapabilitySchema),
+    compatibility: WorkspaceConnectorCompatibilitySchema,
     providerIdentity: ProviderRepositoryIdentitySchema,
     repositoryOwner: z.string().min(1),
     repositoryName: z.string().min(1),

@@ -27,6 +27,7 @@ export { DEFAULT_POLICY_PACK } from "./default-policy-pack.js";
 
 const SAFE_FS_WRITE_BYTES = 256 * 1024;
 const MAX_POLICY_PREDICATE_DEPTH = 5;
+const OPAQUE_SHELL_OVERRIDE_ENV = "AGENTGIT_ALLOW_UNCONTAINED_OPAQUE_SHELL";
 
 const POLICY_DECISION_STRENGTH: Record<PolicyOutcomeRecord["decision"], number> = {
   deny: 4,
@@ -1136,6 +1137,24 @@ function makeShellApprovalOutcome(
   return makeCapabilityApprovalOutcome(action, reason, matchedRule, snapshotRequired);
 }
 
+function makeShellDenyOutcome(action: ActionRecord, reason: PolicyReason, matchedRule: string): PolicyOutcomeRecord {
+  return makeOutcome(
+    action,
+    "deny",
+    [reason],
+    [matchedRule],
+    undefined,
+    makeRecoveryProofContext({
+      recoverability_class: "unrecoverable_or_degraded",
+    }),
+  );
+}
+
+function allowUncontainedOpaqueShell(): boolean {
+  const value = process.env[OPAQUE_SHELL_OVERRIDE_ENV]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
   const locator = action.target.primary.locator;
   const confidenceScore = actionConfidenceScore(action);
@@ -1238,13 +1257,49 @@ function evaluateFilesystem(action: ActionRecord, context: PolicyEvaluationConte
 }
 
 function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): PolicyOutcomeRecord {
-  const shellFacet = action.facets.shell as { command_family?: string } | undefined;
+  const shellFacet = action.facets.shell as
+    | { command_family?: string; protected_paths?: unknown; control_surface_paths?: unknown }
+    | undefined;
   const commandFamily = shellFacet?.command_family ?? "unclassified";
+  const warnings = new Set(action.normalization.warnings);
   const lowConfidenceThreshold = resolvePolicyLowConfidenceThreshold(
     context.compiled_policy ?? DEFAULT_COMPILED_POLICY_PACK,
     action,
   );
   const confidenceTriggered = lowConfidenceThreshold !== null && actionConfidenceScore(action) < lowConfidenceThreshold;
+  const hasProtectedTarget =
+    (Array.isArray(shellFacet?.protected_paths) && shellFacet.protected_paths.length > 0) ||
+    warnings.has("protected_target");
+  const hasControlSurfaceTarget =
+    (Array.isArray(shellFacet?.control_surface_paths) && shellFacet.control_surface_paths.length > 0) ||
+    warnings.has("control_surface_target");
+
+  if (hasProtectedTarget) {
+    return makeShellDenyOutcome(
+      action,
+      {
+        code: "PROTECTED_SECRET_PATH_DENIED",
+        severity: "critical",
+        message: "Protected secret paths are outside the governed auto-execution surface.",
+      },
+      "policy.config.platform.secret-paths.deny",
+    );
+  }
+
+  if (
+    hasControlSurfaceTarget &&
+    (action.risk_hints.side_effect_level === "mutating" || action.risk_hints.side_effect_level === "destructive")
+  ) {
+    return makeShellDenyOutcome(
+      action,
+      {
+        code: "AGENT_CONFIG_MUTATION_DENIED",
+        severity: "critical",
+        message: "Agent configuration and authority-control surfaces may not be mutated automatically.",
+      },
+      "policy.config.platform.agent-config-mutation.deny",
+    );
+  }
 
   if (action.target.scope.breadth === "external") {
     return makeOutcome(
@@ -1261,23 +1316,45 @@ function evaluateShell(action: ActionRecord, context: PolicyEvaluationContext): 
     );
   }
 
-  if (action.target.scope.unknowns.includes("scope")) {
-    return makeOutcome(
+  const opaqueScope = warnings.has("unknown_scope") || action.target.scope.unknowns.includes("scope");
+  const opaqueExecution =
+    warnings.has("opaque_execution") ||
+    opaqueScope ||
+    commandFamily === "interpreter" ||
+    commandFamily === "unclassified";
+
+  if (opaqueExecution && !allowUncontainedOpaqueShell()) {
+    const matchedRule = opaqueScope
+      ? "shell.opaque_scope.deny"
+      : commandFamily === "interpreter"
+        ? "shell.interpreter.deny"
+        : commandFamily === "unclassified"
+          ? "shell.unclassified.deny"
+          : "shell.opaque_execution.deny";
+
+    return makeShellDenyOutcome(
       action,
-      "ask",
-      [
-        {
-          code: "OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL",
-          severity: "high",
-          message:
-            "Shell command scope is too opaque to verify containment, so explicit approval is required before execution.",
-        },
-      ],
-      ["shell.opaque_scope.ask"],
-      undefined,
-      makeRecoveryProofContext({
-        recoverability_class: "unrecoverable_or_degraded",
-      }),
+      {
+        code: "OPAQUE_SHELL_EXECUTION_DENIED",
+        severity: "high",
+        message:
+          "Opaque shell execution is disabled by default because local shell processes are governed but not runtime-contained.",
+      },
+      matchedRule,
+    );
+  }
+
+  if (action.target.scope.unknowns.includes("scope")) {
+    return makeShellApprovalOutcome(
+      action,
+      {
+        code: "OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL",
+        severity: "high",
+        message:
+          "Shell command scope is too opaque to verify containment, so explicit approval is required before execution.",
+      },
+      "shell.opaque_scope.ask",
+      false,
     );
   }
 

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConnectorCapability } from "@agentgit/cloud-sync-protocol";
 
 vi.mock("server-only", () => ({}));
 
@@ -22,7 +23,13 @@ function putConnectorFixture(params: {
   workspaceRoot: string;
   lastSeenAt: string;
   status?: "active" | "revoked";
+  capabilities?: ConnectorCapability[];
+  provider?: "github" | "local";
+  owner?: string;
+  name?: string;
 }) {
+  const owner = params.owner ?? "acme";
+  const name = params.name ?? "platform-ui";
   withControlPlaneState((store) => {
     store.putConnector({
       id: params.id,
@@ -36,14 +43,14 @@ function putConnectorFixture(params: {
         arch: "arm64",
         hostname: `${params.id}-host`,
       },
-      capabilities: ["repo_state_sync", "restore_execution"],
+      capabilities: params.capabilities ?? ["repo_state_sync", "restore_execution"],
       repository: {
-        provider: "github",
+        provider: params.provider ?? "github",
         repo: {
-          owner: "acme",
-          name: "platform-ui",
+          owner,
+          name,
         },
-        remoteUrl: "git@github.com:acme/platform-ui.git",
+        remoteUrl: `git@github.com:${owner}/${name}.git`,
         defaultBranch: "main",
         currentBranch: "main",
         headSha: "abcdef1234567",
@@ -210,6 +217,75 @@ describe("connector routing and dispatch safety", () => {
         "2026-04-07T18:12:00Z",
       ),
     ).toThrowError(ConnectorAccessError);
+  });
+
+  it("refuses to queue commands the connector did not register as capabilities", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-connectors-"));
+    tempDirs.push(tempDir);
+    process.env.AGENTGIT_ROOT = tempDir;
+
+    putConnectorFixture({
+      id: "conn_read_only",
+      workspaceRoot: "/tmp/workspaces/platform-ui",
+      lastSeenAt: "2026-04-07T18:09:00Z",
+    });
+
+    const workspaceSession = {
+      user: {
+        id: "user_01",
+        name: "Admin",
+        email: "admin@agentgit.dev",
+      },
+      activeWorkspace: {
+        id: "ws_acme_01",
+        name: "Acme",
+        slug: "acme",
+        role: "admin",
+      },
+    } satisfies WorkspaceSession;
+
+    expect(() =>
+      queueConnectorCommand(
+        workspaceSession,
+        "conn_read_only",
+        {
+          type: "create_commit",
+          message: "chore: guarded commit",
+          stageAll: true,
+        },
+        "2026-04-07T18:12:00Z",
+      ),
+    ).toThrowError(/capability git_commit/);
+  });
+
+  it("surfaces read-only connector compatibility for existing deployed connectors", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-connectors-"));
+    tempDirs.push(tempDir);
+    process.env.AGENTGIT_ROOT = tempDir;
+
+    putConnectorFixture({
+      id: "conn_legacy_read_only",
+      workspaceRoot: "/tmp/workspaces/platform-ui",
+      lastSeenAt: "2026-04-07T18:09:00Z",
+      capabilities: ["repo_state_sync", "run_event_sync", "snapshot_manifest_sync"],
+      provider: "local",
+      owner: "legacy",
+      name: "platform-ui",
+    });
+
+    const inventory = await listWorkspaceConnectors("ws_acme_01", "2026-04-07T18:12:00Z");
+    expect(inventory.items[0]?.compatibility).toMatchObject({
+      status: "read_only",
+      unsupportedCommands: [
+        "replay_run",
+        "resolve_approval",
+        "create_commit",
+        "push_branch",
+        "execute_restore",
+        "open_pull_request",
+      ],
+    });
+    expect(inventory.items[0]?.compatibility.message).toContain("--enable-write-commands");
   });
 
   it("refuses to replay commands that already completed successfully", () => {

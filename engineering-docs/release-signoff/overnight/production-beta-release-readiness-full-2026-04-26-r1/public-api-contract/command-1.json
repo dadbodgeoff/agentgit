@@ -1,0 +1,10 @@
+{
+  "command": "pnpm --filter @agentgit/schemas test",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> @agentgit/schemas@0.1.0 test /Users/geoffreyfernald/Documents/agentgit/packages/schemas\n> python3 ../../engineering-docs/schema-pack/examples/validate_examples.py\n\nSchema example validation passed.\n",
+  "stderr": ""
+}

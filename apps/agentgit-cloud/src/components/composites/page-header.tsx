@@ -22,9 +22,7 @@ export function PageHeader({
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
           <h1 className="text-[32px] font-semibold tracking-[-0.02em]">{title}</h1>
-          {description ? (
-            <p className="max-w-3xl text-sm text-[var(--ag-text-secondary)]">{description}</p>
-          ) : null}
+          {description ? <p className="max-w-3xl text-sm text-[var(--ag-text-secondary)]">{description}</p> : null}
           {staleIndicator ? <div className="mt-1">{staleIndicator}</div> : null}
         </div>
         {actions ? <div className="flex items-center gap-2">{actions}</div> : null}

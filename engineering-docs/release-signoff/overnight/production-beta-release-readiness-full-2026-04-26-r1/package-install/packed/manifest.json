@@ -1,0 +1,104 @@
+{
+  "generated_at": "2026-04-26T22:04:45.112Z",
+  "output_dir": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed",
+  "packages": [
+    {
+      "name": "@agentgit/agent-runtime-integration",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-agent-runtime-integration-0.1.0.tgz",
+      "filename": "agentgit-agent-runtime-integration-0.1.0.tgz",
+      "bytes": 66357,
+      "sha256": "4da6604f239d8849fb9202896c8ea3aaa344f3e96eac3d1f3f1f30728c4c5ac2"
+    },
+    {
+      "name": "@agentgit/authority-cli",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-authority-cli-0.1.0.tgz",
+      "filename": "agentgit-authority-cli-0.1.0.tgz",
+      "bytes": 70182,
+      "sha256": "f1bb7c23e619c30665835c9259a3766202c371592244af7cf29fcdcb46f3c0a2"
+    },
+    {
+      "name": "@agentgit/authority-daemon",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-authority-daemon-0.1.0.tgz",
+      "filename": "agentgit-authority-daemon-0.1.0.tgz",
+      "bytes": 2599680,
+      "sha256": "f673d975a6945c195559064786a6da52583cb43d9a65976369ae5469d6e2926c"
+    },
+    {
+      "name": "@agentgit/authority-sdk",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-authority-sdk-0.1.0.tgz",
+      "filename": "agentgit-authority-sdk-0.1.0.tgz",
+      "bytes": 11415,
+      "sha256": "b04d69006c48fea77323526e987248a51c7b421a04c7e2c0afbd4df5ac9aab37"
+    },
+    {
+      "name": "@agentgit/cloud-connector",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-cloud-connector-0.1.0.tgz",
+      "filename": "agentgit-cloud-connector-0.1.0.tgz",
+      "bytes": 21290,
+      "sha256": "80db70bc0d1d558519d9764e01aa0b12720d352bfa15c5384bfe3da6b2ebadc1"
+    },
+    {
+      "name": "@agentgit/cloud-sync-protocol",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-cloud-sync-protocol-0.1.0.tgz",
+      "filename": "agentgit-cloud-sync-protocol-0.1.0.tgz",
+      "bytes": 9228,
+      "sha256": "475d4cfd783b0f3aad93a2394e42821c8e5627ab035e8bfc08e8cd420ba0f6eb"
+    },
+    {
+      "name": "@agentgit/control-plane-state",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-control-plane-state-0.1.0.tgz",
+      "filename": "agentgit-control-plane-state-0.1.0.tgz",
+      "bytes": 9548,
+      "sha256": "8a55d4782199eae674a193507110a777d47d80b7357b0027b8f511c237f83c2c"
+    },
+    {
+      "name": "@agentgit/core-ports",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-core-ports-0.1.0.tgz",
+      "filename": "agentgit-core-ports-0.1.0.tgz",
+      "bytes": 4655,
+      "sha256": "e4d3961a0572d54016de936f58fcf50e52bf6c10f85f17a0f7d880f971b368c1"
+    },
+    {
+      "name": "@agentgit/credential-broker",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-credential-broker-0.1.0.tgz",
+      "filename": "agentgit-credential-broker-0.1.0.tgz",
+      "bytes": 13243,
+      "sha256": "07319820b8a779c567c1eedf91d022549fdc1816a9acf25870ff6a66f31f2bc6"
+    },
+    {
+      "name": "@agentgit/integration-state",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-integration-state-0.1.0.tgz",
+      "filename": "agentgit-integration-state-0.1.0.tgz",
+      "bytes": 10396,
+      "sha256": "84dca97de8cb55c18841543c13871df34af1f260f3145ed979ffdf2b21bcf089"
+    },
+    {
+      "name": "@agentgit/run-journal",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-run-journal-0.1.0.tgz",
+      "filename": "agentgit-run-journal-0.1.0.tgz",
+      "bytes": 28411,
+      "sha256": "e82d88960f0267fcc5d17cf85e6bb791b25eeb094a46b91ca6e9d20a9cb7ff42"
+    },
+    {
+      "name": "@agentgit/schemas",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-schemas-0.1.0.tgz",
+      "filename": "agentgit-schemas-0.1.0.tgz",
+      "bytes": 72998,
+      "sha256": "c7b03e7e8ea59c66c985a957fa0bc22b2c7ec5b481fd53a3205864f9df40d17a"
+    },
+    {
+      "name": "@agentgit/snapshot-engine",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-snapshot-engine-0.1.0.tgz",
+      "filename": "agentgit-snapshot-engine-0.1.0.tgz",
+      "bytes": 16546,
+      "sha256": "c75f015e44a9413d882323c8368744dafebd0778f388308cfd3552921bfb1b7b"
+    },
+    {
+      "name": "@agentgit/workspace-index",
+      "tarball_path": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/package-install/packed/agentgit-workspace-index-0.1.0.tgz",
+      "filename": "agentgit-workspace-index-0.1.0.tgz",
+      "bytes": 19235,
+      "sha256": "bea565d182f4ee8915e448fba550c51fd24af98fc1d820c99a40b9a0000f8413"
+    }
+  ]
+}

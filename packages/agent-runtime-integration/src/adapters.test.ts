@@ -124,11 +124,13 @@ class FakeOpenClawRunner implements CommandRunner {
 
 class FakeDockerRunner implements CommandRunner {
   run(command: string, args: string[] = [], _options: CommandRunOptions = {}): CommandRunResult {
+    const dockerArgs = command === "docker" && args[0] === "--config" ? args.slice(2) : args;
+
     if (command === "git" && args[0] === "rev-parse") {
       return { ok: true, exit_code: 0, stdout: "/tmp/workspace", stderr: "" };
     }
 
-    if (command === "docker" && args[0] === "version") {
+    if (command === "docker" && dockerArgs[0] === "version") {
       return {
         ok: true,
         exit_code: 0,
@@ -143,7 +145,7 @@ class FakeDockerRunner implements CommandRunner {
       };
     }
 
-    if (command === "docker" && args[0] === "info") {
+    if (command === "docker" && dockerArgs[0] === "info") {
       return {
         ok: true,
         exit_code: 0,

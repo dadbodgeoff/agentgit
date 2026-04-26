@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import postgres, { type Sql } from "postgres";
 
-import { getDatabaseUrl } from "@/lib/db/client";
-
 type MigrationStep = (sql: Sql) => Promise<unknown>;
+
+function getMigrationDatabaseUrl(): string | null {
+  const value = process.env.DATABASE_URL?.trim() ?? "";
+  return value.length > 0 ? value : null;
+}
 
 function migrationStepId(step: MigrationStep): string {
   return createHash("sha256").update(step.toString(), "utf8").digest("hex");
@@ -305,7 +308,7 @@ const migrationSteps: MigrationStep[] = [
 ];
 
 async function main() {
-  const databaseUrl = getDatabaseUrl();
+  const databaseUrl = getMigrationDatabaseUrl();
   if (!databaseUrl) {
     throw new Error("DATABASE_URL must be set before running migrations.");
   }

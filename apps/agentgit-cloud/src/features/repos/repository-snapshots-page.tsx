@@ -618,7 +618,9 @@ export function RepositorySnapshotsPage({
                   </div>
                   {activePreview.plan.warnings.length > 0 ? (
                     <div className="space-y-2">
-                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Warnings</div>
+                      <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
+                        Warnings
+                      </div>
                       {activePreview.plan.warnings.map((warning) => (
                         <div
                           className="text-sm text-[var(--ag-status-warning)]"

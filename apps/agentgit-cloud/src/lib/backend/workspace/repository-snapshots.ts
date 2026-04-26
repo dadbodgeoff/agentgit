@@ -106,8 +106,47 @@ function relativeScopePath(repoRoot: string, targetPath: string | null): string[
     return [targetPath];
   }
 
-  const relative = path.relative(repoRoot, targetPath);
+  const relative = path.relative(normalizePathForComparison(repoRoot), normalizePathForComparison(targetPath));
   return [relative.length > 0 ? relative : "workspace"];
+}
+
+async function verifySnapshotForRestore(
+  engine: LocalSnapshotEngine,
+  snapshotId: string,
+  manifest: Awaited<ReturnType<LocalSnapshotEngine["getSnapshotManifest"]>>,
+): Promise<SnapshotIntegrityStatus> {
+  if (!manifest) {
+    return "missing";
+  }
+
+  try {
+    if (await engine.verifyIntegrity(snapshotId)) {
+      return "verified";
+    }
+  } catch (error) {
+    if (process.env.AGENTGIT_SNAPSHOT_DEBUG === "1") {
+      console.error("snapshot integrity check failed", {
+        snapshotId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+    // Fall through to the preview path below. Some deployed runtimes can still
+    // plan from the manifest even when the fast integrity check cannot open the
+    // layered index through an equivalent real path such as /tmp vs /private/tmp.
+  }
+
+  try {
+    await engine.previewRestore(snapshotId);
+    return "verified";
+  } catch (error) {
+    if (process.env.AGENTGIT_SNAPSHOT_DEBUG === "1") {
+      console.error("snapshot restore preview failed", {
+        snapshotId,
+        cause: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return "missing";
+  }
 }
 
 function toReadableSummary(domain: string | null, operation: string | null, targetLocator: string): string {
@@ -176,7 +215,7 @@ function toRecoverySummary(event: RunJournalEventRecord): RepositorySnapshotReco
 
 async function isAuthorityReachable(repoRoot: string): Promise<boolean> {
   try {
-    await withScopedAuthorityClient([repoRoot], async (client) => client.getCapabilities(repoRoot));
+    await withScopedAuthorityClient([repoRoot], async () => true);
     return true;
   } catch (error) {
     if (error instanceof AuthorityClientTransportError) {
@@ -207,7 +246,7 @@ async function buildSnapshotItem(params: {
 
   try {
     manifest = await engine.getSnapshotManifest(params.event.snapshotId);
-    integrityStatus = (await engine.verifyIntegrity(params.event.snapshotId)) ? "verified" : "missing";
+    integrityStatus = await verifySnapshotForRestore(engine, params.event.snapshotId, manifest);
   } catch {
     manifest = null;
     integrityStatus = "missing";

@@ -1,0 +1,224 @@
+{
+  "action": {
+    "schema_version": "action.v1",
+    "action_id": "act_019dcbdc6b4b7526a6af0e1369475d02",
+    "run_id": "run_019dcbdc69c27136889d6dad8d1a5d3e",
+    "session_id": "sess_019dcbdc6b1f717a998fb6d59dddef7f",
+    "status": "normalized",
+    "timestamps": {
+      "requested_at": "2026-04-26T22:15:13.392Z",
+      "normalized_at": "2026-04-26T22:15:13.483Z"
+    },
+    "provenance": {
+      "mode": "governed",
+      "source": "authority-sdk-ts",
+      "confidence": 0.99
+    },
+    "actor": {
+      "type": "agent",
+      "agent_name": "agentgit-cli",
+      "agent_framework": "cli",
+      "tool_name": "delete_file",
+      "tool_kind": "filesystem"
+    },
+    "operation": {
+      "domain": "filesystem",
+      "kind": "delete",
+      "name": "filesystem.delete",
+      "display_name": "Delete file"
+    },
+    "execution_path": {
+      "surface": "governed_fs",
+      "mode": "pre_execution",
+      "credential_mode": "none"
+    },
+    "target": {
+      "primary": {
+        "type": "path",
+        "locator": "/tmp/agentgit-recovery-drill-9sPYZf/workspace/recovery-drill.txt",
+        "label": "recovery-drill.txt"
+      },
+      "scope": {
+        "breadth": "single",
+        "estimated_count": 1,
+        "unknowns": []
+      }
+    },
+    "input": {
+      "raw": {
+        "operation": "delete",
+        "path": "recovery-drill.txt"
+      },
+      "redacted": {
+        "operation": "delete",
+        "path": "recovery-drill.txt"
+      },
+      "schema_ref": null,
+      "contains_sensitive_data": false
+    },
+    "risk_hints": {
+      "side_effect_level": "destructive",
+      "external_effects": "none",
+      "reversibility_hint": "potentially_reversible",
+      "sensitivity_hint": "low",
+      "batch": false
+    },
+    "facets": {
+      "filesystem": {
+        "operation": "delete",
+        "paths": [
+          "/tmp/agentgit-recovery-drill-9sPYZf/workspace/recovery-drill.txt"
+        ],
+        "path_count": 1,
+        "recursive": false,
+        "overwrite": false,
+        "byte_length": 0
+      }
+    },
+    "normalization": {
+      "mapper": "filesystem/v1",
+      "inferred_fields": [
+        "target.scope",
+        "risk_hints"
+      ],
+      "warnings": [],
+      "normalization_confidence": 0.99
+    },
+    "confidence_assessment": {
+      "engine_version": "action-confidence/v1",
+      "score": 1,
+      "band": "high",
+      "requires_human_review": false,
+      "factors": [
+        {
+          "factor_id": "normalization_baseline",
+          "label": "Normalization baseline",
+          "kind": "baseline",
+          "delta": 0.99,
+          "rationale": "Started from mapper confidence 0.990."
+        },
+        {
+          "factor_id": "provenance_governed_high",
+          "label": "Strong provenance",
+          "kind": "boost",
+          "delta": 0.04,
+          "rationale": "Governed provenance is high-confidence and strengthens trust in the action envelope."
+        },
+        {
+          "factor_id": "scope_single",
+          "label": "Single-target scope",
+          "kind": "boost",
+          "delta": 0.04,
+          "rationale": "Single-target actions are easier to reason about and recover from."
+        },
+        {
+          "factor_id": "side_effect_destructive",
+          "label": "Destructive execution",
+          "kind": "penalty",
+          "delta": 0,
+          "rationale": "Destructive actions reduce confidence that automated execution should proceed without review."
+        },
+        {
+          "factor_id": "reversibility_partial",
+          "label": "Partially reversible",
+          "kind": "penalty",
+          "delta": 0,
+          "rationale": "Partial reversibility still leaves meaningful uncertainty about recovery quality."
+        },
+        {
+          "factor_id": "surface_governed_fs",
+          "label": "Governed filesystem surface",
+          "kind": "boost",
+          "delta": 0.03,
+          "rationale": "The governed filesystem surface exposes narrow, inspectable semantics."
+        }
+      ]
+    }
+  },
+  "policy_outcome": {
+    "schema_version": "policy-outcome.v1",
+    "policy_outcome_id": "pol_019dcbdc6b4c765b9ff7cca8359a06d7",
+    "action_id": "act_019dcbdc6b4b7526a6af0e1369475d02",
+    "decision": "allow_with_snapshot",
+    "reasons": [
+      {
+        "code": "FS_DESTRUCTIVE_WORKSPACE_MUTATION",
+        "severity": "moderate",
+        "message": "Destructive filesystem mutations require a recovery boundary."
+      }
+    ],
+    "trust_requirements": {
+      "wrapped_path_required": true,
+      "brokered_credentials_required": false,
+      "direct_credentials_forbidden": false
+    },
+    "preconditions": {
+      "snapshot_required": true,
+      "approval_required": false,
+      "simulation_supported": false
+    },
+    "approval": null,
+    "budget_effects": {
+      "budget_check": "passed",
+      "estimated_cost": 0,
+      "remaining_mutating_actions": null,
+      "remaining_destructive_actions": null
+    },
+    "policy_context": {
+      "matched_rules": [
+        "filesystem.delete.requires_snapshot"
+      ],
+      "sticky_decision_applied": false,
+      "recoverability_class": "recoverable_local",
+      "recovery_proof_kind": "snapshot_preimage",
+      "recovery_proof_source": "snapshot-engine.preimage",
+      "recovery_proof_scope": "path"
+    },
+    "evaluated_at": "2026-04-26T22:15:13.484Z"
+  },
+  "execution_result": {
+    "execution_id": "exec_fs_1777241713501",
+    "action_id": "act_019dcbdc6b4b7526a6af0e1369475d02",
+    "mode": "executed",
+    "success": true,
+    "output": {
+      "executed": true,
+      "domain": "filesystem",
+      "operation": "delete",
+      "target": "/private/tmp/agentgit-recovery-drill-9sPYZf/workspace/recovery-drill.txt",
+      "deleted": true,
+      "expected_bytes": 0,
+      "before_preview": "drill-v1",
+      "diff_preview": "- drill-v1"
+    },
+    "artifacts": [
+      {
+        "artifact_id": "artifact_diff_1777241713501",
+        "type": "diff",
+        "content_ref": "inline://exec_fs_1777241713501/diff",
+        "byte_size": 10,
+        "visibility": "user"
+      }
+    ],
+    "started_at": "2026-04-26T22:15:13.501Z",
+    "completed_at": "2026-04-26T22:15:13.501Z",
+    "artifact_capture": {
+      "requested_count": 1,
+      "stored_count": 1,
+      "degraded": false,
+      "failures": []
+    }
+  },
+  "snapshot_record": {
+    "snapshot_id": "snap_1777241713488_0bdf42938639479bb6342d2080552e06",
+    "action_id": "act_019dcbdc6b4b7526a6af0e1369475d02",
+    "snapshot_class": "journal_plus_anchor",
+    "fidelity": "full",
+    "scope_paths": [
+      "/tmp/agentgit-recovery-drill-9sPYZf/workspace/recovery-drill.txt"
+    ],
+    "storage_bytes": 8,
+    "created_at": "2026-04-26T22:15:13.488Z"
+  },
+  "approval_request": null
+}

@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-04-26T22:08:07.564Z",
+  "gateStatus": "passed",
+  "artifactRoot": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-accessibility-rerun-2026-04-26",
+  "results": [
+    {
+      "id": "accessibility",
+      "name": "Accessibility",
+      "required": true,
+      "status": "passed",
+      "command": "pnpm --filter @agentgit/cloud-ui build && pnpm --filter @agentgit/cloud-ui exec -- playwright test --config=playwright.config.ts accessibility.spec.ts",
+      "durationMs": 37213,
+      "summary": "All commands completed successfully.",
+      "productionImplication": "Cloud UI accessibility scan must pass with the configured violations budget.",
+      "evidenceCeiling": null,
+      "artifacts": [
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-accessibility-rerun-2026-04-26/accessibility/command-1.json",
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-accessibility-rerun-2026-04-26/accessibility/command-2.json"
+      ]
+    }
+  ]
+}

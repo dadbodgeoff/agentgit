@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "drill_started_at": "2026-04-26T22:15:11.171Z",
+  "drill_finished_at": "2026-04-26T22:15:14.350Z",
+  "rto_ms": 331,
+  "rpo_target": "latest valid action boundary",
+  "run_id": "run_019dcbdc69c27136889d6dad8d1a5d3e",
+  "recovery_target_action_id": "act_019dcbdc6b4b7526a6af0e1369475d02",
+  "recovery_strategy": "restore_snapshot",
+  "restored": true,
+  "file_exists_after_recovery": true,
+  "file_contents_after_recovery": "drill-v1",
+  "output_dir": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r2/backup-restore-drill/recovery-drill",
+  "temp_workspace": "/tmp/agentgit-recovery-drill-9sPYZf/workspace"
+}

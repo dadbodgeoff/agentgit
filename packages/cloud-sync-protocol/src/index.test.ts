@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CLOUD_SYNC_SCHEMA_VERSION,
+  ConnectorRecordSchema,
   ConnectorRegistrationRequestSchema,
   ConnectorEventEnvelopeSchema,
 } from "./index.js";
@@ -60,5 +61,42 @@ describe("cloud sync protocol schemas", () => {
     });
 
     expect(parsed.type).toBe("repo_state.snapshot");
+  });
+
+  it("migrates existing connector records without explicit capabilities to read-only compatibility", () => {
+    const parsed = ConnectorRecordSchema.parse({
+      id: "conn_legacy_01",
+      workspaceId: "ws_acme_01",
+      workspaceSlug: "acme",
+      connectorName: "Legacy connector",
+      machineName: "legacy-mbp",
+      platform: {
+        os: "darwin",
+        arch: "arm64",
+        hostname: "legacy-mbp",
+      },
+      repository: {
+        provider: "github",
+        repo: {
+          owner: "acme",
+          name: "platform-ui",
+        },
+        remoteUrl: "git@github.com:acme/platform-ui.git",
+        defaultBranch: "main",
+        currentBranch: "main",
+        headSha: "0123456789abcdef",
+        isDirty: false,
+        aheadBy: 0,
+        behindBy: 0,
+        workspaceRoot: "/Users/me/code/platform-ui",
+        lastFetchedAt: null,
+      },
+      status: "active",
+      registeredAt: "2026-04-07T18:00:00Z",
+      lastSeenAt: "2026-04-07T18:01:00Z",
+    });
+
+    expect(parsed.connectorVersion).toBe("legacy-unknown");
+    expect(parsed.capabilities).toEqual(["repo_state_sync", "run_event_sync", "snapshot_manifest_sync"]);
   });
 });

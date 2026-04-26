@@ -1,0 +1,49 @@
+{
+  "agents": [
+    {
+      "run_id": "run_019dcbd07fea71f8a92b0c9ee237e219",
+      "workspace_root": "/tmp/agc1-d85998f91a/workspace",
+      "attempted": 12,
+      "denied": 9,
+      "snapshots": 3,
+      "exact_restore_mismatches": 0,
+      "checkpoint_mismatches": 0
+    },
+    {
+      "run_id": "run_019dcbd08bd376ebadb3a754642fd9b7",
+      "workspace_root": "/tmp/agc2-d85998f91a/workspace",
+      "attempted": 12,
+      "denied": 8,
+      "snapshots": 4,
+      "exact_restore_mismatches": 0,
+      "checkpoint_mismatches": 0
+    },
+    {
+      "run_id": "run_019dcbd0831b70c69d3e5eec003a5096",
+      "workspace_root": "/tmp/agc3-d85998f91a/workspace",
+      "attempted": 12,
+      "denied": 8,
+      "snapshots": 4,
+      "exact_restore_mismatches": 0,
+      "checkpoint_mismatches": 0
+    },
+    {
+      "run_id": "run_019dcbd0874170d6b6683b2738e42b2a",
+      "workspace_root": "/tmp/agc4-d85998f91a/workspace",
+      "attempted": 12,
+      "denied": 9,
+      "snapshots": 3,
+      "exact_restore_mismatches": 0,
+      "checkpoint_mismatches": 0
+    },
+    {
+      "run_id": "run_019dcbd07d5b75ec81fc9a9373aaf663",
+      "workspace_root": "/tmp/agc5-d85998f91a/workspace",
+      "attempted": 12,
+      "denied": 8,
+      "snapshots": 4,
+      "exact_restore_mismatches": 0,
+      "checkpoint_mismatches": 0
+    }
+  ]
+}

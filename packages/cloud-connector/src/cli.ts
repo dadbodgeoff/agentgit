@@ -9,6 +9,8 @@ import {
   CloudConnectorService,
   CloudConnectorStateStore,
   CloudSyncClient,
+  allConnectorCapabilities,
+  parseConnectorCapabilities,
   type CloudConnectorDaemonEvent,
 } from "./index.js";
 
@@ -18,7 +20,7 @@ function usage() {
       "Usage: agentgit-cloud-connector <command> [options]",
       "",
       "Commands:",
-      "  bootstrap --cloud-url <url> --workspace-id <id> --workspace-root <path> --bootstrap-token <token> [--state-db <path>] [--connector-name <name>]",
+      "  bootstrap --cloud-url <url> --workspace-id <id> --workspace-root <path> --bootstrap-token <token> [--state-db <path>] [--connector-name <name>] [--capabilities <list>] [--enable-write-commands]",
       "  run --workspace-root <path> [--state-db <path>] [--poll-interval-ms <ms>] [--heartbeat-interval-ms <ms>] [--backoff-initial-ms <ms>] [--backoff-max-ms <ms>]",
       "  sync-once --workspace-root <path> [--state-db <path>]",
     ].join("\n")}\n`,
@@ -76,6 +78,15 @@ function parseIntegerFlag(flags: Map<string, string>, key: string): number | und
   }
 
   return parsed;
+}
+
+function parseBootstrapCapabilities(flags: Map<string, string>) {
+  if (flags.get("enable-write-commands") === "true") {
+    return allConnectorCapabilities();
+  }
+
+  const rawCapabilities = flags.get("capabilities");
+  return rawCapabilities ? parseConnectorCapabilities(rawCapabilities) : undefined;
 }
 
 function formatDaemonEvent(event: CloudConnectorDaemonEvent) {
@@ -155,6 +166,7 @@ async function main(argv = process.argv.slice(2)) {
           bootstrapToken: required(flags, "bootstrap-token"),
           connectorName: flags.get("connector-name") ?? undefined,
           machineName: flags.get("machine-name") ?? undefined,
+          capabilities: parseBootstrapCapabilities(flags),
         });
         const sync = await runtime.syncOnce();
         writeStdout(

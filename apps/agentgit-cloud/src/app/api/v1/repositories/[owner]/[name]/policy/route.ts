@@ -10,7 +10,7 @@ import {
   saveRepositoryPolicy,
   validateRepositoryPolicyDocument,
 } from "@/lib/backend/workspace/repository-policy";
-import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { PreviewStateSchema, RepositoryPolicyDocumentInputSchema } from "@/schemas/cloud";
 
@@ -76,8 +76,9 @@ export async function POST(
   try {
     rawBody = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
     throw error;
   }
@@ -114,8 +115,9 @@ export async function PUT(
   try {
     rawBody = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
     throw error;
   }
@@ -176,8 +178,9 @@ export async function PATCH(
   try {
     rawBody = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
     throw error;
   }

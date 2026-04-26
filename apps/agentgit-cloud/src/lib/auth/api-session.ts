@@ -4,8 +4,15 @@ import type { Session } from "next-auth";
 import { auth } from "@/auth";
 import { resolveWorkspaceSession } from "@/lib/auth/workspace-session";
 import { hasAtLeastRole } from "@/lib/rbac/roles";
+import { validateCsrfRequest } from "@/lib/security/csrf";
 import { enforceApiRateLimits } from "@/lib/security/rate-limit";
 import type { WorkspaceRole, WorkspaceSession } from "@/schemas/cloud";
+
+const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function isStateChangingRequest(request: Request): boolean {
+  return STATE_CHANGING_METHODS.has(request.method.toUpperCase());
+}
 
 export async function requireApiSession(
   request?: Request,
@@ -34,6 +41,17 @@ export async function requireApiSession(
   }
 
   if (request) {
+    if (isStateChangingRequest(request)) {
+      const csrfError = validateCsrfRequest(request);
+      if (csrfError) {
+        return {
+          session: null,
+          workspaceSession: null,
+          unauthorized: NextResponse.json({ message: csrfError }, { status: 403 }),
+        };
+      }
+    }
+
     const rateLimited = await enforceApiRateLimits(request, workspaceSession.activeWorkspace.id);
     if (rateLimited) {
       return {

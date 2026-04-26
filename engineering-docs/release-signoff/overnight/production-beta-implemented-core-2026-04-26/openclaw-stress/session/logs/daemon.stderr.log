@@ -1,0 +1,21 @@
+node:net:1918
+      const error = new UVExceptionWithHostPort(rval, 'listen', address, port);
+                    ^
+
+Error: listen EINVAL: invalid argument /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26/openclaw-stress/session/workspace/.agentgit/authority.sock
+    at Server.setupListenHandle [as _listen2] (node:net:1918:21)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2119:5)
+    at file:///Users/geoffreyfernald/Documents/agentgit/packages/authority-daemon/dist/main.js:57923:19
+    at new Promise (<anonymous>)
+    at UnixSocketTransport.listen (file:///Users/geoffreyfernald/Documents/agentgit/packages/authority-daemon/dist/main.js:57921:11)
+    at async runAuthorityDaemon (file:///Users/geoffreyfernald/Documents/agentgit/packages/authority-daemon/dist/main.js:58062:3)
+    at async file:///Users/geoffreyfernald/Documents/agentgit/packages/authority-daemon/dist/main.js:58139:1 {
+  code: 'EINVAL',
+  errno: -22,
+  syscall: 'listen',
+  address: '/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26/openclaw-stress/session/workspace/.agentgit/authority.sock',
+  port: -1
+}
+
+Node.js v25.2.1

@@ -1,0 +1,10 @@
+{
+  "command": "node scripts/run-recovery-drill.mjs --output-dir /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/backup-restore-drill/recovery-drill",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "{\n  \"ok\": true,\n  \"drill_started_at\": \"2026-04-26T22:06:12.766Z\",\n  \"drill_finished_at\": \"2026-04-26T22:06:15.799Z\",\n  \"rto_ms\": 348,\n  \"rpo_target\": \"latest valid action boundary\",\n  \"run_id\": \"run_019dcbd4322d76ea8e0d2436cde18f9f\",\n  \"recovery_target_action_id\": \"act_019dcbd43396700f8a4f75bc9fad8e88\",\n  \"recovery_strategy\": \"restore_snapshot\",\n  \"restored\": true,\n  \"file_exists_after_recovery\": true,\n  \"file_contents_after_recovery\": \"drill-v1\",\n  \"output_dir\": \"/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/backup-restore-drill/recovery-drill\",\n  \"temp_workspace\": \"/tmp/agentgit-recovery-drill-5piVTQ/workspace\"\n}\n",
+  "stderr": ""
+}

@@ -1,0 +1,907 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:f1feba73-bcc7-4c65-ba65-63b69e919936",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-04-26T22:05:31.971Z",
+    "component": {
+      "type": "library",
+      "bom-ref": "pkg:npm/agentgit@0.0.0",
+      "name": "agentgit",
+      "version": "0.0.0",
+      "purl": "pkg:npm/agentgit@0.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "agentgit:sbom-scope",
+        "value": "workspace manifests plus packed release artifacts"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/cloud-ui@0.1.0",
+      "name": "@agentgit/cloud-ui",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/cloud-ui@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "apps/agentgit-cloud/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/inspector-ui@0.1.0",
+      "name": "@agentgit/inspector-ui",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/inspector-ui@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "apps/inspector-ui/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/agentgit@0.0.0",
+      "name": "agentgit",
+      "version": "0.0.0",
+      "purl": "pkg:npm/agentgit@0.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/action-normalizer@0.1.0",
+      "name": "@agentgit/action-normalizer",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/action-normalizer@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/action-normalizer/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/agent-runtime-integration@0.1.0",
+      "name": "@agentgit/agent-runtime-integration",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/agent-runtime-integration@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/agent-runtime-integration/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/authority-cli@0.1.0",
+      "name": "@agentgit/authority-cli",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/authority-cli@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/authority-cli/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/authority-daemon@0.1.0",
+      "name": "@agentgit/authority-daemon",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/authority-daemon@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/authority-daemon/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/authority-sdk@0.1.0",
+      "name": "@agentgit/authority-sdk",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/authority-sdk@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/authority-sdk-ts/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/cloud-connector@0.1.0",
+      "name": "@agentgit/cloud-connector",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/cloud-connector@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/cloud-connector/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/cloud-sync-protocol@0.1.0",
+      "name": "@agentgit/cloud-sync-protocol",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/cloud-sync-protocol@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/cloud-sync-protocol/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/control-plane-state@0.1.0",
+      "name": "@agentgit/control-plane-state",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/control-plane-state@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/control-plane-state/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/core-ports@0.1.0",
+      "name": "@agentgit/core-ports",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/core-ports@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/core-ports/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/credential-broker@0.1.0",
+      "name": "@agentgit/credential-broker",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/credential-broker@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/credential-broker/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/execution-adapters@0.1.0",
+      "name": "@agentgit/execution-adapters",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/execution-adapters@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/execution-adapters/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/hosted-mcp-worker@0.1.0",
+      "name": "@agentgit/hosted-mcp-worker",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/hosted-mcp-worker@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/hosted-mcp-worker/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/integration-state@0.1.0",
+      "name": "@agentgit/integration-state",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/integration-state@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/integration-state/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/mcp-registry@0.1.0",
+      "name": "@agentgit/mcp-registry",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/mcp-registry@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/mcp-registry/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/policy-engine@0.1.0",
+      "name": "@agentgit/policy-engine",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/policy-engine@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/policy-engine/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/recovery-engine@0.1.0",
+      "name": "@agentgit/recovery-engine",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/recovery-engine@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/recovery-engine/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/run-journal@0.1.0",
+      "name": "@agentgit/run-journal",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/run-journal@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/run-journal/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/schemas@0.1.0",
+      "name": "@agentgit/schemas",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/schemas@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/schemas/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/snapshot-engine@0.1.0",
+      "name": "@agentgit/snapshot-engine",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/snapshot-engine@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/snapshot-engine/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/test-fixtures@0.1.0",
+      "name": "@agentgit/test-fixtures",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/test-fixtures@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/test-fixtures/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/timeline-helper@0.1.0",
+      "name": "@agentgit/timeline-helper",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/timeline-helper@0.1.0",
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/timeline-helper/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40agentgit/workspace-index@0.1.0",
+      "name": "@agentgit/workspace-index",
+      "version": "0.1.0",
+      "purl": "pkg:npm/%40agentgit/workspace-index@0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:path",
+          "value": "packages/workspace-index/package.json"
+        },
+        {
+          "name": "agentgit:private",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-agent-runtime-integration-0.1.0.tgz",
+      "name": "agentgit-agent-runtime-integration-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "fb84714c0fee97c1211e79d129a998c2a143a78c1615cc6da9b339be50e78cf0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-agent-runtime-integration-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "66358"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-authority-cli-0.1.0.tgz",
+      "name": "agentgit-authority-cli-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "990a9f108afa730962262dc6448c9d927b89a15939195ccb3ad47bfe448a6000"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-authority-cli-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "70180"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-authority-daemon-0.1.0.tgz",
+      "name": "agentgit-authority-daemon-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "69d730878973d472ba3a463778580b4c705d3825c542a9c55651c470bbb2dd00"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-authority-daemon-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "2599680"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-authority-sdk-0.1.0.tgz",
+      "name": "agentgit-authority-sdk-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b04d69006c48fea77323526e987248a51c7b421a04c7e2c0afbd4df5ac9aab37"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-authority-sdk-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "11415"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-cloud-connector-0.1.0.tgz",
+      "name": "agentgit-cloud-connector-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e5ad616c307d781ee6c986145e35f7a32c669c13af853327b6482e5a2e81cd0c"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-cloud-connector-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "21291"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-cloud-sync-protocol-0.1.0.tgz",
+      "name": "agentgit-cloud-sync-protocol-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "475d4cfd783b0f3aad93a2394e42821c8e5627ab035e8bfc08e8cd420ba0f6eb"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-cloud-sync-protocol-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "9228"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-control-plane-state-0.1.0.tgz",
+      "name": "agentgit-control-plane-state-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8a55d4782199eae674a193507110a777d47d80b7357b0027b8f511c237f83c2c"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-control-plane-state-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "9548"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-core-ports-0.1.0.tgz",
+      "name": "agentgit-core-ports-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e4d3961a0572d54016de936f58fcf50e52bf6c10f85f17a0f7d880f971b368c1"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-core-ports-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "4655"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-credential-broker-0.1.0.tgz",
+      "name": "agentgit-credential-broker-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "07319820b8a779c567c1eedf91d022549fdc1816a9acf25870ff6a66f31f2bc6"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-credential-broker-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "13243"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-integration-state-0.1.0.tgz",
+      "name": "agentgit-integration-state-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "84dca97de8cb55c18841543c13871df34af1f260f3145ed979ffdf2b21bcf089"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-integration-state-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "10396"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-run-journal-0.1.0.tgz",
+      "name": "agentgit-run-journal-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e82d88960f0267fcc5d17cf85e6bb791b25eeb094a46b91ca6e9d20a9cb7ff42"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-run-journal-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "28411"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-schemas-0.1.0.tgz",
+      "name": "agentgit-schemas-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c7b03e7e8ea59c66c985a957fa0bc22b2c7ec5b481fd53a3205864f9df40d17a"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-schemas-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "72998"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-snapshot-engine-0.1.0.tgz",
+      "name": "agentgit-snapshot-engine-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c75f015e44a9413d882323c8368744dafebd0778f388308cfd3552921bfb1b7b"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-snapshot-engine-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "16546"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:agentgit-workspace-index-0.1.0.tgz",
+      "name": "agentgit-workspace-index-0.1.0.tgz",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bea565d182f4ee8915e448fba550c51fd24af98fc1d820c99a40b9a0000f8413"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "agentgit-workspace-index-0.1.0.tgz"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "19235"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:manifest.json",
+      "name": "manifest.json",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0590ed0c9aae93e43038b1a97ab322b8bdaf82e2f0163633822ffc867a461529"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "manifest.json"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "6355"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:manifest.sha256",
+      "name": "manifest.sha256",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a83d8cc61041b4d4c05e62520f3b54a0bf284d0036c9705e9be1f18a945ec4d0"
+        }
+      ],
+      "properties": [
+        {
+          "name": "agentgit:artifact-path",
+          "value": "manifest.sha256"
+        },
+        {
+          "name": "agentgit:artifact-size-bytes",
+          "value": "80"
+        }
+      ]
+    }
+  ]
+}

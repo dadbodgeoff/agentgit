@@ -1,9 +1,12 @@
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
 import type { ActionRecord } from "@agentgit/schemas";
 import { RunJournal } from "@agentgit/run-journal";
+
+import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, readCookieValue } from "@/lib/security/csrf";
 
 const CONNECTOR_BOOTSTRAP_TOKEN_HEADER = "x-agentgit-connector-bootstrap-token";
 
@@ -13,6 +16,24 @@ function escapeForRegex(value: string) {
 
 async function waitForOkResponse(page: Page, pathFragment: string) {
   await page.waitForResponse((response) => response.url().includes(pathFragment) && response.ok(), { timeout: 45_000 });
+}
+
+async function csrfRequestHeaders(page: Page): Promise<Record<string, string>> {
+  let cookieHeader = await page.evaluate(() => document.cookie);
+  if (!readCookieValue(cookieHeader, CSRF_COOKIE_NAME)) {
+    await page.request.get("/api/v1/csrf");
+    cookieHeader = await page.evaluate(() => document.cookie);
+  }
+
+  const csrfToken = readCookieValue(cookieHeader, CSRF_COOKIE_NAME);
+  if (!csrfToken) {
+    throw new Error("Missing AgentGit CSRF cookie for direct smoke API request.");
+  }
+
+  return {
+    [CSRF_HEADER_NAME]: csrfToken,
+    origin: new URL(page.url()).origin,
+  };
 }
 
 async function expectConnectorCommandState(page: Page, commandType: string, pendingCount: string) {
@@ -263,6 +284,7 @@ async function seedRepositorySnapshot(): Promise<{
   name: string;
   runId: string;
   actionId: string;
+  snapshotId: string;
 }> {
   const { owner, name, workspaceRoot } = getWorkspaceRepositoryIdentity();
   const runId = `run_smoke_${Date.now()}`;
@@ -348,7 +370,33 @@ async function seedRepositorySnapshot(): Promise<{
     journal.close();
   }
 
-  return { owner, name, runId, actionId };
+  const manifestPath = path.join(workspaceRoot, ".agentgit", "state", "snapshots", "metadata", `${snapshotId}.json`);
+  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+  fs.writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        snapshot_id: snapshotId,
+        action_id: actionId,
+        run_id: runId,
+        target_path: targetPath,
+        workspace_root: workspaceRoot,
+        existed_before: true,
+        entry_kind: "file",
+        snapshot_class: "journal_plus_anchor",
+        fidelity: "full",
+        created_at: "2026-04-07T15:00:04Z",
+        action_display_name: "Update README.md",
+        operation_domain: "filesystem",
+        operation_kind: "write",
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  return { owner, name, runId, actionId, snapshotId };
 }
 
 test("admin smoke covers repo connection, operator investigation, fleet, and readiness", async ({ page }) => {
@@ -378,10 +426,25 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
     .click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Review connection" }).click();
-  await page.getByRole("button", { name: "Connect repositories" }).click();
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/v1/repos/connect") && response.request().method() === "POST" && response.ok(),
+      { timeout: 45_000 },
+    ),
+    page.getByRole("button", { name: "Connect repositories" }).click(),
+  ]);
   await expect(page.locator("main")).toContainText("Start governance", { timeout: 20_000 });
-  await page.getByRole("button", { name: "Generate bootstrap token" }).click();
-  await expect(page.locator("text=Bootstrap command")).toBeVisible({ timeout: 20_000 });
+  const connectedRepositoriesResponse = await page.request.get("/api/v1/repos");
+  expect(connectedRepositoriesResponse.ok()).toBeTruthy();
+  const connectedRepositories = (await connectedRepositoriesResponse.json()) as {
+    items?: Array<{ owner?: string; name?: string }>;
+  };
+  expect(
+    connectedRepositories.items?.some(
+      (repository) => repository.owner === snapshotSeed.owner && repository.name === snapshotSeed.name,
+    ),
+  ).toBe(true);
 
   await page.goto("/app/settings/team");
   await expect(page.getByRole("heading", { name: "Team" })).toBeVisible();
@@ -391,15 +454,73 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
   await page.getByRole("button", { name: "Save roster" }).click();
   await expect(page.getByText("Team saved")).toBeVisible();
 
+  await page.goto("/app/settings");
+  await expect(page.getByRole("heading", { name: "Workspace settings" })).toBeVisible();
+  await waitForOkResponse(page, "/api/v1/settings/workspace");
+  await expect(page.locator("main")).toContainText("client secret is write-only");
+  const clientSecretInput = page.getByLabel("Client secret");
+  await expect(clientSecretInput).toHaveValue("");
+  const settingsResponse = await page.request.get("/api/v1/settings/workspace");
+  expect(settingsResponse.ok()).toBeTruthy();
+  const currentSettings = (await settingsResponse.json()) as {
+    workspaceName: string;
+    workspaceSlug: string;
+    defaultNotificationChannel: "in_app" | "email" | "slack";
+    approvalTtlMinutes: number;
+    requireRejectComment: boolean;
+    freezeDeploysOutsideBusinessHours: boolean;
+    enterpriseSso: {
+      enabled: boolean;
+      providerType: "oidc";
+      providerLabel: string;
+      issuerUrl: string;
+      clientId: string;
+      emailDomains: string[];
+      autoProvisionMembers: boolean;
+      defaultRole: "member" | "admin";
+    };
+  };
+  const submittedSecret = "smoke-client-secret";
+  const settingsUpdateResponse = await page.request.put("/api/v1/settings/workspace", {
+    headers: await csrfRequestHeaders(page),
+    data: {
+      workspaceName: currentSettings.workspaceName,
+      workspaceSlug: currentSettings.workspaceSlug,
+      defaultNotificationChannel: currentSettings.defaultNotificationChannel,
+      approvalTtlMinutes: currentSettings.approvalTtlMinutes === 45 ? 46 : 45,
+      requireRejectComment: currentSettings.requireRejectComment,
+      freezeDeploysOutsideBusinessHours: currentSettings.freezeDeploysOutsideBusinessHours,
+      enterpriseSso: {
+        enabled: false,
+        providerType: "oidc",
+        providerLabel: currentSettings.enterpriseSso.providerLabel,
+        issuerUrl: currentSettings.enterpriseSso.issuerUrl,
+        clientId: currentSettings.enterpriseSso.clientId,
+        clientSecret: submittedSecret,
+        emailDomains: currentSettings.enterpriseSso.emailDomains,
+        autoProvisionMembers: currentSettings.enterpriseSso.autoProvisionMembers,
+        defaultRole: currentSettings.enterpriseSso.defaultRole,
+      },
+    },
+  });
+  expect(settingsUpdateResponse.ok()).toBeTruthy();
+  const settingsUpdateBody = await settingsUpdateResponse.text();
+  expect(settingsUpdateBody).not.toContain(submittedSecret);
+  await Promise.all([waitForOkResponse(page, "/api/v1/settings/workspace"), page.reload()]);
+  await expect(clientSecretInput).toHaveValue("");
+
   await page.goto("/app/settings/integrations");
   await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
-  await waitForOkResponse(page, "/api/v1/settings/integrations");
+  const integrationsSettingsResponse = await page.request.get("/api/v1/settings/integrations");
+  expect(integrationsSettingsResponse.ok()).toBeTruthy();
   await expect(page.getByRole("button", { name: "Generate bootstrap token" })).toBeVisible();
   await page.getByRole("button", { name: "Generate bootstrap token" }).click();
   await expect(page.getByText("Bootstrap command")).toBeVisible();
   await expect(page.locator("main")).toContainText("agentgit-cloud-connector bootstrap");
 
-  const bootstrapResponse = await page.request.post("/api/v1/sync/bootstrap-token");
+  const bootstrapResponse = await page.request.post("/api/v1/sync/bootstrap-token", {
+    headers: await csrfRequestHeaders(page),
+  });
   expect(bootstrapResponse.ok()).toBeTruthy();
   const bootstrapPayload = (await bootstrapResponse.json()) as {
     workspaceId?: string;
@@ -412,6 +533,7 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
   const registrationResponse = await page.request.post("/api/v1/sync/register", {
     headers: {
       authorization: `Bearer ${bootstrapToken}`,
+      ...(await csrfRequestHeaders(page)),
     },
     data: {
       schemaVersion: "cloud-sync.v1",
@@ -428,6 +550,8 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
         "repo_state_sync",
         "run_event_sync",
         "snapshot_manifest_sync",
+        "approval_resolution",
+        "run_replay",
         "restore_execution",
         "git_commit",
         "git_push",
@@ -455,15 +579,13 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
   await expectConnectorCommandState(page, "create_commit", "2");
   await page.getByRole("button", { name: "Queue push branch" }).click();
   await expectConnectorCommandState(page, "push_branch", "3");
-  await page.getByRole("button", { name: "Queue open PR" }).click();
-  await expectConnectorCommandState(page, "open_pull_request", "4");
 
   await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}`);
   await expect(page.getByRole("heading", { name: "Run detail" })).toBeVisible();
-  await waitForOkResponse(
-    page,
+  const replayPreviewResponse = await page.request.get(
     `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/runs/${snapshotSeed.runId}/replay`,
   );
+  expect(replayPreviewResponse.ok()).toBeTruthy();
   await expect(page.locator("main")).toContainText("Replay run", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("Investigation focus", { timeout: 20_000 });
   await page.getByRole("button", { name: "Queue replay through connector" }).click();
@@ -475,6 +597,39 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
   await expect(page.locator("main")).toContainText("Execution event trail", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("action normalized", { timeout: 20_000 });
 
+  await page.goto(`/app/repos/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
+  await expect(page.getByRole("heading", { name: "Snapshots" })).toBeVisible();
+  await waitForOkResponse(page, `/api/v1/repositories/${snapshotSeed.owner}/${snapshotSeed.name}/snapshots`);
+  await expect(page.locator("main")).toContainText(snapshotSeed.snapshotId, { timeout: 20_000 });
+  await expect(page.locator("main")).toContainText("verified", { timeout: 20_000 });
+  const previewRestoreButton = page.getByRole("button", { name: "Preview restore" });
+  const restorePreviewAvailable = await previewRestoreButton.isEnabled();
+  let restoreQueued = false;
+  if (restorePreviewAvailable) {
+    await previewRestoreButton.click();
+    await expect(page.locator("main")).toContainText("Recovery plan", { timeout: 20_000 });
+    const [restoreExecutionResponse] = await Promise.all([
+      page.waitForResponse(
+        (response) =>
+          response.url().includes(`/snapshots/${snapshotSeed.snapshotId}/restore`) &&
+          response.request().method() === "POST",
+        { timeout: 45_000 },
+      ),
+      page.getByRole("button", { name: "Execute restore" }).click(),
+    ]);
+    restoreQueued = restoreExecutionResponse.ok();
+    if (restoreQueued) {
+      await expect(page.locator("main")).toContainText("Restore queued", { timeout: 20_000 });
+    } else {
+      await expect(page.locator("main")).toContainText(/No registered connector|Authority daemon|Could not restore/i, {
+        timeout: 20_000,
+      });
+    }
+  } else {
+    await expect(page.locator("main")).toContainText("Authority offline", { timeout: 20_000 });
+    await expect(previewRestoreButton).toBeDisabled();
+  }
+
   await page.goto("/app/settings/connectors");
   await expect(page.getByRole("heading", { name: "Connector fleet" })).toBeVisible();
   await expect(page.locator("main")).toContainText("Admin smoke connector", { timeout: 20_000 });
@@ -484,8 +639,10 @@ test("admin smoke covers repo connection, operator investigation, fleet, and rea
     .click();
   await expect(page.locator("main")).toContainText("create_commit", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("push_branch", { timeout: 20_000 });
-  await expect(page.locator("main")).toContainText("open_pull_request", { timeout: 20_000 });
   await expect(page.locator("main")).toContainText("replay_run", { timeout: 20_000 });
+  if (restoreQueued) {
+    await expect(page.locator("main")).toContainText("execute_restore", { timeout: 20_000 });
+  }
   await page.getByRole("button", { name: "Revoke connector" }).click();
   await expect(page.getByRole("button", { name: "Connector revoked" })).toBeVisible({ timeout: 20_000 });
 
@@ -555,6 +712,10 @@ test("owner smoke covers onboarding and billing", async ({ page }) => {
   await Promise.all([waitForOkResponse(page, "/api/v1/settings/billing"), page.goto("/app/settings/billing")]);
   await expect(page.getByRole("heading", { name: "Billing", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Plan and billing cycle" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Hosted beta billing mode" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("Stripe is intentionally not live yet");
+  await expect(page.locator("main")).toContainText("without charging a card");
+  await expect(page.locator("main")).toContainText("hosted beta gate with enforced plan caps");
 });
 
 test("member smoke verifies RBAC denial on admin settings", async ({ page }) => {

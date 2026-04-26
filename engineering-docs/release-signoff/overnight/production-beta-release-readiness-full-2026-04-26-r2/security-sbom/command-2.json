@@ -1,0 +1,10 @@
+{
+  "command": "node scripts/generate-release-sbom.mjs --output /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r2/security-sbom/release-sbom.cdx.json --artifacts-dir /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r2/security-sbom/packed",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "{\n  \"output\": \"/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r2/security-sbom/release-sbom.cdx.json\",\n  \"components\": 41,\n  \"artifact_components\": 16\n}\n",
+  "stderr": ""
+}

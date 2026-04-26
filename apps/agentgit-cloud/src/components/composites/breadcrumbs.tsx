@@ -51,9 +51,7 @@ export function Breadcrumbs({ items, className }: { items: BreadcrumbItem[]; cla
                   aria-current={isLast ? "page" : undefined}
                   className={cn(
                     "text-[13px]",
-                    isLast
-                      ? "font-medium text-[var(--ag-text-primary)]"
-                      : "text-[var(--ag-text-secondary)]",
+                    isLast ? "font-medium text-[var(--ag-text-primary)]" : "text-[var(--ag-text-secondary)]",
                   )}
                 >
                   {item.label}

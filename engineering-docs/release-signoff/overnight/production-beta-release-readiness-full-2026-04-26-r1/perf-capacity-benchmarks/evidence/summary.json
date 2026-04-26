@@ -1,0 +1,150 @@
+{
+  "ok": true,
+  "generated_at": "2026-04-26T22:05:18.320Z",
+  "iterations": 8,
+  "latency": {
+    "action_submission_decision_ms": {
+      "count": 8,
+      "min_ms": 200.7,
+      "p50_ms": 202.24,
+      "p95_ms": 225.64,
+      "p99_ms": 225.64,
+      "max_ms": 225.64
+    },
+    "snapshot_creation_ms": {
+      "count": 8,
+      "min_ms": 184.76,
+      "p50_ms": 193.83,
+      "p95_ms": 211.84,
+      "p99_ms": 211.84,
+      "max_ms": 211.84
+    },
+    "snapshot_restore_ms": {
+      "count": 8,
+      "min_ms": 178.17,
+      "p50_ms": 180.65,
+      "p95_ms": 185.92,
+      "p99_ms": 185.92,
+      "max_ms": 185.92
+    },
+    "audit_query_ms": {
+      "count": 8,
+      "min_ms": 171.73,
+      "p50_ms": 174.13,
+      "p95_ms": 191.04,
+      "p99_ms": 191.04,
+      "max_ms": 191.04
+    }
+  },
+  "throughput": {
+    "actions_per_second": 4.75,
+    "snapshots_per_minute": 99.92
+  },
+  "cold_start": {
+    "daemon_boot_ms": 1174.4,
+    "cold_first_action_after_restart_ms": 220.65,
+    "first_action_after_boot_ms": 222.8
+  },
+  "page_response": {
+    "status": "skipped",
+    "reason": "No --base-url was supplied; browser/page render latency needs a hosted local or deployed cloud URL."
+  },
+  "resource_samples": [
+    {
+      "label": "after_boot",
+      "pid": 87400,
+      "rss_mb": 137.95,
+      "cpu_percent": 3.4
+    },
+    {
+      "label": "after_actions",
+      "pid": 87400,
+      "rss_mb": 149.95,
+      "cpu_percent": 3.4
+    },
+    {
+      "label": "after_snapshots_and_restores",
+      "pid": 87400,
+      "rss_mb": 177.98,
+      "cpu_percent": 5
+    },
+    {
+      "label": "after_audit_queries",
+      "pid": 87400,
+      "rss_mb": 178.48,
+      "cpu_percent": 1.9
+    },
+    {
+      "label": "after_restart_first_action",
+      "pid": 88484,
+      "rss_mb": 147.86,
+      "cpu_percent": 23.6
+    }
+  ],
+  "budgets": {
+    "action_submission_decision_ms": {
+      "p99_ms": 2500
+    },
+    "snapshot_creation_ms": {
+      "p99_ms": 2500
+    },
+    "snapshot_restore_ms": {
+      "p99_ms": 3000
+    },
+    "audit_query_ms": {
+      "p99_ms": 2000
+    },
+    "daemon_boot_ms": {
+      "max_ms": 10000
+    },
+    "cold_first_action_after_restart_ms": {
+      "max_ms": 3000
+    }
+  },
+  "budget_results": [
+    {
+      "metric": "action_submission_decision_ms",
+      "budget": "p99_ms",
+      "threshold_ms": 2500,
+      "actual_ms": 225.64,
+      "ok": true
+    },
+    {
+      "metric": "snapshot_creation_ms",
+      "budget": "p99_ms",
+      "threshold_ms": 2500,
+      "actual_ms": 211.84,
+      "ok": true
+    },
+    {
+      "metric": "snapshot_restore_ms",
+      "budget": "p99_ms",
+      "threshold_ms": 3000,
+      "actual_ms": 185.92,
+      "ok": true
+    },
+    {
+      "metric": "audit_query_ms",
+      "budget": "p99_ms",
+      "threshold_ms": 2000,
+      "actual_ms": 191.04,
+      "ok": true
+    },
+    {
+      "metric": "daemon_boot_ms",
+      "budget": "max_ms",
+      "threshold_ms": 10000,
+      "actual_ms": 1174.4,
+      "ok": true
+    },
+    {
+      "metric": "cold_first_action_after_restart_ms",
+      "budget": "max_ms",
+      "threshold_ms": 3000,
+      "actual_ms": 220.65,
+      "ok": true
+    }
+  ],
+  "output_dir": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r1/perf-capacity-benchmarks/evidence",
+  "temp_workspace": "/tmp/agentgit-bench-JyLIYz/workspace"
+}

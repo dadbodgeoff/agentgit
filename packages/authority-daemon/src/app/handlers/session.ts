@@ -1,6 +1,7 @@
 import type { RequestContext } from "@agentgit/core-ports";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type { SessionCredentialBroker } from "@agentgit/credential-broker";
@@ -96,7 +97,13 @@ function probeContainerRuntime(runtime: "docker" | "podman"): { usable: boolean;
     };
   }
 
-  const result = spawnSync(runtime, ["info"], {
+  const probeArgs =
+    runtime === "docker" ? ["--config", path.join(os.tmpdir(), "agentgit-empty-docker-config"), "info"] : ["info"];
+  if (runtime === "docker") {
+    fs.mkdirSync(path.join(os.tmpdir(), "agentgit-empty-docker-config"), { recursive: true });
+  }
+
+  const result = spawnSync(runtime, probeArgs, {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 2_000,
@@ -108,7 +115,7 @@ function probeContainerRuntime(runtime: "docker" | "podman"): { usable: boolean;
     };
   }
 
-  if (result.status !== 0) {
+  if (result.status !== 0 || result.stderr.trim().length > 0) {
     return {
       usable: false,
       reason: result.stderr.trim() || `${runtime} info exited with status ${result.status}.`,

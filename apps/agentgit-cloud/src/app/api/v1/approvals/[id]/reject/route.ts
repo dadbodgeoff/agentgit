@@ -9,7 +9,7 @@ import {
   getRepositoryConnectorAvailability,
   queueConnectorCommand,
 } from "@/lib/backend/control-plane/connectors";
-import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { getWorkspaceApprovalProjection } from "@/lib/backend/workspace/workspace-approvals";
 import { appendWorkspaceAuditEntry } from "@/lib/backend/workspace/workspace-audit-events";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
@@ -34,8 +34,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     rawPayload = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
 
     throw error;

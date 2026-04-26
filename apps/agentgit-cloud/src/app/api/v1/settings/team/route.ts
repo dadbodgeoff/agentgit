@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { requireApiRole } from "@/lib/auth/api-session";
 import { resolveWorkspaceTeam, saveWorkspaceTeam } from "@/lib/backend/workspace/workspace-team";
 import { WorkspaceBillingLimitError } from "@/lib/backend/workspace/workspace-billing";
-import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { WorkspaceTeamUpdateSchema } from "@/schemas/cloud";
 
@@ -30,8 +30,9 @@ export async function PUT(request: Request): Promise<NextResponse> {
   try {
     rawBody = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
     throw error;
   }

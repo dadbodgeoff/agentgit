@@ -282,6 +282,7 @@ describe("cloud connector runtime", () => {
           bootstrapToken: "agcbt_test",
           connectorName: "MacBook connector",
           machineName: "geoffrey-mbp",
+          capabilities: ["repo_state_sync", "run_event_sync", "snapshot_manifest_sync", "git_commit"],
         });
 
         const result = await runtime.syncOnce();
@@ -295,6 +296,52 @@ describe("cloud connector runtime", () => {
         expect(events.some((event) => event.type === "run.lifecycle")).toBe(true);
         expect(events.some((event) => event.type === "run.event")).toBe(true);
         expect(acknowledgements.map((entry) => entry.status)).toEqual(["acked", "completed"]);
+      } finally {
+        store.close();
+      }
+    });
+  });
+
+  it("refuses cloud-driven write commands when the connector registered read-only capabilities", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentgit-cloud-connector-"));
+    tempDirs.push(tempDir);
+    const repoRoot = path.join(tempDir, "repo");
+    fs.mkdirSync(repoRoot, { recursive: true });
+    initGitRepo(repoRoot);
+    seedJournal(repoRoot);
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "# Connector Test\n\nUpdated by connector.\n", "utf8");
+
+    await withServer(async ({ baseUrl, acknowledgements }) => {
+      const stateDbPath = path.join(tempDir, "connector.db");
+      const store = new CloudConnectorStateStore(stateDbPath);
+      const service = new CloudConnectorService(store, new CloudSyncClient(baseUrl));
+      const runtime = new CloudConnectorRuntime({
+        stateStore: store,
+        service,
+        workspaceRoot: repoRoot,
+        connectorVersion: "0.1.0",
+        now: () => "2026-04-07T19:00:10Z",
+      });
+
+      try {
+        await runtime.bootstrapRegister({
+          cloudBaseUrl: baseUrl,
+          workspaceId: "ws_acme_01",
+          bootstrapToken: "agcbt_test",
+        });
+
+        const result = await runtime.syncOnce();
+
+        expect(result.commands).toHaveLength(1);
+        expect(result.commands[0]).toMatchObject({
+          commandId: "cmd_test_01",
+          status: "failed",
+        });
+        expect(result.commands[0]?.message).toContain("requires capability git_commit");
+        expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim()).toBe(
+          "1",
+        );
+        expect(acknowledgements.map((entry) => entry.status)).toEqual(["acked", "failed"]);
       } finally {
         store.close();
       }
@@ -330,6 +377,7 @@ describe("cloud connector runtime", () => {
             bootstrapToken: "agcbt_test",
             connectorName: "MacBook connector",
             machineName: "geoffrey-mbp",
+            capabilities: ["repo_state_sync", "run_event_sync", "snapshot_manifest_sync", "git_commit"],
           });
 
           const result = await runtime.syncOnce();
@@ -417,6 +465,7 @@ describe("cloud connector runtime", () => {
               cloudBaseUrl: baseUrl,
               workspaceId: "ws_acme_01",
               bootstrapToken: "agcbt_test",
+              capabilities: ["repo_state_sync", "run_event_sync", "snapshot_manifest_sync", "pull_request_open"],
             });
 
             const processed = await runtime.processCommands();
@@ -502,6 +551,7 @@ describe("cloud connector runtime", () => {
             cloudBaseUrl: baseUrl,
             workspaceId: "ws_acme_01",
             bootstrapToken: "agcbt_test",
+            capabilities: ["repo_state_sync", "run_event_sync", "snapshot_manifest_sync", "approval_resolution"],
           });
 
           const processed = await runtime.processCommands();
@@ -678,6 +728,7 @@ describe("cloud connector runtime", () => {
             cloudBaseUrl: baseUrl,
             workspaceId: "ws_acme_01",
             bootstrapToken: "agcbt_test",
+            capabilities: ["repo_state_sync", "run_event_sync", "snapshot_manifest_sync", "run_replay"],
           });
 
           const processed = await runtime.processCommands();

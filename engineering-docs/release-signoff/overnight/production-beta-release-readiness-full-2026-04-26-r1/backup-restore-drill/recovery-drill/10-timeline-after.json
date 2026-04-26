@@ -1,0 +1,316 @@
+{
+  "run_summary": {
+    "run_id": "run_019dcbd4322d76ea8e0d2436cde18f9f",
+    "session_id": "sess_019dcbd4320e71a993f87a368f7db803",
+    "workflow_name": "recovery-drill",
+    "agent_framework": "cli",
+    "agent_name": "agentgit-cli",
+    "workspace_roots": [
+      "/tmp/agentgit-recovery-drill-5piVTQ/workspace"
+    ],
+    "event_count": 13,
+    "latest_event": {
+      "sequence": 13,
+      "event_type": "recovery.executed",
+      "occurred_at": "2026-04-26T22:06:15.471Z",
+      "recorded_at": "2026-04-26T22:06:15.471Z"
+    },
+    "budget_config": {
+      "max_mutating_actions": null,
+      "max_destructive_actions": null
+    },
+    "budget_usage": {
+      "mutating_actions": 2,
+      "destructive_actions": 1
+    },
+    "maintenance_status": {
+      "projection_status": "fresh",
+      "projection_lag_events": 0,
+      "degraded_artifact_capture_actions": 0,
+      "low_disk_pressure_signals": 0,
+      "artifact_health": {
+        "total": 3,
+        "available": 3,
+        "missing": 0,
+        "expired": 0,
+        "corrupted": 0,
+        "tampered": 0
+      }
+    },
+    "created_at": "2026-04-26T22:06:14.573Z",
+    "started_at": "2026-04-26T22:06:14.574Z"
+  },
+  "steps": [
+    {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_run_019dcbd4322d76ea8e0d2436cde18f9f_1",
+      "run_id": "run_019dcbd4322d76ea8e0d2436cde18f9f",
+      "sequence": 1,
+      "step_type": "system_step",
+      "title": "Run created",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": null,
+      "decision": null,
+      "reversibility_class": null,
+      "confidence": 0.95,
+      "summary": "Registered run for workflow recovery-drill.",
+      "warnings": [],
+      "primary_artifacts": [],
+      "artifact_previews": [],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": null,
+        "execution_id": null,
+        "recovery_plan_ids": [],
+        "target_locator": null,
+        "recovery_target_type": null,
+        "recovery_target_label": null,
+        "recovery_scope_paths": [],
+        "recovery_strategy": null,
+        "later_actions_affected": null,
+        "overlapping_paths": [],
+        "data_loss_risk": null
+      },
+      "occurred_at": "2026-04-26T22:06:14.573Z"
+    },
+    {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_run_019dcbd4322d76ea8e0d2436cde18f9f_2",
+      "run_id": "run_019dcbd4322d76ea8e0d2436cde18f9f",
+      "sequence": 2,
+      "step_type": "system_step",
+      "title": "Run started",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": null,
+      "decision": null,
+      "reversibility_class": null,
+      "confidence": 0.95,
+      "summary": "Run entered active execution state.",
+      "warnings": [],
+      "primary_artifacts": [],
+      "artifact_previews": [],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": null,
+        "execution_id": null,
+        "recovery_plan_ids": [],
+        "target_locator": null,
+        "recovery_target_type": null,
+        "recovery_target_label": null,
+        "recovery_scope_paths": [],
+        "recovery_strategy": null,
+        "later_actions_affected": null,
+        "overlapping_paths": [],
+        "data_loss_risk": null
+      },
+      "occurred_at": "2026-04-26T22:06:14.574Z"
+    },
+    {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_run_019dcbd4322d76ea8e0d2436cde18f9f_action_act_019dcbd432d37174a37c7edb4097e188",
+      "run_id": "run_019dcbd4322d76ea8e0d2436cde18f9f",
+      "sequence": 3,
+      "step_type": "action_step",
+      "title": "Write file",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": "act_019dcbd432d37174a37c7edb4097e188",
+      "decision": "allow",
+      "primary_reason": {
+        "code": "TRUSTED_GOVERNED_FS_WRITE",
+        "message": "Small governed filesystem writes use atomic durable replacement and are allowed automatically."
+      },
+      "reversibility_class": "compensatable",
+      "confidence": 1,
+      "summary": "Executed Write file.",
+      "warnings": [
+        "Small governed filesystem writes use atomic durable replacement and are allowed automatically."
+      ],
+      "primary_artifacts": [
+        {
+          "type": "execution",
+          "label": "exec_fs_1777241174742"
+        },
+        {
+          "artifact_id": "artifact_file_1777241174754",
+          "integrity": {
+            "schema_version": "artifact-integrity.v1",
+            "digest_algorithm": "sha256",
+            "digest": "f2b54e00d0b2c89c01c5ee3e16da3ca15e80fd2dcb465926f57692ee73403204"
+          },
+          "type": "file_content",
+          "label": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+          "artifact_status": "available"
+        },
+        {
+          "artifact_id": "artifact_diff_1777241174754",
+          "integrity": {
+            "schema_version": "artifact-integrity.v1",
+            "digest_algorithm": "sha256",
+            "digest": "d9ca8c0d8508ffc4f8e5f474121076ec3d002d4a7e5191fdc63fc00a4df5d6ce"
+          },
+          "type": "diff",
+          "label": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+          "artifact_status": "available"
+        }
+      ],
+      "artifact_previews": [
+        {
+          "type": "file_content",
+          "label": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+          "preview": "drill-v1"
+        },
+        {
+          "type": "diff",
+          "label": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+          "preview": "+ drill-v1"
+        }
+      ],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": null,
+        "execution_id": "exec_fs_1777241174742",
+        "recovery_plan_ids": [],
+        "target_locator": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+        "recovery_target_type": null,
+        "recovery_target_label": null,
+        "recovery_scope_paths": [],
+        "recovery_strategy": null,
+        "later_actions_affected": null,
+        "overlapping_paths": [],
+        "data_loss_risk": null
+      },
+      "occurred_at": "2026-04-26T22:06:14.741Z"
+    },
+    {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_run_019dcbd4322d76ea8e0d2436cde18f9f_action_act_019dcbd43396700f8a4f75bc9fad8e88",
+      "run_id": "run_019dcbd4322d76ea8e0d2436cde18f9f",
+      "sequence": 7,
+      "step_type": "action_step",
+      "title": "Delete file",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": "act_019dcbd43396700f8a4f75bc9fad8e88",
+      "decision": "allow_with_snapshot",
+      "primary_reason": {
+        "code": "FS_DESTRUCTIVE_WORKSPACE_MUTATION",
+        "message": "Destructive filesystem mutations require a recovery boundary."
+      },
+      "reversibility_class": "reversible",
+      "confidence": 1,
+      "summary": "Executed Delete file after creating snapshot snap_1777241174938_9e4a0f26126f422fb574024dd6ca22f3.",
+      "warnings": [
+        "Destructive filesystem mutations require a recovery boundary."
+      ],
+      "primary_artifacts": [
+        {
+          "type": "snapshot",
+          "label": "snap_1777241174938_9e4a0f26126f422fb574024dd6ca22f3"
+        },
+        {
+          "type": "execution",
+          "label": "exec_fs_1777241174949"
+        },
+        {
+          "artifact_id": "artifact_diff_1777241174949",
+          "integrity": {
+            "schema_version": "artifact-integrity.v1",
+            "digest_algorithm": "sha256",
+            "digest": "a703801cfd16eb26ffd409d9a04dbb94f3e9d6dbfde349663dc99b1ec645c59a"
+          },
+          "type": "diff",
+          "label": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+          "artifact_status": "available"
+        }
+      ],
+      "artifact_previews": [
+        {
+          "type": "file_content",
+          "label": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+          "preview": "Removed /tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt."
+        },
+        {
+          "type": "diff",
+          "label": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+          "preview": "- drill-v1"
+        }
+      ],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": "snap_1777241174938_9e4a0f26126f422fb574024dd6ca22f3",
+        "execution_id": "exec_fs_1777241174949",
+        "recovery_plan_ids": [],
+        "target_locator": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+        "recovery_target_type": null,
+        "recovery_target_label": null,
+        "recovery_scope_paths": [],
+        "recovery_strategy": null,
+        "later_actions_affected": null,
+        "overlapping_paths": [],
+        "data_loss_risk": null
+      },
+      "occurred_at": "2026-04-26T22:06:14.935Z"
+    },
+    {
+      "schema_version": "timeline-step.v1",
+      "step_id": "step_run_019dcbd4322d76ea8e0d2436cde18f9f_recovery_snap_1777241174938_9e4a0f26126f422fb574024dd6ca22f3",
+      "run_id": "run_019dcbd4322d76ea8e0d2436cde18f9f",
+      "sequence": 12,
+      "step_type": "recovery_step",
+      "title": "Recovery executed",
+      "status": "completed",
+      "provenance": "governed",
+      "action_id": "act_019dcbd43396700f8a4f75bc9fad8e88",
+      "decision": null,
+      "reversibility_class": "reversible",
+      "confidence": 0.97,
+      "summary": "Executed recovery for action act_019dcbd43396700f8a4f75bc9fad8e88.",
+      "warnings": [],
+      "primary_artifacts": [
+        {
+          "type": "snapshot",
+          "label": "action act_019dcbd43396700f8a4f75bc9fad8e88"
+        }
+      ],
+      "artifact_previews": [
+        {
+          "type": "restore",
+          "label": "action act_019dcbd43396700f8a4f75bc9fad8e88",
+          "preview": "Restored /tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt from action act_019dcbd43396700f8a4f75bc9fad8e88."
+        }
+      ],
+      "external_effects": [],
+      "related": {
+        "snapshot_id": "snap_1777241174938_9e4a0f26126f422fb574024dd6ca22f3",
+        "execution_id": null,
+        "recovery_plan_ids": [
+          "rec_1777241175295_2b41abdf5ef54bafa17f8f7139435094",
+          "rec_1777241175468_a12a82d9fb364116adb93be1199531b9"
+        ],
+        "target_locator": "/tmp/agentgit-recovery-drill-5piVTQ/workspace/recovery-drill.txt",
+        "recovery_target_type": "action_boundary",
+        "recovery_target_label": "action act_019dcbd43396700f8a4f75bc9fad8e88",
+        "recovery_scope_paths": [],
+        "recovery_strategy": "restore_snapshot",
+        "recovery_downgrade_reason": null,
+        "later_actions_affected": 0,
+        "overlapping_paths": [],
+        "data_loss_risk": "low"
+      },
+      "occurred_at": "2026-04-26T22:06:15.295Z"
+    }
+  ],
+  "projection_status": "fresh",
+  "visibility_scope": "internal",
+  "redactions_applied": 0,
+  "preview_budget": {
+    "max_inline_preview_chars": 160,
+    "max_total_inline_preview_chars": 1200,
+    "preview_chars_used": 167,
+    "truncated_previews": 0,
+    "omitted_previews": 0
+  }
+}

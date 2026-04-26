@@ -88,6 +88,7 @@ const RUNTIME_COMMANDS = new Set([
   "submit-ticket-remove-label",
   "submit-ticket-assign-user",
   "submit-ticket-unassign-user",
+  "create-run-checkpoint",
   "plan-recovery",
   "execute-recovery",
 ]);
@@ -142,6 +143,25 @@ function parseObjectJsonArgument(
   } catch (error) {
     throw inputError(`${errorMessage}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function normalizeCliRecoveryTarget(rawTarget: string) {
+  if (rawTarget.includes("#")) {
+    return {
+      type: "run_checkpoint" as const,
+      run_checkpoint: rawTarget,
+    };
+  }
+
+  return rawTarget;
+}
+
+function formatCreateRunCheckpoint(result: Awaited<ReturnType<AuthorityClient["createRunCheckpoint"]>>): string {
+  return [
+    `Run checkpoint: ${result.run_checkpoint}`,
+    `Checkpoint kind: ${result.checkpoint_kind}`,
+    `Snapshot: ${result.snapshot_record.snapshot_id}`,
+  ].join("\n");
 }
 
 async function submitAction(
@@ -1190,14 +1210,38 @@ export async function runRuntimeCommand(options: {
       printResult(result, jsonOutput, formatSubmitAction);
       return;
     }
+    case "create-run-checkpoint": {
+      const [runId, checkpointKind, ...reasonParts] = rest;
+
+      if (!runId) {
+        throw usageError(
+          "Usage: agentgit-authority [global-flags] create-run-checkpoint <run-id> [branch_point|hard_checkpoint] [reason]",
+        );
+      }
+
+      if (checkpointKind && checkpointKind !== "branch_point" && checkpointKind !== "hard_checkpoint") {
+        throw inputError("create-run-checkpoint kind must be either branch_point or hard_checkpoint.");
+      }
+      const checkpointKindValue =
+        checkpointKind === "branch_point" || checkpointKind === "hard_checkpoint" ? checkpointKind : undefined;
+
+      const result = await client.createRunCheckpoint({
+        run_id: runId,
+        workspace_root: workspaceRoot,
+        ...(checkpointKindValue ? { checkpoint_kind: checkpointKindValue } : {}),
+        ...(reasonParts.length > 0 ? { reason: reasonParts.join(" ") } : {}),
+      });
+      printResult(result, jsonOutput, formatCreateRunCheckpoint);
+      return;
+    }
     case "plan-recovery": {
       const boundaryId = rest[0];
 
       if (!boundaryId) {
-        throw usageError("Usage: agentgit-authority [global-flags] plan-recovery <snapshot-id|action-id>");
+        throw usageError("Usage: agentgit-authority [global-flags] plan-recovery <snapshot-id|action-id|run-checkpoint>");
       }
 
-      const result = await client.planRecovery(boundaryId);
+      const result = await client.planRecovery(normalizeCliRecoveryTarget(boundaryId));
       printResult(result, jsonOutput, formatPlanRecovery);
       return;
     }
@@ -1205,10 +1249,12 @@ export async function runRuntimeCommand(options: {
       const boundaryId = rest[0];
 
       if (!boundaryId) {
-        throw usageError("Usage: agentgit-authority [global-flags] execute-recovery <snapshot-id|action-id>");
+        throw usageError(
+          "Usage: agentgit-authority [global-flags] execute-recovery <snapshot-id|action-id|run-checkpoint>",
+        );
       }
 
-      const result = await client.executeRecovery(boundaryId);
+      const result = await client.executeRecovery(normalizeCliRecoveryTarget(boundaryId));
       printResult(result, jsonOutput, formatExecuteRecovery);
       return;
     }

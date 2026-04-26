@@ -1,0 +1,10 @@
+{
+  "command": "node --test scripts/verify-cli-compatibility.test.mjs scripts/release-package-config.test.mjs",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "✔ release package config discovers every public package (0.558084ms)\n✔ authority CLI compatibility covers only the authority release surface (0.063833ms)\n✔ CLI compatibility manifest filtering keeps only authority surface packages (0.588291ms)\n✔ CLI compatibility manifest filtering fails when a required authority package is missing (0.294667ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 44.224459\n",
+  "stderr": ""
+}

@@ -1,0 +1,10 @@
+{
+  "command": "pnpm --filter @agentgit/control-plane-state test",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> @agentgit/control-plane-state@0.1.0 test /Users/geoffreyfernald/Documents/agentgit/packages/control-plane-state\n> vitest run --dir src\n\n\n RUN  v4.1.2 /Users/geoffreyfernald/Documents/agentgit/packages/control-plane-state\n\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)\n   Start at  16:35:04\n   Duration  313ms (transform 74ms, setup 0ms, import 159ms, tests 75ms, environment 0ms)\n\n",
+  "stderr": ""
+}

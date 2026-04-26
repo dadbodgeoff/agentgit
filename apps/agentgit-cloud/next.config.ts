@@ -5,8 +5,27 @@ import { buildSecurityHeaders } from "./src/lib/security/http";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  serverExternalPackages: ["better-sqlite3"],
+  serverExternalPackages: [
+    "@agentgit/control-plane-state",
+    "@agentgit/integration-state",
+    "@agentgit/run-journal",
+    "@agentgit/snapshot-engine",
+    "@agentgit/workspace-index",
+    "better-sqlite3",
+  ],
   transpilePackages: ["@agentgit/schemas"],
+  webpack(config, { isServer }) {
+    if (isServer) {
+      config.externals = [
+        ...(Array.isArray(config.externals) ? config.externals : [config.externals].filter(Boolean)),
+        {
+          "better-sqlite3": "commonjs better-sqlite3",
+        },
+      ];
+    }
+
+    return config;
+  },
   async headers() {
     return [
       {

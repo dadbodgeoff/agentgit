@@ -1,0 +1,10 @@
+{
+  "command": "node scripts/stress-autonomous-governance.mjs --profile openclaw --iterations 36 --recover-every 1 --shell-share 0.75 --initialize-git --git-remote https://github.com/openclaw/production-readiness-pipeline.git --workflow-name openclaw-production-readiness --session-root /tmp/agentgit-openclaw-qualification-production-beta-implemented-core-2026-04-26-r2-1777234920464 --seed 20260425 --delay-ms 25",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 1,
+    "signal": null
+  },
+  "stdout": "\n== Build authority surfaces ==\n\n== Seed workspace and policy ==\n\n== Start daemon ==\n",
+  "stderr": "file:///Users/geoffreyfernald/Documents/agentgit/scripts/stress-autonomous-governance.mjs:972\n  throw new Error(`Timed out while waiting for ${label}.`);\n        ^\n\nError: Timed out while waiting for authority daemon socket.\n    at waitFor (file:///Users/geoffreyfernald/Documents/agentgit/scripts/stress-autonomous-governance.mjs:972:9)\n    at async startDaemon (file:///Users/geoffreyfernald/Documents/agentgit/scripts/stress-autonomous-governance.mjs:992:3)\n    at async main (file:///Users/geoffreyfernald/Documents/agentgit/scripts/stress-autonomous-governance.mjs:1051:20)\n    at async file:///Users/geoffreyfernald/Documents/agentgit/scripts/stress-autonomous-governance.mjs:1395:1\n\nNode.js v25.2.1\n"
+}

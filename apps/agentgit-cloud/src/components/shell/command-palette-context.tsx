@@ -26,11 +26,7 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  return (
-    <CommandPaletteContext.Provider value={{ open, setOpen, toggle }}>
-      {children}
-    </CommandPaletteContext.Provider>
-  );
+  return <CommandPaletteContext.Provider value={{ open, setOpen, toggle }}>{children}</CommandPaletteContext.Provider>;
 }
 
 export function useCommandPalette(): CommandPaletteContextValue {

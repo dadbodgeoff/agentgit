@@ -6,7 +6,7 @@ import {
   buildCloudSyncSchemaVersionErrorMessage,
   hasExpectedCloudSyncSchemaVersion,
 } from "@/lib/http/cloud-sync-version";
-import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 
 export async function POST(request: Request, context: { params: Promise<{ commandId: string }> }) {
@@ -21,8 +21,9 @@ export async function POST(request: Request, context: { params: Promise<{ comman
   try {
     rawBody = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
     throw error;
   }

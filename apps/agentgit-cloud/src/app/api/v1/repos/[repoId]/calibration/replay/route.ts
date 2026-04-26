@@ -1,6 +1,6 @@
 import { requireApiRole } from "@/lib/auth/api-session";
 import { replayRepositoryCalibrationThresholds } from "@/lib/backend/authority/calibration";
-import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId, logRouteError } from "@/lib/observability/route-response";
 import { CalibrationReplayRequestSchema } from "@/schemas/cloud";
 
@@ -16,8 +16,9 @@ export async function POST(request: Request, context: { params: Promise<{ repoId
   try {
     rawPayload = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
 
     throw error;

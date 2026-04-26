@@ -232,6 +232,9 @@ async function main() {
       "authority register-run",
     );
     const runId = requireString(registerRun.run_id, "authority register-run run_id");
+    const approvalSourcePath = path.join(workspaceRoot, "approval-source.txt");
+    const approvalDestinationPath = path.join(workspaceRoot, "approval-destination.txt");
+    await fsp.writeFile(approvalSourcePath, "approval smoke\n", "utf8");
     const submit = parseJsonOutput(
       (
         await runRequired(process.execPath, [
@@ -243,9 +246,9 @@ async function main() {
           path.join(workspaceRoot, ".agentgit", "authority.sock"),
           "submit-shell",
           runId,
-          process.execPath,
-          "-e",
-          "process.stdout.write('approval smoke')",
+          "cp",
+          approvalSourcePath,
+          approvalDestinationPath,
         ])
       ).stdout,
       "authority submit-shell",
@@ -319,6 +322,7 @@ async function main() {
     if (!resolvedCommand) {
       throw new Error(`Second sync did not complete the approval command: ${JSON.stringify(secondSync.commands)}`);
     }
+    await ensureFileExists(approvalDestinationPath, "approved shell command destination");
 
     logStep("Verifying the command acknowledgement through the sync inventory API");
     await waitFor(async () => {
@@ -486,8 +490,16 @@ async function writeShellApprovalPolicy(workspaceRoot) {
 }
 
 async function startPostgresContainer(port, logDir) {
-  const dockerCheck = await runCommand(DOCKER, ["info"], { cwd: repoRoot });
-  if (dockerCheck.code !== 0) {
+  const dockerConfigDir = path.join(os.tmpdir(), "agentgit-empty-docker-config");
+  await fsp.mkdir(dockerConfigDir, { recursive: true });
+  const dockerCheck = await runCommand(DOCKER, ["--config", dockerConfigDir, "info"], {
+    cwd: repoRoot,
+    env: {
+      DOCKER_CONFIG: dockerConfigDir,
+    },
+    timeoutMs: 3_000,
+  });
+  if (dockerCheck.code !== 0 || dockerCheck.stderr.trim().length > 0) {
     throw new Error(
       "Docker is required to start a temporary Postgres instance when --database-url is not provided. Pass --database-url or start Docker.",
     );
@@ -667,6 +679,10 @@ function runCommand(command, args, options = {}) {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const timeout =
+      typeof options.timeoutMs === "number" && options.timeoutMs > 0
+        ? setTimeout(() => child.kill("SIGKILL"), options.timeoutMs)
+        : null;
 
     let stdout = "";
     let stderr = "";
@@ -679,6 +695,9 @@ function runCommand(command, args, options = {}) {
     });
     child.on("error", reject);
     child.on("close", (code, signal) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       resolve({
         code: code ?? -1,
         signal: signal ?? null,

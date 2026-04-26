@@ -1,7 +1,7 @@
 import { requireApiRole } from "@/lib/auth/api-session";
 import { listWorkspaceConnectors } from "@/lib/backend/control-plane/connectors";
 import { getWorkspaceConnectionState, saveWorkspaceConnectionState } from "@/lib/backend/workspace/cloud-state";
-import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { listWorkspaceRepositoryOptions } from "@/lib/backend/workspace/repository-inventory";
 import {
   assertWorkspaceUsageWithinBillingLimits,
@@ -78,8 +78,9 @@ export async function POST(request: Request) {
   try {
     rawPayload = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
 
     throw error;

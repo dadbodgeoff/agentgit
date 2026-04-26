@@ -396,8 +396,8 @@ Internally they should compile to rules.
 #### `shell.safe`
 
 - allow common read-only commands
-- `allow_with_snapshot` on likely workspace mutation commands, package manager/build/interpreter execution, and opaque local shell when AgentGit can establish recovery first
-- ask on consent or irreversibility boundaries, degraded capability, and untrusted external effects
+- ask on explicit, classified workspace mutation commands, package manager commands, build commands, consent or irreversibility boundaries, degraded capability, and untrusted external effects
+- deny opaque, interpreter, and unclassified local shell by default because local shell is governed but not runtime-contained
 - deny commands matching explicit deny patterns
 
 #### `browser.safe`

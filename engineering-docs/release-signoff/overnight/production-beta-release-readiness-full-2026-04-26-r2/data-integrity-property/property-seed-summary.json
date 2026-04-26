@@ -1,0 +1,34 @@
+{
+  "seeds": [
+    2026042701,
+    2026042702,
+    2026042703
+  ],
+  "summaries": [
+    {
+      "seed": 2026042701,
+      "run_id": "run_019dcbdbf44a70eb9014a557a85f6fc8",
+      "attempted": 18,
+      "snapshot_backed": 3,
+      "exact_restore_mismatches": 0,
+      "checkpoint_exact_restore_mismatches": 0
+    },
+    {
+      "seed": 2026042702,
+      "run_id": "run_019dcbdc1af97624893b1b30ef231e52",
+      "attempted": 18,
+      "snapshot_backed": 4,
+      "exact_restore_mismatches": 0,
+      "checkpoint_exact_restore_mismatches": 0
+    },
+    {
+      "seed": 2026042703,
+      "run_id": "run_019dcbdc426b763b9b8d46403b78b574",
+      "attempted": 18,
+      "snapshot_backed": 4,
+      "exact_restore_mismatches": 0,
+      "checkpoint_exact_restore_mismatches": 0
+    }
+  ],
+  "failures": []
+}

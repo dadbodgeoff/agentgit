@@ -68,10 +68,7 @@ export function NotificationBell({ count = 0 }: NotificationBellProps) {
           <div className="flex items-center justify-between border-b border-[var(--ag-border-subtle)] px-4 py-3">
             <h3 className="text-[13px] font-semibold text-[var(--ag-text-primary)]">Notifications</h3>
             {hasCount ? (
-              <button
-                className="ag-focus-ring text-[12px] text-[var(--ag-color-brand)] hover:underline"
-                type="button"
-              >
+              <button className="ag-focus-ring text-[12px] text-[var(--ag-color-brand)] hover:underline" type="button">
                 Mark all read
               </button>
             ) : null}

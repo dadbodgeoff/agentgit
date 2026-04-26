@@ -1,0 +1,10 @@
+{
+  "command": "pnpm --filter @agentgit/cloud-ui exec -- playwright test --config=playwright.config.ts accessibility.spec.ts",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 1,
+    "signal": null
+  },
+  "stdout": "\u001b[2m[WebServer] \u001b[22m   ▲ Next.js 15.5.15\n\u001b[2m[WebServer] \u001b[22m   - Local:        http://localhost:3112\n\u001b[2m[WebServer] \u001b[22m   - Network:      http://localhost:3112\n\u001b[2m[WebServer] \u001b[22m\n\u001b[2m[WebServer] \u001b[22m ✓ Starting...\nError: Process from config.webServer was not able to start. Exit code: 1\n\nundefined\n/Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud:\n ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL  Command failed with exit code 1: playwright test --config=playwright.config.ts accessibility.spec.ts\n",
+  "stderr": "\u001b[2m[WebServer] \u001b[22m(node:93152) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n\u001b[2m[WebServer] \u001b[22m(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[2m[WebServer] \u001b[22m(node:93154) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n\u001b[2m[WebServer] \u001b[22m(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[2m[WebServer] \u001b[22m[Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id]\n"
+}

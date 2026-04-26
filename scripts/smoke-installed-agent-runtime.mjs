@@ -39,6 +39,7 @@ function parseArgs(argv) {
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const child = spawn(command, args, {
       cwd: options.cwd ?? repoRoot,
       env: {
@@ -47,6 +48,14 @@ function runCommand(command, args, options = {}) {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const timeout = options.timeoutMs
+      ? setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          child.kill("SIGTERM");
+        }, options.timeoutMs)
+      : null;
 
     let stdout = "";
     let stderr = "";
@@ -61,6 +70,10 @@ function runCommand(command, args, options = {}) {
 
     child.on("error", reject);
     child.on("close", (code, signal) => {
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       const result = {
         code: code ?? -1,
         signal: signal ?? null,
@@ -73,9 +86,10 @@ function runCommand(command, args, options = {}) {
         return;
       }
 
+      const timeoutSuffix = signal === "SIGTERM" && options.timeoutMs ? ` after ${options.timeoutMs}ms` : "";
       reject(
         new Error(
-          `${command} ${args.join(" ")} failed with exit code ${result.code}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+          `${command} ${args.join(" ")} failed with exit code ${result.code}${timeoutSuffix}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
         ),
       );
     });
@@ -96,10 +110,16 @@ async function pathExists(targetPath) {
 }
 
 async function detectDocker() {
-  const result = await runCommand(DOCKER, ["info"], {
-    acceptExitCodes: [0, 1, 127],
+  const dockerConfigDir = await fsp.mkdtemp(path.join(os.tmpdir(), "agentgit-empty-docker-config-"));
+  const result = await runCommand(DOCKER, ["--config", dockerConfigDir, "info"], {
+    acceptExitCodes: [0, 1, 127, -1],
+    env: {
+      DOCKER_CONFIG: dockerConfigDir,
+    },
+    timeoutMs: 3_000,
   });
-  return result.code === 0;
+  await fsp.rm(dockerConfigDir, { recursive: true, force: true });
+  return result.code === 0 && result.stderr.trim().length === 0;
 }
 
 function requireIncludes(output, needle, context) {

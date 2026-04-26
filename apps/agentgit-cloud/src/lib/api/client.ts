@@ -16,12 +16,28 @@ export async function fetchJson<T = unknown>(input: RequestInfo | URL, init?: Re
   return (await fetchJsonWithResponse<T>(input, init)).data;
 }
 
+async function ensureCsrfTokenForMutation(): Promise<string | null> {
+  let csrfToken = readCsrfTokenFromDocumentCookies();
+  if (csrfToken || typeof window === "undefined") {
+    return csrfToken;
+  }
+
+  await fetch("/api/v1/csrf", {
+    cache: "no-store",
+    credentials: "same-origin",
+    method: "GET",
+  });
+
+  csrfToken = readCsrfTokenFromDocumentCookies();
+  return csrfToken;
+}
+
 export async function fetchJsonWithResponse<T = unknown>(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<{ data: T; response: Response }> {
   const method = (init?.method ?? "GET").toUpperCase();
-  const csrfToken = method === "GET" || method === "HEAD" ? null : readCsrfTokenFromDocumentCookies();
+  const csrfToken = method === "GET" || method === "HEAD" ? null : await ensureCsrfTokenForMutation();
 
   const response = await fetch(input, {
     ...init,

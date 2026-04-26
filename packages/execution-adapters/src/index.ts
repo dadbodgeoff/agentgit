@@ -51,6 +51,7 @@ interface ShellFacet {
   protected_paths?: string[];
   control_surface_paths?: string[];
   outside_workspace_paths?: string[];
+  command_family?: string;
 }
 
 interface FunctionFacet {
@@ -3762,6 +3763,35 @@ function extractShellTargetPaths(shellFacet: ShellFacet | undefined, action: Act
   ];
 }
 
+function allowUncontainedOpaqueShell(): boolean {
+  const value = process.env.AGENTGIT_ALLOW_UNCONTAINED_OPAQUE_SHELL?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function verifyOpaqueShellIsAllowed(shellFacet: ShellFacet | undefined, action: ActionRecord): void {
+  const warnings = new Set(action.normalization?.warnings ?? []);
+  const commandFamily = shellFacet?.command_family;
+  const opaque =
+    warnings.has("opaque_execution") ||
+    warnings.has("unknown_scope") ||
+    commandFamily === "interpreter" ||
+    commandFamily === "unclassified";
+
+  if (!opaque || allowUncontainedOpaqueShell()) {
+    return;
+  }
+
+  throw new PreconditionError(
+    "Opaque shell execution is disabled by default because local shell processes are governed but not runtime-contained.",
+    {
+      action_id: action.action_id,
+      command_family: commandFamily ?? null,
+      warnings: Array.from(warnings),
+      override_env: "AGENTGIT_ALLOW_UNCONTAINED_OPAQUE_SHELL",
+    },
+  );
+}
+
 async function verifyShellTargetPaths(
   shellFacet: ShellFacet | undefined,
   action: ActionRecord,
@@ -3822,6 +3852,7 @@ export class ShellExecutionAdapter implements ExecutionAdapter {
     }
 
     await verifyShellTargetPaths(shellFacet, context.action, context.workspace_root);
+    verifyOpaqueShellIsAllowed(shellFacet, context.action);
 
     if (context.policy_outcome.preconditions.snapshot_required && !context.snapshot_record) {
       throw new PreconditionError("Snapshot-required action is missing a snapshot boundary.", {
@@ -3838,6 +3869,7 @@ export class ShellExecutionAdapter implements ExecutionAdapter {
       context.workspace_root,
     );
     await verifyShellTargetPaths(shellFacet, context.action, context.workspace_root);
+    verifyOpaqueShellIsAllowed(shellFacet, context.action);
     const executionId = `exec_sh_${Date.now()}`;
     const startedAt = new Date().toISOString();
 

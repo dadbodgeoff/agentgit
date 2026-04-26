@@ -58,8 +58,7 @@ export function StaleIndicator({
 
   if (!lastUpdatedAt) return null;
 
-  const updatedDate =
-    lastUpdatedAt instanceof Date ? lastUpdatedAt : new Date(lastUpdatedAt);
+  const updatedDate = lastUpdatedAt instanceof Date ? lastUpdatedAt : new Date(lastUpdatedAt);
   if (Number.isNaN(updatedDate.getTime())) return null;
 
   return (
@@ -74,11 +73,7 @@ export function StaleIndicator({
           onClick={onRefresh}
           type="button"
         >
-          <RefreshCw
-            className={isRefreshing ? "animate-spin" : undefined}
-            size={13}
-            strokeWidth={1.5}
-          />
+          <RefreshCw className={isRefreshing ? "animate-spin" : undefined} size={13} strokeWidth={1.5} />
         </button>
       ) : null}
     </div>

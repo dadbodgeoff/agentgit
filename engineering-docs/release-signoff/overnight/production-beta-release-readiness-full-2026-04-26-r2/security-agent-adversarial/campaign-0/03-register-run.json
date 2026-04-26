@@ -1,0 +1,9 @@
+{
+  "run_id": "run_019dcbdbda0a75fea753a2f0ab6edbf7",
+  "run_handle": {
+    "run_id": "run_019dcbdbda0a75fea753a2f0ab6edbf7",
+    "session_id": "sess_019dcbdbd9e9707f93fe8de7c07915bf",
+    "workflow_name": "campaign-0-containment"
+  },
+  "effective_policy_profile": "campaign-zero"
+}

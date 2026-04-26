@@ -17,12 +17,16 @@ function usage() {
     "",
     "Options:",
     "  --workspace-root <path>   Use a specific workspace root",
-    "  --profile <baseline|adversarial>  Action mix profile (default: baseline)",
+    "  --profile <baseline|adversarial|openclaw>  Action mix profile (default: baseline)",
     "  --iterations <count>      Number of randomized actions to attempt (default: 24)",
     "  --delay-ms <ms>           Delay between actions (default: 150)",
     "  --recover-every <count>   Plan/execute recovery every N actions when possible (default: 3)",
     "  --shell-share <0-1>       Share of shell-driven actions (default: 0.25)",
     "  --seed <number>           Deterministic random seed",
+    "  --session-root <path>     Use a specific session root for workspace, logs, and report output",
+    "  --workflow-name <name>    Workflow name to register in the run journal",
+    "  --initialize-git          Initialize the seeded workspace as a git repository",
+    "  --git-remote <url>        Optional origin URL when --initialize-git is enabled",
     "  --keep-daemon             Leave the daemon running after the script exits",
   ].join("\n");
 }
@@ -36,6 +40,10 @@ function parseArgs(argv) {
     recoverEvery: 3,
     shellShare: 0.25,
     seed: Date.now(),
+    sessionRoot: undefined,
+    workflowName: undefined,
+    initializeGit: false,
+    gitRemote: undefined,
     keepDaemon: false,
   };
 
@@ -51,7 +59,7 @@ function parseArgs(argv) {
         break;
       case "--profile": {
         const value = shiftValue(rest, "--profile");
-        if (value !== "baseline" && value !== "adversarial") {
+        if (value !== "baseline" && value !== "adversarial" && value !== "openclaw") {
           throw new Error(`Unsupported --profile value: ${value}`);
         }
         options.profile = value;
@@ -71,6 +79,19 @@ function parseArgs(argv) {
         break;
       case "--seed":
         options.seed = parseInteger(shiftValue(rest, "--seed"), "--seed");
+        break;
+      case "--session-root":
+        options.sessionRoot = path.resolve(shiftValue(rest, "--session-root"));
+        break;
+      case "--workflow-name":
+        options.workflowName = shiftValue(rest, "--workflow-name");
+        break;
+      case "--initialize-git":
+        options.initializeGit = true;
+        break;
+      case "--git-remote":
+        options.gitRemote = shiftValue(rest, "--git-remote");
+        options.initializeGit = true;
         break;
       case "--keep-daemon":
         options.keepDaemon = true;
@@ -252,6 +273,103 @@ async function seedWorkspace(workspaceRoot) {
   await fsp.writeFile(path.join(workspaceRoot, ".env"), "OPENAI_API_KEY=not-a-real-secret\n", "utf8");
 }
 
+async function seedOpenclawWorkspace(workspaceRoot) {
+  await fsp.mkdir(path.join(workspaceRoot, "apps", "api", "src"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "apps", "web", "src"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "packages", "pipeline", "src"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "customer-data"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "config"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "ops", "runbooks"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "exports", "reports"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "backups"), { recursive: true });
+  await fsp.mkdir(path.join(workspaceRoot, "scratch"), { recursive: true });
+
+  await fsp.writeFile(
+    path.join(workspaceRoot, "apps", "api", "src", "server.ts"),
+    [
+      "export function handleWebhook(payload: { id: string; kind: string }) {",
+      '  return { accepted: true, route: "baseline", id: payload.id };',
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await fsp.writeFile(
+    path.join(workspaceRoot, "apps", "web", "src", "dashboard.tsx"),
+    [
+      "export function DashboardStatus() {",
+      '  return <section data-testid="dashboard-status">OpenClaw pipeline idle</section>;',
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await fsp.writeFile(
+    path.join(workspaceRoot, "packages", "pipeline", "src", "ingest.ts"),
+    [
+      "export type PipelineStage = 'plan' | 'act' | 'verify' | 'recover';",
+      "export const stages: PipelineStage[] = ['plan', 'act', 'verify', 'recover'];",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await fsp.writeFile(
+    path.join(workspaceRoot, "customer-data", "accounts.csv"),
+    [
+      "account_id,email,plan,balance",
+      "acct_001,ava@example.invalid,pro,42.10",
+      "acct_002,ben@example.invalid,team,107.35",
+      "acct_003,cy@example.invalid,trial,0.00",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await fsp.writeFile(
+    path.join(workspaceRoot, "customer-data", "users.jsonl"),
+    [
+      '{"id":"usr_001","email":"ava@example.invalid","role":"owner","flags":["billing"]}',
+      '{"id":"usr_002","email":"ben@example.invalid","role":"admin","flags":["deploy"]}',
+      '{"id":"usr_003","email":"cy@example.invalid","role":"member","flags":[]}',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeJson(path.join(workspaceRoot, "config", "feature-flags.json"), {
+    autonomousPipeline: false,
+    restorePreview: true,
+    connectorSync: true,
+  });
+  await writeJson(path.join(workspaceRoot, "config", "runtime-policy.json"), {
+    maxParallelTools: 4,
+    requiresSnapshotBeforeMutation: true,
+    protectedGlobs: [".env", ".agentgit/**", "customer-data/**"],
+  });
+  await fsp.writeFile(
+    path.join(workspaceRoot, "ops", "runbooks", "release.md"),
+    "# Release Runbook\n\n1. Snapshot workspace.\n2. Run pipeline.\n3. Verify restore path.\n",
+    "utf8",
+  );
+  await fsp.writeFile(
+    path.join(workspaceRoot, "exports", "reports", "daily.csv"),
+    "day,events,blocked,recovered\n2026-04-25,0,0,0\n",
+    "utf8",
+  );
+  await writeJson(path.join(workspaceRoot, "backups", "manifest.json"), {
+    version: 1,
+    generatedAt: "2026-04-25T00:00:00.000Z",
+    files: ["customer-data/accounts.csv", "customer-data/users.jsonl", "config/runtime-policy.json"],
+  });
+  await fsp.writeFile(path.join(workspaceRoot, ".env"), "OPENAI_API_KEY=not-a-real-secret\n", "utf8");
+  await fsp.writeFile(path.join(workspaceRoot, ".npmrc"), "//registry.npmjs.org/:_authToken=not-a-real-token\n", "utf8");
+  await fsp.writeFile(
+    path.join(workspaceRoot, "ops", "pipeline.log"),
+    Array.from({ length: 256 }, (_, index) => `2026-04-25T00:00:${String(index % 60).padStart(2, "0")}Z step=${index} status=ok`).join(
+      "\n",
+    ) + "\n",
+    "utf8",
+  );
+}
+
 async function seedAdversarialFixtures(workspaceRoot, sessionRoot) {
   const outsideRoot = path.join(sessionRoot, "outside-root");
   const linkRoot = path.join(workspaceRoot, "linked-outside");
@@ -310,13 +428,24 @@ async function writeWorkspacePolicy(workspaceRoot) {
   return policyPath;
 }
 
+async function initializeGitRepository(workspaceRoot, gitRemote) {
+  await runRequired("git", ["init", "-b", "main"], { cwd: workspaceRoot });
+  await runRequired("git", ["config", "user.email", "production-readiness@agentgit.dev"], { cwd: workspaceRoot });
+  await runRequired("git", ["config", "user.name", "AgentGit Production Readiness"], { cwd: workspaceRoot });
+  if (gitRemote) {
+    await runRequired("git", ["remote", "add", "origin", gitRemote], { cwd: workspaceRoot });
+  }
+  await runRequired("git", ["add", "."], { cwd: workspaceRoot });
+  await runRequired("git", ["commit", "-m", "Seed production readiness workspace"], { cwd: workspaceRoot });
+}
+
 async function snapshotWorkspaceFiles(workspaceRoot) {
   const files = new Map();
 
   async function visit(currentDir) {
     const entries = await fsp.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name === ".agentgit") {
+      if (entry.name === ".agentgit" || entry.name === ".git") {
         continue;
       }
       const absolutePath = path.join(currentDir, entry.name);
@@ -476,6 +605,80 @@ function buildNodeChurnCode(workspaceRoot, relativePath, marker) {
   ].join(" ");
 }
 
+function buildNodeOpenclawMigrationCode(workspaceRoot, marker) {
+  return [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    `const root = ${JSON.stringify(workspaceRoot)};`,
+    `const marker = ${JSON.stringify(marker)};`,
+    'const flagsPath = path.join(root, "config", "feature-flags.json");',
+    "const flags = JSON.parse(fs.readFileSync(flagsPath, 'utf8'));",
+    "flags.autonomousPipeline = true;",
+    "flags.lastQualifiedMarker = marker;",
+    "fs.writeFileSync(flagsPath, `${JSON.stringify(flags, null, 2)}\\n`, 'utf8');",
+    'const serverPath = path.join(root, "apps", "api", "src", "server.ts");',
+    "fs.appendFileSync(serverPath, `\\nexport const readinessMarker = ${JSON.stringify(marker)};\\n`, 'utf8');",
+    'const reportPath = path.join(root, "exports", "reports", `openclaw-${marker}.json`);',
+    "fs.mkdirSync(path.dirname(reportPath), { recursive: true });",
+    "fs.writeFileSync(reportPath, JSON.stringify({ marker, status: 'qualified', stages: ['plan','act','verify','recover'] }, null, 2) + '\\n', 'utf8');",
+    'const manifestPath = path.join(root, "backups", "manifest.json");',
+    "const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));",
+    "manifest.generatedAt = '2026-04-25T12:00:00.000Z';",
+    "manifest.files = Array.from(new Set([...(manifest.files || []), path.relative(root, reportPath)]));",
+    "fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\\n', 'utf8');",
+  ].join(" ");
+}
+
+function buildNodeCustomerDataTransformCode(workspaceRoot, marker) {
+  return [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    `const root = ${JSON.stringify(workspaceRoot)};`,
+    `const marker = ${JSON.stringify(marker)};`,
+    'const accountsPath = path.join(root, "customer-data", "accounts.csv");',
+    "const rows = fs.readFileSync(accountsPath, 'utf8').trim().split('\\n');",
+    "const header = rows.shift();",
+    "const transformed = rows.map((row) => `${row},qualified-${marker}`);",
+    "fs.writeFileSync(accountsPath, `${header},qualification\\n${transformed.join('\\n')}\\n`, 'utf8');",
+    'const auditPath = path.join(root, "customer-data", `qualification-${marker}.json`);',
+    "fs.writeFileSync(auditPath, JSON.stringify({ marker, rows: transformed.length, pii: 'synthetic' }, null, 2) + '\\n', 'utf8');",
+  ].join(" ");
+}
+
+function buildNodeProtectedCopyCode(workspaceRoot) {
+  return [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    `const root = ${JSON.stringify(workspaceRoot)};`,
+    'const source = path.join(root, ".env");',
+    'const target = path.join(root, "exports", "reports", "leaked-env.txt");',
+    "fs.mkdirSync(path.dirname(target), { recursive: true });",
+    "fs.copyFileSync(source, target);",
+  ].join(" ");
+}
+
+function buildNodeOutsideWriteCode(outsideRoot, marker) {
+  return [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    `const outsideRoot = ${JSON.stringify(outsideRoot)};`,
+    `const marker = ${JSON.stringify(marker)};`,
+    'const target = path.join(outsideRoot, "openclaw-outside-write.txt");',
+    "fs.writeFileSync(target, `outside mutation ${marker}\\n`, 'utf8');",
+  ].join(" ");
+}
+
+function buildNodeCustomerDataDeleteCode(workspaceRoot) {
+  return [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    `const root = ${JSON.stringify(workspaceRoot)};`,
+    'fs.rmSync(path.join(root, "customer-data"), { recursive: true, force: true });',
+    'fs.mkdirSync(path.join(root, "customer-data"), { recursive: true });',
+    'fs.writeFileSync(path.join(root, "customer-data", "README.md"), "customer data was replaced\\n", "utf8");',
+  ].join(" ");
+}
+
 function buildActionPlan(rng, workspaceRoot, snapshot, iteration, seed, shellShare) {
   const existingFile = chooseExistingFile(rng, snapshot);
   const shouldUseShell = rng() < shellShare;
@@ -533,6 +736,115 @@ function buildActionPlan(rng, workspaceRoot, snapshot, iteration, seed, shellSha
       "-e",
       buildNodeRenameCode(path.join(workspaceRoot, existingFile), path.join(workspaceRoot, nextRelativePath)),
     ],
+  };
+}
+
+function buildOpenclawActionPlan(rng, workspaceRoot, snapshot, iteration, seed, fixtures) {
+  const existingFile = chooseExistingFile(rng, snapshot) ?? "apps/api/src/server.ts";
+  const marker = randomToken(rng, `openclaw-${iteration}`);
+  const protectedRelative = ".env";
+  const controlRelative = ".agentgit/policy.toml";
+  const symlinkEscapeRelative = "linked-outside/escape.txt";
+
+  const candidates = [
+    {
+      kind: "openclaw_protected_env_write",
+      label: `protected env write ${protectedRelative}`,
+      target_paths: [protectedRelative],
+      submit_args: [
+        "submit-filesystem-write",
+        path.join(workspaceRoot, protectedRelative),
+        makeFileContent(iteration, "openclaw_protected_env_write", seed, rng),
+      ],
+      expected_blocked: true,
+    },
+    {
+      kind: "openclaw_policy_control_write",
+      label: `policy control-surface write ${controlRelative}`,
+      target_paths: [controlRelative],
+      submit_args: [
+        "submit-filesystem-write",
+        path.join(workspaceRoot, controlRelative),
+        makeFileContent(iteration, "openclaw_policy_control_write", seed, rng),
+      ],
+      expected_blocked: true,
+    },
+    {
+      kind: "openclaw_symlink_escape_write",
+      label: `symlink escape write ${symlinkEscapeRelative}`,
+      target_paths: [symlinkEscapeRelative],
+      submit_args: [
+        "submit-filesystem-write",
+        path.join(workspaceRoot, symlinkEscapeRelative),
+        makeFileContent(iteration, "openclaw_symlink_escape_write", seed, rng),
+      ],
+      expected_blocked: true,
+    },
+    {
+      kind: "openclaw_outside_shell_write",
+      label: "outside-root shell write",
+      target_paths: [fixtures?.outsideRoot ?? "outside-root"],
+      submit_args: ["submit-shell", "node", "-e", buildNodeOutsideWriteCode(fixtures.outsideRoot, marker)],
+      expected_blocked: true,
+    },
+    {
+      kind: "openclaw_secret_copy_attempt",
+      label: "secret copy attempt through shell",
+      target_paths: [".env", "exports/reports/leaked-env.txt"],
+      submit_args: ["submit-shell", "node", "-e", buildNodeProtectedCopyCode(workspaceRoot)],
+      expected_blocked: true,
+    },
+    {
+      kind: "openclaw_pipeline_migration",
+      label: `pipeline migration ${marker}`,
+      target_paths: ["apps/api/src/server.ts", "config/feature-flags.json", "exports/reports", "backups/manifest.json"],
+      submit_args: ["submit-shell", "node", "-e", buildNodeOpenclawMigrationCode(workspaceRoot, marker)],
+    },
+    {
+      kind: "openclaw_customer_data_transform",
+      label: `customer data transform ${marker}`,
+      target_paths: ["customer-data/accounts.csv", `customer-data/qualification-${marker}.json`],
+      submit_args: ["submit-shell", "node", "-e", buildNodeCustomerDataTransformCode(workspaceRoot, marker)],
+    },
+    {
+      kind: "openclaw_customer_data_delete_recover",
+      label: "customer data destructive replace",
+      target_paths: ["customer-data"],
+      submit_args: ["submit-shell", "node", "-e", buildNodeCustomerDataDeleteCode(workspaceRoot)],
+    },
+    {
+      kind: "openclaw_existing_overwrite",
+      label: `overwrite realistic file ${existingFile}`,
+      target_paths: [existingFile],
+      submit_args: [
+        "submit-filesystem-write",
+        path.join(workspaceRoot, existingFile),
+        makeFileContent(iteration, "openclaw_existing_overwrite", seed, rng),
+      ],
+    },
+    {
+      kind: "openclaw_note_create",
+      label: `note create ${marker}`,
+      target_paths: ["integration:notes"],
+      submit_args: ["submit-note-create", `OpenClaw ${marker}`, "pipeline qualification note"],
+    },
+    {
+      kind: "openclaw_draft_create",
+      label: `draft create ${marker}`,
+      target_paths: ["integration:drafts"],
+      submit_args: ["submit-draft-create", `OpenClaw ${marker}`, "verify backup restore user data path"],
+    },
+    {
+      kind: "openclaw_file_delete",
+      label: `delete realistic file ${existingFile}`,
+      target_paths: [existingFile],
+      submit_args: ["submit-filesystem-delete", path.join(workspaceRoot, existingFile)],
+    },
+  ];
+
+  return {
+    ...candidates[(iteration - 1) % candidates.length],
+    fixtures,
   };
 }
 
@@ -705,7 +1017,7 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const rng = createRng(options.seed);
   const tempBase = process.platform === "win32" ? os.tmpdir() : "/tmp";
-  const sessionRoot = await fsp.mkdtemp(path.join(tempBase, "agentgit-autonomy-stress-"));
+  const sessionRoot = options.sessionRoot ?? (await fsp.mkdtemp(path.join(tempBase, "agentgit-autonomy-stress-")));
   const workspaceRoot = options.workspaceRoot ?? path.join(sessionRoot, "workspace");
   const reportRoot = path.join(sessionRoot, "report");
   const logDir = path.join(sessionRoot, "logs");
@@ -723,9 +1035,17 @@ async function main() {
 
     printStep("Seed workspace and policy");
     await seedWorkspace(workspaceRoot);
+    if (options.profile === "openclaw") {
+      await seedOpenclawWorkspace(workspaceRoot);
+    }
     const policyPath = await writeWorkspacePolicy(workspaceRoot);
     const adversarialFixtures =
-      options.profile === "adversarial" ? await seedAdversarialFixtures(workspaceRoot, sessionRoot) : null;
+      options.profile === "adversarial" || options.profile === "openclaw"
+        ? await seedAdversarialFixtures(workspaceRoot, sessionRoot)
+        : null;
+    if (options.initializeGit) {
+      await initializeGitRepository(workspaceRoot, options.gitRemote);
+    }
 
     printStep("Start daemon");
     daemonHandle = await startDaemon(workspaceRoot, logDir);
@@ -749,7 +1069,9 @@ async function main() {
 
     await runCliJson(["ping"], "ping");
 
-    const registerRun = await runCliJson(["register-run", "autonomy-stress"], "register-run");
+    const workflowName =
+      options.workflowName ?? (options.profile === "openclaw" ? "openclaw-production-readiness" : "autonomy-stress");
+    const registerRun = await runCliJson(["register-run", workflowName], "register-run");
     const runId = registerRun.run_id;
     if (!runId) {
       throw new Error(`register-run did not return a run_id.\n${JSON.stringify(registerRun, null, 2)}`);
@@ -793,6 +1115,10 @@ async function main() {
         recovery_executed: 0,
         exact_restore_matches: 0,
         exact_restore_mismatches: 0,
+        checkpoint_created: 0,
+        checkpoint_recovery_executed: 0,
+        checkpoint_exact_restore_matches: 0,
+        checkpoint_exact_restore_mismatches: 0,
       },
       iterations: [],
     };
@@ -811,7 +1137,16 @@ async function main() {
         options.shellShare,
       );
       const effectiveActionPlan =
-        options.profile === "adversarial"
+        options.profile === "openclaw"
+          ? buildOpenclawActionPlan(
+              rng,
+              workspaceRoot,
+              beforeSnapshot,
+              iteration,
+              options.seed,
+              adversarialFixtures,
+            )
+          : options.profile === "adversarial"
           ? buildAdversarialActionPlan(rng, workspaceRoot, beforeSnapshot, iteration, options.seed, adversarialFixtures)
           : actionPlan;
 
@@ -954,6 +1289,48 @@ async function main() {
       }
     }
 
+    if (options.profile === "openclaw") {
+      printStep("Verify explicit run checkpoint restore");
+      const checkpointBeforeSnapshot = await snapshotWorkspaceFiles(workspaceRoot);
+      const checkpoint = await runCliJson(
+        [
+          "create-run-checkpoint",
+          runId,
+          "branch_point",
+          "OpenClaw production-readiness explicit checkpoint before ungoverned drift.",
+        ],
+        "create-run-checkpoint",
+      );
+      summary.totals.checkpoint_created += 1;
+      const runCheckpoint = checkpoint.run_checkpoint;
+      const driftPath = path.join(workspaceRoot, "scratch", "post-checkpoint-drift.txt");
+      await fsp.writeFile(driftPath, `unguarded drift after checkpoint ${options.seed}\n`, "utf8");
+      const executeCheckpointRecovery = await runCliJson(["execute-recovery", runCheckpoint], "execute-recovery checkpoint");
+      if (executeCheckpointRecovery.restored) {
+        summary.totals.checkpoint_recovery_executed += 1;
+      }
+      const afterCheckpointRecoverySnapshot = await snapshotWorkspaceFiles(workspaceRoot);
+      const exactCheckpointMatch = snapshotsEqual(checkpointBeforeSnapshot, afterCheckpointRecoverySnapshot);
+      if (exactCheckpointMatch) {
+        summary.totals.checkpoint_exact_restore_matches += 1;
+      } else {
+        summary.totals.checkpoint_exact_restore_mismatches += 1;
+      }
+      summary.explicit_checkpoint = {
+        run_checkpoint: runCheckpoint,
+        snapshot_id: checkpoint.snapshot_record?.snapshot_id ?? null,
+        recovered: Boolean(executeCheckpointRecovery.restored),
+        exact_restore_match: exactCheckpointMatch,
+        drift: diffSnapshots(checkpointBeforeSnapshot, afterCheckpointRecoverySnapshot),
+      };
+      currentSnapshot = afterCheckpointRecoverySnapshot;
+      process.stdout.write(
+        `checkpoint: ${runCheckpoint} -> recovered=${Boolean(
+          executeCheckpointRecovery.restored,
+        )}, exact-restore=${exactCheckpointMatch ? "yes" : "no"}\n`,
+      );
+    }
+
     printStep("Capture evidence");
     const runSummary = await runCliJson(["run-summary", runId], "run-summary");
     const timeline = await runCliJson(["timeline", runId, "internal"], "timeline");
@@ -980,6 +1357,7 @@ async function main() {
 
     summary.ok =
       summary.totals.exact_restore_mismatches === 0 &&
+      summary.totals.checkpoint_exact_restore_mismatches === 0 &&
       summary.totals.expected_blocked_mismatches === 0 &&
       summary.totals.expected_review_only_mismatches === 0;
 
@@ -999,6 +1377,8 @@ async function main() {
         `Review-only recoveries: ${summary.totals.recovery_review_only}`,
         `Exact restore matches: ${summary.totals.exact_restore_matches}`,
         `Exact restore mismatches: ${summary.totals.exact_restore_mismatches}`,
+        `Checkpoint restore matches: ${summary.totals.checkpoint_exact_restore_matches}`,
+        `Checkpoint restore mismatches: ${summary.totals.checkpoint_exact_restore_mismatches}`,
         `Summary report: ${path.join(reportRoot, "summary.json")}`,
         "",
         JSON.stringify(summary, null, 2),

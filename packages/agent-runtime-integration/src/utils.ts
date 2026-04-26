@@ -8,6 +8,7 @@ export interface CommandRunOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   input?: string;
+  timeoutMs?: number;
 }
 
 export interface CommandRunResult {
@@ -29,6 +30,7 @@ export class DefaultCommandRunner implements CommandRunner {
       env: options.env,
       input: options.input,
       encoding: "utf8",
+      timeout: options.timeoutMs,
     });
 
     if (result.error) {

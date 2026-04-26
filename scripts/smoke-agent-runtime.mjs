@@ -27,6 +27,10 @@ function runCommand(command, args, options = {}) {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const timeout =
+      typeof options.timeoutMs === "number" && options.timeoutMs > 0
+        ? setTimeout(() => child.kill("SIGKILL"), options.timeoutMs)
+        : null;
 
     let stdout = "";
     let stderr = "";
@@ -41,6 +45,9 @@ function runCommand(command, args, options = {}) {
 
     child.on("error", reject);
     child.on("close", (code, signal) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       resolve({
         code: code ?? 0,
         signal: signal ?? null,
@@ -101,8 +108,15 @@ async function pathExists(targetPath) {
 }
 
 async function detectDocker() {
-  const result = await runCommand(resolveCommandPath("docker"), ["info"]);
-  return result.code === 0;
+  const dockerConfigDir = path.join(os.tmpdir(), "agentgit-empty-docker-config");
+  await fsp.mkdir(dockerConfigDir, { recursive: true });
+  const result = await runCommand(resolveCommandPath("docker"), ["--config", dockerConfigDir, "info"], {
+    env: {
+      DOCKER_CONFIG: dockerConfigDir,
+    },
+    timeoutMs: 3_000,
+  });
+  return result.code === 0 && result.stderr.trim().length === 0;
 }
 
 function requireIncludes(output, needle, context) {
@@ -217,6 +231,7 @@ async function main() {
     } else {
       const oldFile = path.join(containedRoot, "old.txt");
       const noteFile = path.join(containedRoot, "note.txt");
+      const hostEscapeFile = path.join(tempRoot, "contained-host-escape.txt");
       await fsp.writeFile(oldFile, "to-delete\n", "utf8");
 
       const containedSetup = await runAgentGitRequired(containedRoot, [
@@ -224,7 +239,7 @@ async function main() {
         "--yes",
         "--contained",
         "--command",
-        "sh -lc 'rm -f old.txt && echo contained > note.txt'",
+        `sh -lc 'rm -f old.txt && echo contained > note.txt && echo escaped > ${hostEscapeFile}'`,
         "--network",
         "none",
         "--credentials",
@@ -254,11 +269,17 @@ async function main() {
       if (noteContents.trim() !== "contained") {
         throw new Error(`Contained run wrote unexpected note.txt contents: ${noteContents}`);
       }
+      if (await pathExists(hostEscapeFile)) {
+        throw new Error(
+          `Contained run wrote to an absolute host path outside the projected workspace: ${hostEscapeFile}`,
+        );
+      }
       summary.contained = {
         skipped: false,
         workspace_root: containedRoot,
         deleted_path: oldFile,
         created_path: noteFile,
+        host_escape_blocked_path: hostEscapeFile,
       };
     }
 

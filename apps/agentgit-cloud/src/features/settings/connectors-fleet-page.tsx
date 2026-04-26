@@ -160,6 +160,39 @@ function commandReplayTone(command: WorkspaceConnectorCommandSummary): "success"
   return "neutral";
 }
 
+function compatibilityTone(
+  status: WorkspaceConnectorSummary["compatibility"]["status"],
+): "success" | "warning" | "neutral" {
+  if (status === "full") {
+    return "success";
+  }
+
+  if (status === "limited") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
+function compatibilityLabel(status: WorkspaceConnectorSummary["compatibility"]["status"]): string {
+  if (status === "full") {
+    return "write enabled";
+  }
+
+  if (status === "limited") {
+    return "limited";
+  }
+
+  return "read only";
+}
+
+function connectorHasCapability(
+  connector: WorkspaceConnectorSummary,
+  capability: WorkspaceConnectorSummary["capabilities"][number],
+): boolean {
+  return connector.capabilities.includes(capability);
+}
+
 function commandHistoryMatchesFilter(command: WorkspaceConnectorCommandSummary, filter: CommandHistoryFilter): boolean {
   if (filter === "all") {
     return true;
@@ -388,6 +421,7 @@ export function ConnectorsFleetPage() {
     total: inventory.total,
     active: items.filter((connector) => connector.status === "active").length,
     unhealthy: items.filter((connector) => connector.status !== "active").length,
+    writeReady: items.filter((connector) => connector.compatibility.status === "full").length,
     retryable: items.reduce((total, connector) => total + connector.retryableCommandCount, 0),
     autoRetries: items.reduce((total, connector) => total + connector.automaticRetryCount, 0),
   };
@@ -491,9 +525,9 @@ export function ConnectorsFleetPage() {
           trend={`${summary.autoRetries} scheduled retries`}
         />
         <MetricCard
-          label="Provider verified"
-          value={String(items.filter((connector) => connector.providerIdentity.status === "verified").length)}
-          trend="identity drift surfaced"
+          label="Write-ready"
+          value={String(summary.writeReady)}
+          trend={`${items.length - summary.writeReady} read-only or limited`}
         />
       </div>
 
@@ -565,6 +599,11 @@ export function ConnectorsFleetPage() {
                         <div className="font-medium text-[var(--ag-text-primary)]">{connector.connectorName}</div>
                         <div className="mt-1 text-xs text-[var(--ag-text-secondary)]">
                           {connector.machineName} · {connector.workspaceSlug}
+                        </div>
+                        <div className="mt-2">
+                          <Badge tone={compatibilityTone(connector.compatibility.status)}>
+                            {compatibilityLabel(connector.compatibility.status)}
+                          </Badge>
                         </div>
                         <div className="mt-2 text-[11px] uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
                           {selected ? "Selected" : "Click for diagnostics"}
@@ -658,11 +697,31 @@ export function ConnectorsFleetPage() {
                       : "Local daemon heartbeat is unavailable."}
                   </div>
                 </div>
+                <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-card)] px-3 py-2 text-sm md:col-span-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
+                      Connector compatibility
+                    </div>
+                    <Badge tone={compatibilityTone(selectedConnector.compatibility.status)}>
+                      {compatibilityLabel(selectedConnector.compatibility.status)}
+                    </Badge>
+                  </div>
+                  <div className="mt-2 text-sm text-[var(--ag-text-secondary)]">
+                    {selectedConnector.compatibility.message}
+                  </div>
+                  {selectedConnector.compatibility.unsupportedCommands.length > 0 ? (
+                    <div className="mt-2 text-xs text-[var(--ag-text-secondary)]">
+                      Unsupported commands: {selectedConnector.compatibility.unsupportedCommands.join(", ")}
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Provider URL</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
+                    Provider URL
+                  </div>
                   <div className="mt-1 text-sm text-[var(--ag-text-secondary)]">
                     {sanitizeExternalUrl(selectedConnector.providerIdentity.repositoryUrl) ? (
                       <a
@@ -715,7 +774,9 @@ export function ConnectorsFleetPage() {
                   <div className="mt-1 font-medium">{formatNumber(selectedConnector.retryableCommandCount)}</div>
                 </div>
                 <div>
-                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Auto retries</div>
+                  <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
+                    Auto retries
+                  </div>
                   <div className="mt-1 font-medium">{formatNumber(selectedConnector.automaticRetryCount)}</div>
                 </div>
                 <div>
@@ -729,7 +790,8 @@ export function ConnectorsFleetPage() {
                   disabled={
                     commandMutation.isPending ||
                     selectedConnector.status !== "active" ||
-                    selectedConnector.daemonReachable === false
+                    selectedConnector.daemonReachable === false ||
+                    !connectorHasCapability(selectedConnector, "repo_state_sync")
                   }
                   onClick={() =>
                     commandMutation.mutate({
@@ -748,7 +810,8 @@ export function ConnectorsFleetPage() {
                   disabled={
                     commandMutation.isPending ||
                     selectedConnector.status !== "active" ||
-                    selectedConnector.daemonReachable === false
+                    selectedConnector.daemonReachable === false ||
+                    !connectorHasCapability(selectedConnector, "run_event_sync")
                   }
                   onClick={() =>
                     commandMutation.mutate({
@@ -880,7 +943,9 @@ export function ConnectorsFleetPage() {
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedActiveCommandCount)}</div>
                   </div>
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2">
-                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">Replayable</div>
+                    <div className="text-xs uppercase tracking-[0.06em] text-[var(--ag-text-secondary)]">
+                      Replayable
+                    </div>
                     <div className="mt-1 text-lg font-semibold">{formatNumber(selectedReplayableCount)}</div>
                   </div>
                   <div className="rounded-[var(--ag-radius-md)] border border-[var(--ag-border-subtle)] bg-[var(--ag-bg-elevated)] px-3 py-2">

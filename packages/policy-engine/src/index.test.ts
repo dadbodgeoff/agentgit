@@ -781,7 +781,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.reasons[0]?.code).toBe("AGENT_CONFIG_MUTATION_DENIED");
   });
 
-  it("should require approval for opaque shell scope even when it is local", () => {
+  it("should deny opaque shell scope by default even when it is local", () => {
     const outcome = evaluatePolicy(
       makeAction({
         actor: {
@@ -836,8 +836,8 @@ describe("evaluatePolicy", () => {
       }),
     );
 
-    expect(outcome.decision).toBe("ask");
-    expect(outcome.reasons[0]?.code).toBe("OPAQUE_SHELL_SCOPE_REQUIRES_APPROVAL");
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.reasons[0]?.code).toBe("OPAQUE_SHELL_EXECUTION_DENIED");
     expect(outcome.policy_context.recoverability_class).toBe("unrecoverable_or_degraded");
   });
 
@@ -2143,7 +2143,7 @@ describe("evaluatePolicy", () => {
     expect(outcome.reasons[0]?.code).toBe("PACKAGE_MANAGER_REQUIRES_APPROVAL");
   });
 
-  it("should keep communication-boundary shell commands approval-gated", () => {
+  it("should deny unclassified communication-boundary shell commands by default", () => {
     const outcome = evaluatePolicy(
       makeAction({
         operation: {
@@ -2180,9 +2180,9 @@ describe("evaluatePolicy", () => {
       }),
     );
 
-    expect(outcome.decision).toBe("ask");
-    expect(outcome.preconditions.approval_required).toBe(true);
-    expect(outcome.reasons[0]?.code).toBe("EXTERNAL_CONSENT_BOUNDARY_REQUIRES_APPROVAL");
+    expect(outcome.decision).toBe("deny");
+    expect(outcome.preconditions.approval_required).toBe(false);
+    expect(outcome.reasons[0]?.code).toBe("OPAQUE_SHELL_EXECUTION_DENIED");
   });
 
   it("should allow trusted compensatable draft functions with snapshot protection", () => {

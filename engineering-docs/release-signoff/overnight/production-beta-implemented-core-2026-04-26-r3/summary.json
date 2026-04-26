@@ -1,0 +1,62 @@
+{
+  "generatedAt": "2026-04-26T20:23:38.556Z",
+  "gateStatus": "passed",
+  "artifactRoot": "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26-r3",
+  "results": [
+    {
+      "id": "snapshot-regression",
+      "name": "Snapshot Regression",
+      "required": true,
+      "status": "passed",
+      "command": "pnpm --filter @agentgit/workspace-index test -- src/index.test.ts && pnpm --filter @agentgit/snapshot-engine test -- src/index.test.ts",
+      "durationMs": 1527,
+      "summary": "All commands completed successfully.",
+      "productionImplication": "Snapshot and workspace-index restore semantics must stay exact before user data is trusted.",
+      "artifacts": [
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26-r3/snapshot-regression/command-1.json",
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26-r3/snapshot-regression/command-2.json"
+      ]
+    },
+    {
+      "id": "openclaw-stress",
+      "name": "OpenClaw Stress",
+      "required": true,
+      "status": "passed",
+      "command": "node scripts/stress-autonomous-governance.mjs --profile openclaw --iterations 36 --recover-every 1 --shell-share 0.75 --initialize-git --git-remote https://github.com/openclaw/production-readiness-pipeline.git --workflow-name openclaw-production-readiness --session-root /tmp/agq-29640599e0 --seed 20260425 --delay-ms 25",
+      "durationMs": 17045,
+      "summary": "attempted=36, denied=25, snapshots=11, exact_restore_mismatches=0, checkpoint_mismatches=0",
+      "productionImplication": "Governed local agent actions, denials, snapshots, recoveries, and explicit checkpoints must pass together.",
+      "artifacts": [
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26-r3/openclaw-stress/command.json",
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26-r3/openclaw-stress/session-root.txt",
+        "/tmp/agq-29640599e0/report/summary.json"
+      ]
+    },
+    {
+      "id": "sensitive-redaction",
+      "name": "Sensitive Redaction",
+      "required": true,
+      "status": "passed",
+      "command": "scan /tmp/agq-29640599e0",
+      "durationMs": 19,
+      "summary": "No synthetic secrets were found in qualification report artifacts.",
+      "productionImplication": "Synthetic secrets must not leak into qualification summaries or browser-visible evidence.",
+      "artifacts": [
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26-r3/sensitive-redaction/redaction-scan.json"
+      ]
+    },
+    {
+      "id": "diff-check",
+      "name": "Diff Check",
+      "required": true,
+      "status": "passed",
+      "command": "git diff --check",
+      "durationMs": 34,
+      "summary": "All commands completed successfully.",
+      "productionImplication": "Whitespace and patch hygiene must be clean before publishing release evidence.",
+      "artifacts": [
+        "/Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-implemented-core-2026-04-26-r3/diff-check/command-1.json"
+      ]
+    }
+  ]
+}

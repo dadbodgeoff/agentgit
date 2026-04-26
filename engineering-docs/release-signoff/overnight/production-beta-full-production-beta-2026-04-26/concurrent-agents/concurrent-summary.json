@@ -1,0 +1,22 @@
+{
+  "agents": [
+    {
+      "run_id": "run_019dcb808fc5718ebbc342d5cb123cfb",
+      "workspace_root": "/tmp/agc1-9a73cde1a7/workspace",
+      "attempted": 18,
+      "denied": 15,
+      "snapshots": 3,
+      "exact_restore_mismatches": 0,
+      "checkpoint_mismatches": 0
+    },
+    {
+      "run_id": "run_019dcb8092f6726d8bcc92361d1d4296",
+      "workspace_root": "/tmp/agc2-9a73cde1a7/workspace",
+      "attempted": 18,
+      "denied": 14,
+      "snapshots": 4,
+      "exact_restore_mismatches": 0,
+      "checkpoint_mismatches": 0
+    }
+  ]
+}

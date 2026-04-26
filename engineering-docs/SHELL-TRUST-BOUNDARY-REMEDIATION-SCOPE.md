@@ -141,7 +141,7 @@ Required outcomes:
 
 - protected-path and control-surface rules must apply to shell where relevant
 - outside-workspace path access must fail closed
-- opaque shell scope must not auto-proceed when actual affected paths are unknown and risk-relevant
+- opaque shell scope must be denied by default when actual affected paths are unknown and risk-relevant
 - `allow_with_snapshot` must not be used as a substitute for permission
 - policy recovery context must not claim `recoverable_local` unless that is truly supportable
 

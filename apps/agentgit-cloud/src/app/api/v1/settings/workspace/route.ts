@@ -7,7 +7,7 @@ import {
   saveWorkspaceSettings,
   WorkspaceSettingsValidationError,
 } from "@/lib/backend/workspace/workspace-settings";
-import { readJsonBody, JsonBodyParseError } from "@/lib/http/request-body";
+import { readJsonBody, jsonBodyErrorResponse } from "@/lib/http/request-body";
 import { createRequestId, jsonWithRequestId } from "@/lib/observability/route-response";
 import { WorkspaceSettingsUpdateSchema } from "@/schemas/cloud";
 
@@ -34,8 +34,9 @@ export async function PUT(request: Request): Promise<NextResponse> {
   try {
     rawPayload = await readJsonBody(request);
   } catch (error) {
-    if (error instanceof JsonBodyParseError) {
-      return jsonWithRequestId({ message: error.message }, { status: 400 }, requestId);
+    const bodyError = jsonBodyErrorResponse(error, requestId);
+    if (bodyError) {
+      return bodyError;
     }
 
     throw error;
