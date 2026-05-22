@@ -1,0 +1,10 @@
+{
+  "command": "pnpm observability:coverage",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> agentgit@ observability:coverage /Users/geoffreyfernald/Documents/agentgit\n> pnpm --filter @agentgit/cloud-ui test -- src/lib/observability/metrics.test.ts src/app/api/v1/metrics/route.test.ts\n\n\n> @agentgit/cloud-ui@0.1.0 test /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n> sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; vitest run \"$@\"; status=$?; rm -rf .next; exit $status' -- -- src/lib/observability/metrics.test.ts src/app/api/v1/metrics/route.test.ts\n\n\n RUN  v4.1.2 /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n\n\n Test Files  2 passed (2)\n      Tests  3 passed (3)\n   Start at  19:33:32\n   Duration  551ms (transform 50ms, setup 144ms, import 42ms, tests 18ms, environment 734ms)\n\n",
+  "stderr": ""
+}

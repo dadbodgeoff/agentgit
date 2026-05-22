@@ -1,0 +1,10 @@
+{
+  "command": "pnpm quality:visual",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> agentgit@ quality:visual /Users/geoffreyfernald/Documents/agentgit\n> pnpm --filter @agentgit/cloud-ui exec -- playwright test --config=playwright.visual.config.ts\n\n\u001b[2m[WebServer] \u001b[22m   ▲ Next.js 15.5.15\n\u001b[2m[WebServer] \u001b[22m   - Local:        http://localhost:3112\n\u001b[2m[WebServer] \u001b[22m   - Network:      http://localhost:3112\n\u001b[2m[WebServer] \u001b[22m\n\u001b[2m[WebServer] \u001b[22m ✓ Starting...\n\u001b[2m[WebServer] \u001b[22m ✓ Ready in 746ms\n\nRunning 4 tests using 1 worker\n\n  ✓  1 e2e/visual-regression.spec.ts:26:5 › public route visual regression › / matches the approved baseline (1.7s)\n  ✓  2 e2e/visual-regression.spec.ts:26:5 › public route visual regression › /pricing matches the approved baseline (1.3s)\n  ✓  3 e2e/visual-regression.spec.ts:26:5 › public route visual regression › /docs matches the approved baseline (1.4s)\n  ✓  4 e2e/visual-regression.spec.ts:26:5 › public route visual regression › /sign-in matches the approved baseline (969ms)\n\n  4 passed (9.2s)\n",
+  "stderr": "\u001b[2m[WebServer] \u001b[22m(node:45686) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n\u001b[2m[WebServer] \u001b[22m(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[2m[WebServer] \u001b[22m(node:45687) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n\u001b[2m[WebServer] \u001b[22m(Use `node --trace-warnings ...` to show where the warning was created)\n\u001b[2m[WebServer] \u001b[22m(node:45687) Warning: `--localstorage-file` was provided without a valid path\n(node:45697) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n(node:45697) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+}

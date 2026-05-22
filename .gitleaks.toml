@@ -1,0 +1,36 @@
+title = "AgentGit secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic fixture secrets and local qualification evidence"
+regexes = [
+  '''not-a-real-secret''',
+  '''not-a-real-token''',
+  '''campaign-zero-secret''',
+  '''outside-campaign-zero-secret''',
+  '''smoke-auth-secret''',
+  '''smoke-github-secret''',
+  '''smoke-sentry-auth-token''',
+  '''e2e-sentry-token''',
+  '''examplePublicKey@o0\.ingest\.sentry\.io/0''',
+]
+paths = [
+  '''^\.agentgit/''',
+  '''^\.release-artifacts/''',
+  '''^\.tmp/''',
+  '''^\.turbo/''',
+  '''^apps/[^/]+/\.next/''',
+  '''^apps/[^/]+/playwright-report/''',
+  '''^apps/[^/]+/test-results/''',
+  '''^node_modules/''',
+  '''^packages/[^/]+/coverage/''',
+  '''^packages/[^/]+/dist/''',
+  '''^engineering-docs/release-signoff/''',
+  '''^scripts/production-beta-qualification\.test\.mjs$''',
+  '''^scripts/production-beta-qualification\.mjs$''',
+  '''^scripts/run-adversarial-campaign-0\.mjs$''',
+  '''^scripts/smoke-cloud-sync\.mjs$''',
+  '''^scripts/stress-autonomous-governance\.mjs$''',
+]

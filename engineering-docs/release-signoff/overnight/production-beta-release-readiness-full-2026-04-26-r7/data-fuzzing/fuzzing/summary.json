@@ -1,0 +1,44 @@
+{
+  "ok": true,
+  "generated_at": "2026-04-26T23:33:29.244Z",
+  "seed": 2026042601,
+  "iterations": 32,
+  "results": [
+    {
+      "surface": "connector-registration",
+      "accepted": 6,
+      "rejected": 26,
+      "failures": []
+    },
+    {
+      "surface": "event-batch",
+      "accepted": 3,
+      "rejected": 29,
+      "failures": []
+    },
+    {
+      "surface": "command-pull",
+      "accepted": 6,
+      "rejected": 26,
+      "failures": []
+    },
+    {
+      "surface": "command-ack",
+      "accepted": 2,
+      "rejected": 30,
+      "failures": []
+    },
+    {
+      "surface": "audit-bundle-verifier",
+      "verified": 0,
+      "rejected": 32,
+      "failures": []
+    },
+    {
+      "surface": "authority-cli-arguments",
+      "attempted": 32,
+      "failures": []
+    }
+  ],
+  "failure_count": 0
+}

@@ -1,0 +1,10 @@
+{
+  "command": "semgrep scan --config .semgrep.yml --error --metrics=off --json --output /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r7/security-static-analysis/semgrep.json",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "",
+  "stderr": "               \n               \n┌─────────────┐\n│ Scan Status │\n└─────────────┘\n  Scanning 1760 files tracked by git with 5 Code rules:\n                                                                                                                        \n  Language   Rules   Files          Origin   Rules                                                                      \n ──────────────────────────        ────────────────                                                                     \n  ts             5     391          Custom       5                                                                      \n  js             3      35                                                                                              \n                                                                                                                        \n                \n                \n┌──────────────┐\n│ Scan Summary │\n└──────────────┘\n✅ Scan completed successfully.\n • Findings: 0 (0 blocking)\n • Rules run: 5\n • Targets scanned: 426\n • Parsed lines: ~100.0%\n • Scan skipped: \n   ◦ Files matching .semgrepignore patterns: 1\n • Scan was limited to files tracked by git\n • For a detailed list of skipped files and lines, run semgrep with the --verbose flag\nRan 5 rules on 426 files: 0 findings.\n\nA new version of Semgrep is available. See https://semgrep.dev/docs/upgrading\nIf Semgrep missed a finding, please send us feedback to let us know!\nSee https://semgrep.dev/docs/reporting-false-negatives/\n"
+}

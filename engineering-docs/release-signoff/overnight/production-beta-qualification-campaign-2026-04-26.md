@@ -102,11 +102,20 @@ Implemented local release-readiness suites:
 - [x] `perf-capacity-benchmarks`
   - Measures daemon boot, first action after restart, action submission, checkpoint creation, restore, audit query, throughput, and resource samples.
   - Evidence limit: local single-machine numbers; controlled hardware and baseline regression comparison belong in CI/staging.
+  - Benchmark-use rule: run this suite in isolation for customer/SRE latency claims. The full release-readiness matrix can contend with snapshot-heavy suites and should be treated as gate evidence, not as the canonical latency baseline.
+  - Latest isolated baseline: `release-readiness-perf-isolated-2026-04-26` measured action p99 209.28ms, snapshot p99 202.74ms, restore p99 199.16ms, audit p99 180.48ms, 5.03 actions/sec, and 105.57 snapshots/min.
+  - Regression check: the isolated snapshot/restore numbers are better than r2's snapshot p99 354.5ms and restore p99 494.46ms; r7's full-matrix snapshot p99 1931.82ms and restore p99 1684.53ms were contention artifacts, not a bisect-worthy product regression.
 - [x] `security-dependency-audit`
   - Runs the configured Node and Python dependency audit threshold.
 - [x] `security-sbom`
   - Packs release artifacts and writes a CycloneDX JSON SBOM covering workspace manifests and packed files.
   - Evidence limit: local SBOM generation; enterprise release should attach CI-generated CycloneDX/SPDX output.
+- [x] `security-static-analysis`
+  - Runs Semgrep with repo-owned rules for unsafe dynamic execution, dangerous HTML injection, direct request parsing, shell execution, and hardcoded secret assignments.
+  - Evidence limit: local rule pack only; CodeQL or hosted SAST should still be added in CI for deeper dataflow coverage.
+- [x] `security-secret-scan`
+  - Runs gitleaks against git history and the working tree with repo allowlists and redacted findings.
+  - Evidence limit: local repo scan only; scheduled protected-branch scans and packed-artifact scans still belong in CI.
 - [x] `security-authz-matrix`
   - Runs focused auth guard, token/session, cross-resource, restore, and team route tests.
 - [x] `security-agent-adversarial`
@@ -114,13 +123,22 @@ Implemented local release-readiness suites:
 - [x] `data-integrity-property`
   - Runs multiple seeded OpenClaw stress sequences and fails on any restore mismatch.
   - Evidence limit: seeded property-style stress; a true property-based generator and shrinker is still needed.
+- [x] `data-fuzzing`
+  - Mutates audit bundle verifier inputs, cloud sync protocol decoder payloads, and CLI argument inputs.
+  - Evidence limit: deterministic corpus mutation only; coverage-guided fuzzing with shrinking remains a deeper GA item.
 - [x] `backup-restore-drill`
   - Runs the recovery drill and reports measured RTO/RPO evidence.
+- [x] `observability-coverage`
+  - Exposes token-gated Prometheus-format cloud metrics and tests non-zero API response and route-error samples.
+  - Evidence limit: local cloud route metrics only; daemon/runtime OpenTelemetry export remains a GA hardening item.
 - [x] `log-quality`
   - Scans qualification logs and command artifacts for secret-shaped values and obvious SSN-shaped PII.
   - Evidence limit: local artifact scan only; structured correlation-ID completeness belongs in production log validation.
 - [x] `accessibility`
   - Runs the existing Playwright accessibility scan.
+- [x] `visual-regression`
+  - Runs Playwright screenshot diffs against approved local Chromium baselines for `/`, `/pricing`, `/docs`, and `/sign-in`.
+  - Evidence limit: local Chromium public-route baseline only; full browser/device visual baselines belong in CI.
 - [x] `docs-dx-quickstart`
   - Packs artifacts and runs public-package, installed CLI, and installed agent-runtime smoke paths.
 - [x] `public-api-contract`
@@ -134,14 +152,9 @@ Implemented local release-readiness suites:
 External evidence blockers now tracked by the release-readiness gate:
 
 - [ ] `reliability-chaos`: destructive fault injection for kill -9 mid-snapshot, disk-full WAL append, network partition, clock skew, and partial filesystem corruption.
-- [ ] `security-static-analysis`: Semgrep or CodeQL scanner configuration.
-- [ ] `security-secret-scan`: gitleaks or trufflehog over git history, working tree, and packed artifacts.
-- [ ] `data-fuzzing`: fuzz harnesses for audit bundle parser, sync protocol decoder, and CLI argument surfaces.
-- [ ] `observability-coverage`: Prometheus or OpenTelemetry metrics with non-zero samples under qualification load.
 - [ ] `alert-runbook-smoke`: staging alerts and top incident runbook execution.
 - [ ] `os-node-matrix`: Linux x64, Linux arm64, macOS arm64, macOS x64, and Windows install matrix across supported Node versions.
 - [ ] `network-conditions`: high-latency, lossy, captive-portal, and IPv6-only test environment.
 - [ ] `browser-matrix`: Chrome, Firefox, Safari, and mobile browser matrix.
-- [ ] `visual-regression`: approved screenshot baseline and visual diff workflow.
 - [ ] `telemetry-privacy-review`: telemetry send-home behavior, documentation, and opt-out validation.
 - [ ] `data-residency-review`: deployed cloud storage topology and region/customer data residency claims.

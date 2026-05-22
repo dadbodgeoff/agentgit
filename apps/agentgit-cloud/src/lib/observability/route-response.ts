@@ -5,6 +5,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
 import { logServerEvent } from "@/lib/observability/logger";
+import { recordCloudApiResponse, recordCloudRouteError } from "@/lib/observability/metrics";
 
 export function createRequestId(request: Request): string {
   const upstreamRequestId = request.headers.get("x-request-id")?.trim();
@@ -13,10 +14,13 @@ export function createRequestId(request: Request): string {
 
 export function jsonWithRequestId(body: unknown, init: ResponseInit | undefined, requestId: string): NextResponse {
   const headers = new Headers(init?.headers);
+  const status = init?.status ?? 200;
   headers.set("x-agentgit-request-id", requestId);
   if (!headers.has("cache-control")) {
     headers.set("cache-control", "private, no-store");
   }
+
+  recordCloudApiResponse(status);
 
   return NextResponse.json(body, {
     ...init,
@@ -59,6 +63,7 @@ export function logRouteError(
   details: Record<string, unknown> = {},
 ): void {
   const sanitizedDetails = sanitizeLogDetails(details);
+  recordCloudRouteError(route);
   Sentry.captureException(error, {
     tags: {
       route,

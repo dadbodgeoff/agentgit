@@ -10,7 +10,7 @@ This folder contains grouped example fixtures and linked trace bundles for the c
   - grouped invalid examples for each schema
 - `traces/`
   - end-to-end record bundles with cross-schema links
-- `validate_examples.py`
+- `validate_examples.mjs`
   - validates schema compliance and trace referential integrity
 
 ## Coverage
@@ -39,5 +39,5 @@ The trace bundles cover:
 ## Run Validation
 
 ```bash
-python3 engineering-docs/schema-pack/examples/validate_examples.py
+pnpm --filter @agentgit/schemas test
 ```

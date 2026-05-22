@@ -1,0 +1,10 @@
+{
+  "command": "pnpm --filter @agentgit/cloud-ui test -- src/lib/backend/workspace/audit-log.test.ts src/app/api/v1/audit/export/route.test.ts src/app/api/v1/auth-guards.test.ts",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> @agentgit/cloud-ui@0.1.0 test /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n> sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; vitest run \"$@\"; status=$?; rm -rf .next; exit $status' -- -- src/lib/backend/workspace/audit-log.test.ts src/app/api/v1/audit/export/route.test.ts src/app/api/v1/auth-guards.test.ts\n\n\n RUN  v4.1.2 /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n\n\n Test Files  3 passed (3)\n      Tests  11 passed (11)\n   Start at  19:31:06\n   Duration  2.27s (transform 606ms, setup 187ms, import 77ms, tests 3.04s, environment 966ms)\n\n",
+  "stderr": ""
+}

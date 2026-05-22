@@ -1,0 +1,71 @@
+rules:
+  - id: agentgit.javascript.no-eval
+    languages:
+      - javascript
+      - typescript
+    message: Avoid eval/new Function. Route dynamic behavior through explicit parsers or registries.
+    severity: ERROR
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+    paths:
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "**/*.test.js"
+        - "**/*.test.mjs"
+
+  - id: agentgit.react.no-dangerously-set-inner-html
+    languages:
+      - typescript
+      - javascript
+    message: Avoid dangerouslySetInnerHTML in shipped UI. Use structured rendering or sanitize at the boundary.
+    severity: ERROR
+    pattern: dangerouslySetInnerHTML
+    paths:
+      include:
+        - "/apps/agentgit-cloud/src/**/*.tsx"
+        - "/apps/inspector-ui/src/**/*.ts"
+
+  - id: agentgit.next.no-direct-request-json
+    languages:
+      - typescript
+    message: API routes must use the shared request-body helper so malformed payloads fail consistently.
+    severity: ERROR
+    pattern: $REQUEST.json()
+    paths:
+      include:
+        - "/apps/agentgit-cloud/src/app/api/**/*.ts"
+      exclude:
+        - "**/*.test.ts"
+
+  - id: agentgit.node.no-shell-exec
+    languages:
+      - javascript
+      - typescript
+    message: Use spawn/execFile with an argument array instead of shell exec.
+    severity: ERROR
+    pattern-either:
+      - pattern: exec(...)
+      - pattern: execSync(...)
+    paths:
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "**/*.test.js"
+        - "**/*.test.mjs"
+
+  - id: agentgit.node.no-hardcoded-secret-assignment
+    languages:
+      - javascript
+      - typescript
+    message: Do not hardcode production-shaped secrets. Use environment variables, fixtures, or redacted placeholders.
+    severity: ERROR
+    patterns:
+      - pattern-regex: '(?i)(api[_-]?key|auth[_-]?token|secret|password)\s*[:=]\s*["''](sk|ghp|gho|ghu|ghs|ghr|npm_|xox[baprs]-)[A-Za-z0-9_-]{16,}["'']'
+    paths:
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "**/*.test.js"
+        - "**/*.test.mjs"

@@ -1,0 +1,10 @@
+{
+  "command": "pnpm --filter @agentgit/cloud-ui test -- src/app/api/v1/auth-guards.test.ts src/lib/auth/workspace-access.test.ts \"src/app/api/v1/repositories/[owner]/[name]/route.test.ts\" \"src/app/api/v1/repositories/[owner]/[name]/snapshots/[snapshotId]/restore/route.test.ts\" src/app/api/v1/settings/team/route.test.ts",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> @agentgit/cloud-ui@0.1.0 test /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n> sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; vitest run \"$@\"; status=$?; rm -rf .next; exit $status' -- -- src/app/api/v1/auth-guards.test.ts src/lib/auth/workspace-access.test.ts 'src/app/api/v1/repositories/[owner]/[name]/route.test.ts' 'src/app/api/v1/repositories/[owner]/[name]/snapshots/[snapshotId]/restore/route.test.ts' src/app/api/v1/settings/team/route.test.ts\n\n\n RUN  v4.1.2 /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n\n\n Test Files  5 passed (5)\n      Tests  21 passed (21)\n   Start at  19:32:45\n   Duration  2.95s (transform 1.02s, setup 644ms, import 991ms, tests 4.83s, environment 3.52s)\n\n",
+  "stderr": ""
+}

@@ -1,0 +1,167 @@
+{
+  "packages": [
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud/package.json",
+      "name": "@agentgit/cloud-ui",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/apps/inspector-ui/package.json",
+      "name": "@agentgit/inspector-ui",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/package.json",
+      "name": "agentgit",
+      "private": true,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/action-normalizer/package.json",
+      "name": "@agentgit/action-normalizer",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/agent-runtime-integration/package.json",
+      "name": "@agentgit/agent-runtime-integration",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/authority-cli/package.json",
+      "name": "@agentgit/authority-cli",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/authority-daemon/package.json",
+      "name": "@agentgit/authority-daemon",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/authority-sdk-ts/package.json",
+      "name": "@agentgit/authority-sdk",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/cloud-connector/package.json",
+      "name": "@agentgit/cloud-connector",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/cloud-sync-protocol/package.json",
+      "name": "@agentgit/cloud-sync-protocol",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/control-plane-state/package.json",
+      "name": "@agentgit/control-plane-state",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/core-ports/package.json",
+      "name": "@agentgit/core-ports",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/credential-broker/package.json",
+      "name": "@agentgit/credential-broker",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/execution-adapters/package.json",
+      "name": "@agentgit/execution-adapters",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/hosted-mcp-worker/package.json",
+      "name": "@agentgit/hosted-mcp-worker",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/integration-state/package.json",
+      "name": "@agentgit/integration-state",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/mcp-registry/package.json",
+      "name": "@agentgit/mcp-registry",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/policy-engine/package.json",
+      "name": "@agentgit/policy-engine",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/recovery-engine/package.json",
+      "name": "@agentgit/recovery-engine",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/run-journal/package.json",
+      "name": "@agentgit/run-journal",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/schemas/package.json",
+      "name": "@agentgit/schemas",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/snapshot-engine/package.json",
+      "name": "@agentgit/snapshot-engine",
+      "private": false,
+      "license": "Apache-2.0"
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/test-fixtures/package.json",
+      "name": "@agentgit/test-fixtures",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/timeline-helper/package.json",
+      "name": "@agentgit/timeline-helper",
+      "private": true,
+      "license": null
+    },
+    {
+      "path": "/Users/geoffreyfernald/Documents/agentgit/packages/workspace-index/package.json",
+      "name": "@agentgit/workspace-index",
+      "private": false,
+      "license": "Apache-2.0"
+    }
+  ],
+  "failures": [],
+  "warnings": [
+    "@agentgit/cloud-ui is private and missing a license",
+    "@agentgit/inspector-ui is private and missing a license",
+    "@agentgit/action-normalizer is private and missing a license",
+    "@agentgit/execution-adapters is private and missing a license",
+    "@agentgit/hosted-mcp-worker is private and missing a license",
+    "@agentgit/mcp-registry is private and missing a license",
+    "@agentgit/policy-engine is private and missing a license",
+    "@agentgit/recovery-engine is private and missing a license",
+    "@agentgit/test-fixtures is private and missing a license",
+    "@agentgit/timeline-helper is private and missing a license"
+  ]
+}

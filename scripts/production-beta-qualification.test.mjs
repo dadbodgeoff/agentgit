@@ -79,17 +79,24 @@ test("release-hardening registry expands into measurable and externally blocked 
   assert.deepEqual(blocked.sort(), [
     "alert-runbook-smoke",
     "browser-matrix",
-    "data-fuzzing",
     "data-residency-review",
     "network-conditions",
-    "observability-coverage",
     "os-node-matrix",
     "reliability-chaos",
-    "security-secret-scan",
-    "security-static-analysis",
     "telemetry-privacy-review",
-    "visual-regression",
   ]);
+
+  for (const suiteId of [
+    "security-static-analysis",
+    "security-secret-scan",
+    "data-fuzzing",
+    "observability-coverage",
+    "visual-regression",
+  ]) {
+    const suite = suites.find((candidate) => candidate.id === suiteId);
+    assert.ok(suite, `${suiteId} should be registered`);
+    assert.equal(suite?.blockedReason, undefined, `${suiteId} should be executable in the repo-local gate`);
+  }
 });
 
 test("deriveGateStatus fails closed for failed, blocked, or missing required suites", () => {

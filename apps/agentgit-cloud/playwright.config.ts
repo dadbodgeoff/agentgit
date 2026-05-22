@@ -20,6 +20,7 @@ const webServerCommand = `${webServerEnv} node scripts/start-playwright-server.m
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: /visual-regression\.spec\.ts/,
   fullyParallel: false,
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   retries: 0,

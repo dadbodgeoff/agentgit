@@ -44,7 +44,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "python3 ../../engineering-docs/schema-pack/examples/validate_examples.py",
+    "test": "node ../../engineering-docs/schema-pack/examples/validate_examples.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist tsconfig.tsbuildinfo",
     "prepack": "node ../../scripts/verify-package-build.mjs",
@@ -52,5 +52,9 @@
   },
   "dependencies": {
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1"
   }
 }

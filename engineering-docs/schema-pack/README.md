@@ -27,7 +27,7 @@ That fixture set contains:
 Run it with:
 
 ```bash
-python3 engineering-docs/schema-pack/examples/validate_examples.py
+pnpm --filter @agentgit/schemas test
 ```
 
 The same fixture set is also enforced by the normal repo test pipeline via `pnpm test` through `@agentgit/schemas`, so schema/example drift fails fast during everyday development.

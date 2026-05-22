@@ -1,0 +1,212 @@
+{
+  "action": {
+    "schema_version": "action.v1",
+    "action_id": "act_019dcc241a02761199f4ab38dfcfea1f",
+    "run_id": "run_019dcc241950722482afab5760738c4d",
+    "session_id": "sess_019dcc2419e473c1b77006b866480dbd",
+    "status": "normalized",
+    "timestamps": {
+      "requested_at": "2026-04-26T23:33:31.205Z",
+      "normalized_at": "2026-04-26T23:33:31.266Z"
+    },
+    "provenance": {
+      "mode": "governed",
+      "source": "authority-sdk-ts",
+      "confidence": 0.99
+    },
+    "actor": {
+      "type": "agent",
+      "agent_name": "agentgit-cli",
+      "agent_framework": "cli",
+      "tool_name": "write_file",
+      "tool_kind": "filesystem"
+    },
+    "operation": {
+      "domain": "filesystem",
+      "kind": "write",
+      "name": "filesystem.write",
+      "display_name": "Write file"
+    },
+    "execution_path": {
+      "surface": "governed_fs",
+      "mode": "pre_execution",
+      "credential_mode": "none"
+    },
+    "target": {
+      "primary": {
+        "type": "path",
+        "locator": "/tmp/agentgit-recovery-drill-SCpWex/workspace/recovery-drill.txt",
+        "label": "recovery-drill.txt"
+      },
+      "scope": {
+        "breadth": "single",
+        "estimated_count": 1,
+        "unknowns": []
+      }
+    },
+    "input": {
+      "raw": {
+        "operation": "write",
+        "path": "recovery-drill.txt",
+        "content": "drill-v1"
+      },
+      "redacted": {
+        "operation": "write",
+        "path": "recovery-drill.txt",
+        "content": "drill-v1"
+      },
+      "schema_ref": null,
+      "contains_sensitive_data": false
+    },
+    "risk_hints": {
+      "side_effect_level": "mutating",
+      "external_effects": "none",
+      "reversibility_hint": "reversible",
+      "sensitivity_hint": "low",
+      "batch": false
+    },
+    "facets": {
+      "filesystem": {
+        "operation": "write",
+        "paths": [
+          "/tmp/agentgit-recovery-drill-SCpWex/workspace/recovery-drill.txt"
+        ],
+        "path_count": 1,
+        "recursive": false,
+        "overwrite": true,
+        "byte_length": 8
+      }
+    },
+    "normalization": {
+      "mapper": "filesystem/v1",
+      "inferred_fields": [
+        "target.scope",
+        "risk_hints"
+      ],
+      "warnings": [],
+      "normalization_confidence": 0.99
+    },
+    "confidence_assessment": {
+      "engine_version": "action-confidence/v1",
+      "score": 1,
+      "band": "high",
+      "requires_human_review": false,
+      "factors": [
+        {
+          "factor_id": "normalization_baseline",
+          "label": "Normalization baseline",
+          "kind": "baseline",
+          "delta": 0.99,
+          "rationale": "Started from mapper confidence 0.990."
+        },
+        {
+          "factor_id": "provenance_governed_high",
+          "label": "Strong provenance",
+          "kind": "boost",
+          "delta": 0.04,
+          "rationale": "Governed provenance is high-confidence and strengthens trust in the action envelope."
+        },
+        {
+          "factor_id": "scope_single",
+          "label": "Single-target scope",
+          "kind": "boost",
+          "delta": 0.04,
+          "rationale": "Single-target actions are easier to reason about and recover from."
+        },
+        {
+          "factor_id": "reversibility_reversible",
+          "label": "Clearly reversible",
+          "kind": "boost",
+          "delta": 0.03,
+          "rationale": "Clear rollback paths improve confidence in automated handling."
+        },
+        {
+          "factor_id": "surface_governed_fs",
+          "label": "Governed filesystem surface",
+          "kind": "boost",
+          "delta": 0.03,
+          "rationale": "The governed filesystem surface exposes narrow, inspectable semantics."
+        }
+      ]
+    }
+  },
+  "policy_outcome": {
+    "schema_version": "policy-outcome.v1",
+    "policy_outcome_id": "pol_019dcc241a0477eaa9e11e61b270594e",
+    "action_id": "act_019dcc241a02761199f4ab38dfcfea1f",
+    "decision": "allow",
+    "reasons": [
+      {
+        "code": "TRUSTED_GOVERNED_FS_WRITE",
+        "severity": "low",
+        "message": "Small governed filesystem writes use atomic durable replacement and are allowed automatically."
+      }
+    ],
+    "trust_requirements": {
+      "wrapped_path_required": true,
+      "brokered_credentials_required": false,
+      "direct_credentials_forbidden": false
+    },
+    "preconditions": {
+      "snapshot_required": false,
+      "approval_required": false,
+      "simulation_supported": false
+    },
+    "approval": null,
+    "budget_effects": {
+      "budget_check": "passed",
+      "estimated_cost": 0,
+      "remaining_mutating_actions": null,
+      "remaining_destructive_actions": null
+    },
+    "policy_context": {
+      "matched_rules": [
+        "filesystem.safe.small_write"
+      ],
+      "sticky_decision_applied": false
+    },
+    "evaluated_at": "2026-04-26T23:33:31.268Z"
+  },
+  "execution_result": {
+    "execution_id": "exec_fs_1777246411269",
+    "action_id": "act_019dcc241a02761199f4ab38dfcfea1f",
+    "mode": "executed",
+    "success": true,
+    "output": {
+      "executed": true,
+      "domain": "filesystem",
+      "operation": "write",
+      "target": "/private/tmp/agentgit-recovery-drill-SCpWex/workspace/recovery-drill.txt",
+      "bytes_written": 8,
+      "before_preview": null,
+      "after_preview": "drill-v1",
+      "diff_preview": "+ drill-v1"
+    },
+    "artifacts": [
+      {
+        "artifact_id": "artifact_file_1777246411281",
+        "type": "file_content",
+        "content_ref": "/private/tmp/agentgit-recovery-drill-SCpWex/workspace/recovery-drill.txt",
+        "byte_size": 8,
+        "visibility": "user"
+      },
+      {
+        "artifact_id": "artifact_diff_1777246411281",
+        "type": "diff",
+        "content_ref": "inline://exec_fs_1777246411269/diff",
+        "byte_size": 10,
+        "visibility": "user"
+      }
+    ],
+    "started_at": "2026-04-26T23:33:31.269Z",
+    "completed_at": "2026-04-26T23:33:31.281Z",
+    "artifact_capture": {
+      "requested_count": 2,
+      "stored_count": 2,
+      "degraded": false,
+      "failures": []
+    }
+  },
+  "snapshot_record": null,
+  "approval_request": null
+}

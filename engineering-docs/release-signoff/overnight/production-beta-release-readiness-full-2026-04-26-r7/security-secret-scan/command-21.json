@@ -1,0 +1,10 @@
+{
+  "command": "gitleaks dir /Users/geoffreyfernald/Documents/agentgit/engineering-docs/09-agent-runtime-integration --config /Users/geoffreyfernald/Documents/agentgit/.gitleaks.toml --redact --no-banner --report-format json --report-path /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r7/security-secret-scan/gitleaks-engineering-docs-09-agent-runtime-integration.json",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "",
+  "stderr": "7:32PM INF scanned ~132480 bytes (132.48 KB) in 19ms\n7:32PM INF no leaks found\n"
+}

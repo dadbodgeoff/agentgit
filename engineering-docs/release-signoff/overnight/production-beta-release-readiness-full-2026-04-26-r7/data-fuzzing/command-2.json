@@ -1,0 +1,10 @@
+{
+  "command": "node scripts/fuzz-release-surfaces.mjs --output-dir /Users/geoffreyfernald/Documents/agentgit/engineering-docs/release-signoff/overnight/production-beta-release-readiness-full-2026-04-26-r7/data-fuzzing/fuzzing --iterations 32 --seed 2026042601",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "{\n  \"ok\": true,\n  \"generated_at\": \"2026-04-26T23:33:29.244Z\",\n  \"seed\": 2026042601,\n  \"iterations\": 32,\n  \"results\": [\n    {\n      \"surface\": \"connector-registration\",\n      \"accepted\": 6,\n      \"rejected\": 26,\n      \"failures\": []\n    },\n    {\n      \"surface\": \"event-batch\",\n      \"accepted\": 3,\n      \"rejected\": 29,\n      \"failures\": []\n    },\n    {\n      \"surface\": \"command-pull\",\n      \"accepted\": 6,\n      \"rejected\": 26,\n      \"failures\": []\n    },\n    {\n      \"surface\": \"command-ack\",\n      \"accepted\": 2,\n      \"rejected\": 30,\n      \"failures\": []\n    },\n    {\n      \"surface\": \"audit-bundle-verifier\",\n      \"verified\": 0,\n      \"rejected\": 32,\n      \"failures\": []\n    },\n    {\n      \"surface\": \"authority-cli-arguments\",\n      \"attempted\": 32,\n      \"failures\": []\n    }\n  ],\n  \"failure_count\": 0\n}\n",
+  "stderr": ""
+}

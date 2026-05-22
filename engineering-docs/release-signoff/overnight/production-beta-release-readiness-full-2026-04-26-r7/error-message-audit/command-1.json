@@ -1,0 +1,10 @@
+{
+  "command": "pnpm --filter @agentgit/cloud-ui test -- src/app/api/v1/approvals/approval-decision-routes.test.ts src/app/api/v1/repos/connect/route.test.ts \"src/app/api/v1/repositories/[owner]/[name]/snapshots/[snapshotId]/restore/route.test.ts\" src/app/api/v1/settings/workspace/route.test.ts src/app/api/v1/sync/events/route.test.ts \"src/app/api/v1/sync/commands/[commandId]/ack/route.test.ts\" src/lib/auth/api-session.test.ts src/lib/http/request-body.test.ts",
+  "cwd": "/Users/geoffreyfernald/Documents/agentgit",
+  "exit": {
+    "code": 0,
+    "signal": null
+  },
+  "stdout": "\n> @agentgit/cloud-ui@0.1.0 test /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n> sh -c 'if [ \"$1\" = \"--\" ]; then shift; fi; vitest run \"$@\"; status=$?; rm -rf .next; exit $status' -- -- src/app/api/v1/approvals/approval-decision-routes.test.ts src/app/api/v1/repos/connect/route.test.ts 'src/app/api/v1/repositories/[owner]/[name]/snapshots/[snapshotId]/restore/route.test.ts' src/app/api/v1/settings/workspace/route.test.ts src/app/api/v1/sync/events/route.test.ts 'src/app/api/v1/sync/commands/[commandId]/ack/route.test.ts' src/lib/auth/api-session.test.ts src/lib/http/request-body.test.ts\n\n\n RUN  v4.1.2 /Users/geoffreyfernald/Documents/agentgit/apps/agentgit-cloud\n\n\n Test Files  8 passed (8)\n      Tests  23 passed (23)\n   Start at  19:36:16\n   Duration  3.12s (transform 1.77s, setup 1.52s, import 1.37s, tests 7.76s, environment 8.03s)\n\n",
+  "stderr": ""
+}
